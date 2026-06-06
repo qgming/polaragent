@@ -1,11 +1,10 @@
 // 团队编辑模态窗：编辑团队的头像/名称/简介/协作模式/成员/领导/系统提示词/团队技能/工作区目录
 // 仿 AgentEditorModal，基于通用 Modal 组件居中弹出
-// src/components/TeamEditorModal.tsx
 
 import { Bot, FolderOpen, Sparkles, Star, Users, Wrench, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { Field, SettingDropdown } from "@/components/settings/shared";
+import { Field, SettingDropdown } from "@/components/settings/settings-shared";
 import { Button } from "@/components/ui/button";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Switch } from "@/components/ui/switch";
@@ -17,9 +16,9 @@ import {
   ModalHeader,
   ModalTitle,
 } from "@/components/ui/modal";
-import { pickWorkingDirectory } from "@/lib/electron-api";
+import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
-import { useSkillsStore } from "@/stores/skills-store";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 import type { TeamConfig } from "@/types/config";
 
 // 协作模式选项

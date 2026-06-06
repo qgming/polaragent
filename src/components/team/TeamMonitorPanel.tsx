@@ -1,5 +1,4 @@
 // 团队监控面板 —— 与普通对话侧边栏结构一致
-// src/components/TeamMonitorPanel.tsx
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -12,20 +11,19 @@ import {
 
 import { WorkspaceTree } from "@/components/WorkspaceTree";
 import { fileIconFor } from "@/lib/file-icons";
-import { isPreviewable } from "@/lib/preview-file";
-import { openPreviewWindow } from "@/lib/preview-window";
+import { isPreviewable, openPreviewWindow } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/stores/config-store";
 import {
   useTeamChatStore,
   useTeamThreadMessages,
-} from "@/stores/team-chat-store";
-import { useTeamsStore } from "@/stores/teams-store";
+} from "@/stores/team/team-chat-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import {
   useTeamMonitorStore,
   type ArtifactItem,
   type TodoItem,
-} from "@/stores/team-monitor-store";
+} from "@/stores/team/team-monitor-store";
 
 export function TeamMonitorPanel({
   threadId,

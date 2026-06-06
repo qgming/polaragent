@@ -14,8 +14,8 @@ import {
   type TeamMessage,
   type TeamThread,
   useTeamChatStore,
-} from "@/stores/team-chat-store";
-import { useTeamsStore } from "@/stores/teams-store";
+} from "@/stores/team/team-chat-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import { cn } from "@/lib/utils";
 
 type ChatSearchResult = {

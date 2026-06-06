@@ -1,8 +1,8 @@
-// 文件预览类型判定与渲染分类 —— 侧边栏、AI 输出、预览窗口共用
-// src/lib/preview-file.ts
+// 文件预览：类型判定/渲染分类 + 打开独立预览窗口
+// src/lib/preview.ts
 //
-// 仅做纯粹的扩展名分类，不含任何 Electron/窗口副作用，
-// 可在主窗口与预览窗口安全引用。
+// 扩展名分类部分为纯函数、无副作用，可在主窗口与预览窗口安全引用；
+// openPreviewWindow 含 Electron 窗口副作用，仅主窗口调用。
 
 // 预览窗口的内容渲染类别
 export type PreviewKind = "markdown" | "html" | "image" | "code" | "unsupported";
@@ -80,4 +80,17 @@ export function previewKindLabel(kind: PreviewKind, ext: string): string {
     default:
       return "File";
   }
+}
+
+/**
+ * 打开（或聚焦已存在的）文件预览窗口。
+ * - 同一文件路径复用同一窗口：已存在则置顶聚焦，不重复创建。
+ * - 路径经 URL 参数传入预览窗口的前端入口（main.tsx 据此分发渲染）。
+ */
+export async function openPreviewWindow(path: string): Promise<void> {
+  if (!path || !window.polaragent) {
+    return;
+  }
+
+  await window.polaragent.preview.open(path);
 }

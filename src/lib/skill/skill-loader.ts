@@ -1,5 +1,4 @@
 // Skill 加载器 - 支持 Agent Skills 标准
-// src/lib/skill-loader.ts
 
 import type { SkillConfig } from "@/types/config";
 import type { Skill as PiSkill } from "@earendil-works/pi-agent-core";
@@ -9,7 +8,7 @@ import {
   installSkillFromLocal,
   readFile,
   listDirectory,
-} from "./electron-api";
+} from "@/lib/electron/electron-api";
 
 /**
  * Agent Skills 标准的 SKILL.md frontmatter

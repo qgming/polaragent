@@ -1,6 +1,5 @@
 // 团队操作菜单：hover「更多」下拉 + 清空会话/删除确认弹窗
 // 供「团队管理页卡片」与「侧边栏团队项」共用，保证两处操作功能一致
-// src/components/TeamActionsMenu.tsx
 
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";

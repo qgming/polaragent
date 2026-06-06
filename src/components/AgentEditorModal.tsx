@@ -5,7 +5,7 @@
 import { Bot, Brain, Sparkles, Wrench, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { Field, SettingDropdown } from "@/components/settings/shared";
+import { Field, SettingDropdown } from "@/components/settings/settings-shared";
 import { Button } from "@/components/ui/button";
 import {
   Modal,
@@ -21,7 +21,7 @@ import {
   hasAllSkills,
   normalizeSkillSelection,
   ALL_SKILLS_ID,
-} from "@/lib/skill-selection";
+} from "@/lib/skill/skill-selection";
 import { useConfigStore } from "@/stores/config-store";
 import type { AgentConfig } from "@/types/config";
 

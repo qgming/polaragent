@@ -1,5 +1,5 @@
 // 工具上下文与共享辅助
-// src/ai/tools/context.ts
+// src/ai/tools/tool-context.ts
 //
 // 所有内置工具共享的执行上下文与路径/文本辅助函数。
 
@@ -41,13 +41,54 @@ export function text(value: string): AgentToolResult<unknown>["content"] {
   return [{ type: "text", text: value }];
 }
 
-// 把相对路径解析到工作目录下；绝对路径原样返回
+// 路径分隔符归一为 "/"，并解析掉 "." 与 ".." 段（纯字符串实现，前端无 Node path）。
+// 不触碰文件系统，仅做词法规范化。
+function normalizeSegments(input: string): { prefix: string; parts: string[] } {
+  const unified = input.replace(/\\/g, "/");
+  // 提取盘符（C:/）或根（/）前缀，其余按 "/" 切段
+  const driveMatch = unified.match(/^([a-zA-Z]:)\//);
+  let prefix = "";
+  let rest = unified;
+  if (driveMatch) {
+    prefix = `${driveMatch[1]}/`;
+    rest = unified.slice(driveMatch[0].length);
+  } else if (unified.startsWith("/")) {
+    prefix = "/";
+    rest = unified.slice(1);
+  }
+  const parts: string[] = [];
+  for (const seg of rest.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length > 0) parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return { prefix, parts };
+}
+
+// 把相对路径解析到工作目录下；绝对路径原样使用。
+// 设置了 workingDir 时，校验最终路径不逃逸出工作目录（防止 ".." 或绝对路径写到目录外）。
 export function resolvePath(ctx: ToolContext, path: string): string {
   if (!ctx.workingDir) return path;
   const isAbsolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(path);
-  if (isAbsolute) return path;
   const base = ctx.workingDir.replace(/[\\/]+$/, "");
-  return `${base}/${path}`;
+  const resolved = isAbsolute ? path : `${base}/${path}`;
+
+  // 规范化后做前缀校验：解析路径必须落在工作目录之内（或正好等于工作目录）
+  const baseNorm = normalizeSegments(base);
+  const targetNorm = normalizeSegments(resolved);
+  const within =
+    baseNorm.prefix === targetNorm.prefix &&
+    targetNorm.parts.length >= baseNorm.parts.length &&
+    baseNorm.parts.every((part, i) => part === targetNorm.parts[i]);
+  if (!within) {
+    throw new Error(
+      `路径越界：「${path}」超出了工作目录范围（${ctx.workingDir}），出于安全已拒绝访问。`,
+    );
+  }
+  return resolved;
 }
 
 // 取路径中的文件名

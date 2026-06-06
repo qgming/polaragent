@@ -19,11 +19,11 @@ import {
   ToolStepItem,
   ToolStepsRow,
   type ToolSeg,
-} from "@/components/AgentTrace";
-import { ComposerToolbar } from "@/components/ComposerToolbar";
+} from "@/components/chat/AgentTrace";
+import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { IconButton } from "@/components/IconButton";
-import { MarkdownContent } from "@/components/MarkdownContent";
-import { TeamMonitorPanel } from "@/components/TeamMonitorPanel";
+import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import { TeamMonitorPanel } from "@/components/team/TeamMonitorPanel";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -36,9 +36,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { checkProviderConfig } from "@/lib/init";
+import { checkProviderConfig } from "@/lib/app-init";
 import { cn } from "@/lib/utils";
-import { pickWorkingDirectory } from "@/lib/electron-api";
+import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
 import { type Segment } from "@/stores/chat-store";
 import {
@@ -46,9 +46,9 @@ import {
   useTeamChatStore,
   useTeamThreadMessages,
   type TeamMessage,
-} from "@/stores/team-chat-store";
-import { useTeamsStore } from "@/stores/teams-store";
-import { useTeamPanelStore } from "@/stores/team-panel-store";
+} from "@/stores/team/team-chat-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
+import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 
 export function TeamChatPage({
   teamId,

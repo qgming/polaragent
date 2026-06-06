@@ -23,18 +23,18 @@ import {
 } from "lucide-react";
 
 import { fileIconFor } from "@/lib/file-icons";
-import { CodeBlock } from "@/components/CodeBlock";
-import { MarkdownContent } from "@/components/MarkdownContent";
+import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { useTheme } from "@/hooks/useTheme";
-import { initializeApp } from "@/lib/init";
-import { fileUrl, readFile, writeFile, openPath } from "@/lib/electron-api";
+import { initializeApp } from "@/lib/app-init";
+import { fileUrl, readFile, writeFile, openPath } from "@/lib/electron/electron-api";
 import {
   extOf,
   previewKindLabel,
   previewKindOf,
   type PreviewKind,
-} from "@/lib/preview-file";
-import { runWindowAction } from "@/lib/electron-window";
+} from "@/lib/preview";
+import { runWindowAction } from "@/lib/electron/electron-window";
 import { cn } from "@/lib/utils";
 
 type ViewMode = "preview" | "code";

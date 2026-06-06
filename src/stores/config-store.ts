@@ -18,7 +18,7 @@ import {
   readConfig,
   writeAgentConfig,
   writeConfig,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 import {
   defaultSettings,
   defaultProviders,
@@ -26,7 +26,7 @@ import {
 import {
   ALL_SKILLS_ID,
   normalizeSkillSelection,
-} from "@/lib/skill-selection";
+} from "@/lib/skill/skill-selection";
 
 interface ConfigState {
   // 状态

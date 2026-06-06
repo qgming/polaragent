@@ -3,7 +3,7 @@
 
 import { Info, Sparkles } from "lucide-react";
 
-import { PageTitle } from "./shared";
+import { PageTitle } from "./settings-shared";
 
 export function AboutPanel() {
   return (

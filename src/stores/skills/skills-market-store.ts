@@ -1,5 +1,4 @@
 // 技能广场 Store —— SkillsMP 搜索、分类缓存与安装
-// src/stores/skills-market-store.ts
 //
 // SkillsMP 仅有一个搜索端点，因此「分类浏览」用预置分类关键词驱动搜索实现。
 // 启动时全量拉取所有分类并持久化到本地；超过 24 小时则后台自动刷新。
@@ -10,9 +9,9 @@ import {
   searchMarketSkills,
   writeConfig,
   type MarketSkill,
-} from "@/lib/electron-api";
-import { skillLoader } from "@/lib/skill-loader";
-import { useConfigStore } from "./config-store";
+} from "@/lib/electron/electron-api";
+import { skillLoader } from "@/lib/skill/skill-loader";
+import { useConfigStore } from "@/stores/config-store";
 
 // 预置分类：label 展示，query 作搜索词（q 必填），category 作 API 过滤 slug
 export interface MarketCategory {

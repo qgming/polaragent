@@ -1,11 +1,10 @@
 // Skills 安装对话框
-// src/components/SkillInstallDialog.tsx
 
 import { useState } from "react";
 import { Download, FolderOpen, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/useToast";
-import { skillLoader } from "@/lib/skill-loader";
+import { skillLoader } from "@/lib/skill/skill-loader";
 
 interface SkillInstallDialogProps {
   isOpen: boolean;

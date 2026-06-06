@@ -1,5 +1,5 @@
 // 设置页面共享的小组件
-// src/components/settings/shared.tsx
+// src/components/settings/settings-shared.tsx
 
 import { ChevronDown } from "lucide-react";
 import type { Bot } from "lucide-react";

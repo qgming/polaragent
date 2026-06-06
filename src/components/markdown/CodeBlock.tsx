@@ -1,5 +1,4 @@
 // 代码块组件（带语法高亮、搜索命中高亮和复制按钮）
-// src/components/CodeBlock.tsx
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";

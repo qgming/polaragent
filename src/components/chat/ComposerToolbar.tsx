@@ -1,5 +1,4 @@
 // 对话输入工具栏 —— "/" 技能选择 + "@" 上下文（占位）
-// src/components/ComposerToolbar.tsx
 //
 // "/" 按钮：纯图标按钮，点击弹出技能选择下拉（样式与助手选择下拉一致）。
 //   列出全部技能（内置 + 已安装，即技能页两类），菜单项只显示名称，
@@ -20,8 +19,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { pickTextFile } from "@/lib/electron-api";
-import { useSkillsStore } from "@/stores/skills-store";
+import { pickTextFile } from "@/lib/electron/electron-api";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 
 // 从绝对路径取文件名（兼容正反斜杠）
 function basename(path: string): string {

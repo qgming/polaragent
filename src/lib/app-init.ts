@@ -1,12 +1,12 @@
 // 应用初始化逻辑
-// src/lib/init.ts
+// src/lib/app-init.ts
 
 import { useConfigStore } from "@/stores/config-store";
 import { useChatStore } from "@/stores/chat-store";
-import { useSkillsStore } from "@/stores/skills-store";
-import { useSkillsMarketStore } from "@/stores/skills-market-store";
+import { useSkillsStore } from "@/stores/skills/skills-store";
+import { useSkillsMarketStore } from "@/stores/skills/skills-market-store";
 import { useAgentsMarketStore } from "@/stores/agents-market-store";
-import { useTeamsStore } from "@/stores/teams-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { providerManager } from "@/ai/providers";
 import { agentManager } from "@/ai/agent-manager";

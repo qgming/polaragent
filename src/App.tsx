@@ -6,7 +6,7 @@ import { AnimatePresence } from "motion/react";
 
 import { abortAgentThread, resetAgent } from "@/ai/agent";
 import { abortTeamThread } from "@/ai/team";
-import { AppSidebar } from "@/components/AppSidebar";
+import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { AskUserModal } from "@/components/AskUserModal";
 import { GlobalSessionSearch } from "@/components/GlobalSessionSearch";
 import { TitleBar } from "@/components/TitleBar";
@@ -14,10 +14,10 @@ import { ToastContainer } from "@/components/ToastContainer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
-import { initializeApp, initializeAiRuntime } from "@/lib/init";
+import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
-import { resolveSkillSelection } from "@/lib/skill-selection";
-import { TeamEditorModal } from "@/components/TeamEditorModal";
+import { resolveSkillSelection } from "@/lib/skill/skill-selection";
+import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import type { TeamConfig } from "@/types/config";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
@@ -34,10 +34,10 @@ import {
   useThreadTitle,
 } from "@/stores/chat-store";
 import { useConfigStore } from "@/stores/config-store";
-import { useSkillsStore } from "@/stores/skills-store";
-import { useTeamsStore } from "@/stores/teams-store";
-import { useTeamChatStore } from "@/stores/team-chat-store";
-import { clearTeamSessions } from "@/lib/pi-session";
+import { useSkillsStore } from "@/stores/skills/skills-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
+import { useTeamChatStore } from "@/stores/team/team-chat-store";
+import { clearTeamSessions } from "@/lib/session/session-operations";
 import type { SettingsSection } from "@/pages/SettingsPage";
 
 function App() {

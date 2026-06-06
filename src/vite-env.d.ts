@@ -58,10 +58,10 @@ interface Window {
       fetchBuiltinMcpConfigs: () => Promise<string>;
     };
     llm: {
-      chatCompletion: (request: import("@/lib/electron-api").LlmChatCompletionRequest) => Promise<import("@/lib/electron-api").LlmChatCompletionResponse>;
-      chatCompletionStream: (request: import("@/lib/electron-api").LlmChatCompletionRequest) => Promise<void>;
+      chatCompletion: (request: import("@/lib/electron/electron-api").LlmChatCompletionRequest) => Promise<import("@/lib/electron/electron-api").LlmChatCompletionResponse>;
+      chatCompletionStream: (request: import("@/lib/electron/electron-api").LlmChatCompletionRequest) => Promise<void>;
       listModels: (baseUrl: string, apiKey: string) => Promise<string[]>;
-      onChatStream: (handler: (event: import("@/lib/electron-api").LlmChatStreamEvent) => void) => () => void;
+      onChatStream: (handler: (event: import("@/lib/electron/electron-api").LlmChatStreamEvent) => void) => () => void;
     };
     network: {
       corsFetch: (request: {
@@ -71,8 +71,8 @@ interface Window {
         body?: string;
         timeoutMs?: number;
       }) => Promise<unknown>;
-      webSearch: (request: unknown) => Promise<import("@/lib/electron-api").WebSearchResponse>;
-      webRead: (request: unknown) => Promise<import("@/lib/electron-api").WebReadResponse>;
+      webSearch: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebSearchResponse>;
+      webRead: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebReadResponse>;
       skillsMarketSearch: (request: unknown) => Promise<string>;
       fetchTextPrompts: () => Promise<string>;
     };
@@ -83,7 +83,7 @@ interface Window {
       installFromLocal: (sourcePath: string) => Promise<string>;
     };
     mcp: {
-      stdioListTools: (server: import("@/types/config").McpServerConfig) => Promise<import("@/lib/electron-api").McpRemoteTool[]>;
+      stdioListTools: (server: import("@/types/config").McpServerConfig) => Promise<import("@/lib/electron/electron-api").McpRemoteTool[]>;
       stdioCallTool: (request: {
         server: import("@/types/config").McpServerConfig;
         toolName: string;

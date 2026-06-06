@@ -1,9 +1,8 @@
 // Skills Store - 管理 Skills 状态
-// src/stores/skills-store.ts
 
 import { create } from "zustand";
 import type { SkillConfig } from "@/types/config";
-import { skillLoader } from "@/lib/skill-loader";
+import { skillLoader } from "@/lib/skill/skill-loader";
 
 interface SkillsState {
   // 状态

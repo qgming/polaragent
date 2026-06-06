@@ -13,9 +13,9 @@
 import { agentManager, type TeamContext } from "./agent-manager";
 import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
-import { initializeAiRuntime } from "@/lib/init";
-import { skillLoader } from "@/lib/skill-loader";
-import { readFile } from "@/lib/electron-api";
+import { initializeAiRuntime } from "@/lib/app-init";
+import { skillLoader } from "@/lib/skill/skill-loader";
+import { readFile } from "@/lib/electron/electron-api";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { Segment } from "@/stores/chat-store";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";

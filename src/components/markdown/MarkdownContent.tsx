@@ -1,5 +1,4 @@
 // 统一 Markdown 渲染入口：会话页与预览窗口共用
-// src/components/MarkdownContent.tsx
 
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";

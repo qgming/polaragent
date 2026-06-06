@@ -32,13 +32,13 @@ import { cancelAskUserRequestsForThread } from "./ask-user";
 import {
   appendTeamAssistantMessage,
   appendTeamUserMessage,
-} from "@/lib/pi-session";
+} from "@/lib/session/session-operations";
 import { useConfigStore } from "@/stores/config-store";
-import { useTeamsStore } from "@/stores/teams-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import {
   useTeamChatStore,
   type TeamMessage,
-} from "@/stores/team-chat-store";
+} from "@/stores/team/team-chat-store";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 const createId = () =>

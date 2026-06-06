@@ -33,10 +33,10 @@ import {
   getElectronWindowApi,
   refreshMaximizedState,
   runWindowAction,
-} from "@/lib/electron-window";
+} from "@/lib/electron/electron-window";
 import { useConfigStore } from "@/stores/config-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
-import { useTeamPanelStore } from "@/stores/team-panel-store";
+import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { cn } from "@/lib/utils";
 
 export function TitleBar({

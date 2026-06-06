@@ -18,12 +18,12 @@ import { AgentEditorModal } from "@/components/AgentEditorModal";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/useToast";
-import { initializeAiRuntime } from "@/lib/init";
+import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
-import { useSkillsStore } from "@/stores/skills-store";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import type { AgentConfig } from "@/types/config";
-import type { MarketAgent } from "@/lib/electron-api";
+import type { MarketAgent } from "@/lib/electron/electron-api";
 import { cn } from "@/lib/utils";
 
 type AgentTab = "market" | "builtin" | "custom";

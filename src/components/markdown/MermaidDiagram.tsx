@@ -1,5 +1,4 @@
 // Mermaid 图表渲染组件
-// src/components/MermaidDiagram.tsx
 //
 // 把 ```mermaid 代码块渲染成 SVG 图。支持：
 //   - 明暗主题自适应（跟随 documentElement 的 .dark 类）
@@ -12,7 +11,7 @@ import { Check, Copy, Download, Maximize2, FileImage } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { CodeBlock } from "@/components/CodeBlock";
+import { CodeBlock } from "@/components/markdown/CodeBlock";
 
 // 全局只初始化一次主题外的基础配置
 let initialized = false;

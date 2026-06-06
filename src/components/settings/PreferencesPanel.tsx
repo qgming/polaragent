@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Check, Eye, EyeOff, KeyRound, Loader2, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Settings } from "@/types/config";
-import { PageTitle, SettingDropdown, SettingRow } from "./shared";
+import { PageTitle, SettingDropdown, SettingRow } from "./settings-shared";
 
 export function PreferencesPanel({
   settings,

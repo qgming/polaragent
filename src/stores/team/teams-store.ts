@@ -1,5 +1,4 @@
 // 团队配置 Store —— 镜像 config-store 的 agents CRUD
-// src/stores/teams-store.ts
 //
 // 团队配置以本地文件为准（{dataDir}/teams/<id>.json，经 Rust 命令读写）。
 // 这里只做内存镜像 + 增删改，落盘交给 Electron API。
@@ -11,7 +10,7 @@ import {
   listTeams,
   readTeamConfig,
   writeTeamConfig,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 import type { TeamConfig } from "@/types/config";
 
 interface TeamsState {

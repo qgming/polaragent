@@ -12,10 +12,10 @@ import {
   readFile,
   writeFile,
   listDirectory,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team-monitor-store";
-import { fileName, resolvePath, text, type ToolContext } from "./context";
+import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
+import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
 // read_file 参数 schema
 const readFileParams = Type.Object({

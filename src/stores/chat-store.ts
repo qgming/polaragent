@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { useConversationStore } from "./conversation-store";
 import { useTaskMonitorStore } from "./task-monitor-store";
-import { getSessionWorkingDir, loadThreadMonitor } from "@/lib/pi-session";
+import { getSessionWorkingDir } from "@/lib/session/session-operations";
+import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
 
 // 切到某对话时从会话 jsonl 恢复右侧任务监控（工作目录 + 待办 + 产物），

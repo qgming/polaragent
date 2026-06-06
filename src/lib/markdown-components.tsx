@@ -6,8 +6,8 @@
 // 工厂函数：streaming 时 mermaid 暂按代码块显示，生成完成后才渲染成图。
 
 import type { Components } from "react-markdown";
-import { CodeBlock } from "@/components/CodeBlock";
-import { MermaidDiagram } from "@/components/MermaidDiagram";
+import { CodeBlock } from "@/components/markdown/CodeBlock";
+import { MermaidDiagram } from "@/components/markdown/MermaidDiagram";
 
 export function createMarkdownComponents(streaming: boolean): Components {
   return {

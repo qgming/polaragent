@@ -2,7 +2,6 @@
 //   ① 每条 thread 关联 teamId
 //   ② assistant 消息带 speakerAgentId（发言成员）
 //   ③ 持久化走「团队会话仓库」（teams/conversations），与普通对话物理隔离
-// src/stores/team-chat-store.ts
 
 import { useMemo } from "react";
 import { create } from "zustand";
@@ -11,14 +10,14 @@ import {
   deleteTeamSession,
   getTeamSessionWorkingDir,
   listTeamSessions,
-  loadTeamChatMessages,
   openOrCreateTeamSession,
   setTeamSessionTeamRef,
   setTeamSessionTitle,
   setTeamSessionWorkingDir,
-} from "@/lib/pi-session";
+} from "@/lib/session/session-operations";
+import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
-import { useTeamsStore } from "@/stores/teams-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import type { ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
 
 // 团队消息：在普通消息基础上，assistant 消息携带发言成员 id + 支持投票
@@ -186,7 +185,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     void deleteTeamSession(threadId);
   },
 
-  // 清空某团队的所有会话（磁盘删除由 pi-session.clearTeamSessions 负责，这里清内存）
+  // 清空某团队的所有会话（磁盘删除由 session-operations.clearTeamSessions 负责，这里清内存）
 	  clearTeamThreadsOfTeam: (teamId) => {
 	    set((state) => ({
 	      threads: state.threads.filter((t) => t.teamId !== teamId),

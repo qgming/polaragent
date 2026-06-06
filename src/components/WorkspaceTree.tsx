@@ -18,13 +18,12 @@ import {
 
 import { cn } from "@/lib/utils";
 import { fileIconFor } from "@/lib/file-icons";
-import { isPreviewable } from "@/lib/preview-file";
-import { openPreviewWindow } from "@/lib/preview-window";
+import { isPreviewable, openPreviewWindow } from "@/lib/preview";
 import {
   listDirectoryEntries,
   openPath,
   type DirEntry,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 
 // 拼接子路径（统一用 /，后端兼容）
 function joinPath(base: string, name: string): string {

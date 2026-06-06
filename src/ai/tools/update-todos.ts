@@ -8,8 +8,8 @@ import {
   useTaskMonitorStore,
   type TodoItem,
 } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team-monitor-store";
-import { text, type ToolContext } from "./context";
+import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
+import { text, type ToolContext } from "./tool-context";
 
 // 待办参数 schema（独立成 const 以便推导 execute 的 params 类型）
 const updateTodosParams = Type.Object({

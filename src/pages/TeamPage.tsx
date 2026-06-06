@@ -6,13 +6,13 @@ import { useMemo, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { FolderOpen, Pencil, Plus, Search, Users } from "lucide-react";
 
-import { TeamActionsMenu } from "@/components/TeamActionsMenu";
-import { TeamEditorModal } from "@/components/TeamEditorModal";
+import { TeamActionsMenu } from "@/components/team/TeamActionsMenu";
+import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import { Button } from "@/components/ui/button";
-import { initializeAiRuntime } from "@/lib/init";
-import { clearTeamSessions } from "@/lib/pi-session";
+import { initializeAiRuntime } from "@/lib/app-init";
+import { clearTeamSessions } from "@/lib/session/session-operations";
 import { useConfigStore } from "@/stores/config-store";
-import { useTeamsStore } from "@/stores/teams-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
 import type { TeamConfig } from "@/types/config";
 
 export function TeamPage() {

@@ -4,7 +4,7 @@
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
-import { text, type ToolContext } from "./context";
+import { text, type ToolContext } from "./tool-context";
 
 const requestTeamVoteParams = Type.Object({
   topic: Type.String({ description: "投票主题或要决策的问题" }),

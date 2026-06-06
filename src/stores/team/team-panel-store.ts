@@ -1,5 +1,4 @@
 // 团队面板 Store —— 管理团队聊天页右侧面板的开合状态
-// src/stores/team-panel-store.ts
 
 import { create } from "zustand";
 

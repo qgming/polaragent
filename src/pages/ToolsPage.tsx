@@ -15,13 +15,13 @@ import { BUILTIN_TOOLS, type ToolMeta } from "@/ai/tools";
 import {
   McpToolEditorModal,
   type McpEditorMode,
-} from "@/components/McpToolEditorModal";
-import { McpProviderDiscovery } from "@/components/McpProviderDiscovery";
+} from "@/components/mcp/McpToolEditorModal";
+import { McpProviderDiscovery } from "@/components/mcp/McpProviderDiscovery";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/useToast";
-import { openExternal } from "@/lib/electron-api";
+import { openExternal } from "@/lib/electron/electron-api";
 import { useToolsStore } from "@/stores/tools-store";
 import type { McpToolConfig, McpTransport } from "@/types/config";
 

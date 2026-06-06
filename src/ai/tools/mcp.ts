@@ -3,9 +3,9 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
-import { mcpCallTool } from "@/lib/electron-api";
+import { mcpCallTool } from "@/lib/electron/electron-api";
 import type { McpDiscoveredTool, McpToolConfig } from "@/types/config";
-import { text, type ToolContext } from "./context";
+import { text, type ToolContext } from "./tool-context";
 
 export function buildMcpTools(
   _ctx: ToolContext,

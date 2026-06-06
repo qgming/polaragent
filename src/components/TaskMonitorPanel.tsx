@@ -12,8 +12,7 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { fileIconFor } from "@/lib/file-icons";
-import { isPreviewable } from "@/lib/preview-file";
-import { openPreviewWindow } from "@/lib/preview-window";
+import { isPreviewable, openPreviewWindow } from "@/lib/preview";
 import { WorkspaceTree } from "@/components/WorkspaceTree";
 import {
   useTaskMonitorStore,

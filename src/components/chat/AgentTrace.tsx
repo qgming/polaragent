@@ -1,5 +1,4 @@
 // 对话流执行块组件
-// src/components/AgentTrace.tsx
 //
 // 复刻 QoderWork 的执行轨迹展示：
 //   - StepTrace：「查看 N 个步骤」可折叠的工具调用轨迹

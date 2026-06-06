@@ -7,9 +7,9 @@
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
-import { webSearch, webRead } from "@/lib/electron-api";
+import { webSearch, webRead } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
-import { text, type ToolContext } from "./context";
+import { text, type ToolContext } from "./tool-context";
 
 // 把设置里以换行/逗号分隔的实例文本解析为数组
 function parseInstances(raw?: string): string[] {

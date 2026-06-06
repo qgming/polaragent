@@ -1,5 +1,4 @@
 // 富文本对话输入框 —— contentEditable + 行内 chip（技能 / 文件）
-// src/components/SkillComposerInput.tsx
 //
 // 用 contentEditable 替代原始 textarea，使「技能标记 / 文件标记」作为不可编辑的
 // 行内元素，像富文本一样与文字逐字混排。对外以三个维度暴露：

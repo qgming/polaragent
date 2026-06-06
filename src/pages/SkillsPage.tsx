@@ -21,14 +21,14 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/useToast";
-import { useSkillsStore } from "@/stores/skills-store";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 import {
   MARKET_CATEGORIES,
   useSkillsMarketStore,
-} from "@/stores/skills-market-store";
-import { SkillInstallDialog } from "@/components/SkillInstallDialog";
+} from "@/stores/skills/skills-market-store";
+import { SkillInstallDialog } from "@/components/skill/SkillInstallDialog";
 import type { SkillConfig } from "@/types/config";
-import type { MarketSkill } from "@/lib/electron-api";
+import type { MarketSkill } from "@/lib/electron/electron-api";
 import { cn } from "@/lib/utils";
 
 type SkillTab = "market" | "builtin" | "custom";

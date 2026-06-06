@@ -2,8 +2,8 @@
 // src/ai/title-generator.ts
 
 import { agentManager } from "./agent-manager";
-import { initializeAiRuntime } from "@/lib/init";
-import { chatCompletion, isElectronRuntime } from "@/lib/electron-api";
+import { initializeAiRuntime } from "@/lib/app-init";
+import { chatCompletion, isElectronRuntime } from "@/lib/electron/electron-api";
 
 /** 标题建议字数上限（放宽，不做硬截断，仅在明显超长时按完整词收口） */
 const MAX_TITLE_LENGTH = 20;

@@ -4,9 +4,9 @@
 import { useState } from "react";
 import { FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { openDataDir } from "@/lib/electron-api";
+import { openDataDir } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
-import { PageTitle } from "./shared";
+import { PageTitle } from "./settings-shared";
 
 export function AdvancedPanel() {
   return (

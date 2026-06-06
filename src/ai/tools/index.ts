@@ -9,7 +9,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { useToolsStore } from "@/stores/tools-store";
-import type { ToolContext } from "./context";
+import type { ToolContext } from "./tool-context";
 import { updateTodosTool } from "./update-todos";
 import { askUserTool } from "./ask-user";
 import { controlTeamFlowTool } from "./team-control";
@@ -25,7 +25,7 @@ import {
 import { searchWebTool, readWebTool } from "./web-search";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 
-export type { ToolContext } from "./context";
+export type { ToolContext } from "./tool-context";
 
 // 真实工具登记项：每个条目对应一个可执行工具，id 与工具的 name 一致。
 // 这是唯一事实来源——展示目录(BUILTIN_TOOLS)与运行时装配都从这里派生，二者不会漂移。

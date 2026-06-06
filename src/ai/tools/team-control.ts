@@ -4,7 +4,7 @@ import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { setTeamControlSignal, type TeamFlowAction } from "@/ai/team-control";
-import { text, type ToolContext } from "./context";
+import { text, type ToolContext } from "./tool-context";
 
 const controlTeamFlowParams = Type.Object({
   action: Type.Union([

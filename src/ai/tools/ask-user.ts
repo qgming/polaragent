@@ -4,7 +4,7 @@ import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { initiateAskUser, type AskUserMode } from "@/ai/ask-user";
-import { text, type ToolContext } from "./context";
+import { text, type ToolContext } from "./tool-context";
 
 const askUserParams = Type.Object({
   prompt: Type.String({

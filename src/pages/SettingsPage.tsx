@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowLeft, Bot, Database, Info, Settings2 } from "lucide-react";
-import { initializeAiRuntime } from "@/lib/init";
+import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
 import { cn } from "@/lib/utils";
 import { ModelPanel } from "@/components/settings/ModelPanel";

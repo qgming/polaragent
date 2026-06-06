@@ -5,12 +5,12 @@ import { ChevronDown, FolderOpen, SendHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { promptAgent } from "@/ai/agent";
-import { ComposerToolbar } from "@/components/ComposerToolbar";
+import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { IconButton } from "@/components/IconButton";
 import {
   SkillComposerInput,
   type SkillComposerHandle,
-} from "@/components/SkillComposerInput";
+} from "@/components/skill/SkillComposerInput";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,9 +18,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { checkProviderConfig } from "@/lib/init";
-import { setSessionWorkingDir } from "@/lib/pi-session";
-import { pickWorkingDirectory } from "@/lib/electron-api";
+import { checkProviderConfig } from "@/lib/app-init";
+import { setSessionWorkingDir } from "@/lib/session/session-operations";
+import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { type Segment, useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { AgentConfig } from "@/types/config";

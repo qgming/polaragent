@@ -16,12 +16,12 @@ import { buildAgentTools, type ToolContext } from "./tools";
 import {
   openOrCreateSession,
   openOrCreateTeamSession,
-  getExecutionEnv,
-} from "@/lib/pi-session";
+} from "@/lib/session/session-operations";
+import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
 import { useToolsStore } from "@/stores/tools-store";
-import { skillLoader } from "@/lib/skill-loader";
-import { resolveSkillSelection } from "@/lib/skill-selection";
+import { skillLoader } from "@/lib/skill/skill-loader";
+import { resolveSkillSelection } from "@/lib/skill/skill-selection";
 
 // 团队上下文：成员发言时叠加到该成员自身配置之上。
 export interface TeamContext {

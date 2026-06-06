@@ -13,10 +13,10 @@ import type { ChatMessage } from "./chat-store";
 import {
   deleteSession,
   listSessions,
-  loadChatMessages,
   openOrCreateSession,
   setSessionTitle,
-} from "@/lib/pi-session";
+} from "@/lib/session/session-operations";
+import { loadChatMessages } from "@/lib/session/message-parser";
 
 // 会话列表项（标题来自 pi Session 的 session name；缺省回退）
 export interface ConversationMetaLite {

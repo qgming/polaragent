@@ -1,5 +1,4 @@
 // 团队监控 Store —— 管理团队会话的监控数据
-// src/stores/team-monitor-store.ts
 
 import { create } from "zustand";
 

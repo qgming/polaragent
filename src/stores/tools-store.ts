@@ -13,7 +13,7 @@ import {
   mcpListTools,
   readMcpConfig,
   writeMcpConfig,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 import type { McpServerConfig, McpToolConfig } from "@/types/config";
 
 interface ToolsState {
@@ -165,18 +165,16 @@ function normalizeDisabledToolKeys(keys: string[]): string[] {
   return Array.from(new Set(keys.map((key) => key.trim()).filter(Boolean))).sort();
 }
 
-function isDisabled(keys: string[], key: string, legacyKey?: string): boolean {
-  return keys.includes(key) || (legacyKey ? keys.includes(legacyKey) : false);
+function isDisabled(keys: string[], key: string): boolean {
+  return keys.includes(key);
 }
 
-function updateDisabledKey(keys: string[], key: string, enabled: boolean, legacyKey?: string): string[] {
+function updateDisabledKey(keys: string[], key: string, enabled: boolean): string[] {
   const set = new Set(normalizeDisabledToolKeys(keys));
   if (enabled) {
     set.delete(key);
-    if (legacyKey) set.delete(legacyKey);
   } else {
     set.add(key);
-    if (legacyKey) set.delete(legacyKey);
   }
   return Array.from(set).sort();
 }
@@ -217,7 +215,6 @@ export const useToolsStore = create<ToolsState>()(
               state.disabledTools,
               builtinToolKey(id),
               enabled,
-              id,
             ),
           });
         });
@@ -239,7 +236,6 @@ export const useToolsStore = create<ToolsState>()(
               state.disabledTools,
               mcpServerKey(id),
               enabled,
-              id,
             ),
           };
 
@@ -282,10 +278,10 @@ export const useToolsStore = create<ToolsState>()(
       },
 
       isBuiltinToolEnabled: (id) =>
-        !isDisabled(get().disabledTools, builtinToolKey(id), id),
+        !isDisabled(get().disabledTools, builtinToolKey(id)),
 
       isMcpServerEnabled: (id) =>
-        !isDisabled(get().disabledTools, mcpServerKey(id), id),
+        !isDisabled(get().disabledTools, mcpServerKey(id)),
 
       isMcpRemoteToolEnabled: (serverId, remoteToolName) => {
         if (!get().isMcpServerEnabled(serverId)) return false;

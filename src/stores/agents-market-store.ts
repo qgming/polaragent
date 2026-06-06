@@ -11,7 +11,7 @@ import {
   readConfig,
   writeConfig,
   type MarketAgent,
-} from "@/lib/electron-api";
+} from "@/lib/electron/electron-api";
 import type { AgentConfig } from "@/types/config";
 import { useConfigStore } from "./config-store";
 
