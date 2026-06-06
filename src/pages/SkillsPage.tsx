@@ -192,8 +192,6 @@ function MarketView({
 }) {
   const byCategory = useSkillsMarketStore((state) => state.byCategory);
   const searchResults = useSkillsMarketStore((state) => state.searchResults);
-  const searchQuery = useSkillsMarketStore((state) => state.searchQuery);
-  const updatedAt = useSkillsMarketStore((state) => state.updatedAt);
   const isLoading = useSkillsMarketStore((state) => state.isLoading);
   const isRefreshing = useSkillsMarketStore((state) => state.isRefreshing);
   const error = useSkillsMarketStore((state) => state.error);
@@ -256,22 +254,6 @@ function MarketView({
         ))}
       </div>
 
-      {/* 状态行：更新时间 / 后台刷新中 / 搜索结果提示 */}
-      <div className="mt-4 flex h-5 items-center gap-2 text-xs text-muted-foreground">
-        {error ? (
-          <span className="text-destructive">{error}</span>
-        ) : isSearching ? (
-          <span>搜索「{searchQuery}」的结果</span>
-        ) : isRefreshing ? (
-          <span className="flex items-center gap-1.5">
-            <Loader2 className="size-3.5 animate-spin" />
-            正在后台更新技能广场…
-          </span>
-        ) : updatedAt > 0 ? (
-          <span>更新于 {formatUpdatedAt(updatedAt)}</span>
-        ) : null}
-      </div>
-
       {/* 内容区 */}
       {error && results.length === 0 ? (
         <MarketError message={error} />
@@ -301,16 +283,6 @@ function MarketView({
       )}
     </div>
   );
-}
-
-// 把时间戳格式化为「今天 14:30 / X 天前」
-function formatUpdatedAt(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const hours = Math.floor(diff / (60 * 60 * 1000));
-  if (hours < 1) return "刚刚";
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
 }
 
 function SkillGrid({ children }: { children: React.ReactNode }) {

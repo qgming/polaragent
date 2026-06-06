@@ -1,7 +1,7 @@
 // Agents 管理页面
 // src/pages/AgentsPage.tsx
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import {
   Bot,
@@ -181,49 +181,93 @@ function AgentMarketView({
   installedNames: Set<string>;
   search: string;
 }) {
-  const agents = useAgentsMarketStore((state) => state.agents);
+  const categories = useAgentsMarketStore((state) => state.categories);
+  const byCategory = useAgentsMarketStore((state) => state.byCategory);
   const activeGroup = useAgentsMarketStore((state) => state.activeGroup);
   const setActiveGroup = useAgentsMarketStore((state) => state.setActiveGroup);
   const isLoading = useAgentsMarketStore((state) => state.isLoading);
-  const isRefreshing = useAgentsMarketStore((state) => state.isRefreshing);
+  const loadingFiles = useAgentsMarketStore((state) => state.loadingFiles);
   const error = useAgentsMarketStore((state) => state.error);
-  const updatedAt = useAgentsMarketStore((state) => state.updatedAt);
   const installingIds = useAgentsMarketStore((state) => state.installingIds);
   const install = useAgentsMarketStore((state) => state.install);
   const toast = useToast();
 
-  // 所有 group 去重，作为分类 chip
-  const groups = useMemo(() => {
-    const set = new Set<string>();
-    for (const agent of agents) {
-      for (const g of agent.group) set.add(g);
-    }
-    return Array.from(set);
-  }, [agents]);
+  // 分类索引作为 chip 数据源
+  const groups = useMemo(
+    () => categories.map((c) => c.category),
+    [categories],
+  );
 
-  // 首次有数据后默认选中第一个分类（避免一次性渲染全部分类的卡片导致卡顿）
+  // 当前选中分类对应的文件名与已加载的助手
+  const activeFile = useMemo(
+    () => categories.find((c) => c.category === activeGroup)?.file ?? null,
+    [categories, activeGroup],
+  );
+  const activeAgents = useMemo(
+    () => (activeFile ? byCategory[activeFile] : undefined),
+    [byCategory, activeFile],
+  );
+
+  // 首次有索引后默认选中第一个分类（会触发该分类的懒加载）
   useEffect(() => {
     if (!activeGroup && groups.length > 0) {
       setActiveGroup(groups[0]);
     }
   }, [activeGroup, groups, setActiveGroup]);
 
-  // 先按分类筛选，再按搜索词本地过滤
+  // 在当前分类的助手里按搜索词本地过滤
   const visible = useMemo(() => {
+    const list = activeAgents ?? [];
     const query = search.trim().toLowerCase();
-    return agents.filter((agent) => {
-      if (activeGroup && !agent.group.includes(activeGroup)) return false;
-      if (!query) return true;
-      return `${agent.name} ${agent.description} ${agent.prompt}`
+    if (!query) return list;
+    return list.filter((agent) =>
+      `${agent.name} ${agent.description} ${agent.prompt}`
         .toLowerCase()
-        .includes(query);
-    });
-  }, [agents, activeGroup, search]);
+        .includes(query),
+    );
+  }, [activeAgents, search]);
 
   const isInstalled = (agent: MarketAgent) =>
     installedNames.has(agent.name.toLowerCase().replace(/\s+/g, ""));
 
-  const waiting = isLoading || (agents.length === 0 && isRefreshing);
+  // 首屏分批渲染：避免一次性挂载上百张卡片造成卡顿。
+  // 初始只渲染 PAGE_SIZE 张，滚动到底部哨兵时再增量加载下一批。
+  const PAGE_SIZE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // 切换分类或搜索词变化时，重置回第一批
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [activeFile, search]);
+
+  // 哨兵进入视口 → 再加载一批；已全部渲染则不再观察
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node || visibleCount >= visible.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((n) => Math.min(n + PAGE_SIZE, visible.length));
+        }
+      },
+      { rootMargin: "300px" }, // 提前 300px 预加载，滚动更顺滑
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [visibleCount, visible.length]);
+
+  // 当前实际渲染的卡片切片
+  const rendered = useMemo(
+    () => visible.slice(0, visibleCount),
+    [visible, visibleCount],
+  );
+
+  // 索引加载中，或当前分类正在懒加载（且尚无缓存）时显示骨架
+  const categoryLoading = activeFile ? loadingFiles.includes(activeFile) : false;
+  const waiting =
+    (isLoading && groups.length === 0) ||
+    (activeAgents === undefined && (categoryLoading || groups.length > 0));
 
   const handleInstall = async (agent: MarketAgent) => {
     const ok = await install(agent);
@@ -238,30 +282,19 @@ function AgentMarketView({
     <div className="mt-5">
       {/* 分类 chip */}
       <div className="flex flex-wrap gap-2">
-        {groups.map((group) => (
+        {categories.map((c) => (
           <GroupChip
-            key={group}
-            active={activeGroup === group}
-            label={group}
-            onClick={() => setActiveGroup(group)}
+            key={c.category}
+            active={activeGroup === c.category}
+            icon={c.icon}
+            label={c.category}
+            onClick={() => setActiveGroup(c.category)}
           />
         ))}
       </div>
 
-      {/* 状态行 */}
-      <div className="mt-4 flex h-5 items-center gap-2 text-xs text-muted-foreground">
-        {isRefreshing ? (
-          <span className="flex items-center gap-1.5">
-            <Loader2 className="size-3.5 animate-spin" />
-            正在后台更新助手广场…
-          </span>
-        ) : updatedAt > 0 ? (
-          <span>更新于 {formatUpdatedAt(updatedAt)}</span>
-        ) : null}
-      </div>
-
       {/* 内容区 */}
-      {error && agents.length === 0 ? (
+      {error && groups.length === 0 ? (
         <MarketError message={error} />
       ) : waiting ? (
         <AgentGrid>
@@ -270,17 +303,23 @@ function AgentMarketView({
           ))}
         </AgentGrid>
       ) : visible.length > 0 ? (
-        <AgentGrid>
-          {visible.map((agent) => (
-            <MarketAgentCard
-              key={agent.id}
-              agent={agent}
-              installed={isInstalled(agent)}
-              installing={installingIds.includes(agent.id)}
-              onInstall={() => void handleInstall(agent)}
-            />
-          ))}
-        </AgentGrid>
+        <>
+          <AgentGrid>
+            {rendered.map((agent) => (
+              <MarketAgentCard
+                key={agent.id}
+                agent={agent}
+                installed={isInstalled(agent)}
+                installing={installingIds.includes(agent.id)}
+                onInstall={() => void handleInstall(agent)}
+              />
+            ))}
+          </AgentGrid>
+          {/* 滚动到底部哨兵：进入视口时增量加载下一批 */}
+          {visibleCount < visible.length ? (
+            <div ref={sentinelRef} className="h-10" aria-hidden />
+          ) : null}
+        </>
       ) : (
         <EmptyCloudState
           title="没有匹配的助手"
@@ -293,10 +332,12 @@ function AgentMarketView({
 
 function GroupChip({
   active,
+  icon,
   label,
   onClick,
 }: {
   active: boolean;
+  icon?: string;
   label: string;
   onClick: () => void;
 }) {
@@ -305,12 +346,13 @@ function GroupChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3.5 py-1.5 text-sm transition-colors",
+        "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm transition-colors",
         active
           ? "border-transparent bg-[#f1eafb] text-[#5b3a9e]"
           : "border-border bg-card text-muted-foreground hover:border-[#9b6fe0]/30 hover:text-foreground",
       )}
     >
+      {icon ? <span className="text-base leading-none">{icon}</span> : null}
       {label}
     </button>
   );
@@ -414,16 +456,6 @@ function MarketError({ message }: { message: string }) {
       </p>
     </div>
   );
-}
-
-// 把时间戳格式化为「刚刚 / X 小时前 / X 天前」
-function formatUpdatedAt(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const hours = Math.floor(diff / (60 * 60 * 1000));
-  if (hours < 1) return "刚刚";
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
 }
 
 function TopToolbar({

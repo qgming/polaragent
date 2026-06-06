@@ -40,6 +40,12 @@ export async function initializeApp() {
       })(),
     ]).catch((error) => console.error("侧边栏加载失败:", error));
 
+    // 紧随侧边栏发起广场 hydrate（不阻塞启动），提前到 MCP 之前发起，
+    // 使索引和默认分类更早就绪，用户进入广场页时多半已加载完成。
+    // 技能广场：读盘缓存 + 超 24 小时后台刷新；助手广场为内置静态数据，仅读索引。
+    void useSkillsMarketStore.getState().hydrate();
+    void useAgentsMarketStore.getState().hydrate();
+
     // 3. 技能 / 助手 / 工具（MCP）—— 排在会话之后。
     // 3.1 初始化 Skills（loadSkills 内部会执行 skillLoader.initialize()，
     //     既填充 skillLoader 单例，也填充 skills-store 供 UI 订阅）
@@ -59,12 +65,6 @@ export async function initializeApp() {
 
     // 4. 兜底等待侧边栏加载完成（多数情况下此时早已完成）
     await sidebarPromise;
-
-    // 5. 技能广场：读盘缓存 + 超 24 小时后台自动刷新（不阻塞启动）
-    void useSkillsMarketStore.getState().hydrate();
-
-    // 6. 助手广场：读盘缓存 + 超 24 小时后台自动刷新（不阻塞启动）
-    void useAgentsMarketStore.getState().hydrate();
 
     console.log("🎉 应用初始化完成！");
     return true;

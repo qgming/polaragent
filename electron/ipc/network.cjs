@@ -212,10 +212,21 @@ async function skillsMarketSearch(request) {
   return body;
 }
 
-// 读取内置助手广场 JSON
-async function fetchTextPrompts() {
-  const source = projectResourcePath("resources", "market", "agents", "agents-zh.json");
-  if (!source) throw new Error("未找到内置助手广场 JSON：resources/market/agents/agents-zh.json");
+// 读取助手广场分类索引（不含 prompt，体积极小）
+async function fetchAgentIndex() {
+  const source = projectResourcePath("resources", "market", "agents", "index.json");
+  if (!source) throw new Error("未找到助手广场索引：resources/market/agents/index.json");
+  return readText(source);
+}
+
+// 按分类文件名读取该分类下的全部助手
+// fileName 形如 "cat-编程.json"，来自索引，这里仍做白名单校验防止路径穿越
+async function fetchAgentCategory(fileName) {
+  if (typeof fileName !== "string" || !/^cat-[^\\/]+\.json$/.test(fileName)) {
+    throw new Error(`非法的助手分类文件名：${fileName}`);
+  }
+  const source = projectResourcePath("resources", "market", "agents", fileName);
+  if (!source) throw new Error(`未找到助手分类文件：resources/market/agents/${fileName}`);
   return readText(source);
 }
 
@@ -224,7 +235,8 @@ function register(ipcMain) {
   ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));
   ipcMain.handle("network:web-read", (_event, { request }) => webRead(request));
   ipcMain.handle("network:skills-market-search", (_event, { request }) => skillsMarketSearch(request));
-  ipcMain.handle("network:fetch-text-prompts", fetchTextPrompts);
+  ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
+  ipcMain.handle("network:fetch-agent-category", (_event, { fileName }) => fetchAgentCategory(fileName));
 }
 
 module.exports = { register };

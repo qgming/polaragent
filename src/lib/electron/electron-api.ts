@@ -267,8 +267,39 @@ function normalizeAgent(raw: unknown, index: number): MarketAgent | null {
   };
 }
 
-export async function fetchTextPrompts(): Promise<MarketAgent[]> {
-  const payload = JSON.parse(await api().network.fetchTextPrompts()) as unknown;
+// 助手广场分类索引中的一项
+export interface MarketAgentCategory {
+  category: string; // 分类显示名
+  icon: string; // 分类代表 emoji
+  count: number; // 该分类下助手数量
+  file: string; // 对应的分类文件名，如 "cat-编程.json"
+}
+
+// 读取助手广场分类索引（轻量，无 prompt），用于渲染分类 chip
+export async function fetchAgentIndex(): Promise<MarketAgentCategory[]> {
+  const payload = JSON.parse(await api().network.fetchAgentIndex()) as unknown;
+  const obj = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const list = Array.isArray(obj.categories) ? obj.categories : [];
+  return list
+    .map((item): MarketAgentCategory | null => {
+      if (!item || typeof item !== "object") return null;
+      const o = item as Record<string, unknown>;
+      const category = typeof o.category === "string" ? o.category : "";
+      const file = typeof o.file === "string" ? o.file : "";
+      if (!category || !file) return null;
+      return {
+        category,
+        file,
+        icon: typeof o.icon === "string" && o.icon.trim() ? o.icon : "⚡",
+        count: typeof o.count === "number" ? o.count : 0,
+      };
+    })
+    .filter((c): c is MarketAgentCategory => c !== null);
+}
+
+// 按分类文件名读取该分类下的全部助手（点击分类 chip 时懒加载）
+export async function fetchAgentCategory(fileName: string): Promise<MarketAgent[]> {
+  const payload = JSON.parse(await api().network.fetchAgentCategory(fileName)) as unknown;
   return extractArray(payload)
     .map((item, index) => normalizeAgent(item, index))
     .filter((agent): agent is MarketAgent => agent !== null);

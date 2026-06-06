@@ -1,0 +1,94 @@
+{
+  "categories": [
+    {
+      "category": "商业",
+      "icon": "💼",
+      "count": 135,
+      "file": "cat-商业.json"
+    },
+    {
+      "category": "工具",
+      "icon": "🔧",
+      "count": 122,
+      "file": "cat-工具.json"
+    },
+    {
+      "category": "教育",
+      "icon": "📚",
+      "count": 119,
+      "file": "cat-教育.json"
+    },
+    {
+      "category": "生活",
+      "icon": "🏠",
+      "count": 47,
+      "file": "cat-生活.json"
+    },
+    {
+      "category": "写作",
+      "icon": "✍️",
+      "count": 45,
+      "file": "cat-写作.json"
+    },
+    {
+      "category": "设计",
+      "icon": "🎨",
+      "count": 40,
+      "file": "cat-设计.json"
+    },
+    {
+      "category": "娱乐",
+      "icon": "🎮",
+      "count": 40,
+      "file": "cat-娱乐.json"
+    },
+    {
+      "category": "情感",
+      "icon": "💗",
+      "count": 37,
+      "file": "cat-情感.json"
+    },
+    {
+      "category": "通用",
+      "icon": "🌐",
+      "count": 35,
+      "file": "cat-通用.json"
+    },
+    {
+      "category": "编程",
+      "icon": "💻",
+      "count": 35,
+      "file": "cat-编程.json"
+    },
+    {
+      "category": "学术",
+      "icon": "🎓",
+      "count": 31,
+      "file": "cat-学术.json"
+    },
+    {
+      "category": "创意",
+      "icon": "💡",
+      "count": 31,
+      "file": "cat-创意.json"
+    },
+    {
+      "category": "文案",
+      "icon": "📝",
+      "count": 29,
+      "file": "cat-文案.json"
+    },
+    {
+      "category": "翻译",
+      "icon": "🌍",
+      "count": 17,
+      "file": "cat-翻译.json"
+    },
+    {
+      "category": "游戏",
+      "icon": "🕹️",
+      "count": 17,
+      "file": "cat-游戏.json"
+    }
+  ]
+}

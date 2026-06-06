@@ -74,7 +74,8 @@ interface Window {
       webSearch: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebSearchResponse>;
       webRead: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebReadResponse>;
       skillsMarketSearch: (request: unknown) => Promise<string>;
-      fetchTextPrompts: () => Promise<string>;
+      fetchAgentIndex: () => Promise<string>;
+      fetchAgentCategory: (fileName: string) => Promise<string>;
     };
     skills: {
       list: (skillType: "builtin" | "custom") => Promise<string[]>;
