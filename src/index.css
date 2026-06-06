@@ -1,0 +1,295 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme inline {
+  --font-sans: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+}
+
+:root {
+  --background: #fbfbfa;
+  --foreground: #202421;
+  --card: #ffffff;
+  --card-foreground: #202421;
+  --popover: #ffffff;
+  --popover-foreground: #202421;
+  --primary: #151715;
+  --primary-foreground: #f8faf8;
+  --secondary: #eff1ee;
+  --secondary-foreground: #2d332f;
+  --muted: #f2f3f1;
+  --muted-foreground: #858b86;
+  --accent: #f1eafb;
+  --accent-foreground: #5b3a9e;
+  --destructive: #c94343;
+  --border: #e5e7e3;
+  --input: #dfe3df;
+  --ring: #9b6fe0;
+  --sidebar: #f5f5f3;
+  --sidebar-foreground: #4e554f;
+  /* 全局简洁滚动条（浅色模式） */
+  --scrollbar-thumb: rgb(32 36 33 / 0.22);
+  --scrollbar-thumb-hover: rgb(32 36 33 / 0.36);
+  /* 对话内容字体与字号（由设置页驱动，这里给默认兜底值） */
+  --chat-font: var(--font-sans);
+  --chat-font-size: 14px;
+}
+
+.dark {
+  --background: #121212;
+  --foreground: #ededed;
+  --card: #1a1a1a;
+  --card-foreground: #ededed;
+  --popover: #1a1a1a;
+  --popover-foreground: #ededed;
+  --primary: #f5f5f5;
+  --primary-foreground: #121212;
+  --secondary: #242424;
+  --secondary-foreground: #e8e8e8;
+  --muted: #222222;
+  --muted-foreground: #9e9e9e;
+  --accent: #2e2342;
+  --accent-foreground: #c9aef5;
+  --destructive: #e05252;
+  --border: #2e2e2e;
+  --input: #363636;
+  --ring: #b898f0;
+  --sidebar: #161616;
+  --sidebar-foreground: #cacaca;
+  /* 全局简洁滚动条（深色模式） */
+  --scrollbar-thumb: rgb(237 237 237 / 0.18);
+  --scrollbar-thumb-hover: rgb(237 237 237 / 0.3);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+button {
+  -webkit-app-region: no-drag;
+}
+
+[data-electron-drag-region] {
+  -webkit-app-region: drag;
+}
+
+::selection {
+  background: #e4d5f9;
+  color: #2a1b42;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.app-scrollbar {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+.code-block .hljs {
+  color: #e6e6e6;
+  background: transparent;
+}
+
+.code-block .hljs-keyword,
+.code-block .hljs-selector-tag,
+.code-block .hljs-literal,
+.code-block .hljs-built_in,
+.code-block .hljs-type {
+  color: #c792ea;
+}
+
+.code-block .hljs-string,
+.code-block .hljs-regexp,
+.code-block .hljs-symbol,
+.code-block .hljs-template-variable {
+  color: #c3e88d;
+}
+
+.code-block .hljs-title,
+.code-block .hljs-name,
+.code-block .hljs-section,
+.code-block .hljs-attribute {
+  color: #82aaff;
+}
+
+.code-block .hljs-number,
+.code-block .hljs-meta,
+.code-block .hljs-variable,
+.code-block .hljs-params,
+.code-block .hljs-link {
+  color: #f78c6c;
+}
+
+.code-block .hljs-comment,
+.code-block .hljs-quote {
+  color: #7f8a99;
+}
+
+.code-block .hljs-doctag,
+.code-block .hljs-strong {
+  font-weight: 600;
+}
+
+.code-block .hljs-emphasis {
+  font-style: italic;
+}
+
+.code-block .code-search-mark {
+  border-radius: 3px;
+  background: #facc15;
+  color: #111827;
+  padding: 0 1px;
+}
+
+/* 对话消息内容：用 @tailwindcss/typography 的 prose 渲染 markdown，
+   并让「对话字体 / 对话字号」真实驱动它。
+   容器字号跟随 --chat-font-size，prose 子元素的相对 em 字号会随之整体缩放；
+   字体族强制继承容器的 --chat-font。!important 用于压过 prose-sm 的内置值。 */
+.chat-content {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--foreground);
+  --tw-prose-lead: var(--muted-foreground);
+  --tw-prose-links: var(--accent-foreground);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: var(--muted-foreground);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--muted-foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-kbd: var(--foreground);
+  --tw-prose-kbd-shadows: 0 0 0;
+  --tw-prose-code: var(--foreground);
+  --tw-prose-pre-code: #e6e6e6;
+  --tw-prose-pre-bg: transparent;
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+  --tw-prose-invert-body: var(--foreground);
+  --tw-prose-invert-headings: var(--foreground);
+  --tw-prose-invert-lead: var(--muted-foreground);
+  --tw-prose-invert-links: var(--accent-foreground);
+  --tw-prose-invert-bold: var(--foreground);
+  --tw-prose-invert-counters: var(--muted-foreground);
+  --tw-prose-invert-bullets: var(--muted-foreground);
+  --tw-prose-invert-hr: var(--border);
+  --tw-prose-invert-quotes: var(--muted-foreground);
+  --tw-prose-invert-quote-borders: var(--border);
+  --tw-prose-invert-captions: var(--muted-foreground);
+  --tw-prose-invert-kbd: var(--foreground);
+  --tw-prose-invert-kbd-shadows: 0 0 0;
+  --tw-prose-invert-code: var(--foreground);
+  --tw-prose-invert-pre-code: #e6e6e6;
+  --tw-prose-invert-pre-bg: transparent;
+  --tw-prose-invert-th-borders: var(--border);
+  --tw-prose-invert-td-borders: var(--border);
+  font-family: var(--chat-font) !important;
+  font-size: var(--chat-font-size) !important;
+}
+
+.chat-content :where(p, li, ul, ol, blockquote, h1, h2, h3, h4, h5, h6,
+  table, thead, tbody, tr, td, th, a, strong, em, figcaption) {
+  font-family: inherit;
+}
+
+.chat-content :where(pre):not(:where(.not-prose, .not-prose *)) {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.chat-content :where(table):not(:where(.not-prose, .not-prose *)) {
+  width: 100%;
+}
+
+.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *)) {
+  border-radius: 4px;
+  background: var(--muted);
+  padding: 0.1em 0.35em;
+  color: var(--foreground);
+  font-family: "Consolas", "SF Mono", "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *))::before,
+.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *))::after {
+  content: none;
+}
+
+/* 富文本对话输入框（contentEditable）：空内容时显示占位文案。
+   :empty 在仅有 <br> 时不生效，故同时判断 data-placeholder 与无文本。 */
+.composer-editable:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground, #9ca3af);
+  pointer-events: none;
+}

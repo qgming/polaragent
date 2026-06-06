@@ -1,0 +1,269 @@
+// Mermaid 图表渲染组件
+// src/components/MermaidDiagram.tsx
+//
+// 把 ```mermaid 代码块渲染成 SVG 图。支持：
+//   - 明暗主题自适应（跟随 documentElement 的 .dark 类）
+//   - 渲染失败（语法错误/源码不完整）时回退为原始代码块
+//   - 工具条：复制源码 / 下载 SVG / 下载 PNG / 点击放大查看
+
+import { useEffect, useId, useRef, useState } from "react";
+import mermaid from "mermaid";
+import { Check, Copy, Download, Maximize2, FileImage } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { CodeBlock } from "@/components/CodeBlock";
+
+// 全局只初始化一次主题外的基础配置
+let initialized = false;
+function ensureInit() {
+  if (initialized) return;
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict", // 禁止图表内嵌脚本/点击回调，防注入
+    suppressErrorRendering: true, // 失败时不向 DOM 注入红色错误块，由我们自行回退
+  });
+  initialized = true;
+}
+
+// 当前是否暗色主题（与 App.tsx 的 .dark 类一致）
+function isDarkTheme(): boolean {
+  return document.documentElement.classList.contains("dark");
+}
+
+// 宽高比超过该阈值视为「很宽的图」，让其宽度撑满容器以减少留白
+const WIDE_ASPECT_RATIO = 2.5;
+
+// 后处理 mermaid SVG：宽高比悬殊（很宽）时移除 max-width 限制、宽度撑满；
+// 比例正常的图保持原样（居中，不强行放大以免小图模糊）。
+function fitSvgWidth(svg: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const el = doc.querySelector("svg");
+    if (!el) return svg;
+
+    // 从 viewBox 取原始宽高，计算宽高比
+    const viewBox = el.getAttribute("viewBox");
+    let ratio = 0;
+    if (viewBox) {
+      const parts = viewBox.split(/[\s,]+/).map(Number);
+      const [, , w, h] = parts;
+      if (w > 0 && h > 0) ratio = w / h;
+    }
+
+    if (ratio >= WIDE_ASPECT_RATIO) {
+      // 很宽的图：去掉固定宽度与 mermaid 默认的 max-width，宽度撑满容器
+      el.removeAttribute("width");
+      el.removeAttribute("height");
+      const style = (el.getAttribute("style") || "").replace(
+        /max-width:[^;]+;?/g,
+        "",
+      );
+      el.setAttribute("style", `${style};width:100%;height:auto;`.trim());
+    }
+
+    return el.outerHTML;
+  } catch {
+    return svg;
+  }
+}
+
+interface MermaidDiagramProps {
+  code: string;
+}
+
+export function MermaidDiagram({ code }: MermaidDiagramProps) {
+  // useId 提供稳定且唯一的渲染 id（mermaid.render 要求 DOM id 合法，去掉冒号）
+  const rawId = useId();
+  const renderId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
+
+  const [svg, setSvg] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
+
+  // 避免异步渲染竞态：只采纳最后一次渲染结果
+  const renderSeq = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const seq = ++renderSeq.current;
+
+    async function render() {
+      const source = code.trim();
+      if (!source) {
+        setSvg(null);
+        setFailed(false);
+        return;
+      }
+
+      try {
+        ensureInit();
+        // 每次渲染前按当前主题重置，确保明暗切换后颜色正确
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          suppressErrorRendering: true,
+          theme: isDarkTheme() ? "dark" : "default",
+        });
+
+        // 先做语法校验，不合法直接走回退（流式未完成时常见）
+        await mermaid.parse(source);
+        const { svg: rendered } = await mermaid.render(renderId, source);
+
+        if (cancelled || seq !== renderSeq.current) return;
+        setSvg(fitSvgWidth(rendered));
+        setFailed(false);
+      } catch {
+        if (cancelled || seq !== renderSeq.current) return;
+        setSvg(null);
+        setFailed(true);
+      }
+    }
+
+    void render();
+    return () => {
+      cancelled = true;
+    };
+  }, [code, renderId]);
+
+  // 复制 mermaid 源码
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // 下载 SVG 文件
+  const handleDownloadSvg = () => {
+    if (!svg) return;
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    triggerDownload(url, "diagram.svg");
+    URL.revokeObjectURL(url);
+  };
+
+  // 下载 PNG：把 SVG 画到离屏 canvas 再导出
+  const handleDownloadPng = async () => {
+    if (!svg) return;
+    try {
+      const png = await svgToPngDataUrl(svg);
+      triggerDownload(png, "diagram.png");
+    } catch (error) {
+      console.error("导出 PNG 失败:", error);
+    }
+  };
+
+  // 渲染失败或源码不完整：回退为原始代码块
+  if (failed || !svg) {
+    return <CodeBlock code={code} language="mermaid" />;
+  }
+
+  return (
+    <>
+      <div className="app-scrollbar group relative my-4 overflow-x-auto rounded-lg border border-border bg-card p-4">
+        {/* 渲染结果：宽图已设 width:100% 撑满，正常图居中显示 */}
+        <div
+          className="mermaid-svg flex w-full justify-center [&_svg]:h-auto [&_svg]:max-w-full"
+          // mermaid 产出的 SVG 已在 strict 模式下消毒，可安全注入
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+
+        {/* hover 工具条 */}
+        <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <ToolbarButton label={copied ? "已复制" : "复制源码"} onClick={handleCopy}>
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          </ToolbarButton>
+          <ToolbarButton label="下载 SVG" onClick={handleDownloadSvg}>
+            <Download className="size-3.5" />
+          </ToolbarButton>
+          <ToolbarButton label="下载 PNG" onClick={() => void handleDownloadPng()}>
+            <FileImage className="size-3.5" />
+          </ToolbarButton>
+          <ToolbarButton label="放大查看" onClick={() => setZoomOpen(true)}>
+            <Maximize2 className="size-3.5" />
+          </ToolbarButton>
+        </div>
+      </div>
+
+      {/* 放大查看弹层 */}
+      <Dialog open={zoomOpen} onOpenChange={setZoomOpen}>
+        <DialogContent className="app-scrollbar max-h-[90vh] max-w-[90vw] overflow-auto sm:max-w-[90vw]">
+          <div
+            className="flex justify-center [&_svg]:h-auto [&_svg]:max-w-full"
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// 工具条按钮
+function ToolbarButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      title={label}
+      onClick={onClick}
+      className="h-7 gap-1 bg-card/80 px-2 text-xs text-muted-foreground backdrop-blur hover:text-foreground"
+    >
+      {children}
+    </Button>
+  );
+}
+
+// 触发浏览器下载
+function triggerDownload(url: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// 把 SVG 字符串渲染到 canvas 并导出 PNG dataURL（2x 提升清晰度）
+function svgToPngDataUrl(svg: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+
+    img.onload = () => {
+      const scale = 2;
+      const width = img.width || 800;
+      const height = img.height || 600;
+      const canvas = document.createElement("canvas");
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error("无法创建画布上下文"));
+        return;
+      }
+      // 白底，避免透明 PNG 在浅色处看不清
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0, width, height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("SVG 加载失败"));
+    };
+    img.src = url;
+  });
+}
