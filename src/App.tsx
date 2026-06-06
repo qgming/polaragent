@@ -1,7 +1,7 @@
 // 应用根组件：布局与全局状态编排
 // src/App.tsx
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence } from "motion/react";
 
 import { abortAgentThread, resetAgent } from "@/ai/agent";
@@ -16,7 +16,6 @@ import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
-import { resolveSkillSelection } from "@/lib/skill/skill-selection";
 import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import type { TeamConfig } from "@/types/config";
 import { AgentsPage } from "@/pages/AgentsPage";
@@ -34,7 +33,6 @@ import {
   useThreadTitle,
 } from "@/stores/chat-store";
 import { useConfigStore } from "@/stores/config-store";
-import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { clearTeamSessions } from "@/lib/session/session-operations";
@@ -91,9 +89,6 @@ function App() {
   const teams = useTeamsStore((state) => state.teams);
   const removeTeam = useTeamsStore((state) => state.removeTeam);
   const updateTeam = useTeamsStore((state) => state.updateTeam);
-  const hydrateTeamThreads = useTeamChatStore(
-    (state) => state.hydrateTeamThreads,
-  );
   const createTeamThread = useTeamChatStore((state) => state.createTeamThread);
   const selectTeamThread = useTeamChatStore((state) => state.selectTeamThread);
   const renameTeamThread = useTeamChatStore((state) => state.renameTeamThread);
@@ -105,10 +100,6 @@ function App() {
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const toasts = useToast((state) => state.toasts);
   const removeToast = useToast((state) => state.remove);
-
-  useEffect(() => {
-    void hydrateTeamThreads();
-  }, [hydrateTeamThreads]);
 
   useEffect(() => {
     void initializeApp();
@@ -134,24 +125,6 @@ function App() {
     root.style.setProperty("--chat-font", fontMap[chatFont]);
     root.style.setProperty("--chat-font-size", sizeMap[chatFontSize]);
   }, [chatFont, chatFontSize]);
-
-  // 当前会话所用 Agent 启用的技能（用于右侧监控面板「技能与 MCP」展示）
-  const skills = useSkillsStore((state) => state.skills);
-  const chatEnabledSkills = useMemo(() => {
-    const agentId = activeThreadAgentId || activeAgentId;
-    const agent = agents.find((item) => item.id === agentId);
-    const ids = agent?.config.enabledSkills ?? [];
-    const enabledSkillIds = skills
-      .filter((skill) => skill.enabled)
-      .map((skill) => skill.id);
-    return resolveSkillSelection(ids, enabledSkillIds).map((id) => {
-      const skill = skills.find((item) => item.id === id);
-      return {
-        id,
-        name: skill?.name ?? id,
-      };
-    });
-  }, [activeThreadAgentId, activeAgentId, agents, skills]);
 
   // 后台并行运行：切换页面/会话不再中止正在运行的会话——它们继续在后台跑。
   // 只有用户在某会话内主动点「停止」，或清空/删除该会话时，才中止对应线程。
@@ -317,7 +290,6 @@ function App() {
                   agentId={activeThreadAgentId || activeAgentId}
                   applyStreamingUpdate={applyStreamingUpdate}
                   composer={composer}
-                  enabledSkills={chatEnabledSkills}
                   failAssistant={failAssistant}
                   finishAssistant={finishAssistant}
                   setComposer={setComposer}

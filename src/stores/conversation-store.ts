@@ -17,6 +17,10 @@ import {
   setSessionTitle,
 } from "@/lib/session/session-operations";
 import { loadChatMessages } from "@/lib/session/message-parser";
+import {
+  removeTitleIndex,
+  upsertTitleIndex,
+} from "@/lib/session/title-index";
 
 // 会话列表项（标题来自 pi Session 的 session name；缺省回退）
 export interface ConversationMetaLite {
@@ -62,7 +66,8 @@ export const useConversationStore = create<ConversationState>((set) => ({
       const conversations: ConversationMetaLite[] = sessions.map((session) => ({
         id: session.id,
         title: session.title || "新对话",
-        updatedAt: Date.parse(session.createdAt) || 0,
+        // 优先用索引里的 updatedAt（反映重命名/清空等活动），缺失则回退创建时间
+        updatedAt: session.updatedAt ?? (Date.parse(session.createdAt) || 0),
       }));
       set({ conversations });
     } catch (error) {
@@ -96,9 +101,12 @@ export const useConversationStore = create<ConversationState>((set) => ({
       if (title && title !== "新对话") {
         await setSessionTitle(id, title);
       }
+      const updatedAt = Date.now();
+      // 同步标题索引，使侧边栏下次启动走快路径（只读 titles.json）
+      await upsertTitleIndex(id, title || "新对话", updatedAt);
       set((state) => ({
         conversations: [
-          { id, title: title || "新对话", updatedAt: Date.now() },
+          { id, title: title || "新对话", updatedAt },
           ...state.conversations.filter((c) => c.id !== id),
         ],
       }));
@@ -112,9 +120,12 @@ export const useConversationStore = create<ConversationState>((set) => ({
   renameConversation: async (id: string, title: string) => {
     try {
       await setSessionTitle(id, title);
+      const updatedAt = Date.now();
+      // 同步标题索引
+      await upsertTitleIndex(id, title, updatedAt);
       set((state) => ({
         conversations: state.conversations.map((c) =>
-          c.id === id ? { ...c, title, updatedAt: Date.now() } : c,
+          c.id === id ? { ...c, title, updatedAt } : c,
         ),
       }));
     } catch (error) {
@@ -127,6 +138,8 @@ export const useConversationStore = create<ConversationState>((set) => ({
   deleteConversation: async (id: string) => {
     try {
       await deleteSession(id);
+      // 同步从标题索引移除
+      await removeTitleIndex(id);
       set((state) => ({
         conversations: state.conversations.filter((c) => c.id !== id),
       }));
@@ -141,11 +154,17 @@ export const useConversationStore = create<ConversationState>((set) => ({
     try {
       await deleteSession(id);
       await openOrCreateSession(id);
-      set((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === id ? { ...c, updatedAt: Date.now() } : c,
-        ),
-      }));
+      const updatedAt = Date.now();
+      // 清空后标题保持不变，仅刷新更新时间
+      set((state) => {
+        const target = state.conversations.find((c) => c.id === id);
+        void upsertTitleIndex(id, target?.title || "新对话", updatedAt);
+        return {
+          conversations: state.conversations.map((c) =>
+            c.id === id ? { ...c, updatedAt } : c,
+          ),
+        };
+      });
     } catch (error) {
       console.error("清空会话失败:", error);
       throw error;

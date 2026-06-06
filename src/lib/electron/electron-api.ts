@@ -113,6 +113,7 @@ export const ensureDataDir = () => api().app.ensureDataDir();
 export const listDirectory = (path: string) => api().fs.listDirectory(path);
 export const listDirectoryEntries = (path: string) => api().fs.listDirectoryEntries(path);
 export const readFile = (path: string) => api().fs.readFile(path);
+export const fileExists = (path: string): Promise<boolean> => api().fs.exists(path);
 export const writeFile = (path: string, content: string) => api().fs.writeFile(path, content);
 export const createDirectory = (path: string) => api().fs.createDirectory(path);
 export const deleteFile = (path: string) => api().fs.deletePath(path);

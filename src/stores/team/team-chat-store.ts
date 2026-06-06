@@ -16,6 +16,7 @@ import {
   setTeamSessionWorkingDir,
 } from "@/lib/session/session-operations";
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
+import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import type { ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
@@ -160,10 +161,11 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       threads: [thread, ...state.threads],
     }));
 
-    // 创建团队会话文件 + 写入归属团队
+    // 创建团队会话文件 + 写入归属团队 + 同步标题索引（含 teamId）
     void (async () => {
       await openOrCreateTeamSession(id);
       await setTeamSessionTeamRef(id, teamId);
+      await upsertTitleIndex(id, "新会话", thread.updatedAt, "team", { teamId });
     })();
 
     return id;
@@ -183,6 +185,8 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       threads: state.threads.filter((t) => t.id !== threadId),
     }));
     void deleteTeamSession(threadId);
+    // 同步从团队标题索引移除
+    void removeTitleIndex(threadId, "team");
   },
 
   // 清空某团队的所有会话（磁盘删除由 session-operations.clearTeamSessions 负责，这里清内存）
@@ -203,12 +207,15 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
   renameTeamThread: (threadId, title) => {
     const next = title.trim();
     if (!next) return;
+    const updatedAt = Date.now();
     set((state) => ({
       threads: state.threads.map((t) =>
-        t.id === threadId ? { ...t, title: next, updatedAt: Date.now() } : t,
+        t.id === threadId ? { ...t, title: next, updatedAt } : t,
       ),
     }));
     void setTeamSessionTitle(threadId, next);
+    // 同步团队标题索引（teamId 由索引内既有值保留）
+    void upsertTitleIndex(threadId, next, updatedAt, "team");
   },
 
   // 设置某会话工作目录：更新内存 + 持久化到团队会话
@@ -369,7 +376,8 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
           teamId: s.teamId as string,
           title: s.title || "新会话",
           messages: [],
-          updatedAt: Date.parse(s.createdAt) || 0,
+          // 优先用索引里的 updatedAt（反映重命名等活动），缺失则回退创建时间
+          updatedAt: s.updatedAt ?? (Date.parse(s.createdAt) || 0),
           loaded: false,
           // 已持久化、且标题不是默认「新会话」的，视为已命名，不再自动改名
           autoTitled: !!(s.title && s.title !== "新会话"),

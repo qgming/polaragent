@@ -47,7 +47,6 @@ export function ChatPage({
   agentId,
   applyStreamingUpdate,
   composer,
-  enabledSkills,
   failAssistant,
   finishAssistant,
   setComposer,
@@ -62,7 +61,6 @@ export function ChatPage({
     update: { appendDelta?: string; segments?: Segment[] },
   ) => void;
   composer: string;
-  enabledSkills: Array<{ id: string; name: string }>;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
   finishAssistant: (
     threadId: string,
@@ -259,7 +257,6 @@ export function ChatPage({
         {panelOpen ? (
           <TaskMonitorPanel
             key="task-monitor-panel"
-            enabledSkills={enabledSkills}
             threadId={threadId}
           />
         ) : null}

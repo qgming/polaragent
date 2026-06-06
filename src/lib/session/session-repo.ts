@@ -3,6 +3,7 @@
 import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import { getDataDir } from "@/lib/electron/electron-api";
 import { ElectronExecutionEnv } from "@/lib/electron/electron-fs";
+import { resetTitleIndexCache } from "./title-index";
 
 let envPromise: Promise<ElectronExecutionEnv> | null = null;
 let repoPromise: Promise<JsonlSessionRepo> | null = null;
@@ -71,4 +72,5 @@ export function resetSessionRuntime(): void {
   repoPromise = null;
   teamRepoPromise = null;
   sessionPromises.clear();
+  resetTitleIndexCache();
 }

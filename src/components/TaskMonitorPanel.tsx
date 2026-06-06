@@ -22,10 +22,8 @@ import {
 
 export function TaskMonitorPanel({
   threadId,
-  enabledSkills,
 }: {
   threadId: string;
-  enabledSkills: Array<{ id: string; name: string }>;
 }) {
   const monitor = useTaskMonitorStore((state) =>
     state.byThread[threadId],
@@ -72,24 +70,6 @@ export function TaskMonitorPanel({
             workingFiles={workingFiles}
             workingDir={monitor?.workingDir}
           />
-        </Section>
-
-        {/* 技能与 MCP */}
-        <Section title="技能与 MCP">
-          {enabledSkills.length > 0 ? (
-            <ul className="space-y-0.5">
-              {enabledSkills.map((skill) => (
-                <li
-                  key={skill.id}
-                  className="flex items-center rounded-md px-3 py-1 text-sm text-sidebar-foreground"
-                >
-                  <span className="truncate">{skill.name}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyHint text="当前对话未启用技能" />
-          )}
         </Section>
         </div>
       </div>

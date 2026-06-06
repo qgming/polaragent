@@ -12,6 +12,7 @@ import {
 } from "./session-repo";
 import { pickBestMeta, readLastCustomEntryString, type SessionMeta } from "./meta-selection";
 import { TEAM_REF_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
+import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
 
 /**
  * 打开已存在的会话；若不存在则按给定 id 新建。
@@ -73,56 +74,22 @@ async function openOrCreateSessionImpl(
 /**
  * 列出所有会话的元数据（id + 创建时间 + 标题）。
  *
+ * 快路径：repo.list() 只读每个 jsonl 第一行 header（廉价），拿到 id/createdAt；
+ * 标题从 titles.json 索引读取，不再为取标题 open 整个文件。
+ *
+ * 慢路径（回退）：索引里缺失的 id（老用户首次启动、或新会话尚未写入索引），
+ * 才逐个 open 读 session name；读完把全量结果回写索引，下次即走快路径。
+ *
  * 历史脏数据可能出现同 id 的多个 jsonl（并发创建竞态遗留：一条带标题、一条带消息）。
- * 这里按 id 折叠为一条：createdAt 取最优那条，标题取组内任意有 name 的一条，
- * 避免侧边栏出现两条同名会话、且分别点不开。
+ * 这里按 id 折叠为一条：createdAt 取最优那条，标题优先取索引、回退读 name。
  */
 export async function listSessions(): Promise<
-  Array<{ id: string; createdAt: string; path: string; title?: string }>
+  Array<{ id: string; createdAt: string; path: string; title?: string; updatedAt?: number }>
 > {
-  return listSessionsImpl(getRepo);
-}
-
-/**
- * 团队会话版：列出团队会话仓库里的会话，并附带每条会话归属的 teamId（来自 team_ref 自定义条目）。
- * 供团队聊天 store 按 teamId 分组。
- */
-export async function listTeamSessions(): Promise<
-  Array<{ id: string; createdAt: string; path: string; title?: string; teamId?: string }>
-> {
-  const repo = await getTeamRepo();
-  // 排除成员私有 session（id 含 "__m_"）——它们只是各成员发言时的 harness 草稿，
-  // 不是「团队会话」本身，不应出现在会话列表里。
-  const base = (await listSessionsImpl(getTeamRepo)).filter(
-    (item) => !item.id.includes("__m_"),
-  );
-  // 为每条会话回读 team_ref（最后一次写入）
-  return Promise.all(
-    base.map(async (item) => {
-      let teamId: string | undefined;
-      try {
-        const session = await openOrCreateTeamSession(item.id);
-        teamId = readLastCustomEntryString(
-          await session.getEntries(),
-          TEAM_REF_ENTRY,
-          "teamId",
-        );
-      } catch {
-        // 读不到归属则留空，由上层兜底
-      }
-      void repo;
-      return { ...item, teamId };
-    }),
-  );
-}
-
-async function listSessionsImpl(
-  repoGetter: () => Promise<JsonlSessionRepo>,
-): Promise<Array<{ id: string; createdAt: string; path: string; title?: string }>> {
-  const repo = await repoGetter();
+  const repo = await getRepo();
   const metas = await repo.list().catch(() => []);
 
-  // 按 id 分组
+  // 按 id 分组（折叠历史同 id 多文件）
   const groups = new Map<string, SessionMeta[]>();
   for (const meta of metas) {
     const list = groups.get(meta.id);
@@ -130,33 +97,137 @@ async function listSessionsImpl(
     else groups.set(meta.id, [meta]);
   }
 
+  const index = await readTitleIndex();
+  let indexMissing = false; // 是否出现过「索引里没有」的 id，用于决定是否回写索引
+
   const result = await Promise.all(
     Array.from(groups.values()).map(async (group) => {
       // createdAt/path 取「内容最多」的那条，确保点开能读到有消息的会话
       const best = await pickBestMeta(group);
-      // 标题：组内任意一条 session 有 name 即采用（标题常落在空壳那条）
+      const cached = index[best.id];
       let title: string | undefined;
-      for (const meta of group) {
-        try {
-          const session = await repo.open(meta);
-          const name = await session.getSessionName();
-          if (name && name.trim()) {
-            title = name;
-            break;
-          }
-        } catch {
-          // 忽略打不开的条目
-        }
+      let updatedAt: number | undefined;
+      if (cached) {
+        // 快路径：标题/更新时间来自索引，零额外读盘
+        title = cached.title;
+        updatedAt = cached.updatedAt;
+      } else {
+        // 慢路径：索引缺失，回退逐个 open 读 session name
+        indexMissing = true;
+        title = await readTitleFromSessions(repo, group);
       }
-      return {
-        id: best.id,
-        createdAt: best.createdAt,
-        path: best.path,
-        title,
-      };
+      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt };
     }),
   );
+
+  // 索引有缺失（首次启动 / 老数据）则用本次全量结果重建一次，使下次走快路径
+  if (indexMissing) {
+    void rebuildTitleIndex(
+      result.map((item) => ({
+        id: item.id,
+        title: item.title || "新对话",
+        updatedAt: Date.parse(item.createdAt) || 0,
+      })),
+    );
+  }
+
   return result;
+}
+
+/**
+ * 团队会话版：列出团队会话仓库里的会话，并附带每条会话归属的 teamId。
+ * 供团队聊天 store 按 teamId 分组。
+ *
+ * 快路径：标题与 teamId 都从 teams/conversations/titles.json 索引读取，零额外读盘。
+ * 慢路径（回退）：索引缺失的 id 才 open 整文件读 session name + team_ref，
+ * 读完把全量结果回写团队索引，下次即走快路径。
+ */
+export async function listTeamSessions(): Promise<
+  Array<{ id: string; createdAt: string; path: string; title?: string; updatedAt?: number; teamId?: string }>
+> {
+  const repo = await getTeamRepo();
+  const metas = await repo.list().catch(() => []);
+
+  // 按 id 分组（折叠历史同 id 多文件），并排除成员私有 session（id 含 "__m_"）——
+  // 它们只是各成员发言时的 harness 草稿，不是「团队会话」本身。
+  const groups = new Map<string, SessionMeta[]>();
+  for (const meta of metas) {
+    if (meta.id.includes("__m_")) continue;
+    const list = groups.get(meta.id);
+    if (list) list.push(meta);
+    else groups.set(meta.id, [meta]);
+  }
+
+  const index = await readTitleIndex("team");
+  let indexMissing = false;
+
+  const result = await Promise.all(
+    Array.from(groups.values()).map(async (group) => {
+      const best = await pickBestMeta(group);
+      const cached = index[best.id];
+      let title: string | undefined;
+      let teamId: string | undefined;
+      let updatedAt: number | undefined;
+      if (cached) {
+        // 快路径：标题/归属/更新时间均来自索引
+        title = cached.title;
+        teamId = cached.teamId;
+        updatedAt = cached.updatedAt;
+      } else {
+        // 慢路径：索引缺失，回退 open 整文件读标题与 team_ref
+        indexMissing = true;
+        title = await readTitleFromSessions(repo, group);
+        teamId = await readTeamRefFromSession(best.id);
+      }
+      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt, teamId };
+    }),
+  );
+
+  // 索引有缺失（首次启动 / 老数据）则用本次全量结果重建团队索引，使下次走快路径
+  if (indexMissing) {
+    void rebuildTitleIndex(
+      result.map((item) => ({
+        id: item.id,
+        title: item.title || "新会话",
+        updatedAt: item.updatedAt ?? (Date.parse(item.createdAt) || 0),
+        teamId: item.teamId,
+      })),
+      "team",
+    );
+  }
+
+  return result;
+}
+
+/** 慢路径读团队归属：open 整个团队会话取最后一条 team_ref 的 teamId。 */
+async function readTeamRefFromSession(sessionId: string): Promise<string | undefined> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    return readLastCustomEntryString(await session.getEntries(), TEAM_REF_ENTRY, "teamId");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 慢路径取标题：在同 id 的一组 meta 里，打开任意一条能读到 session name 的会话取其标题。
+ * 标题常落在「空壳」那条，故需遍历整组。仅在索引缺失（回退）时调用。
+ * 会读取整个 jsonl，开销较大——平时由 titles.json 索引覆盖，避免走到这里。
+ */
+async function readTitleFromSessions(
+  repo: JsonlSessionRepo,
+  group: SessionMeta[],
+): Promise<string | undefined> {
+  for (const meta of group) {
+    try {
+      const session = await repo.open(meta);
+      const name = await session.getSessionName();
+      if (name && name.trim()) return name;
+    } catch {
+      // 忽略打不开的条目
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -214,6 +285,8 @@ export async function clearTeamSessions(teamId: string): Promise<string[]> {
   const sessions = await listTeamSessions().catch(() => []);
   const owned = sessions.filter((s) => s.teamId === teamId);
   await Promise.all(owned.map((s) => deleteTeamSession(s.id)));
+  // 同步从团队标题索引移除被删会话
+  await Promise.all(owned.map((s) => removeTitleIndex(s.id, "team")));
   return owned.map((s) => s.id);
 }
 
