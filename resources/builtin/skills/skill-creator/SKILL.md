@@ -2,7 +2,7 @@
 name: skill-creator
 description: 创建或优化 PolarAgent 本地自定义技能：先通过网络调研和需求澄清确定技能边界，再在应用数据目录的 skills/custom 下创建完整技能文件夹、SKILL.md、references/scripts/assets 等内容，并验证该技能能被后续助手正确发现和使用。当用户说想创建新技能、封装工作流、把某类能力沉淀成技能、改进已有技能时使用。
 license: MIT
-allowed-tools: search_web, read_web, list_directory, create_directory, read_file, write_file, edit_file
+allowed-tools: web_search, web_fetch, list_directory, create_directory, read_file, write_file, edit_file
 metadata:
   author: PolarAgent Team
   version: "1.0.0"
@@ -19,7 +19,7 @@ metadata:
    确认用户想让技能解决什么问题、触发场景是什么、典型输入/输出是什么。需求很清楚时直接推进；不清楚时只问 1-3 个关键问题。
 
 2. **必要时网络调研**  
-   如果技能涉及外部工具、框架、平台规则、最佳实践或近期变化，先用 `search_web` 检索，再用 `read_web` 阅读权威来源。优先使用官方文档、规范、项目仓库、论文或可信资料。把调研结论转成技能中需要的流程、约束和参考链接。
+   如果技能涉及外部工具、框架、平台规则、最佳实践或近期变化，先用 `web_search` 检索，再用 `web_fetch` 阅读权威来源。优先使用官方文档、规范、项目仓库、论文或可信资料。把调研结论转成技能中需要的流程、约束和参考链接。
 
 3. **设计技能结构**  
    先确定技能名，必须使用小写字母、数字和连字符，例如 `pdf-report-builder`。默认创建到本地应用数据目录：

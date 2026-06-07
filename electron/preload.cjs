@@ -83,4 +83,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     stdioListTools: (server) => invoke("mcp:stdio-list-tools", { server }),
     stdioCallTool: (request) => invoke("mcp:stdio-call-tool", { request }),
   },
+  shell: {
+    exec: (request) => invoke("shell:exec", { request }),
+  },
 });

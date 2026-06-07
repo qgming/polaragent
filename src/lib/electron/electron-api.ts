@@ -404,3 +404,48 @@ export interface WebSearchResponse {
 export function webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
   return api().network.webSearch(request);
 }
+
+// 跨域代理请求 —— 由主进程统一发起 HTTP 请求并回传原始响应。
+// 复用 network:cors-fetch IPC，供网页读取等需要拉取任意 URL 的能力使用。
+export interface CorsFetchRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+}
+
+export interface CorsFetchResponse {
+  status: number;
+  statusText: string;
+  // 主进程以 [key, value][] 形式回传响应头（已过滤 content-length 等）
+  headers: Array<[string, string]>;
+  body: string;
+}
+
+export function corsFetch(request: CorsFetchRequest): Promise<CorsFetchResponse> {
+  return api().network.corsFetch(request) as Promise<CorsFetchResponse>;
+}
+
+// Shell 命令执行 —— 由主进程在指定工作目录下执行 shell 命令，供 run_bash 工具使用。
+// 主进程会做黑名单校验、超时 kill、输出截断。
+export interface ShellExecRequest {
+  command: string;
+  cwd: string;
+  timeoutMs?: number;
+}
+
+export interface ShellExecResponse {
+  success: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  truncated: boolean;
+  error?: string;
+  blocked?: boolean;
+}
+
+export function runShell(request: ShellExecRequest): Promise<ShellExecResponse> {
+  return api().shell.exec(request);
+}

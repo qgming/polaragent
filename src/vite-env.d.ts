@@ -133,5 +133,21 @@ interface Window {
         arguments?: Record<string, unknown>;
       }) => Promise<unknown>;
     };
+    shell: {
+      exec: (request: {
+        command: string;
+        cwd: string;
+        timeoutMs?: number;
+      }) => Promise<{
+        success: boolean;
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        timedOut: boolean;
+        truncated: boolean;
+        error?: string;
+        blocked?: boolean;
+      }>;
+    };
   };
 }

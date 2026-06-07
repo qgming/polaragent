@@ -1,7 +1,7 @@
 // Tools 管理页面
 // src/pages/ToolsPage.tsx
 
-import { useState, type ReactNode } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import {
   ChevronDown,
   Edit3,
@@ -11,7 +11,7 @@ import {
   Wrench,
 } from "lucide-react";
 
-import { BUILTIN_TOOLS, type ToolMeta } from "@/ai/tools";
+import { BUILTIN_TOOLS, TOOL_GROUPS, type ToolMeta } from "@/ai/tools";
 import {
   McpToolEditorModal,
   type McpEditorMode,
@@ -42,6 +42,22 @@ export function ToolsPage() {
   const updateCustomTool = useToolsStore((state) => state.updateCustomTool);
   const toggleMcpRemoteTool = useToolsStore((state) => state.toggleMcpRemoteTool);
   const removeCustomTool = useToolsStore((state) => state.removeCustomTool);
+  const expandedGroups = useToolsStore((state) => state.expandedGroups);
+  const toggleGroupExpand = useToolsStore((state) => state.toggleGroupExpand);
+  const toggleGroup = useToolsStore((state) => state.toggleGroup);
+
+  // 按 group 分组内置工具
+  const groupedTools = useMemo(() => {
+    const byGroup = new Map<string, ToolMeta[]>();
+    BUILTIN_TOOLS.forEach((tool) => {
+      const key = tool.group ?? "__ungrouped";
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(tool);
+    });
+    return Array.from(byGroup.entries()).sort(
+      ([a], [b]) => (TOOL_GROUPS[a]?.order ?? 999) - (TOOL_GROUPS[b]?.order ?? 999),
+    );
+  }, []);
 
   const openExternalUrl = async (url: string) => {
     try {
@@ -116,12 +132,31 @@ export function ToolsPage() {
                     }
                   />
                 ))}
-                {BUILTIN_TOOLS.map((tool) => (
-                  <BuiltinToolRow
-                    key={tool.id}
-                    tool={tool}
-                  />
-                ))}
+                {groupedTools
+                  .filter(([key]) => key !== "__ungrouped")
+                  .map(([groupKey, tools]) => (
+                    <ToolGroupRow
+                      key={groupKey}
+                      groupKey={groupKey}
+                      groupName={TOOL_GROUPS[groupKey]?.name ?? groupKey}
+                      description={TOOL_GROUPS[groupKey]?.description ?? ""}
+                      tools={tools}
+                      expanded={expandedGroups.includes(groupKey)}
+                      onToggleExpand={() => toggleGroupExpand(groupKey)}
+                      onToggleGroup={(enabled) =>
+                        toggleGroup(
+                          groupKey,
+                          enabled,
+                          tools.map((t) => t.id),
+                        )
+                      }
+                    />
+                  ))}
+                {(groupedTools.find(([key]) => key === "__ungrouped")?.[1] ?? []).map(
+                  (tool) => (
+                    <BuiltinToolRow key={tool.id} tool={tool} />
+                  ),
+                )}
               </>
             ) : (
               <EmptyCloudState
@@ -252,7 +287,6 @@ function BuiltinToolRow({ tool }: { tool: ToolMeta }) {
         <ToolIdentity
           name={tool.name}
           description={tool.description}
-          meta="内置工具"
         />
         <div className="flex items-center gap-3">
           <Switch
@@ -434,7 +468,7 @@ function ToolIdentity({
 }: {
   badges?: string[];
   description: string;
-  meta: string;
+  meta?: string;
   name: string;
 }) {
   return (
@@ -442,9 +476,11 @@ function ToolIdentity({
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h3 className="truncate text-base font-semibold">{name}</h3>
-          <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
-            {meta}
-          </span>
+          {meta ? (
+            <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
+              {meta}
+            </span>
+          ) : null}
           {badges?.map((badge) => (
             <span
               key={badge}
@@ -516,6 +552,81 @@ function createEmptyMcpTool(): McpToolConfig {
       url: "",
     },
   };
+}
+
+function ToolGroupRow({
+  description,
+  expanded,
+  groupName,
+  onToggleExpand,
+  onToggleGroup,
+  tools,
+}: {
+  description: string;
+  expanded: boolean;
+  groupKey: string;
+  groupName: string;
+  onToggleExpand: () => void;
+  onToggleGroup: (enabled: boolean) => void;
+  tools: ToolMeta[];
+}) {
+  const isBuiltinToolEnabled = useToolsStore((state) => state.isBuiltinToolEnabled);
+  const toggleBuiltinTool = useToolsStore((state) => state.toggleBuiltinTool);
+
+  // 只要有一个子工具启用,外侧开关就显示为开启
+  const someEnabled = tools.some((tool) => isBuiltinToolEnabled(tool.id));
+  const enabledCount = tools.filter((tool) => isBuiltinToolEnabled(tool.id)).length;
+
+  return (
+    <div className="border-b border-border last:border-b-0">
+      <ToolRowShell onClick={onToggleExpand}>
+        <ToolIdentity
+          name={groupName}
+          description={description}
+          badges={[`${enabledCount}/${tools.length}`]}
+        />
+        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title={expanded ? "收起工具清单" : "展开工具清单"}
+            onClick={onToggleExpand}
+          >
+            <ChevronDown
+              className={`size-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </Button>
+          <Switch
+            checked={someEnabled}
+            onCheckedChange={onToggleGroup}
+          />
+        </div>
+      </ToolRowShell>
+      {expanded ? (
+        <div className="border-t border-border bg-background">
+          {tools.map((tool) => (
+            <div
+              key={tool.id}
+              className="border-b border-border bg-card last:border-b-0"
+            >
+              <ToolRowShell>
+                <div className="pl-6">
+                  <ToolIdentity
+                    name={tool.name}
+                    description={tool.description}
+                  />
+                </div>
+                <Switch
+                  checked={isBuiltinToolEnabled(tool.id)}
+                  onCheckedChange={(next) => toggleBuiltinTool(tool.id, next)}
+                />
+              </ToolRowShell>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function transportLabel(transport: McpTransport): string {

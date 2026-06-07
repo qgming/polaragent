@@ -28,11 +28,17 @@ interface ToolsState {
   // 用户已安装 / 自定义的 MCP 工具配置
   customTools: McpToolConfig[];
   isInstalledLoading: boolean;
+  // 展开的工具分组 key 列表（UI 状态，不持久化）
+  expandedGroups: string[];
 
   // 启用/禁用某工具
   toggleBuiltinTool: (id: string, enabled: boolean) => void;
   // 启用/禁用某个 MCP server（内置 MCP 与已安装 MCP 共用，id 带 mcp: 命名空间）
   toggleMcpServer: (id: string, enabled: boolean) => void;
+  // 切换分组展开/收起状态
+  toggleGroupExpand: (groupKey: string) => void;
+  // 启用/禁用整个工具分组
+  toggleGroup: (groupKey: string, enabled: boolean, toolIds: string[]) => void;
   // 该工具是否处于全局启用状态
   isBuiltinToolEnabled: (id: string) => boolean;
   // 该 MCP server 是否处于全局启用状态
@@ -207,6 +213,7 @@ export const useToolsStore = create<ToolsState>()(
       builtinMcpTools: [],
       customTools: [],
       isInstalledLoading: false,
+      expandedGroups: [], // 默认全部收起
 
       toggleBuiltinTool: (id, enabled) => {
         set((state) => {
@@ -216,6 +223,34 @@ export const useToolsStore = create<ToolsState>()(
               builtinToolKey(id),
               enabled,
             ),
+          });
+        });
+      },
+
+      toggleGroupExpand: (groupKey) => {
+        set((state) => ({
+          expandedGroups: state.expandedGroups.includes(groupKey)
+            ? state.expandedGroups.filter((key) => key !== groupKey)
+            : [...state.expandedGroups, groupKey],
+        }));
+      },
+
+      toggleGroup: (_groupKey, enabled, toolIds) => {
+        set((state) => {
+          const nextDisabledTools = [...state.disabledTools];
+          toolIds.forEach((id) => {
+            const key = builtinToolKey(id);
+            if (enabled) {
+              const index = nextDisabledTools.indexOf(key);
+              if (index >= 0) nextDisabledTools.splice(index, 1);
+            } else {
+              if (!nextDisabledTools.includes(key)) {
+                nextDisabledTools.push(key);
+              }
+            }
+          });
+          return withRuntimeSignature(state, {
+            disabledTools: normalizeDisabledToolKeys(nextDisabledTools),
           });
         });
       },
