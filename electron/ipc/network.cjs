@@ -1,4 +1,4 @@
-// IPC：网络相关（跨域代理、技能广场搜索、内置助手广场）
+// IPC：网络相关（跨域代理、技能广场搜索、内置助手广场、网络搜索）
 const { projectResourcePath } = require("../lib/app-paths.cjs");
 const { readText } = require("../lib/fs-utils.cjs");
 const { normalizeWebUrl } = require("../lib/http-utils.cjs");
@@ -71,11 +71,256 @@ async function fetchAgentCategory(fileName) {
   return readText(source);
 }
 
+// 网络搜索统一路由 - 根据 provider 选择不同的服务商
+async function webSearch(request) {
+  const provider = String(request.provider || "tavily");
+  const query = String(request.query || "").trim();
+  if (!query) throw new Error("缺少搜索关键词。");
+
+  switch (provider) {
+    case "tavily":
+      return tavilySearch(request);
+    case "exa":
+      return exaSearch(request);
+    case "serper":
+      return serperSearch(request);
+    case "searxng":
+      return searxngSearch(request);
+    case "brave":
+      return braveSearch(request);
+    default:
+      throw new Error(`不支持的搜索服务商：${provider}`);
+  }
+}
+
+// Tavily 搜索
+async function tavilySearch(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  if (!apiKey) throw new Error("Tavily API Key 未配置。");
+
+  const url = "https://api.tavily.com/search";
+  const body = {
+    api_key: apiKey,
+    query: request.query,
+    search_depth: request.searchDepth || "basic",
+    max_results: Math.min(Math.max(Number(request.limit || 5), 1), 10),
+  };
+
+  if (request.includeDomains) body.include_domains = request.includeDomains.split(",").map((d) => d.trim()).filter(Boolean);
+  if (request.excludeDomains) body.exclude_domains = request.excludeDomains.split(",").map((d) => d.trim()).filter(Boolean);
+
+  // 完整内容选项
+  if (request.includeAnswer) body.include_answer = true;
+  if (request.includeRawContent) body.include_raw_content = true;
+  if (request.includeImages) body.include_images = true;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(`Tavily 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+
+  const results = (data.results || []).map((item) => ({
+    title: item.title || "",
+    url: item.url || "",
+    snippet: item.content || "",
+    score: item.score,
+    // 完整内容字段
+    rawContent: item.raw_content,
+    images: item.images,
+  }));
+
+  return {
+    success: true,
+    provider: "tavily",
+    results,
+    // AI 生成的答案（如果启用）
+    answer: data.answer,
+  };
+}
+
+// Exa 搜索
+async function exaSearch(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  if (!apiKey) throw new Error("Exa API Key 未配置。");
+
+  const url = "https://api.exa.ai/search";
+  const body = {
+    query: request.query,
+    num_results: Math.min(Math.max(Number(request.limit || 5), 1), 10),
+    type: request.type || "neural",
+  };
+
+  if (request.useAutoprompt) body.use_autoprompt = true;
+  if (request.category) body.category = request.category;
+
+  // 完整内容选项
+  if (request.includeText || request.includeHighlights || request.includeSummary) {
+    body.contents = {
+      text: request.includeText || false,
+      highlights: request.includeHighlights || false,
+      summary: request.includeSummary || false,
+    };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(`Exa 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+
+  const results = (data.results || []).map((item) => ({
+    title: item.title || "",
+    url: item.url || "",
+    snippet: item.snippet || item.text || "",
+    score: item.score,
+    // 完整内容字段
+    text: item.text,
+    highlights: item.highlights,
+    summary: item.summary,
+  }));
+
+  return { success: true, provider: "exa", results };
+}
+
+// Serper 搜索（Google Search API）
+async function serperSearch(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  if (!apiKey) throw new Error("Serper API Key 未配置。");
+
+  const url = "https://google.serper.dev/search";
+  const body = {
+    q: request.query,
+    num: Math.min(Math.max(Number(request.limit || 5), 1), 10),
+  };
+
+  if (request.gl) body.gl = request.gl;
+  if (request.hl) body.hl = request.hl;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-KEY": apiKey,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(`Serper 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+
+  const results = (data.organic || []).map((item) => ({
+    title: item.title || "",
+    url: item.link || "",
+    snippet: item.snippet || "",
+  }));
+
+  return { success: true, provider: "serper", results };
+}
+
+// SearXNG 搜索（开源元搜索引擎）
+async function searxngSearch(request) {
+  const instances = (request.instances || "")
+    .split(/[\n,]/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // 如果用户未配置实例，使用默认公共实例
+  const defaultInstances = [
+    "https://searx.be",
+    "https://searx.work",
+    "https://search.sapti.me",
+  ];
+
+  const targetInstances = instances.length > 0 ? instances : defaultInstances;
+  const limit = Math.min(Math.max(Number(request.limit || 5), 1), 10);
+
+  // 尝试每个实例，直到成功
+  let lastError = null;
+  for (const instance of targetInstances) {
+    try {
+      const url = new URL("/search", instance);
+      url.searchParams.set("q", request.query);
+      url.searchParams.set("format", "json");
+      url.searchParams.set("pageno", "1");
+
+      const response = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      const results = (data.results || [])
+        .slice(0, limit)
+        .map((item) => ({
+          title: item.title || "",
+          url: item.url || "",
+          snippet: item.content || "",
+        }));
+
+      return { success: true, provider: "searxng", instance, results };
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+  }
+
+  throw new Error(`所有 SearXNG 实例均不可用${lastError ? `：${lastError.message}` : ""}`);
+}
+
+// Brave 搜索
+async function braveSearch(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  if (!apiKey) throw new Error("Brave Search API Key 未配置。");
+
+  const url = new URL("https://api.search.brave.com/res/v1/web/search");
+  url.searchParams.set("q", request.query);
+  url.searchParams.set("count", String(Math.min(Math.max(Number(request.limit || 5), 1), 20)));
+
+  if (request.country) url.searchParams.set("country", request.country);
+  if (request.searchLang) url.searchParams.set("search_lang", request.searchLang);
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "X-Subscription-Token": apiKey,
+    },
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(`Brave 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+
+  const results = (data.web?.results || []).map((item) => ({
+    title: item.title || "",
+    url: item.url || "",
+    snippet: item.description || "",
+  }));
+
+  return { success: true, provider: "brave", results };
+}
+
 function register(ipcMain) {
   ipcMain.handle("network:cors-fetch", (_event, { request }) => corsFetch(request));
   ipcMain.handle("network:skills-market-search", (_event, { request }) => skillsMarketSearch(request));
   ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
   ipcMain.handle("network:fetch-agent-category", (_event, { fileName }) => fetchAgentCategory(fileName));
+  ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));
 }
 
 module.exports = { register };

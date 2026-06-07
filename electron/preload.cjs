@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     skillsMarketSearch: (request) => invoke("network:skills-market-search", { request }),
     fetchAgentIndex: () => invoke("network:fetch-agent-index"),
     fetchAgentCategory: (fileName) => invoke("network:fetch-agent-category", { fileName }),
+    webSearch: (request) => invoke("network:web-search", { request }),
   },
   skills: {
     list: (skillType) => invoke("skills:list", { skillType }),

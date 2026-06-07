@@ -49,6 +49,7 @@ import {
 } from "@/stores/team/team-chat-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";
+import { useAlert } from "@/hooks/useAlert";
 
 export function TeamChatPage({
   teamId,
@@ -94,6 +95,8 @@ export function TeamChatPage({
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  // 自定义对话框
+  const { alert: showAlert, AlertDialog } = useAlert();
 
   // 进入会话时回读其绑定的工作目录
   useEffect(() => {
@@ -131,7 +134,7 @@ export function TeamChatPage({
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
   }, [messages, isResponding]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const input = composer.trim();
     const running = useTeamChatStore
       .getState()
@@ -140,7 +143,11 @@ export function TeamChatPage({
 
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
-      alert(providerCheck.message);
+      await showAlert({
+        title: "未配置模型",
+        message: providerCheck.message,
+        variant: "warning",
+      });
       return;
     }
 
@@ -162,60 +169,63 @@ export function TeamChatPage({
   };
 
   return (
-    <div className="flex h-full min-w-0">
-      <section className="relative flex h-full min-w-0 flex-1 flex-col">
-        <TeamHeader
-          teamName={team?.name ?? "团队"}
-          teamAvatar={team?.avatar ?? "👥"}
-        />
-
-        <div
-          ref={scrollAreaRef}
-          className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
-        >
-          <div className="mx-auto flex w-full max-w-[920px] flex-col gap-8 px-4 pb-48 pt-8 sm:px-8">
-            {visibleMessages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center pt-24 text-center text-sm text-muted-foreground">
-                <Users className="mb-3 size-8" />
-                向团队发起任务，{emptyHint}。
-              </div>
-            ) : (
-              visibleMessages.map((message) => (
-                <TeamMessageView
-                  key={message.id}
-                  message={message}
-                  memberInfo={memberInfo}
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        <Composer
-          members={(team?.memberIds ?? [])
-            .map((id) => memberInfo.get(id))
-            .filter((m): m is { avatar: string; name: string } => !!m)}
-          isResponding={isResponding}
-          workingDir={workingDir}
-          onAbort={() => abortTeamThread(threadId)}
-          onInsertMention={insertMention}
-          onPickDir={() => void handlePickDir()}
-          onSend={handleSend}
-          setValue={setComposer}
-          value={composer}
-        />
-      </section>
-
-      <AnimatePresence initial={false}>
-        {panelOpen ? (
-          <TeamMonitorPanel
-            key="team-monitor-panel"
-            threadId={threadId}
-            teamId={teamId}
+    <>
+      <div className="flex h-full min-w-0">
+        <section className="relative flex h-full min-w-0 flex-1 flex-col">
+          <TeamHeader
+            teamName={team?.name ?? "团队"}
+            teamAvatar={team?.avatar ?? "👥"}
           />
-        ) : null}
-      </AnimatePresence>
-    </div>
+
+          <div
+            ref={scrollAreaRef}
+            className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
+          >
+            <div className="mx-auto flex w-full max-w-[920px] flex-col gap-8 px-4 pb-48 pt-8 sm:px-8">
+              {visibleMessages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center pt-24 text-center text-sm text-muted-foreground">
+                  <Users className="mb-3 size-8" />
+                  向团队发起任务，{emptyHint}。
+                </div>
+              ) : (
+                visibleMessages.map((message) => (
+                  <TeamMessageView
+                    key={message.id}
+                    message={message}
+                    memberInfo={memberInfo}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          <Composer
+            members={(team?.memberIds ?? [])
+              .map((id) => memberInfo.get(id))
+              .filter((m): m is { avatar: string; name: string } => !!m)}
+            isResponding={isResponding}
+            workingDir={workingDir}
+            onAbort={() => abortTeamThread(threadId)}
+            onInsertMention={insertMention}
+            onPickDir={() => void handlePickDir()}
+            onSend={handleSend}
+            setValue={setComposer}
+            value={composer}
+          />
+        </section>
+
+        <AnimatePresence initial={false}>
+          {panelOpen ? (
+            <TeamMonitorPanel
+              key="team-monitor-panel"
+              threadId={threadId}
+              teamId={teamId}
+            />
+          ) : null}
+        </AnimatePresence>
+      </div>
+      <AlertDialog />
+    </>
   );
 }
 

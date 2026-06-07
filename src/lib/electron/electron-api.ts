@@ -347,3 +347,60 @@ export async function readTeamConfig<T = any>(teamId: string): Promise<T> {
 export const writeTeamConfig = (teamId: string, content: any) =>
   api().config.writeTeam(teamId, JSON.stringify(content, null, 2));
 export const deleteTeamConfig = (teamId: string) => api().config.deleteTeam(teamId);
+
+// 网络搜索接口
+export interface WebSearchRequest {
+  provider: "tavily" | "exa" | "serper" | "searxng" | "brave";
+  query: string;
+  limit?: number;
+  apiKey?: string;
+  // Tavily 特定参数
+  searchDepth?: "basic" | "advanced";
+  includeDomains?: string;
+  excludeDomains?: string;
+  includeAnswer?: boolean;
+  includeRawContent?: boolean;
+  includeImages?: boolean;
+  // Exa 特定参数
+  type?: "neural" | "keyword";
+  useAutoprompt?: boolean;
+  category?: string;
+  includeText?: boolean;
+  includeHighlights?: boolean;
+  includeSummary?: boolean;
+  // Serper 特定参数
+  gl?: string;
+  hl?: string;
+  // SearXNG 特定参数
+  instances?: string;
+  // Brave 特定参数
+  country?: string;
+  searchLang?: string;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  score?: number;
+  // Tavily 完整内容字段
+  rawContent?: string;
+  images?: string[];
+  // Exa 完整内容字段
+  text?: string;
+  highlights?: string[];
+  summary?: string;
+}
+
+export interface WebSearchResponse {
+  success: boolean;
+  provider: string;
+  instance?: string;
+  results: WebSearchResult[];
+  // Tavily AI 答案
+  answer?: string;
+}
+
+export function webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
+  return api().network.webSearch(request);
+}

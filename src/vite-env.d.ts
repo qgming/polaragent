@@ -74,6 +74,50 @@ interface Window {
       skillsMarketSearch: (request: unknown) => Promise<string>;
       fetchAgentIndex: () => Promise<string>;
       fetchAgentCategory: (fileName: string) => Promise<string>;
+      webSearch: (request: {
+        provider: string;
+        query: string;
+        limit?: number;
+        apiKey?: string;
+        // Tavily 特定参数
+        searchDepth?: string;
+        includeDomains?: string;
+        excludeDomains?: string;
+        includeAnswer?: boolean;
+        includeRawContent?: boolean;
+        includeImages?: boolean;
+        // Exa 特定参数
+        type?: string;
+        useAutoprompt?: boolean;
+        category?: string;
+        includeText?: boolean;
+        includeHighlights?: boolean;
+        includeSummary?: boolean;
+        // Serper 特定参数
+        gl?: string;
+        hl?: string;
+        // SearXNG 特定参数
+        instances?: string;
+        // Brave 特定参数
+        country?: string;
+        searchLang?: string;
+      }) => Promise<{
+        success: boolean;
+        provider: string;
+        instance?: string;
+        results: Array<{
+          title: string;
+          url: string;
+          snippet: string;
+          score?: number;
+          rawContent?: string;
+          images?: string[];
+          text?: string;
+          highlights?: string[];
+          summary?: string;
+        }>;
+        answer?: string;
+      }>;
     };
     skills: {
       list: (skillType: "builtin" | "custom") => Promise<string[]>;

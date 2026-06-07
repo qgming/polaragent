@@ -24,6 +24,7 @@ import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { type Segment, useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { AgentConfig } from "@/types/config";
+import { useAlert } from "@/hooks/useAlert";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 
@@ -71,6 +72,8 @@ export function HomePage({
   const composerRef = useRef<SkillComposerHandle>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [filePaths, setFilePaths] = useState<string[]>([]);
+  // 自定义对话框
+  const { alert: showAlert, AlertDialog } = useAlert();
 
   const handlePickDir = async () => {
     const dir = await pickWorkingDirectory();
@@ -87,7 +90,11 @@ export function HomePage({
 
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
-      alert(providerCheck.message);
+      await showAlert({
+        title: "未配置模型",
+        message: providerCheck.message,
+        variant: "warning",
+      });
       return;
     }
 
@@ -134,8 +141,9 @@ export function HomePage({
   };
 
   return (
-    <section className="flex h-full min-w-0 items-center justify-center px-6 pb-20">
-      <div className="w-full max-w-[900px]">
+    <>
+      <section className="flex h-full min-w-0 items-center justify-center px-6 pb-20">
+        <div className="w-full max-w-[900px]">
         <div className="mb-8">
           <img
             src={logoUrl}
@@ -225,7 +233,9 @@ export function HomePage({
           </span>
           <ChevronDown className="size-4 shrink-0" />
         </button>
-      </div>
-    </section>
+        </div>
+      </section>
+      <AlertDialog />
+    </>
   );
 }

@@ -41,6 +41,7 @@ import {
 } from "@/stores/chat-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
+import { useAlert } from "@/hooks/useAlert";
 
 export function ChatPage({
   activeThreadTitle,
@@ -87,6 +88,8 @@ export function ChatPage({
   const [filePaths, setFilePaths] = useState<string[]>([]);
   // 是否「粘底」：用户在底部附近时自动跟随新内容；向上滚离底部后停止跟随
   const stickToBottomRef = useRef(true);
+  // 自定义对话框
+  const { alert: showAlert, AlertDialog } = useAlert();
 
   // 该会话是否已产生监控数据（待办/产物/步骤）——决定面板默认是否展开
   const hasMonitorData = useTaskMonitorStore((state) => {
@@ -170,7 +173,11 @@ export function ChatPage({
     // 检查 Provider 配置
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
-      alert(providerCheck.message);
+      await showAlert({
+        title: "未配置模型",
+        message: providerCheck.message,
+        variant: "warning",
+      });
       return;
     }
 
@@ -217,51 +224,54 @@ export function ChatPage({
   };
 
   return (
-    <div className="flex h-full min-w-0">
-      <section className="relative flex h-full min-w-0 flex-1 flex-col">
-        <PageHeader title={activeThreadTitle || "新对话"} />
+    <>
+      <div className="flex h-full min-w-0">
+        <section className="relative flex h-full min-w-0 flex-1 flex-col">
+          <PageHeader title={activeThreadTitle || "新对话"} />
 
-        <div
-          ref={scrollAreaRef}
-          className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
-        >
-          <div className="mx-auto flex w-full max-w-[920px] flex-col gap-8 px-4 pb-48 pt-8 sm:px-8">
-            {messages.map((message) => (
-              <ChatMessageView
-                key={message.id}
-                message={message}
-                threadId={threadId}
-              />
-            ))}
+          <div
+            ref={scrollAreaRef}
+            className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
+          >
+            <div className="mx-auto flex w-full max-w-[920px] flex-col gap-8 px-4 pb-48 pt-8 sm:px-8">
+              {messages.map((message) => (
+                <ChatMessageView
+                  key={message.id}
+                  message={message}
+                  threadId={threadId}
+                />
+              ))}
+            </div>
           </div>
-        </div>
 
-        <Composer
-          composerRef={composerRef}
-          isResponding={isResponding}
-          onAbort={() => abortAgentThread(threadId)}
-          onEnter={() => void handleSend()}
-          onPickDir={() => void handlePickDir()}
-          onPickSkill={(skill) => composerRef.current?.insertSkill(skill)}
-          onPickFile={(file) => composerRef.current?.insertFile(file)}
-          onSend={() => void handleSend()}
-          onSkillsChange={setSkillIds}
-          onFilesChange={setFilePaths}
-          setValue={setComposer}
-          value={composer}
-          workingDir={workingDir}
-        />
-      </section>
-
-      <AnimatePresence initial={false}>
-        {panelOpen ? (
-          <TaskMonitorPanel
-            key="task-monitor-panel"
-            threadId={threadId}
+          <Composer
+            composerRef={composerRef}
+            isResponding={isResponding}
+            onAbort={() => abortAgentThread(threadId)}
+            onEnter={() => void handleSend()}
+            onPickDir={() => void handlePickDir()}
+            onPickSkill={(skill) => composerRef.current?.insertSkill(skill)}
+            onPickFile={(file) => composerRef.current?.insertFile(file)}
+            onSend={() => void handleSend()}
+            onSkillsChange={setSkillIds}
+            onFilesChange={setFilePaths}
+            setValue={setComposer}
+            value={composer}
+            workingDir={workingDir}
           />
-        ) : null}
-      </AnimatePresence>
-    </div>
+        </section>
+
+        <AnimatePresence initial={false}>
+          {panelOpen ? (
+            <TaskMonitorPanel
+              key="task-monitor-panel"
+              threadId={threadId}
+            />
+          ) : null}
+        </AnimatePresence>
+      </div>
+      <AlertDialog />
+    </>
   );
 }
 

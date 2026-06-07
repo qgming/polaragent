@@ -28,6 +28,7 @@ import { fileIconFor } from "@/lib/file-icons";
 import { extOf, previewKindLabel, previewKindOf, type PreviewKind } from "@/lib/preview";
 import { cn } from "@/lib/utils";
 import type { SkillConfig } from "@/types/config";
+import { useConfirm } from "@/hooks/useConfirm";
 
 type ViewMode = "code" | "preview";
 
@@ -94,6 +95,8 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
   const [fileError, setFileError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("preview");
+  // 自定义确认对话框
+  const { confirm, ConfirmDialog } = useConfirm();
 
   const selectedKind = useMemo<PreviewKind>(
     () => (selectedPath ? previewKindOf(selectedPath) : "unsupported"),
@@ -191,7 +194,14 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
 
   const selectFile = async (path: string) => {
     if (path === selectedPath) return;
-    if (dirty && !window.confirm("当前文件还有未保存的修改，确定切换文件吗？")) return;
+    if (dirty) {
+      const confirmed = await confirm({
+        title: "有未保存的修改",
+        message: "当前文件还有未保存的修改，确定切换文件吗？",
+        variant: "default",
+      });
+      if (!confirmed) return;
+    }
     await loadSelectedFile(path);
   };
 
@@ -213,113 +223,123 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
     }
   };
 
-  const handleOpenChange = (open: boolean) => {
+  const handleOpenChange = async (open: boolean) => {
     if (open) return;
-    if (dirty && !window.confirm("当前文件还有未保存的修改，确定关闭吗？")) return;
+    if (dirty) {
+      const confirmed = await confirm({
+        title: "有未保存的修改",
+        message: "当前文件还有未保存的修改，确定关闭吗？",
+        variant: "default",
+      });
+      if (!confirmed) return;
+    }
     onClose();
   };
 
   return (
-    <Modal open={isOpen} onOpenChange={handleOpenChange}>
-      <ModalContent
-        size="2xl"
-        showCloseButton={false}
-        className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background"
-      >
-        <ModalTitle className="sr-only">编辑技能：{skill?.name || skill?.id || "未选择"}</ModalTitle>
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
-          <ViewModeSwitch value={viewMode} onChange={setViewMode} disabled={!selectedPath || selectedKind === "image"} />
+    <>
+      <Modal open={isOpen} onOpenChange={handleOpenChange}>
+        <ModalContent
+          size="2xl"
+          showCloseButton={false}
+          className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background"
+        >
+          <ModalTitle className="sr-only">编辑技能：{skill?.name || skill?.id || "未选择"}</ModalTitle>
+          <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+            <ViewModeSwitch value={viewMode} onChange={setViewMode} disabled={!selectedPath || selectedKind === "image"} />
 
-          <SelectedIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium" title={selectedPath || rootPath}>
-            {selectedPath ? selectedName : skill?.name || skill?.id || "未选择"}
-            {dirty ? <span className="ml-1 text-muted-foreground">•</span> : null}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">
-            · {selectedPath ? previewKindLabel(selectedKind, selectedExt) : "Skill"}
-          </span>
-          {rootPath ? (
-            <span className="min-w-0 truncate text-xs text-muted-foreground" title={rootPath}>
-              {rootPath}
+            <SelectedIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate text-sm font-medium" title={selectedPath || rootPath}>
+              {selectedPath ? selectedName : skill?.name || skill?.id || "未选择"}
+              {dirty ? <span className="ml-1 text-muted-foreground">•</span> : null}
             </span>
-          ) : null}
-
-          <div className="ml-auto flex h-full items-center gap-0.5">
-            {selectedIsText && viewMode === "code" ? (
-              <ToolbarButton
-                label={saving ? "保存中…" : "保存"}
-                onClick={() => void handleSave()}
-                disabled={!dirty || saving}
-              >
-                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              </ToolbarButton>
-            ) : null}
-            <ToolbarButton
-              label="刷新"
-              onClick={() => selectedPath && void loadSelectedFile(selectedPath)}
-              disabled={!selectedPath || loadingFile}
-            >
-              <RefreshCw className={cn("size-4", loadingFile && "animate-spin")} />
-            </ToolbarButton>
-            <ToolbarButton label="打开技能目录" onClick={() => rootPath && void openPath(rootPath)} disabled={!rootPath}>
-              <FolderOpen className="size-4" />
-            </ToolbarButton>
-            <ToolbarButton label="关闭" onClick={() => handleOpenChange(false)} close>
-              <X className="size-4" />
-            </ToolbarButton>
-          </div>
-        </header>
-        <ModalBody className="grid overflow-hidden p-0 md:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="app-scrollbar min-h-0 overflow-auto border-b border-border bg-muted/20 p-2 md:border-b-0 md:border-r">
-            {treeError ? (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {treeError}
-              </div>
-            ) : null}
+            <span className="shrink-0 text-xs text-muted-foreground">
+              · {selectedPath ? previewKindLabel(selectedKind, selectedExt) : "Skill"}
+            </span>
             {rootPath ? (
-              <DirectoryContents
-                entries={entriesByDir[normalizePath(rootPath)] ?? []}
-                entriesByDir={entriesByDir}
-                expandedDirs={expandedDirs}
-                loadingDirs={loadingDirs}
-                selectedPath={selectedPath}
-                rootPath={rootPath}
-                onToggleDir={(path) => void toggleDir(path)}
-                onSelectFile={(path) => void selectFile(path)}
-              />
+              <span className="min-w-0 truncate text-xs text-muted-foreground" title={rootPath}>
+                {rootPath}
+              </span>
             ) : null}
-          </aside>
-          <section className="flex min-h-0 flex-col overflow-hidden bg-background">
-            <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 text-sm">
-              {selectedPath ? (
-                <>
-                  <SelectedFileIcon path={selectedPath} kind={selectedKind} />
-                  <span className="min-w-0 truncate font-medium" title={selectedPath}>
-                    {relativePath(rootPath, selectedPath)}
-                  </span>
-                  {dirty ? <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">未保存</span> : null}
-                </>
-              ) : (
-                <span className="text-muted-foreground">选择一个文件查看内容</span>
-              )}
+
+            <div className="ml-auto flex h-full items-center gap-0.5">
+              {selectedIsText && viewMode === "code" ? (
+                <ToolbarButton
+                  label={saving ? "保存中…" : "保存"}
+                  onClick={() => void handleSave()}
+                  disabled={!dirty || saving}
+                >
+                  {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                </ToolbarButton>
+              ) : null}
+              <ToolbarButton
+                label="刷新"
+                onClick={() => selectedPath && void loadSelectedFile(selectedPath)}
+                disabled={!selectedPath || loadingFile}
+              >
+                <RefreshCw className={cn("size-4", loadingFile && "animate-spin")} />
+              </ToolbarButton>
+              <ToolbarButton label="打开技能目录" onClick={() => rootPath && void openPath(rootPath)} disabled={!rootPath}>
+                <FolderOpen className="size-4" />
+              </ToolbarButton>
+              <ToolbarButton label="关闭" onClick={() => void handleOpenChange(false)} close>
+                <X className="size-4" />
+              </ToolbarButton>
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <FileContentPane
-                content={content}
-                draft={draft}
-                error={fileError}
-                ext={selectedExt}
-                filePath={selectedPath}
-                kind={selectedKind}
-                loading={loadingFile}
-                viewMode={viewMode}
-                onDraftChange={setDraft}
-              />
-            </div>
-          </section>
-        </ModalBody>
-      </ModalContent>
-    </Modal>
+          </header>
+          <ModalBody className="grid overflow-hidden p-0 md:grid-cols-[280px_minmax(0,1fr)]">
+            <aside className="app-scrollbar min-h-0 overflow-auto border-b border-border bg-muted/20 p-2 md:border-b-0 md:border-r">
+              {treeError ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {treeError}
+                </div>
+              ) : null}
+              {rootPath ? (
+                <DirectoryContents
+                  entries={entriesByDir[normalizePath(rootPath)] ?? []}
+                  entriesByDir={entriesByDir}
+                  expandedDirs={expandedDirs}
+                  loadingDirs={loadingDirs}
+                  selectedPath={selectedPath}
+                  rootPath={rootPath}
+                  onToggleDir={(path) => void toggleDir(path)}
+                  onSelectFile={(path) => void selectFile(path)}
+                />
+              ) : null}
+            </aside>
+            <section className="flex min-h-0 flex-col overflow-hidden bg-background">
+              <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4 text-sm">
+                {selectedPath ? (
+                  <>
+                    <SelectedFileIcon path={selectedPath} kind={selectedKind} />
+                    <span className="min-w-0 truncate font-medium" title={selectedPath}>
+                      {relativePath(rootPath, selectedPath)}
+                    </span>
+                    {dirty ? <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">未保存</span> : null}
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">选择一个文件查看内容</span>
+                )}
+              </div>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <FileContentPane
+                  content={content}
+                  draft={draft}
+                  error={fileError}
+                  ext={selectedExt}
+                  filePath={selectedPath}
+                  kind={selectedKind}
+                  loading={loadingFile}
+                  viewMode={viewMode}
+                  onDraftChange={setDraft}
+                />
+              </div>
+            </section>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+      <ConfirmDialog />
+    </>
   );
 }
 

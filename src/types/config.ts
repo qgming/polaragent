@@ -2,6 +2,64 @@
 // src/types/config.ts
 
 /**
+ * 网络搜索服务商类型
+ */
+export type WebSearchProvider =
+  | "tavily"
+  | "exa"
+  | "serper"
+  | "searxng"
+  | "brave";
+
+/**
+ * 网络搜索配置
+ */
+export interface WebSearchConfig {
+  // 当前选择的服务商
+  provider: WebSearchProvider;
+  // 各服务商的搜索次数统计
+  usage?: {
+    tavily?: number;
+    exa?: number;
+    serper?: number;
+    searxng?: number;
+    brave?: number;
+  };
+  // 各服务商的配置
+  tavily?: {
+    apiKey: string;
+    searchDepth?: "basic" | "advanced";
+    includeDomains?: string;
+    excludeDomains?: string;
+    includeAnswer?: boolean; // AI 生成的答案
+    includeRawContent?: boolean; // 原始网页内容
+    includeImages?: boolean; // 图片链接
+  };
+  exa?: {
+    apiKey: string;
+    useAutoprompt?: boolean;
+    type?: "neural" | "keyword";
+    category?: string;
+    includeText?: boolean; // 完整文本内容
+    includeHighlights?: boolean; // 高亮摘要
+    includeSummary?: boolean; // AI 摘要
+  };
+  serper?: {
+    apiKey: string;
+    gl?: string; // 国家代码
+    hl?: string; // 语言代码
+  };
+  searxng?: {
+    instances: string; // 多个实例用换行或逗号分隔
+  };
+  brave?: {
+    apiKey: string;
+    country?: string;
+    searchLang?: string;
+  };
+}
+
+/**
  * 全局应用设置
  */
 export interface Settings {
@@ -29,6 +87,8 @@ export interface Settings {
   dataDirectory: string;
   // SkillsMP 技能广场 API Key（可选，匿名亦可搜索但额度低）
   skillsApiKey?: string;
+  // 网络搜索配置
+  webSearch?: WebSearchConfig;
 }
 
 /**

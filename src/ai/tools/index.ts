@@ -22,6 +22,7 @@ import {
   createDirectoryTool,
   listDirectoryTool,
 } from "./file-operations";
+import { searchWebTool } from "./web-search";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 
 export type { ToolContext } from "./tool-context";
@@ -106,6 +107,12 @@ const TOOL_REGISTRY: ToolEntry[] = [
     name: "列出目录",
     description: "列出工作目录或指定目录下的文件与子目录。",
     factory: listDirectoryTool,
+  },
+  {
+    id: "search_web",
+    name: "网络搜索",
+    description: "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。",
+    factory: searchWebTool,
   },
 ];
 

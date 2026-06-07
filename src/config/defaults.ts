@@ -28,6 +28,34 @@ export const defaultSettings: Settings = {
   },
   dataDirectory: "", // 运行时设置
   skillsApiKey: "", // SkillsMP 技能广场 API Key（留空走匿名额度）
+  webSearch: {
+    // 默认服务商：Tavily（免费 1000 次/月，专为 AI 设计）
+    provider: "tavily",
+    usage: {
+      tavily: 0,
+      exa: 0,
+      serper: 0,
+      searxng: 0,
+      brave: 0,
+    },
+    tavily: {
+      apiKey: "",
+      searchDepth: "basic",
+      includeAnswer: false,
+      includeRawContent: false,
+      includeImages: false,
+    },
+    exa: {
+      apiKey: "",
+      type: "neural",
+      includeText: false,
+      includeHighlights: false,
+      includeSummary: false,
+    },
+    serper: { apiKey: "", gl: "cn", hl: "zh-cn" },
+    searxng: { instances: "" },
+    brave: { apiKey: "" },
+  },
 };
 
 /**
