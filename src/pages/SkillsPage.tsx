@@ -9,10 +9,10 @@ import {
   ExternalLink,
   FolderOpen,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
-  Settings,
   Star,
   Trash2,
   Zap,
@@ -26,6 +26,7 @@ import {
   MARKET_CATEGORIES,
   useSkillsMarketStore,
 } from "@/stores/skills/skills-market-store";
+import { SkillDetailModal } from "@/components/skill/SkillDetailModal";
 import { SkillInstallDialog } from "@/components/skill/SkillInstallDialog";
 import type { SkillConfig } from "@/types/config";
 import type { MarketSkill } from "@/lib/electron/electron-api";
@@ -42,6 +43,7 @@ export function SkillsPage() {
   const [activeTab, setActiveTab] = useState<SkillTab>("market");
   const [search, setSearch] = useState("");
   const [showInstallDialog, setShowInstallDialog] = useState(false);
+  const [editingSkill, setEditingSkill] = useState<SkillConfig | null>(null);
 
   useEffect(() => {
     void loadSkills();
@@ -134,6 +136,7 @@ export function SkillsPage() {
                   <InstalledSkillRow
                     key={skill.id}
                     skill={skill}
+                    onEdit={() => setEditingSkill(skill)}
                     onToggle={() => toggleSkill(skill.id, !skill.enabled)}
                   />
                 ))
@@ -157,6 +160,7 @@ export function SkillsPage() {
                     key={skill.id}
                     removable
                     skill={skill}
+                    onEdit={() => setEditingSkill(skill)}
                     onToggle={() => toggleSkill(skill.id, !skill.enabled)}
                   />
                 ))
@@ -175,6 +179,12 @@ export function SkillsPage() {
           isOpen={showInstallDialog}
           onClose={() => setShowInstallDialog(false)}
           onInstallSuccess={() => void loadSkills()}
+        />
+        <SkillDetailModal
+          isOpen={editingSkill !== null}
+          skill={editingSkill}
+          onClose={() => setEditingSkill(null)}
+          onSaved={() => void loadSkills()}
         />
       </div>
     </div>
@@ -506,10 +516,12 @@ function TabTrigger({
 function InstalledSkillRow({
   removable,
   skill,
+  onEdit,
   onToggle,
 }: {
   removable?: boolean;
   skill: SkillConfig;
+  onEdit: () => void;
   onToggle: () => void;
 }) {
   return (
@@ -521,10 +533,16 @@ function InstalledSkillRow({
         </p>
       </div>
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm">
-          {removable ? <Trash2 className="size-4" /> : <Settings className="size-4" />}
-          {removable ? "删除" : "设置"}
+        <Button variant="outline" size="sm" onClick={onEdit}>
+          <Pencil className="size-4" />
+          编辑
         </Button>
+        {removable ? (
+          <Button variant="outline" size="sm">
+            <Trash2 className="size-4" />
+            删除
+          </Button>
+        ) : null}
         <Switch checked={skill.enabled} onCheckedChange={onToggle} />
       </div>
     </div>

@@ -1,18 +1,14 @@
-import { Check, MessageCircleQuestion } from "lucide-react";
+import { Check, MessageCircleQuestion, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
   cancelAskUserRequest,
   submitAskUserResponse,
 } from "@/ai/ask-user";
-import { Button } from "@/components/ui/button";
 import {
   Modal,
   ModalBody,
   ModalContent,
-  ModalDescription,
-  ModalFooter,
-  ModalHeader,
   ModalTitle,
 } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
@@ -75,17 +71,36 @@ export function AskUserModal() {
         if (!open) cancel();
       }}
     >
-      <ModalContent size="md" showCloseButton>
-        <ModalHeader>
-          <div className="flex items-center gap-2">
-            <MessageCircleQuestion className="size-5 text-[#7b5ac8]" />
-            <ModalTitle>需要你的输入</ModalTitle>
+      <ModalContent size="md" showCloseButton={false} className="max-h-[calc(100vh-4rem)] rounded-lg bg-background">
+        <ModalTitle className="sr-only">需要你的输入</ModalTitle>
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+          <MessageCircleQuestion className="size-4 shrink-0 text-[#7b5ac8]" />
+          <span className="min-w-0 truncate text-sm font-medium">需要你的输入</span>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            · {request.requesterName}
+            {queuedCount > 0 ? ` · 还有 ${queuedCount} 个请求` : ""}
+          </span>
+
+          <div className="ml-auto flex h-full items-center gap-0.5">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit}
+              title="提交回复"
+              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              提交回复
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              title="取消"
+              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
+            >
+              <X className="size-4" />
+            </button>
           </div>
-          <ModalDescription>
-            {request.requesterName} 正在等待回复
-            {queuedCount > 0 ? `，后面还有 ${queuedCount} 个请求` : ""}
-          </ModalDescription>
-        </ModalHeader>
+        </header>
 
         <ModalBody className="space-y-4">
           <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm leading-6 text-foreground">
@@ -154,15 +169,6 @@ export function AskUserModal() {
             </div>
           )}
         </ModalBody>
-
-        <ModalFooter>
-          <Button type="button" variant="ghost" onClick={cancel}>
-            取消
-          </Button>
-          <Button type="button" disabled={!canSubmit} onClick={submit}>
-            提交回复
-          </Button>
-        </ModalFooter>
       </ModalContent>
     </Modal>
   );

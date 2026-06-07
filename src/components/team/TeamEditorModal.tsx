@@ -1,7 +1,7 @@
 // 团队编辑模态窗：编辑团队的头像/名称/简介/协作模式/成员/领导/系统提示词/团队技能/工作区目录
 // 仿 AgentEditorModal，基于通用 Modal 组件居中弹出
 
-import { Bot, FolderOpen, Sparkles, Star, Users, Wrench, Zap } from "lucide-react";
+import { Bot, FolderOpen, Sparkles, Star, Users, Wrench, X, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Field, SettingDropdown } from "@/components/settings/settings-shared";
@@ -12,8 +12,6 @@ import {
   Modal,
   ModalBody,
   ModalContent,
-  ModalFooter,
-  ModalHeader,
   ModalTitle,
 } from "@/components/ui/modal";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
@@ -130,10 +128,32 @@ export function TeamEditorModal({
 
   return (
     <Modal open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <ModalContent size="2xl">
-        <ModalHeader>
-          <ModalTitle>团队详情</ModalTitle>
-        </ModalHeader>
+      <ModalContent size="2xl" showCloseButton={false} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
+        <ModalTitle className="sr-only">团队详情</ModalTitle>
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+          <Users className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm font-medium">团队详情</span>
+
+          <div className="ml-auto flex h-full items-center gap-0.5">
+            <button
+              type="button"
+              onClick={save}
+              disabled={memberIds.length < 2 || !name.trim()}
+              title="保存"
+              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              保存
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="关闭"
+              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </header>
 
         <ModalBody className="bg-background">
           <div className="space-y-6">
@@ -297,15 +317,6 @@ export function TeamEditorModal({
             ) : null}
           </div>
         </ModalBody>
-
-        <ModalFooter>
-          <Button variant="outline" className="min-w-[120px]" onClick={onClose}>
-            取消
-          </Button>
-          <Button className="min-w-[120px]" onClick={save}>
-            保存
-          </Button>
-        </ModalFooter>
       </ModalContent>
 
       <EmojiPicker

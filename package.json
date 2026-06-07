@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "productName": "PolarAgent",
   "description": "PolarAgent desktop AI workspace",
+  "author": "qgming",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -17,6 +18,7 @@
   "build": {
     "appId": "com.qgming.polaragent",
     "productName": "PolarAgent",
+    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -24,7 +26,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "extraResources": [
       {

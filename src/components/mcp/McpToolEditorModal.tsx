@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
-import { Braces, ListChecks, Loader2, Save } from "lucide-react";
+import { Braces, ListChecks, Loader2, Save, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import {
   Modal,
   ModalBody,
   ModalContent,
-  ModalDescription,
-  ModalFooter,
-  ModalHeader,
   ModalTitle,
 } from "@/components/ui/modal";
 import type { McpDiscoveredTool, McpToolConfig, McpTransport } from "@/types/config";
@@ -67,13 +63,38 @@ export function McpToolEditorModal({
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
-      <ModalContent size="2xl">
-        <ModalHeader>
-          <ModalTitle>{title}</ModalTitle>
-          <ModalDescription>
-            直接粘贴 MCP 客户端配置。支持 mcpServers 下的 stdio、streamable_http 和 sse。
-          </ModalDescription>
-        </ModalHeader>
+      <ModalContent size="2xl" showCloseButton={false} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
+        <ModalTitle className="sr-only">{title}</ModalTitle>
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+          <Braces className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm font-medium">{title}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            · 直接粘贴 MCP 客户端配置
+          </span>
+
+          <div className="ml-auto flex h-full items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={isSaving}
+              title={isSaving ? "获取工具中" : mode === "install" ? "安装" : "保存"}
+              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              {isSaving ? "获取工具中" : mode === "install" ? "安装" : "保存"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              disabled={isSaving}
+              title="关闭"
+              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </header>
+
         <ModalBody className="space-y-4">
           <div className="rounded-lg border border-border bg-background">
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -106,15 +127,6 @@ export function McpToolEditorModal({
           ) : null}
 
         </ModalBody>
-        <ModalFooter>
-          <Button variant="ghost" disabled={isSaving} onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button disabled={isSaving} onClick={() => void submit()}>
-            {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {isSaving ? "获取工具中" : mode === "install" ? "安装" : "保存"}
-          </Button>
-        </ModalFooter>
       </ModalContent>
     </Modal>
   );

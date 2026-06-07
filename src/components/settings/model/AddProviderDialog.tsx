@@ -1,7 +1,12 @@
 // 添加供应商弹窗
 import { useState } from "react";
 import { Bot, KeyRound, Loader2, Plug, Settings2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalTitle,
+} from "@/components/ui/modal";
 import type { ProviderConfig } from "@/types/config";
 import { Field, SettingDropdown } from "../settings-shared";
 import { PROVIDER_TYPE_OPTIONS, makeProviderId } from "./provider-meta";
@@ -39,19 +44,36 @@ export function AddProviderDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-      <div className="w-full max-w-[460px] rounded-xl border border-border bg-card shadow-2xl">
-        <header className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h3 className="text-base font-semibold">添加供应商</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-5" />
-          </button>
+    <Modal open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <ModalContent size="md" showCloseButton={false} className="max-w-[460px] rounded-xl bg-card">
+        <ModalTitle className="sr-only">添加供应商</ModalTitle>
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
+          <Settings2 className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm font-medium">添加供应商</span>
+
+          <div className="ml-auto flex h-full items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={!name.trim() || creating}
+              title={creating ? "创建中..." : "创建"}
+              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {creating ? <Loader2 className="size-4 animate-spin" /> : null}
+              创建
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              title="关闭"
+              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </header>
-        <div className="space-y-4 px-5 py-5">
+
+        <ModalBody className="space-y-4">
           <Field icon={Bot} label="名称">
             <input
               value={name}
@@ -85,17 +107,8 @@ export function AddProviderDialog({
               className="h-11 w-full rounded-lg border border-input bg-background px-3 text-base outline-none focus:border-ring"
             />
           </Field>
-        </div>
-        <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">
-          <Button variant="outline" onClick={onClose}>
-            取消
-          </Button>
-          <Button disabled={!name.trim() || creating} onClick={() => void submit()}>
-            {creating ? <Loader2 className="size-4 animate-spin" /> : null}
-            创建
-          </Button>
-        </footer>
-      </div>
-    </div>
+        </ModalBody>
+      </ModalContent>
+    </Modal>
   );
 }
