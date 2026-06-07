@@ -484,8 +484,8 @@ function toolResultText(result: unknown): string | undefined {
     return record.content.trim();
   }
 
-  // content 为空时：若 details 带有正文字段（如 read_web 的 markdown），优先展示正文，
-  // 而非把整个 details 结构 JSON 化（那样只会看到 url/字数等元信息，看不到正文）。
+  // content 为空时：若 details 带有正文字段（如 markdown），优先展示正文，
+  // 而非把整个 details 结构 JSON 化（那样只会看到元信息，看不到正文内容）。
   if (record.details && typeof record.details === "object") {
     const markdown = (record.details as { markdown?: unknown }).markdown;
     if (typeof markdown === "string" && markdown.trim()) {

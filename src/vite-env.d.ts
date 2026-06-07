@@ -71,8 +71,6 @@ interface Window {
         body?: string;
         timeoutMs?: number;
       }) => Promise<unknown>;
-      webSearch: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebSearchResponse>;
-      webRead: (request: unknown) => Promise<import("@/lib/electron/electron-api").WebReadResponse>;
       skillsMarketSearch: (request: unknown) => Promise<string>;
       fetchAgentIndex: () => Promise<string>;
       fetchAgentCategory: (fileName: string) => Promise<string>;

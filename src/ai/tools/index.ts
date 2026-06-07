@@ -22,7 +22,6 @@ import {
   createDirectoryTool,
   listDirectoryTool,
 } from "./file-operations";
-import { searchWebTool, readWebTool } from "./web-search";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 
 export type { ToolContext } from "./tool-context";
@@ -107,18 +106,6 @@ const TOOL_REGISTRY: ToolEntry[] = [
     name: "列出目录",
     description: "列出工作目录或指定目录下的文件与子目录。",
     factory: listDirectoryTool,
-  },
-  {
-    id: "search_web",
-    name: "网络搜索",
-    description: "通过 SearXNG 检索互联网信息，返回标题、链接与摘要。",
-    factory: searchWebTool,
-  },
-  {
-    id: "read_web",
-    name: "读取网页",
-    description: "读取指定网页的正文内容（转为 Markdown），用于核实与引用。",
-    factory: readWebTool,
   },
 ];
 

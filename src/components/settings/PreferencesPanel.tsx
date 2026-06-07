@@ -2,7 +2,7 @@
 // src/components/settings/PreferencesPanel.tsx
 
 import { useEffect, useState } from "react";
-import { Check, Eye, EyeOff, KeyRound, Loader2, Save, Search } from "lucide-react";
+import { Check, Eye, EyeOff, KeyRound, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Settings } from "@/types/config";
 import { PageTitle, SettingDropdown, SettingRow } from "./settings-shared";
@@ -88,7 +88,6 @@ export function PreferencesPanel({
       </div>
 
       <SkillsApiKeyCard settings={settings} onUpdate={onUpdate} />
-      <SearxngInstancesCard settings={settings} onUpdate={onUpdate} />
     </section>
   );
 }
@@ -146,66 +145,6 @@ function SkillsApiKeyCard({
             </button>
           </div>
           <Button onClick={() => void handleSave()} disabled={saveState === "saving"}>
-            {saveState === "saving" ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : saveState === "saved" ? (
-              <Check className="size-4" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            保存
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// SearXNG 搜索实例设置卡片
-function SearxngInstancesCard({
-  settings,
-  onUpdate,
-}: {
-  settings: Settings;
-  onUpdate: (updates: Partial<Settings>) => Promise<void>;
-}) {
-  const [value, setValue] = useState(settings.searxngInstances ?? "");
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
-    "idle",
-  );
-
-  useEffect(() => {
-    setValue(settings.searxngInstances ?? "");
-  }, [settings.searxngInstances]);
-
-  const handleSave = async () => {
-    setSaveState("saving");
-    await onUpdate({ searxngInstances: value.trim() });
-    setSaveState("saved");
-    setTimeout(() => setSaveState("idle"), 1500);
-  };
-
-  return (
-    <div className="mt-6 rounded-xl border border-border bg-card">
-      <div className="px-5 py-5">
-        <div className="flex items-center gap-2">
-          <Search className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">SearXNG 搜索实例</h3>
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">
-          网络搜索通过 SearXNG 实例完成。留空则使用内置公共实例；也可填入你自己的实例（每行一个，或用逗号分隔），更稳定。
-        </p>
-        <textarea
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder={"https://searx.be\nhttps://search.inetol.net"}
-          className="app-scrollbar mt-4 min-h-[96px] w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-ring"
-        />
-        <div className="mt-3 flex justify-end">
-          <Button
-            onClick={() => void handleSave()}
-            disabled={saveState === "saving"}
-          >
             {saveState === "saving" ? (
               <Loader2 className="size-4 animate-spin" />
             ) : saveState === "saved" ? (

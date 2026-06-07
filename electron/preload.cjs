@@ -68,8 +68,6 @@ contextBridge.exposeInMainWorld("polaragent", {
   },
   network: {
     corsFetch: (request) => invoke("network:cors-fetch", { request }),
-    webSearch: (request) => invoke("network:web-search", { request }),
-    webRead: (request) => invoke("network:web-read", { request }),
     skillsMarketSearch: (request) => invoke("network:skills-market-search", { request }),
     fetchAgentIndex: () => invoke("network:fetch-agent-index"),
     fetchAgentCategory: (fileName) => invoke("network:fetch-agent-category", { fileName }),

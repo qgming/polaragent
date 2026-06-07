@@ -1,13 +1,15 @@
 // Skills 安装对话框
 
 import { useState } from "react";
-import { Download, FolderOpen, Loader2, X, Wrench } from "lucide-react";
+import { Download, FolderOpen, Loader2, Wrench } from "lucide-react";
 import {
   Modal,
   ModalBody,
   ModalContent,
+  ModalFooter,
   ModalTitle,
 } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/useToast";
 import { skillLoader } from "@/lib/skill/skill-loader";
 
@@ -67,7 +69,7 @@ export function SkillInstallDialog({
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <ModalContent size="md" showCloseButton={false} className="max-w-lg rounded-lg bg-background">
+      <ModalContent size="md" showCloseButton={true} className="max-w-lg rounded-lg bg-background">
         <ModalTitle className="sr-only">安装 Skill</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Wrench className="size-4 shrink-0 text-muted-foreground" />
@@ -77,51 +79,6 @@ export function SkillInstallDialog({
               · {installType === "git" ? "Git 仓库" : "本地目录"}
             </span>
           )}
-
-          <div className="ml-auto flex h-full items-center gap-0.5">
-            {installType && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleInstall}
-                  disabled={isInstalling || !source.trim()}
-                  title={isInstalling ? "安装中..." : "安装"}
-                  className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {isInstalling ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" />
-                      安装中...
-                    </>
-                  ) : (
-                    "安装"
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInstallType(null);
-                    setSource("");
-                    setError(null);
-                  }}
-                  disabled={isInstalling}
-                  title="返回"
-                  className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  返回
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isInstalling}
-              title="关闭"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
         </header>
 
         <ModalBody className="space-y-4">
@@ -185,6 +142,36 @@ export function SkillInstallDialog({
             </div>
           )}
         </ModalBody>
+
+        {installType && (
+          <ModalFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setInstallType(null);
+                setSource("");
+                setError(null);
+              }}
+              disabled={isInstalling}
+            >
+              返回
+            </Button>
+            <Button
+              variant="default"
+              onClick={handleInstall}
+              disabled={isInstalling || !source.trim()}
+            >
+              {isInstalling ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  安装中...
+                </>
+              ) : (
+                "安装"
+              )}
+            </Button>
+          </ModalFooter>
+        )}
       </ModalContent>
     </Modal>
   );

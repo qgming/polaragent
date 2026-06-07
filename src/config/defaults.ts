@@ -28,7 +28,6 @@ export const defaultSettings: Settings = {
   },
   dataDirectory: "", // 运行时设置
   skillsApiKey: "", // SkillsMP 技能广场 API Key（留空走匿名额度）
-  searxngInstances: "", // 自定义 SearXNG 实例（留空用内置默认）
 };
 
 /**

@@ -1,4 +1,4 @@
-import { Check, MessageCircleQuestion, X } from "lucide-react";
+import { Check, MessageCircleQuestion } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -9,8 +9,10 @@ import {
   Modal,
   ModalBody,
   ModalContent,
+  ModalFooter,
   ModalTitle,
 } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAskUserStore } from "@/stores/ask-user-store";
 
@@ -71,7 +73,7 @@ export function AskUserModal() {
         if (!open) cancel();
       }}
     >
-      <ModalContent size="md" showCloseButton={false} className="max-h-[calc(100vh-4rem)] rounded-lg bg-background">
+      <ModalContent size="md" showCloseButton={true} className="max-h-[calc(100vh-4rem)] rounded-lg bg-background">
         <ModalTitle className="sr-only">需要你的输入</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <MessageCircleQuestion className="size-4 shrink-0 text-[#7b5ac8]" />
@@ -80,26 +82,6 @@ export function AskUserModal() {
             · {request.requesterName}
             {queuedCount > 0 ? ` · 还有 ${queuedCount} 个请求` : ""}
           </span>
-
-          <div className="ml-auto flex h-full items-center gap-0.5">
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!canSubmit}
-              title="提交回复"
-              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              提交回复
-            </button>
-            <button
-              type="button"
-              onClick={cancel}
-              title="取消"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
         </header>
 
         <ModalBody className="space-y-4">
@@ -169,6 +151,15 @@ export function AskUserModal() {
             </div>
           )}
         </ModalBody>
+
+        <ModalFooter>
+          <Button variant="outline" onClick={cancel}>
+            取消
+          </Button>
+          <Button variant="default" onClick={submit} disabled={!canSubmit}>
+            提交回复
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );

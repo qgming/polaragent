@@ -29,8 +29,6 @@ export interface Settings {
   dataDirectory: string;
   // SkillsMP 技能广场 API Key（可选，匿名亦可搜索但额度低）
   skillsApiKey?: string;
-  // 自定义 SearXNG 实例（用换行或逗号分隔，留空则用内置默认实例）
-  searxngInstances?: string;
 }
 
 /**

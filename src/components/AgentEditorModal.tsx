@@ -2,7 +2,7 @@
 // 从 AgentsPage 拆分而来，基于通用 Modal 组件居中弹出
 // src/components/AgentEditorModal.tsx
 
-import { Bot, Brain, Sparkles, Wrench, X, Zap } from "lucide-react";
+import { Bot, Brain, Sparkles, Wrench, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Field, SettingDropdown } from "@/components/settings/settings-shared";
@@ -10,8 +10,10 @@ import {
   Modal,
   ModalBody,
   ModalContent,
+  ModalFooter,
   ModalTitle,
 } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { EmojiPicker } from "@/components/ui/emoji-picker";
 import {
@@ -96,38 +98,11 @@ export function AgentEditorModal({
 
   return (
     <Modal open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <ModalContent size="2xl" showCloseButton={false} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
+      <ModalContent size="2xl" showCloseButton={true} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
         <ModalTitle className="sr-only">助手详情</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Bot className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate text-sm font-medium">助手详情</span>
-
-          <div className="ml-auto flex h-full items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => onStartChat(agent.id)}
-              title="开始对话"
-              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              开始对话
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              title="保存"
-              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              title="关闭"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
         </header>
 
         <ModalBody className="bg-background">
@@ -258,6 +233,19 @@ export function AgentEditorModal({
             </Field>
           </div>
         </ModalBody>
+
+        <ModalFooter>
+          <Button variant="outline" onClick={() => onStartChat(agent.id)}>
+            开始对话
+          </Button>
+          <div className="flex-1" />
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
+          <Button variant="default" onClick={save}>
+            保存
+          </Button>
+        </ModalFooter>
       </ModalContent>
 
       <EmojiPicker

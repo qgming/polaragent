@@ -321,52 +321,6 @@ export const mcpCallTool = (params: {
   arguments?: Record<string, unknown>;
 }): Promise<unknown> => mcpSdkCallTool(params);
 
-export interface WebSearchResultItem {
-  title: string;
-  url: string;
-  snippet: string;
-}
-
-export interface WebSearchResponse {
-  success: boolean;
-  query: string;
-  instance: string;
-  totalCount: number;
-  results: WebSearchResultItem[];
-  error?: string;
-}
-
-export const webSearch = (params: {
-  query: string;
-  limit?: number;
-  language?: string;
-  instances?: string[];
-}): Promise<WebSearchResponse> =>
-  api().network.webSearch({
-    query: params.query,
-    limit: params.limit,
-    language: params.language,
-    instances: params.instances ?? [],
-  });
-
-export interface WebReadResponse {
-  success: boolean;
-  url: string;
-  title?: string;
-  actualMethod?: string;
-  truncated: boolean;
-  totalChars: number;
-  markdown: string;
-  error?: string;
-}
-
-export const webRead = (params: {
-  url: string;
-  maxChars?: number;
-  timeoutMs?: number;
-  method?: "proxy_markdown" | "direct_html";
-}): Promise<WebReadResponse> => api().network.webRead(params);
-
 export const listAgents = (): Promise<string[]> => api().config.listAgents();
 export async function readAgentConfig<T = any>(agentId: string): Promise<T> {
   return JSON.parse(await api().config.readAgent(agentId)) as T;

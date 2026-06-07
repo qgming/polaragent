@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Braces, ListChecks, Loader2, Save, X } from "lucide-react";
+import { Braces, ListChecks, Loader2 } from "lucide-react";
 
 import {
   Modal,
   ModalBody,
   ModalContent,
+  ModalFooter,
   ModalTitle,
 } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import type { McpDiscoveredTool, McpToolConfig, McpTransport } from "@/types/config";
 
 export type McpEditorMode = "create" | "edit" | "install";
@@ -63,7 +65,7 @@ export function McpToolEditorModal({
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
-      <ModalContent size="2xl" showCloseButton={false} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
+      <ModalContent size="2xl" showCloseButton={true} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
         <ModalTitle className="sr-only">{title}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Braces className="size-4 shrink-0 text-muted-foreground" />
@@ -71,28 +73,6 @@ export function McpToolEditorModal({
           <span className="shrink-0 text-xs text-muted-foreground">
             · 直接粘贴 MCP 客户端配置
           </span>
-
-          <div className="ml-auto flex h-full items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={isSaving}
-              title={isSaving ? "获取工具中" : mode === "install" ? "安装" : "保存"}
-              className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              {isSaving ? "获取工具中" : mode === "install" ? "安装" : "保存"}
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              disabled={isSaving}
-              title="关闭"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
         </header>
 
         <ModalBody className="space-y-4">
@@ -127,6 +107,22 @@ export function McpToolEditorModal({
           ) : null}
 
         </ModalBody>
+
+        <ModalFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
+            取消
+          </Button>
+          <Button variant="default" onClick={() => void submit()} disabled={isSaving}>
+            {isSaving ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                获取工具中
+              </>
+            ) : (
+              mode === "install" ? "安装" : "保存"
+            )}
+          </Button>
+        </ModalFooter>
       </ModalContent>
     </Modal>
   );
