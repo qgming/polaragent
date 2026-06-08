@@ -9,7 +9,7 @@ import { toolDisplayName } from "@/ai/tools";
 import { getRepo, getTeamRepo } from "./session-repo";
 import { pickBestMeta } from "./meta-selection";
 import { openOrCreateSession } from "./session-operations";
-import { TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY } from "./entries";
+import { GUIDANCE_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY } from "./entries";
 
 // 团队会话消息：在普通 ChatMessage 基础上附带发言成员 id / 投票信息。
 export type TeamChatMessage = ChatMessage & Pick<TeamMessage, "speakerAgentId" | "vote">;
@@ -199,6 +199,7 @@ async function loadChatMessagesImpl(
     tokenCount?: number;
     speakerAgentId?: string;
   } | null = null;
+  const pendingGuidance: Array<{ text: string; createdAt: number }> = [];
 
   // 把累积中的助手消息落地为一条 ChatMessage
   const flushPending = () => {
@@ -226,6 +227,20 @@ async function loadChatMessagesImpl(
   };
 
   for (const entry of branch) {
+    if (entry.type === "custom" && entry.customType === GUIDANCE_ENTRY) {
+      const data = entry.data as { text?: unknown; createdAt?: unknown } | undefined;
+      if (data && typeof data.text === "string" && data.text.trim()) {
+        pendingGuidance.push({
+          text: data.text.trim(),
+          createdAt:
+            typeof data.createdAt === "number"
+              ? data.createdAt
+              : Date.parse(entry.timestamp) || 0,
+        });
+      }
+      continue;
+    }
+
     if (
       opts?.trackSpeaker &&
       entry.type === "custom" &&
@@ -263,9 +278,30 @@ async function loadChatMessagesImpl(
     const timestamp = Date.parse(entry.timestamp) || message.timestamp || 0;
 
     if (message.role === "user") {
+      const text = userMessageText(message);
+      const guidanceIndex = pendingGuidance.findIndex(
+        (guidance) => guidance.text === text.trim(),
+      );
+      if (guidanceIndex >= 0) {
+        const [guidance] = pendingGuidance.splice(guidanceIndex, 1);
+        if (!pending) {
+          pending = {
+            id: entry.id,
+            createdAt: timestamp,
+            segments: [],
+            speakerAgentId: currentSpeaker,
+          };
+        }
+        pending.segments.push({
+          kind: "guidance",
+          text: guidance.text,
+          createdAt: guidance.createdAt,
+        });
+        continue;
+      }
+
       // 新的用户消息 -> 先落地累积的助手消息，断开合并
       flushPending();
-      const text = userMessageText(message);
       if (text.trim().length === 0) continue;
       messages.push({
         id: entry.id,

@@ -16,6 +16,10 @@ import { toolDisplayName } from "./tools";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { skillLoader } from "@/lib/skill/skill-loader";
 import { readFile } from "@/lib/electron/electron-api";
+import {
+  appendGuidanceMessage,
+  appendTeamGuidanceMessage,
+} from "@/lib/session/session-operations";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { Segment } from "@/stores/chat-store";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -174,18 +178,31 @@ export async function promptAgent(
 
     const monitor = useTaskMonitorStore.getState();
     let assistantText = "";
-    // 本次 run 内按轮次产生的 assistant 消息（多轮工具调用会有多条）。
+    // 本次 run 内按真实顺序产生的可渲染过程：assistant 轮次 + 中途引导状态。
     // 必须聚合全部轮次，否则只取最后一条会丢掉前面轮次已输出的正文/思考。
-    const runMessages: Array<AgentMessage & { role: "assistant" }> = [];
+    const runItems: Array<
+      | { type: "assistant"; message: AgentMessage & { role: "assistant" } }
+      | { type: "guidance"; text: string; createdAt: number }
+    > = [];
     // 当前正在进行的轮次的 partial assistant 消息（尚未 turn_end）。
     let livePartial: (AgentMessage & { role: "assistant" }) | null = null;
+    let queuedGuidanceTexts: string[] = [];
+    const consumedGuidanceTexts: string[] = [];
 
     // 把「已完成轮次 + 当前 partial」聚合为有序 segments，缓存等待按帧 flush。
     // partial 与已完成轮次不重叠：turn_end 时把 partial 落入 runMessages 并清空。
     const emitSegments = () => {
       const segments: Segment[] = [];
-      for (const message of runMessages) {
-        segments.push(...extractSegments(message, toolResults));
+      for (const item of runItems) {
+        if (item.type === "assistant") {
+          segments.push(...extractSegments(item.message, toolResults));
+        } else {
+          segments.push({
+            kind: "guidance",
+            text: item.text,
+            createdAt: item.createdAt,
+          });
+        }
       }
       if (livePartial) {
         segments.push(...extractSegments(livePartial, toolResults));
@@ -196,8 +213,40 @@ export async function promptAgent(
       }
     };
 
-    const unsubscribe = harness.subscribe((event) => {
+    const unsubscribe = harness.subscribe(async (event) => {
       switch (event.type) {
+        case "queue_update": {
+          const nextQueued = event.steer.map((message) =>
+            agentUserMessageText(message),
+          );
+          if (nextQueued.length < queuedGuidanceTexts.length) {
+            consumedGuidanceTexts.push(
+              ...queuedGuidanceTexts.slice(
+                0,
+                queuedGuidanceTexts.length - nextQueued.length,
+              ),
+            );
+          }
+          queuedGuidanceTexts = nextQueued;
+          break;
+        }
+
+        case "message_start": {
+          if (event.message.role === "user" && consumedGuidanceTexts.length > 0) {
+            const text = consumedGuidanceTexts.shift() ?? agentUserMessageText(event.message);
+            if (text.trim()) {
+              await persistGuidance(options, text);
+            }
+            runItems.push({
+              type: "guidance",
+              text,
+              createdAt: Date.now(),
+            });
+            emitSegments();
+          }
+          break;
+        }
+
         case "message_update": {
           const inner = event.assistantMessageEvent;
           if (inner.type === "text_delta") {
@@ -218,9 +267,10 @@ export async function promptAgent(
         case "turn_end": {
           // 每轮结束收集该轮的 assistant 消息（仅本次 run 新增，不含历史）
           if (event.message.role === "assistant") {
-            runMessages.push(
-              event.message as AgentMessage & { role: "assistant" },
-            );
+            runItems.push({
+              type: "assistant",
+              message: event.message as AgentMessage & { role: "assistant" },
+            });
           }
           // 该轮已落地，清空 partial，避免与 runMessages 重复计入
           livePartial = null;
@@ -264,7 +314,12 @@ export async function promptAgent(
 
           // 优先用本次 run 逐轮收集到的 assistant 消息；兜底从 agent_end.messages
           // 取最后一条（极少数事件缺失场景）。
-          let assistants = runMessages;
+          let assistants = runItems
+            .filter(
+              (item): item is Extract<(typeof runItems)[number], { type: "assistant" }> =>
+                item.type === "assistant",
+            )
+            .map((item) => item.message);
           if (assistants.length === 0) {
             const last = [...event.messages]
               .reverse()
@@ -296,8 +351,16 @@ export async function promptAgent(
 
           // 聚合所有轮次的 segments，保持轮次与块的真实顺序
           const segments: Segment[] = [];
-          for (const message of assistants) {
-            segments.push(...extractSegments(message, toolResults));
+          for (const item of runItems) {
+            if (item.type === "assistant") {
+              segments.push(...extractSegments(item.message, toolResults));
+            } else {
+              segments.push({
+                kind: "guidance",
+                text: item.text,
+                createdAt: item.createdAt,
+              });
+            }
           }
 
           const content =
@@ -338,6 +401,15 @@ export async function promptAgent(
     if (!settled) {
       handlers.onError(error instanceof Error ? error.message : String(error));
     }
+  }
+}
+
+async function persistGuidance(options: PromptOptions, text: string): Promise<void> {
+  const sessionId = options.teamContext?.sessionId ?? options.threadId;
+  if (options.teamContext) {
+    await appendTeamGuidanceMessage(sessionId, text);
+  } else {
+    await appendGuidanceMessage(sessionId, text);
   }
 }
 
@@ -388,6 +460,16 @@ function extractSegments(
   }
 
   return segments;
+}
+
+function agentUserMessageText(message: AgentMessage): string {
+  if (message.role !== "user") return "";
+  if (typeof message.content === "string") return message.content.trim();
+  return message.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 // 从 update_todos 的结果里抽取完整待办快照（供按待办分组折叠）
@@ -510,6 +592,18 @@ function toolResultText(result: unknown): string | undefined {
 export function abortAgentThread(threadId: string) {
   cancelAskUserRequestsForThread(threadId);
   agentManager.abortThread(threadId);
+}
+
+/**
+ * 在 Agent 正在运行时插入用户引导。pi-agent 会在后续循环点消费 steering 消息，
+ * 通常表现为当前工具/步骤完成后、下一轮模型请求前生效。
+ */
+export async function steerAgentThread(
+  threadId: string,
+  text: string,
+): Promise<boolean> {
+  const accepted = await agentManager.steerThread(threadId, text);
+  return accepted > 0;
 }
 
 /** 中止当前所有 Agent 运行（极端清理场景，如重置运行时）。 */

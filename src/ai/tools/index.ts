@@ -12,6 +12,7 @@ import { useToolsStore } from "@/stores/tools-store";
 import type { ToolContext } from "./tool-context";
 import { updateTodosTool } from "./update-todos";
 import { askUserTool } from "./ask-user";
+import { listSkillsTool, readSkillFileTool, readSkillTool } from "./skills";
 import { controlTeamFlowTool } from "./team-control";
 import { castTeamVoteTool, requestTeamVoteTool } from "./team-vote";
 import {
@@ -46,8 +47,9 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 2 },
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 3 },
   dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 4 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 5 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 6 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 5 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 6 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 7 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -65,6 +67,27 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "向用户请求文本输入、单选或多选，并等待用户在模态窗中提交。",
     factory: askUserTool,
     group: "interaction",
+  },
+  {
+    id: "list_skills",
+    name: "列出技能",
+    description: "列出当前助手或团队上下文可用的技能名称与适用场景。",
+    factory: listSkillsTool,
+    group: "skill",
+  },
+  {
+    id: "read_skill",
+    name: "读取技能",
+    description: "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。",
+    factory: readSkillTool,
+    group: "skill",
+  },
+  {
+    id: "read_skill_file",
+    name: "读取技能文件",
+    description: "读取可用技能目录内 references、examples 等子文件。",
+    factory: readSkillFileTool,
+    group: "skill",
   },
   {
     id: "control_team_flow",

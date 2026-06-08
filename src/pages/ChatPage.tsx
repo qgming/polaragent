@@ -14,7 +14,7 @@ import {
   type RefObject,
 } from "react";
 
-import { abortAgentThread, promptAgent } from "@/ai/agent";
+import { abortAgentThread, promptAgent, steerAgentThread } from "@/ai/agent";
 import { AnimatePresence } from "motion/react";
 import { ChatMessageView } from "@/components/chat/MessageRenderer";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
@@ -177,7 +177,27 @@ export function ChatPage({
 
   const handleSend = async () => {
     const input = composer.trim();
-    if (!input || isResponding) {
+    if (!input) {
+      return;
+    }
+
+    if (isResponding) {
+      composerRef.current?.clear();
+      setComposer("");
+      setSkillIds([]);
+      setFilePaths([]);
+
+      const accepted = await steerAgentThread(threadId, input);
+      if (accepted) {
+        return;
+      }
+
+      setComposer(input);
+      await showAlert({
+        title: "插队失败",
+        message: "当前任务刚好结束，请重新发送为新消息。",
+        variant: "warning",
+      });
       return;
     }
 
@@ -192,7 +212,7 @@ export function ChatPage({
       return;
     }
 
-    const { assistantId, threadId } = startExchange(input);
+    const { assistantId, threadId: exchangeThreadId } = startExchange(input);
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
     const sendFilePaths = filePaths;
@@ -204,18 +224,18 @@ export function ChatPage({
     // 获取工作目录：优先使用当前会话的工作目录，回退到全局默认；
     // 若仍无，则自动使用会话临时目录（自动创建并绑定）
     let workingDir =
-      useTaskMonitorStore.getState().getMonitor(threadId).workingDir ||
+      useTaskMonitorStore.getState().getMonitor(exchangeThreadId).workingDir ||
       useChatStore.getState().workingDir ||
       undefined;
 
     if (!workingDir) {
       // 无工作目录时：使用临时目录（会话文件目录）作为默认工作目录
-      const tempDir = await getSessionFilesDir(threadId);
-      await ensureSessionFilesDir(threadId); // 确保目录存在
+      const tempDir = await getSessionFilesDir(exchangeThreadId);
+      await ensureSessionFilesDir(exchangeThreadId); // 确保目录存在
       workingDir = tempDir;
       // 绑定到当前会话（store + 持久化）
-      useTaskMonitorStore.getState().setWorkingDir(threadId, tempDir);
-      void setSessionWorkingDir(threadId, tempDir);
+      useTaskMonitorStore.getState().setWorkingDir(exchangeThreadId, tempDir);
+      void setSessionWorkingDir(exchangeThreadId, tempDir);
     }
 
     // 使用 pi AgentHarness 驱动多轮工具调用（历史由 pi Session 原生管理）。
@@ -226,18 +246,18 @@ export function ChatPage({
       {
         // 流式合批：每帧一次写入（追加文本 + 替换有序段），思考/工具/正文按真实顺序显示
         onStreamUpdate: (update) =>
-          applyStreamingUpdate(threadId, assistantId, update),
+          applyStreamingUpdate(exchangeThreadId, assistantId, update),
         onDone: ({ content, model, usage, segments }) =>
-          finishAssistant(threadId, assistantId, content, {
+          finishAssistant(exchangeThreadId, assistantId, content, {
             model,
             tokenCount: usage.totalTokens,
             segments,
           }),
-        onError: (message) => failAssistant(threadId, assistantId, message),
+        onError: (message) => failAssistant(exchangeThreadId, assistantId, message),
       },
       agentId,
       {
-        threadId,
+        threadId: exchangeThreadId,
         workingDir,
         messageId: assistantId,
         skillIds: sendSkillIds,
@@ -340,7 +360,8 @@ function Composer({
   workingDir: string;
   sessionFilesDir: string;
 }) {
-  const canSend = value.trim().length > 0 && !isResponding;
+  const canSend = value.trim().length > 0;
+  const showSendButton = !isResponding || canSend;
   // 仅展示工作目录的末级名称，hover 时完整路径见 title
   const isTempDir =
     workingDir &&
@@ -362,7 +383,7 @@ function Composer({
           onSkillsChange={onSkillsChange}
           onFilesChange={onFilesChange}
           onEnter={onEnter}
-          placeholder="描述任务，/ 快捷调用，@ 添加文件"
+          placeholder={isResponding ? "输入引导，发送后会插队到后续步骤" : "描述任务，/ 快捷调用，@ 添加文件"}
           className="app-scrollbar max-h-[220px] min-h-[74px] overflow-y-auto px-4 py-3"
         />
 
@@ -391,7 +412,8 @@ function Composer({
               <IconButton label="停止" onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
-            ) : (
+            ) : null}
+            {showSendButton ? (
               <Button
                 className="size-8 rounded-full"
                 disabled={!canSend}
@@ -400,9 +422,9 @@ function Composer({
                 type="button"
               >
                 <SendHorizontal className="size-4" />
-                <span className="sr-only">发送</span>
+                <span className="sr-only">{isResponding ? "发送引导" : "发送"}</span>
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

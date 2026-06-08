@@ -12,7 +12,7 @@ import {
   getSessionsRoot,
 } from "./session-repo";
 import { pickBestMeta, readLastCustomEntryString, type SessionMeta } from "./meta-selection";
-import { TEAM_REF_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
+import { GUIDANCE_ENTRY, TEAM_REF_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
 import { createDirectory, deleteFile, fileExists } from "@/lib/electron/electron-api";
 
@@ -402,6 +402,38 @@ export async function setTeamSessionWorkingDir(
     await session.appendCustomEntry(WORKING_DIR_ENTRY, { dir });
   } catch (error) {
     console.error(`写入团队会话工作目录失败 ${sessionId}:`, error);
+  }
+}
+
+/** 标记普通会话中一条运行时引导。该条目应写在对应 user message 之前。 */
+export async function appendGuidanceMessage(
+  sessionId: string,
+  text: string,
+): Promise<void> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    await session.appendCustomEntry(GUIDANCE_ENTRY, {
+      text,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error(`写入会话引导失败 ${sessionId}:`, error);
+  }
+}
+
+/** 标记团队会话中一条运行时引导。该条目应写在对应 user message 之前。 */
+export async function appendTeamGuidanceMessage(
+  sessionId: string,
+  text: string,
+): Promise<void> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    await session.appendCustomEntry(GUIDANCE_ENTRY, {
+      text,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error(`写入团队会话引导失败 ${sessionId}:`, error);
   }
 }
 

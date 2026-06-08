@@ -4,6 +4,7 @@
 // 所有内置工具共享的执行上下文与路径/文本辅助函数。
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { Skill } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 // 工具执行时的会话上下文：把产物/待办归属到正确的会话与工作目录
@@ -15,6 +16,8 @@ export interface ToolContext {
     id: string;
     name: string;
   };
+  // 当前助手/团队上下文允许使用的技能。技能工具只能读取这里列出的技能。
+  skills?: Skill[];
   // 团队成员工具上下文。存在时团队成员可发起投票。
   teamVote?: {
     team: TeamConfig;

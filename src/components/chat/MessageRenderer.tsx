@@ -5,6 +5,7 @@ import { memo, useMemo } from "react";
 
 import {
   ThinkingRow,
+  GuidanceRow,
   ToolStepsRow,
   ToolStepItem,
   TaskGroup,
@@ -153,6 +154,7 @@ function FlatSegmentedContent({
   const blocks: Array<
     | { type: "text"; text: string }
     | { type: "thinking"; text: string }
+    | { type: "guidance"; text: string }
     | { type: "tools"; tools: ToolSeg[] }
   > = [];
 
@@ -161,6 +163,8 @@ function FlatSegmentedContent({
       blocks.push({ type: "text", text: seg.text });
     } else if (seg.kind === "thinking") {
       blocks.push({ type: "thinking", text: seg.text });
+    } else if (seg.kind === "guidance") {
+      blocks.push({ type: "guidance", text: seg.text });
     } else {
       // 连续的工具段合并到同一组
       const last = blocks[blocks.length - 1];
@@ -186,6 +190,9 @@ function FlatSegmentedContent({
         }
         if (block.type === "thinking") {
           return <ThinkingRow key={`think-${index}`} text={block.text} />;
+        }
+        if (block.type === "guidance") {
+          return <GuidanceRow key={`guidance-${index}`} text={block.text} />;
         }
         return <ToolStepsRow key={`tools-${index}`} tools={block.tools} />;
       })}
@@ -308,6 +315,13 @@ function TaskGroupInner({
           return (
             <div key={`k-${index}`}>
               <ThinkingRow text={seg.text} />
+            </div>
+          );
+        }
+        if (seg.kind === "guidance") {
+          return (
+            <div key={`g-${index}`}>
+              <GuidanceRow text={seg.text} />
             </div>
           );
         }

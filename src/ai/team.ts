@@ -604,6 +604,24 @@ export async function promptTeam(
   }
 }
 
+/**
+ * 团队运行中插入用户引导：写入团队公共会话，并尝试投递给当前正在运行的成员 harness。
+ * 即使当前成员刚好结束、steer 未命中，后续成员也能通过团队讨论转写读取到这条引导。
+ */
+export async function steerTeamThread(
+  threadId: string,
+  text: string,
+): Promise<boolean> {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  const accepted = await agentManager.steerThread(threadId, trimmed);
+  if (accepted === 0) return false;
+
+  await appendTeamUserMessage(threadId, trimmed);
+  return true;
+}
+
 /** 中止某团队会话的所有成员 harness（用户点停止时调用）。 */
 export function abortTeamThread(threadId: string): void {
   cancelAskUserRequestsForThread(threadId);

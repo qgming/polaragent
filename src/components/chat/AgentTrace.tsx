@@ -13,6 +13,7 @@ import {
   CircleDot,
   ClipboardList,
   Loader2,
+  MessageCircleDashed,
   XCircle,
   Brain,
   Wrench,
@@ -153,6 +154,34 @@ export function ThinkingRow({ text }: { text: string }) {
       </button>
       {open ? (
         <div className="ml-6 border-l border-border pl-3 text-sm italic leading-6 text-muted-foreground">
+          {text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// 运行中用户插入的引导已被 agent 当前循环接收。
+export function GuidanceRow({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <MessageCircleDashed className="size-4 shrink-0" />
+        <span>对话已引导</span>
+        <ChevronRight
+          className={cn(
+            "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
+            open && "rotate-90 opacity-100",
+          )}
+        />
+      </button>
+      {open ? (
+        <div className="ml-6 border-l border-border pl-3 text-sm leading-6 text-muted-foreground">
           {text}
         </div>
       ) : null}

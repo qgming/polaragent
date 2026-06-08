@@ -13,8 +13,9 @@ import {
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 
-import { abortTeamThread, promptTeam } from "@/ai/team";
+import { abortTeamThread, promptTeam, steerTeamThread } from "@/ai/team";
 import {
+  GuidanceRow,
   ThinkingRow,
   ToolStepItem,
   ToolStepsRow,
@@ -51,6 +52,11 @@ import {
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { useAlert } from "@/hooks/useAlert";
+
+const createUiMessageId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `tmsg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export function TeamChatPage({
   teamId,
@@ -151,7 +157,31 @@ export function TeamChatPage({
     const running = useTeamChatStore
       .getState()
       .runningThreadIds.includes(threadId);
-    if (!input || isResponding || running || !threadId) return;
+    if (!input || !threadId) return;
+
+    if (isResponding || running) {
+      setComposer("");
+      const accepted = await steerTeamThread(threadId, input);
+      if (!accepted) {
+        setComposer(input);
+        await showAlert({
+          title: "插队失败",
+          message: "当前团队任务刚好结束，请重新发送为新消息。",
+          variant: "warning",
+        });
+        return;
+      }
+
+      const userMessage: TeamMessage = {
+        id: createUiMessageId(),
+        role: "user",
+        content: input,
+        createdAt: Date.now(),
+        status: "complete",
+      };
+      useTeamChatStore.getState().appendMessage(threadId, userMessage);
+      return;
+    }
 
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
@@ -323,6 +353,7 @@ function FlatSegments({
   const blocks: Array<
     | { type: "text"; text: string }
     | { type: "thinking"; text: string }
+    | { type: "guidance"; text: string }
     | { type: "tools"; tools: ToolSeg[] }
   > = [];
 
@@ -331,6 +362,8 @@ function FlatSegments({
       blocks.push({ type: "text", text: seg.text });
     } else if (seg.kind === "thinking") {
       blocks.push({ type: "thinking", text: seg.text });
+    } else if (seg.kind === "guidance") {
+      blocks.push({ type: "guidance", text: seg.text });
     } else {
       const last = blocks[blocks.length - 1];
       if (last && last.type === "tools") {
@@ -356,6 +389,9 @@ function FlatSegments({
         if (block.type === "thinking") {
           return <ThinkingRow key={`think-${index}`} text={block.text} />;
         }
+        if (block.type === "guidance") {
+          return <GuidanceRow key={`guidance-${index}`} text={block.text} />;
+        }
         if (block.type === "process") {
           return <ProcessFold key={`process-${index}`} blocks={block.blocks} />;
         }
@@ -368,6 +404,7 @@ function FlatSegments({
 type SegmentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
+  | { type: "guidance"; text: string }
   | { type: "tools"; tools: ToolSeg[] };
 
 type RenderBlock =
@@ -436,13 +473,17 @@ function ProcessFold({
       </button>
       {open ? (
         <div className="ml-6 space-y-1 border-l border-border py-1 pl-3">
-          {blocks.flatMap((block, index) =>
-            block.type === "thinking"
-              ? [<ThinkingRow key={`thinking-${index}`} text={block.text} />]
-              : block.tools.map((tool) => (
-                  <ToolStepItem key={tool.toolCallId} tool={tool} />
-                )),
-          )}
+          {blocks.flatMap((block, index) => {
+            if (block.type === "thinking") {
+              return [<ThinkingRow key={`thinking-${index}`} text={block.text} />];
+            }
+            if (block.type === "guidance") {
+              return [<GuidanceRow key={`guidance-${index}`} text={block.text} />];
+            }
+            return block.tools.map((tool) => (
+              <ToolStepItem key={tool.toolCallId} tool={tool} />
+            ));
+          })}
         </div>
       ) : null}
     </div>
@@ -472,7 +513,8 @@ function Composer({
   setValue: (value: string) => void;
   value: string;
 }) {
-  const canSend = value.trim().length > 0 && !isResponding;
+  const canSend = value.trim().length > 0;
+  const showSendButton = !isResponding || canSend;
   // 工作目录仅显示末级名称，hover 看完整路径
   const isTempDir =
     workingDir &&
@@ -496,7 +538,7 @@ function Composer({
               onSend();
             }
           }}
-          placeholder="描述任务，/ 调用技能，@ 添加文件，选成员指定发言"
+          placeholder={isResponding ? "输入引导，发送后会加入后续协作" : "描述任务，/ 调用技能，@ 添加文件，选成员指定发言"}
           className="app-scrollbar max-h-[220px] min-h-[74px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 outline-none"
         />
 
@@ -565,7 +607,8 @@ function Composer({
               <IconButton label="停止" onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
-            ) : (
+            ) : null}
+            {showSendButton ? (
               <Button
                 className="size-8 rounded-full"
                 disabled={!canSend}
@@ -574,9 +617,9 @@ function Composer({
                 type="button"
               >
                 <SendHorizontal className="size-4" />
-                <span className="sr-only">发送</span>
+                <span className="sr-only">{isResponding ? "发送引导" : "发送"}</span>
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

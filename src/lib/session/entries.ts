@@ -7,6 +7,8 @@
 export const TEAM_REF_ENTRY = "team_ref";
 // 工作目录
 export const WORKING_DIR_ENTRY = "working_dir";
+// 运行中用户插入的引导。写在对应 user message 之前，回读时合并为 guidance segment。
+export const GUIDANCE_ENTRY = "guidance";
 // 团队发言成员：运行时在每位成员发言前写入其 agentId
 export const TEAM_SPEAKER_ENTRY = "team_speaker";
 // 团队投票

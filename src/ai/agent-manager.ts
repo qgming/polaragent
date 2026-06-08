@@ -205,6 +205,19 @@ export class AgentManager {
     const requesterName = teamContext
       ? (agentConfig?.name ?? "团队成员")
       : (agentConfig?.name ?? "助手");
+
+    // 渐进式披露：把该 Agent 启用的技能转成 pi 的 Skill，
+    // 在系统提示里仅列「清单 + 文件位置」（不塞全文），
+    // AI 判断任务匹配某技能时，可用 list_skills/read_skill 读取全文。
+    // 团队模式下并入团队级技能（对全员可用），去重。
+    const ownSkillIds = agentConfig?.config.enabledSkills ?? [];
+    const rawSkillIds = teamContext
+      ? Array.from(new Set([...ownSkillIds, ...teamContext.extraSkillIds]))
+      : ownSkillIds;
+    const allSkillIds = skillLoader.getEnabledSkills().map((skill) => skill.id);
+    const mergedSkillIds = resolveSkillSelection(rawSkillIds, allSkillIds);
+    const skills = skillLoader.toPiSkills(mergedSkillIds);
+
     // 装配工具（全局工具，受工具页开关过滤；团队投票工具仅团队上下文可见）。
     const toolCtx: ToolContext = {
       threadId,
@@ -214,6 +227,7 @@ export class AgentManager {
         id: agentId,
         name: requesterName,
       },
+      skills,
       teamVote:
         !teamContext?.voteCasting &&
         teamContext?.teamConfig &&
@@ -249,19 +263,15 @@ export class AgentManager {
 
     const apiKey = provider.apiKey;
 
-    // 渐进式披露：把该 Agent 启用的技能转成 pi 的 Skill，
-    // 在系统提示里仅列「清单 + 文件位置」（不塞全文），
-    // AI 判断任务匹配某技能时，自行用 read_file 按 location 读取 SKILL.md 及其 references。
-    // 团队模式下并入团队级技能（对全员可用），去重。
-    const ownSkillIds = agentConfig?.config.enabledSkills ?? [];
-    const rawSkillIds = teamContext
-      ? Array.from(new Set([...ownSkillIds, ...teamContext.extraSkillIds]))
-      : ownSkillIds;
-    const allSkillIds = skillLoader.getEnabledSkills().map((skill) => skill.id);
-    const mergedSkillIds = resolveSkillSelection(rawSkillIds, allSkillIds);
-    const skills = skillLoader.toPiSkills(mergedSkillIds);
     const basePrompt = agentConfig?.config.systemPrompt ?? "";
-    const skillsBlock = formatSkillsForSystemPrompt(skills);
+    const skillsBlock = [
+      formatSkillsForSystemPrompt(skills),
+      skills.length > 0
+        ? "需要使用某个技能时，请先调用 list_skills 确认可用技能，再调用 read_skill 读取该技能完整说明和目录树；如需读取 references、examples 或其他子文件，请继续调用 read_skill_file。不要用 read_file 直接读取技能文件。"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     // 团队模式：身份前缀 + 成员自身提示词 + 团队整体提示词 + 技能清单，依次拼接。
     const promptParts = teamContext
       ? [
@@ -309,6 +319,29 @@ export class AgentManager {
         void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * 向指定线程当前正在运行的 harness 插入 steering 消息。
+   * 返回实际接收消息的 harness 数量；idle harness 会被跳过。
+   */
+  async steerThread(threadId: string, text: string): Promise<number> {
+    const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
+      harnessBelongsToThread(key, threadId),
+    );
+    let accepted = 0;
+    await Promise.all(
+      targets.map(async ([, cached]) => {
+        try {
+          const harness = await cached.promise;
+          await harness.steer(text);
+          accepted += 1;
+        } catch {
+          // steer() requires a running harness; idle or already-settled harnesses are ignored.
+        }
+      }),
+    );
+    return accepted;
   }
 
   /** 中止所有线程当前正在运行的 harness。 */

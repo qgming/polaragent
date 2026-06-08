@@ -31,6 +31,7 @@ export type ChatMessageStatus = "complete" | "streaming" | "error";
 export type Segment =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
+  | { kind: "guidance"; text: string; createdAt: number }
   | {
       kind: "tool";
       toolCallId: string;

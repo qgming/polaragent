@@ -400,7 +400,12 @@ function scoreConversation(
 function messageText(message: ChatMessage | TeamMessage): string {
   const segmentText =
     message.segments
-      ?.filter((segment) => segment.kind === "text" || segment.kind === "thinking")
+      ?.filter(
+        (segment) =>
+          segment.kind === "text" ||
+          segment.kind === "thinking" ||
+          segment.kind === "guidance",
+      )
       .map((segment) => ("text" in segment ? segment.text : ""))
       .join("\n") ?? "";
   return [message.content, segmentText].filter(Boolean).join("\n");
