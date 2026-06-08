@@ -35,7 +35,20 @@ export async function loadThreadMonitor(
     let todos: TodoItem[] = [];
     // 路径 -> 产物，保留插入顺序由下方数组维护
     const artifactMap = new Map<string, ArtifactItem>();
+    const toolResultPaths = new Map<string, string>();
     let order = 0; // 用作 updatedAt 的单调序，避免依赖 Date.now()
+
+    for (const entry of branch) {
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message.role !== "toolResult") continue;
+      const details = message.details;
+      if (!details || typeof details !== "object") continue;
+      const path = (details as Record<string, unknown>).path;
+      if (typeof path === "string" && path.trim()) {
+        toolResultPaths.set(message.toolCallId, path);
+      }
+    }
 
     for (const entry of branch) {
       if (entry.type !== "message") continue;
@@ -69,7 +82,7 @@ export async function loadThreadMonitor(
           typeof args.path === "string" &&
           args.path.trim()
         ) {
-          const path = args.path;
+          const path = toolResultPaths.get(block.id) ?? args.path;
           if (block.name === "delete_file") {
             const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
             const prefix = `${normalized}/`;

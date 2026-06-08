@@ -19,7 +19,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { checkProviderConfig } from "@/lib/app-init";
-import { setSessionWorkingDir } from "@/lib/session/session-operations";
+import {
+  ensureSessionFilesDir,
+  getSessionFilesDir,
+  setSessionWorkingDir,
+} from "@/lib/session/session-operations";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { type Segment, useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
@@ -108,12 +112,15 @@ export function HomePage({
     setSkillIds([]);
     setFilePaths([]);
 
-    const workingDir = useChatStore.getState().workingDir || undefined;
-    if (workingDir) {
-      useTaskMonitorStore.getState().setWorkingDir(threadId, workingDir);
-      // 持久化到新会话 meta，使重开/切回该对话能恢复其工作目录
-      void setSessionWorkingDir(threadId, workingDir);
+    let workingDir = useChatStore.getState().workingDir || undefined;
+    if (!workingDir) {
+      workingDir = await getSessionFilesDir(threadId);
+      await ensureSessionFilesDir(threadId);
     }
+
+    useTaskMonitorStore.getState().setWorkingDir(threadId, workingDir);
+    // 持久化到新会话 meta，使重开/切回该对话能恢复其工作目录
+    void setSessionWorkingDir(threadId, workingDir);
 
     // 后台运行：不 await，切换会话/页面后该会话继续运行
     void promptAgent(
@@ -167,7 +174,7 @@ export function HomePage({
             onFilesChange={setFilePaths}
             onEnter={() => void handleSend()}
             placeholder="描述任务，/ 快捷调用，@ 添加文件"
-            className="min-h-[96px] px-5 py-4 text-base"
+            className="app-scrollbar max-h-[240px] min-h-[96px] overflow-y-auto px-5 py-4 text-base"
           />
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2">

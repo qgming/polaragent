@@ -9,7 +9,7 @@ import "./index.css";
 //   ?view=preview&path=<文件路径>  -> 文件预览窗口
 //   其它                          -> 主应用窗口
 const params = new URLSearchParams(window.location.search);
-const isPreview = params.get("view") === "preview";
+const view = params.get("view");
 const previewPath = params.get("path") ?? "";
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
@@ -17,7 +17,11 @@ const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement)
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      {isPreview ? <PreviewWindow filePath={previewPath} /> : <App />}
+      {view === "preview" ? (
+        <PreviewWindow filePath={previewPath} />
+      ) : (
+        <App />
+      )}
     </ErrorBoundary>
   </React.StrictMode>,
 );

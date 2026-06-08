@@ -39,6 +39,7 @@ import {
 import { checkProviderConfig } from "@/lib/app-init";
 import { cn } from "@/lib/utils";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
+import { getTeamSessionFilesDir } from "@/lib/session/session-operations";
 import { useConfigStore } from "@/stores/config-store";
 import { type Segment } from "@/stores/chat-store";
 import {
@@ -92,6 +93,17 @@ export function TeamChatPage({
   );
   // 显示用：会话级目录优先，回退团队配置目录
   const workingDir = threadWorkingDir || team?.workspaceDir || "";
+
+  // 团队会话文件目录路径（用于右侧面板显示）
+  const [sessionFilesDir, setSessionFilesDir] = useState<string>("");
+
+  // 获取团队会话文件目录路径
+  useEffect(() => {
+    void (async () => {
+      const dir = await getTeamSessionFilesDir(threadId);
+      setSessionFilesDir(dir);
+    })();
+  }, [threadId]);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -205,6 +217,7 @@ export function TeamChatPage({
               .filter((m): m is { avatar: string; name: string } => !!m)}
             isResponding={isResponding}
             workingDir={workingDir}
+            sessionFilesDir={sessionFilesDir}
             onAbort={() => abortTeamThread(threadId)}
             onInsertMention={insertMention}
             onPickDir={() => void handlePickDir()}
@@ -220,6 +233,7 @@ export function TeamChatPage({
               key="team-monitor-panel"
               threadId={threadId}
               teamId={teamId}
+              sessionFilesDir={sessionFilesDir}
             />
           ) : null}
         </AnimatePresence>
@@ -439,6 +453,7 @@ function Composer({
   members,
   isResponding,
   workingDir,
+  sessionFilesDir,
   onAbort,
   onInsertMention,
   onPickDir,
@@ -449,6 +464,7 @@ function Composer({
   members: Array<{ avatar: string; name: string }>;
   isResponding: boolean;
   workingDir: string;
+  sessionFilesDir: string;
   onAbort: () => void;
   onInsertMention: (name: string) => void;
   onPickDir: () => void;
@@ -458,9 +474,15 @@ function Composer({
 }) {
   const canSend = value.trim().length > 0 && !isResponding;
   // 工作目录仅显示末级名称，hover 看完整路径
-  const dirLabel = workingDir
-    ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
-    : "选择工作目录";
+  const isTempDir =
+    workingDir &&
+    sessionFilesDir &&
+    normalizeDir(workingDir) === normalizeDir(sessionFilesDir);
+  const dirLabel = isTempDir
+    ? "临时目录"
+    : workingDir
+      ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
+      : "选择工作目录";
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-12">
@@ -475,7 +497,7 @@ function Composer({
             }
           }}
           placeholder="描述任务，/ 调用技能，@ 添加文件，选成员指定发言"
-          className="app-scrollbar min-h-[74px] w-full resize-none bg-transparent px-4 py-3 text-sm leading-6 outline-none"
+          className="app-scrollbar max-h-[220px] min-h-[74px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 outline-none"
         />
 
         <div className="flex items-center justify-between gap-2 px-3 py-2">
@@ -560,4 +582,8 @@ function Composer({
       </div>
     </div>
   );
+}
+
+function normalizeDir(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }

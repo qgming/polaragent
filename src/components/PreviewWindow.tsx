@@ -15,6 +15,7 @@ import {
   Code2,
   Eye,
   FolderOpen,
+  Globe,
   Loader2,
   RefreshCw,
   Save,
@@ -27,13 +28,14 @@ import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp } from "@/lib/app-init";
-import { fileUrl, readFile, writeFile, openPath } from "@/lib/electron/electron-api";
+import { fileUrl, readFile, writeFile, openPath, openExternal } from "@/lib/electron/electron-api";
 import {
   extOf,
   previewKindLabel,
   previewKindOf,
   type PreviewKind,
 } from "@/lib/preview";
+
 import { runWindowAction } from "@/lib/electron/electron-window";
 import { cn } from "@/lib/utils";
 
@@ -151,6 +153,11 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
     void runWindowAction((w) => w.close());
   };
 
+  const openInSystemBrowser = useCallback(async () => {
+    const url = await fileUrl(filePath);
+    await openExternal(url);
+  }, [filePath]);
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* ===== 标题栏（可拖拽） ===== */}
@@ -209,6 +216,15 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
           >
             <FolderOpen className="size-4" />
           </ToolbarButton>
+
+          {kind === "html" ? (
+            <ToolbarButton
+              label="使用系统浏览器打开"
+              onClick={() => void openInSystemBrowser()}
+            >
+              <Globe className="size-4" />
+            </ToolbarButton>
+          ) : null}
 
           <ToolbarButton label="关闭" onClick={closeWindow} close>
             <X className="size-4" />
@@ -388,12 +404,13 @@ function PreviewContent({
   }
 
   if (kind === "html") {
+    // 本地 HTML 文件用 srcDoc
     return (
       <iframe
         title="HTML 预览"
         srcDoc={content}
         sandbox="allow-same-origin"
-        className="size-full border-0 bg-white"
+        className="size-full border-0 bg-white dark:bg-background"
       />
     );
   }
@@ -418,6 +435,7 @@ function ImagePreview({ filePath }: { filePath: string }) {
   const [src, setSrc] = useState("");
 
   useEffect(() => {
+    // 本地文件需要转换为 file:// URL
     let cancelled = false;
     void fileUrl(filePath).then((url) => {
       if (!cancelled) setSrc(url);
@@ -440,7 +458,7 @@ function ImagePreview({ filePath }: { filePath: string }) {
   );
 }
 
-// 代码/文本只读展示，支持搜索词高亮（命中处黄色背景）
+// 代码/文本只读展示,支持搜索词高亮（命中处黄色背景）
 function CodeWithSearch({
   code,
   language,

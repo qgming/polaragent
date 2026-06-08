@@ -62,6 +62,7 @@ export interface RuntimeAgentConfig {
 interface CachedHarness {
   promise: Promise<AgentHarness>;
   toolsRuntimeSignature: string;
+  workingDirSignature: string;
 }
 
 // 缓存的 harness 实例的复合键：threadId::agentId
@@ -71,6 +72,10 @@ function harnessKey(sessionId: string, agentId: string): string {
 
 function harnessBelongsToThread(key: string, threadId: string): boolean {
   return key.startsWith(`${threadId}::`) || key.startsWith(`${threadId}__`);
+}
+
+function normalizeWorkingDir(dir?: string): string {
+  return (dir ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
 /**
@@ -137,17 +142,27 @@ export class AgentManager {
   ): Promise<AgentHarness> {
     const key = harnessKey(options?.teamContext?.sessionId ?? threadId, agentId);
     const toolsRuntimeSignature = useToolsStore.getState().runtimeSignature;
+    const workingDirSignature = normalizeWorkingDir(options?.workingDir);
     const cached = this.harnesses.get(key);
     if (cached) {
-      if (cached.toolsRuntimeSignature === toolsRuntimeSignature) return cached.promise;
+      if (
+        cached.toolsRuntimeSignature === toolsRuntimeSignature &&
+        cached.workingDirSignature === workingDirSignature
+      ) {
+        return cached.promise;
+      }
 
-      // 工具目录已经变化（安装/删除/启用/禁用 MCP 或内置工具）。旧 harness 的工具
-      // 列表是创建时固定的；重新打开同一个 pi Session 可保留历史并装配最新工具。
+      // 工具目录或工作目录已经变化。旧 harness 的工具列表/工具上下文是创建时固定的；
+      // 重新打开同一个 pi Session 可保留历史并装配最新工具上下文。
       this.harnesses.delete(key);
     }
 
     const promise = this.createHarness(threadId, agentId, options);
-    this.harnesses.set(key, { promise, toolsRuntimeSignature });
+    this.harnesses.set(key, {
+      promise,
+      toolsRuntimeSignature,
+      workingDirSignature,
+    });
     // 创建失败则移除缓存，避免后续一直拿到 rejected Promise
     promise.catch(() => this.harnesses.delete(key));
     return promise;

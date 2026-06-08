@@ -22,8 +22,10 @@ import {
 
 export function TaskMonitorPanel({
   threadId,
+  sessionFilesDir,
 }: {
   threadId: string;
+  sessionFilesDir?: string;
 }) {
   const monitor = useTaskMonitorStore((state) =>
     state.byThread[threadId],
@@ -63,12 +65,13 @@ export function TaskMonitorPanel({
           )}
         </Section>
 
-        {/* 产物：左「最终文件」/ 右「工作区」双 tab */}
+        {/* 产物：左「最终文件」/ 中「工作区」/ 右「会话文件」三 tab */}
         <Section title="产物">
           <ArtifactsTabs
             finalFiles={finalFiles}
             workingFiles={workingFiles}
             workingDir={monitor?.workingDir}
+            sessionFilesDir={sessionFilesDir}
           />
         </Section>
         </div>
@@ -115,44 +118,63 @@ function Section({
   );
 }
 
-// 产物双 tab：左「最终文件」（已产出 artifacts）/ 右「工作区」（工作目录文件树）。
+// 产物 tab：左「生成文件」（已产出 artifacts）/ 中「工作目录」或「临时目录」。
+// 规则：有工作目录时显示「生成文件 + 工作目录」，无工作目录时显示「生成文件 + 临时目录」。
 // tab 切换样式与动画复刻左侧侧边栏：选中态用 layoutId 滑块平滑移动，内容按方向横滑。
-const ARTIFACT_TABS: Array<"final" | "workspace"> = ["final", "workspace"];
 
 function ArtifactsTabs({
   finalFiles,
   workingFiles,
   workingDir,
+  sessionFilesDir,
 }: {
   finalFiles: ArtifactItem[];
   workingFiles: ArtifactItem[];
   workingDir?: string;
+  sessionFilesDir?: string;
 }) {
-  const [tab, setTab] = useState<"final" | "workspace">("final");
+  // 判断是否选择了工作目录（非临时目录）
+  const hasWorkingDir = workingDir && workingDir !== sessionFilesDir;
+  // 动态 tab 列表：有工作目录时显示「final + workspace」，无则显示「final + session」
+  const availableTabs: Array<"final" | "workspace" | "session"> = hasWorkingDir
+    ? ["final", "workspace"]
+    : ["final", "session"];
+
+  const [tab, setTab] = useState<"final" | "workspace" | "session">("final");
   // 记录上一个 tab，推导内容横滑方向（切到右侧 +1，左侧 -1）
   const prevTabRef = useRef(tab);
   const direction =
-    ARTIFACT_TABS.indexOf(tab) >= ARTIFACT_TABS.indexOf(prevTabRef.current)
+    availableTabs.indexOf(tab) >= availableTabs.indexOf(prevTabRef.current)
       ? 1
       : -1;
   useEffect(() => {
     prevTabRef.current = tab;
   }, [tab]);
 
+  // 当 tab 列表变化时（工作目录切换），确保当前 tab 在可用列表中
+  useEffect(() => {
+    if (!availableTabs.includes(tab)) {
+      setTab("final");
+    }
+  }, [availableTabs, tab]);
+
   return (
     <div className="px-3">
       {/* 分段控件（与左侧侧边栏一致：layoutId 滑块） */}
-      <div className="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5">
-        {ARTIFACT_TABS.map((value) => {
+      <div className={cn(
+        "grid gap-0.5 rounded-md bg-muted p-0.5",
+        availableTabs.length === 2 ? "grid-cols-2" : "grid-cols-3"
+      )}>
+        {availableTabs.map((value) => {
           const active = tab === value;
-          const label = value === "final" ? "最终文件" : "工作区";
+          const label = value === "final" ? "生成文件" : value === "workspace" ? "工作目录" : "临时目录";
           return (
             <button
               key={value}
               type="button"
               onClick={() => setTab(value)}
               className={cn(
-                "relative flex h-6 items-center justify-center rounded-[5px] px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                "relative flex h-6 items-center justify-center rounded-[5px] px-2 text-xs font-medium whitespace-nowrap transition-colors",
                 active
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -210,10 +232,16 @@ function ArtifactsTabs({
               ) : (
                 <EmptyHint text="生成的文件会出现在这里" />
               )
-            ) : workingDir ? (
-              <WorkspaceTree rootDir={workingDir} />
+            ) : tab === "workspace" ? (
+              workingDir ? (
+                <WorkspaceTree rootDir={workingDir} />
+              ) : (
+                <EmptyHint text="未选择工作目录" />
+              )
+            ) : sessionFilesDir ? (
+              <WorkspaceTree rootDir={sessionFilesDir} />
             ) : (
-              <EmptyHint text="未选择工作目录" />
+              <EmptyHint text="会话文件目录不存在" />
             )}
           </motion.div>
         </AnimatePresence>

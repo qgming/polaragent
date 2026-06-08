@@ -32,6 +32,8 @@ import { cancelAskUserRequestsForThread } from "./ask-user";
 import {
   appendTeamAssistantMessage,
   appendTeamUserMessage,
+  getTeamSessionFilesDir,
+  ensureTeamSessionFilesDir,
 } from "@/lib/session/session-operations";
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
@@ -39,6 +41,7 @@ import {
   useTeamChatStore,
   type TeamMessage,
 } from "@/stores/team/team-chat-store";
+import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 const createId = () =>
@@ -291,10 +294,20 @@ async function promptTeamLeader(
 
   const store = useTeamChatStore.getState();
 
-  // 工作目录：会话级绑定优先，回退团队配置的 workspaceDir。
-  // 团队协作（成员 harness + 工具）都在该目录下进行。
-  const workingDir =
+  // 工作目录：会话级绑定优先，回退团队配置的 workspaceDir；
+  // 若仍无，则自动使用团队会话临时目录（自动创建并绑定）。
+  let workingDir =
     thread?.workingDir?.trim() || team.workspaceDir?.trim() || undefined;
+
+  if (!workingDir) {
+    // 无工作目录时：使用临时目录（团队会话文件目录）作为默认工作目录
+    const tempDir = await getTeamSessionFilesDir(threadId);
+    await ensureTeamSessionFilesDir(threadId); // 确保目录存在
+    workingDir = tempDir;
+    // 绑定到当前团队会话
+    store.setTeamThreadWorkingDir(threadId, tempDir);
+    useTeamMonitorStore.getState().setWorkingDir(threadId, tempDir);
+  }
 
   // 1) 写入用户消息（store + 权威会话）
   const userMessage: TeamMessage = {
@@ -386,8 +399,20 @@ async function promptTeamEqual(
 
   const store = useTeamChatStore.getState();
 
-  const workingDir =
+  // 工作目录：会话级绑定优先，回退团队配置的 workspaceDir；
+  // 若仍无，则自动使用团队会话临时目录（自动创建并绑定）。
+  let workingDir =
     thread?.workingDir?.trim() || team.workspaceDir?.trim() || undefined;
+
+  if (!workingDir) {
+    // 无工作目录时：使用临时目录（团队会话文件目录）作为默认工作目录
+    const tempDir = await getTeamSessionFilesDir(threadId);
+    await ensureTeamSessionFilesDir(threadId); // 确保目录存在
+    workingDir = tempDir;
+    // 绑定到当前团队会话
+    store.setTeamThreadWorkingDir(threadId, tempDir);
+    useTeamMonitorStore.getState().setWorkingDir(threadId, tempDir);
+  }
 
   // 1) 写入用户消息
   const userMessage: TeamMessage = {
@@ -475,8 +500,21 @@ async function promptTeamParallel(
   }
 
   const store = useTeamChatStore.getState();
-  const workingDir =
+
+  // 工作目录：会话级绑定优先，回退团队配置的 workspaceDir；
+  // 若仍无，则自动使用团队会话临时目录（自动创建并绑定）。
+  let workingDir =
     thread?.workingDir?.trim() || team.workspaceDir?.trim() || undefined;
+
+  if (!workingDir) {
+    // 无工作目录时：使用临时目录（团队会话文件目录）作为默认工作目录
+    const tempDir = await getTeamSessionFilesDir(threadId);
+    await ensureTeamSessionFilesDir(threadId); // 确保目录存在
+    workingDir = tempDir;
+    // 绑定到当前团队会话
+    store.setTeamThreadWorkingDir(threadId, tempDir);
+    useTeamMonitorStore.getState().setWorkingDir(threadId, tempDir);
+  }
 
   const userMessage: TeamMessage = {
     id: createId(),

@@ -71,8 +71,13 @@ function normalizeSegments(input: string): { prefix: string; parts: string[] } {
 // 把相对路径解析到工作目录下；绝对路径原样使用。
 // 设置了 workingDir 时，校验最终路径不逃逸出工作目录（防止 ".." 或绝对路径写到目录外）。
 export function resolvePath(ctx: ToolContext, path: string): string {
-  if (!ctx.workingDir) return path;
   const isAbsolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(path);
+  if (!ctx.workingDir) {
+    if (isAbsolute) return path;
+    throw new Error(
+      `当前会话未设置工作目录，无法访问相对路径「${path}」。请先选择工作目录，或使用会话临时目录后再试。`,
+    );
+  }
   const base = ctx.workingDir.replace(/[\\/]+$/, "");
   const resolved = isAbsolute ? path : `${base}/${path}`;
 

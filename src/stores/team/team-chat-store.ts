@@ -14,6 +14,8 @@ import {
   setTeamSessionTeamRef,
   setTeamSessionTitle,
   setTeamSessionWorkingDir,
+  ensureTeamSessionFilesDir,
+  deleteTeamSessionFilesDir,
 } from "@/lib/session/session-operations";
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
@@ -161,9 +163,10 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       threads: [thread, ...state.threads],
     }));
 
-    // 创建团队会话文件 + 写入归属团队 + 同步标题索引（含 teamId）
+    // 创建团队会话文件 + 创建文件目录 + 写入归属团队 + 同步标题索引（含 teamId）
     void (async () => {
       await openOrCreateTeamSession(id);
+      await ensureTeamSessionFilesDir(id);
       await setTeamSessionTeamRef(id, teamId);
       await upsertTitleIndex(id, "新会话", thread.updatedAt, "team", { teamId });
     })();
@@ -185,6 +188,8 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       threads: state.threads.filter((t) => t.id !== threadId),
     }));
     void deleteTeamSession(threadId);
+    // 删除团队会话专属的文件存储目录
+    void deleteTeamSessionFilesDir(threadId);
     // 同步从团队标题索引移除
     void removeTitleIndex(threadId, "team");
   },

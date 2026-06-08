@@ -55,6 +55,12 @@ function register(ipcMain) {
   ipcMain.handle("window:is-maximized", (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
   ipcMain.handle("preview:open", async (_event, { path: filePath }) => {
     if (!filePath) return;
+
+    if (/^https?:\/\//i.test(filePath)) {
+      await shell.openExternal(filePath);
+      return;
+    }
+
     const key = labelForPath(filePath);
     const existing = previewWindows.get(key);
     if (existing && !existing.isDestroyed()) {

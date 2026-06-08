@@ -15,6 +15,8 @@ import {
   listSessions,
   openOrCreateSession,
   setSessionTitle,
+  ensureSessionFilesDir,
+  deleteSessionFilesDir,
 } from "@/lib/session/session-operations";
 import { loadChatMessages } from "@/lib/session/message-parser";
 import {
@@ -101,6 +103,8 @@ export const useConversationStore = create<ConversationState>((set) => ({
       if (title && title !== "新对话") {
         await setSessionTitle(id, title);
       }
+      // 创建会话专属的文件存储目录
+      await ensureSessionFilesDir(id);
       const updatedAt = Date.now();
       // 同步标题索引，使侧边栏下次启动走快路径（只读 titles.json）
       await upsertTitleIndex(id, title || "新对话", updatedAt);
@@ -138,6 +142,8 @@ export const useConversationStore = create<ConversationState>((set) => ({
   deleteConversation: async (id: string) => {
     try {
       await deleteSession(id);
+      // 删除会话专属的文件存储目录
+      await deleteSessionFilesDir(id);
       // 同步从标题索引移除
       await removeTitleIndex(id);
       set((state) => ({

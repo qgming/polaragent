@@ -9,10 +9,12 @@ import {
   getTeamRepo,
   getTeamSessionsRoot,
   sessionPromises,
+  getSessionsRoot,
 } from "./session-repo";
 import { pickBestMeta, readLastCustomEntryString, type SessionMeta } from "./meta-selection";
 import { TEAM_REF_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
+import { createDirectory, deleteFile, fileExists } from "@/lib/electron/electron-api";
 
 /**
  * 打开已存在的会话；若不存在则按给定 id 新建。
@@ -285,6 +287,8 @@ export async function clearTeamSessions(teamId: string): Promise<string[]> {
   const sessions = await listTeamSessions().catch(() => []);
   const owned = sessions.filter((s) => s.teamId === teamId);
   await Promise.all(owned.map((s) => deleteTeamSession(s.id)));
+  // 删除各会话的文件存储目录
+  await Promise.all(owned.map((s) => deleteTeamSessionFilesDir(s.id)));
   // 同步从团队标题索引移除被删会话
   await Promise.all(owned.map((s) => removeTitleIndex(s.id, "team")));
   return owned.map((s) => s.id);
@@ -465,5 +469,93 @@ export async function appendTeamAssistantMessage(
     } as AgentMessage);
   } catch (error) {
     console.error(`写入团队成员发言失败 ${sessionId}:`, error);
+  }
+}
+
+// ============ 文件目录管理 ============
+
+/**
+ * 获取会话的文件存储目录路径。
+ * 规则：{sessionId}_files
+ */
+export async function getSessionFilesDir(sessionId: string): Promise<string> {
+  const root = await getSessionsRoot();
+  return `${root}/${sessionId}_files`;
+}
+
+/**
+ * 获取团队会话的文件存储目录路径。
+ * 规则：{sessionId}_files
+ */
+export async function getTeamSessionFilesDir(sessionId: string): Promise<string> {
+  const root = await getTeamSessionsRoot();
+  return `${root}/${sessionId}_files`;
+}
+
+/**
+ * 创建会话的文件存储目录（如果不存在）。
+ * 在创建新会话时自动调用。
+ */
+export async function ensureSessionFilesDir(sessionId: string): Promise<void> {
+  try {
+    const dir = await getSessionFilesDir(sessionId);
+    const exists = await fileExists(dir);
+    if (!exists) {
+      await createDirectory(dir);
+      console.log(`创建会话文件目录: ${dir}`);
+    }
+  } catch (error) {
+    console.error(`创建会话文件目录失败 ${sessionId}:`, error);
+  }
+}
+
+/**
+ * 创建团队会话的文件存储目录（如果不存在）。
+ * 在创建新团队会话时自动调用。
+ */
+export async function ensureTeamSessionFilesDir(sessionId: string): Promise<void> {
+  try {
+    const dir = await getTeamSessionFilesDir(sessionId);
+    const exists = await fileExists(dir);
+    if (!exists) {
+      await createDirectory(dir);
+      console.log(`创建团队文件目录: ${dir}`);
+    }
+  } catch (error) {
+    console.error(`创建团队文件目录失败 ${sessionId}:`, error);
+  }
+}
+
+/**
+ * 删除会话的文件存储目录（如果存在）。
+ * 在删除会话时自动调用。
+ */
+export async function deleteSessionFilesDir(sessionId: string): Promise<void> {
+  try {
+    const dir = await getSessionFilesDir(sessionId);
+    const exists = await fileExists(dir);
+    if (exists) {
+      await deleteFile(dir);
+      console.log(`删除会话文件目录: ${dir}`);
+    }
+  } catch (error) {
+    console.error(`删除会话文件目录失败 ${sessionId}:`, error);
+  }
+}
+
+/**
+ * 删除团队会话的文件存储目录（如果存在）。
+ * 在删除团队会话时自动调用。
+ */
+export async function deleteTeamSessionFilesDir(sessionId: string): Promise<void> {
+  try {
+    const dir = await getTeamSessionFilesDir(sessionId);
+    const exists = await fileExists(dir);
+    if (exists) {
+      await deleteFile(dir);
+      console.log(`删除团队文件目录: ${dir}`);
+    }
+  } catch (error) {
+    console.error(`删除团队文件目录失败 ${sessionId}:`, error);
   }
 }

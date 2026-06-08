@@ -6,8 +6,14 @@
 // 工厂函数：streaming 时 mermaid 暂按代码块显示，生成完成后才渲染成图。
 
 import type { Components } from "react-markdown";
+import type { MouseEvent } from "react";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { MermaidDiagram } from "@/components/markdown/MermaidDiagram";
+import { isElectronRuntime, openExternal } from "@/lib/electron/electron-api";
+
+function isHttpUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
 
 export function createMarkdownComponents(streaming: boolean): Components {
   return {
@@ -37,16 +43,25 @@ export function createMarkdownComponents(streaming: boolean): Components {
         </code>
       );
     },
-    a: ({ children, href }) => (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-accent-foreground underline-offset-2 hover:underline"
-      >
-        {children}
-      </a>
-    ),
+    a: ({ children, href }) => {
+      const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+        if (!href || !isElectronRuntime() || !isHttpUrl(href)) return;
+        e.preventDefault();
+        void openExternal(href);
+      };
+
+      return (
+        <a
+          href={href}
+          onClick={handleClick}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent-foreground underline-offset-2 hover:underline"
+        >
+          {children}
+        </a>
+      );
+    },
     // GFM 表格：外层加横向滚动，避免宽表撑破布局
     table: ({ children }) => (
       <div className="app-scrollbar my-3 overflow-x-auto">

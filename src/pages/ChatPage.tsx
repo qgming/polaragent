@@ -31,7 +31,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { checkProviderConfig } from "@/lib/app-init";
-import { setSessionWorkingDir } from "@/lib/session/session-operations";
+import { setSessionWorkingDir, getSessionFilesDir, ensureSessionFilesDir } from "@/lib/session/session-operations";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import {
   type Segment,
@@ -123,6 +123,17 @@ export function ChatPage({
     (state) => state.byThread[threadId]?.workingDir ?? "",
   );
 
+  // 会话文件目录路径（用于右侧面板显示）
+  const [sessionFilesDir, setSessionFilesDir] = useState<string>("");
+
+  // 获取会话文件目录路径
+  useEffect(() => {
+    void (async () => {
+      const dir = await getSessionFilesDir(threadId);
+      setSessionFilesDir(dir);
+    })();
+  }, [threadId]);
+
   const handlePickDir = async () => {
     const dir = await pickWorkingDirectory();
     if (dir) {
@@ -190,10 +201,22 @@ export function ChatPage({
     setSkillIds([]);
     setFilePaths([]);
 
-    const workingDir =
+    // 获取工作目录：优先使用当前会话的工作目录，回退到全局默认；
+    // 若仍无，则自动使用会话临时目录（自动创建并绑定）
+    let workingDir =
       useTaskMonitorStore.getState().getMonitor(threadId).workingDir ||
       useChatStore.getState().workingDir ||
       undefined;
+
+    if (!workingDir) {
+      // 无工作目录时：使用临时目录（会话文件目录）作为默认工作目录
+      const tempDir = await getSessionFilesDir(threadId);
+      await ensureSessionFilesDir(threadId); // 确保目录存在
+      workingDir = tempDir;
+      // 绑定到当前会话（store + 持久化）
+      useTaskMonitorStore.getState().setWorkingDir(threadId, tempDir);
+      void setSessionWorkingDir(threadId, tempDir);
+    }
 
     // 使用 pi AgentHarness 驱动多轮工具调用（历史由 pi Session 原生管理）。
     // 此处不 await 阻塞 UI——promptAgent 会在后台持续运行，
@@ -258,6 +281,7 @@ export function ChatPage({
             setValue={setComposer}
             value={composer}
             workingDir={workingDir}
+            sessionFilesDir={sessionFilesDir}
           />
         </section>
 
@@ -266,6 +290,7 @@ export function ChatPage({
             <TaskMonitorPanel
               key="task-monitor-panel"
               threadId={threadId}
+              sessionFilesDir={sessionFilesDir}
             />
           ) : null}
         </AnimatePresence>
@@ -298,6 +323,7 @@ function Composer({
   setValue,
   value,
   workingDir,
+  sessionFilesDir,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -312,12 +338,19 @@ function Composer({
   setValue: (value: string) => void;
   value: string;
   workingDir: string;
+  sessionFilesDir: string;
 }) {
   const canSend = value.trim().length > 0 && !isResponding;
   // 仅展示工作目录的末级名称，hover 时完整路径见 title
-  const dirLabel = workingDir
-    ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
-    : "选择工作目录";
+  const isTempDir =
+    workingDir &&
+    sessionFilesDir &&
+    normalizeDir(workingDir) === normalizeDir(sessionFilesDir);
+  const dirLabel = isTempDir
+    ? "临时目录"
+    : workingDir
+      ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
+      : "选择工作目录";
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-12">
@@ -330,7 +363,7 @@ function Composer({
           onFilesChange={onFilesChange}
           onEnter={onEnter}
           placeholder="描述任务，/ 快捷调用，@ 添加文件"
-          className="min-h-[74px] px-4 py-3"
+          className="app-scrollbar max-h-[220px] min-h-[74px] overflow-y-auto px-4 py-3"
         />
 
         <div className="flex items-center justify-between px-3 py-2">
@@ -375,4 +408,8 @@ function Composer({
       </div>
     </div>
   );
+}
+
+function normalizeDir(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
