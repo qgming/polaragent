@@ -60,6 +60,20 @@ export interface WebSearchConfig {
 }
 
 /**
+ * 图片生成配置
+ */
+export interface ImageGenerationConfig {
+  // 当前选择的服务商
+  provider: "openai" | "openai-compatible";
+  // OpenAI / OpenAI 兼容图片生成接口配置
+  openai: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+  };
+}
+
+/**
  * 全局应用设置
  */
 export interface Settings {
@@ -89,6 +103,8 @@ export interface Settings {
   skillsApiKey?: string;
   // 网络搜索配置
   webSearch?: WebSearchConfig;
+  // 图片生成配置
+  imageGeneration?: ImageGenerationConfig;
 }
 
 /**

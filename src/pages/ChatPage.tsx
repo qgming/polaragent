@@ -32,8 +32,10 @@ import {
 } from "@/components/ui/tooltip";
 import { checkProviderConfig } from "@/lib/app-init";
 import { setSessionWorkingDir, getSessionFilesDir, ensureSessionFilesDir } from "@/lib/session/session-operations";
+import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import {
+  type ChatAttachment,
   type Segment,
   useChatStore,
   useIsThreadResponding,
@@ -70,7 +72,7 @@ export function ChatPage({
     metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
   ) => void;
   setComposer: (value: string) => void;
-  startExchange: (userText: string) => {
+  startExchange: (userText: string, attachments?: ChatAttachment[]) => {
     assistantId: string;
     threadId: string;
   };
@@ -85,7 +87,7 @@ export function ChatPage({
   // 富文本输入区句柄 + 本次发送临时选中的技能 id / 文件路径（输入框 "/" 与 "@"）
   const composerRef = useRef<SkillComposerHandle>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
-  const [filePaths, setFilePaths] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   // 是否「粘底」：用户在底部附近时自动跟随新内容；向上滚离底部后停止跟随
   const stickToBottomRef = useRef(true);
   // 自定义对话框
@@ -177,15 +179,27 @@ export function ChatPage({
 
   const handleSend = async () => {
     const input = composer.trim();
-    if (!input) {
+    if (!input && attachments.length === 0) {
       return;
     }
 
     if (isResponding) {
+      // 引导插队是纯文本语义：带附件时无法随引导发送，避免静默丢弃，给出明确提示。
+      if (attachments.length > 0) {
+        await showAlert({
+          title: "引导不支持附件",
+          message: "任务进行中只能发送文本引导。请等任务结束后，再带附件作为新消息发送。",
+          variant: "warning",
+        });
+        return;
+      }
+      if (!input) {
+        return;
+      }
+
       composerRef.current?.clear();
       setComposer("");
       setSkillIds([]);
-      setFilePaths([]);
 
       const accepted = await steerAgentThread(threadId, input);
       if (accepted) {
@@ -212,17 +226,13 @@ export function ChatPage({
       return;
     }
 
-    const { assistantId, threadId: exchangeThreadId } = startExchange(input);
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
-    const sendFilePaths = filePaths;
-    composerRef.current?.clear();
-    setComposer("");
-    setSkillIds([]);
-    setFilePaths([]);
+    const pendingAttachments = attachments;
 
     // 获取工作目录：优先使用当前会话的工作目录，回退到全局默认；
     // 若仍无，则自动使用会话临时目录（自动创建并绑定）
+    const exchangeThreadId = threadId;
     let workingDir =
       useTaskMonitorStore.getState().getMonitor(exchangeThreadId).workingDir ||
       useChatStore.getState().workingDir ||
@@ -237,6 +247,16 @@ export function ChatPage({
       useTaskMonitorStore.getState().setWorkingDir(exchangeThreadId, tempDir);
       void setSessionWorkingDir(exchangeThreadId, tempDir);
     }
+
+    const sendAttachments = await materializeAttachments(pendingAttachments, workingDir);
+    const sendFilePaths = sendAttachments
+      .filter((attachment) => attachment.kind === "text")
+      .map((attachment) => attachment.path);
+    const { assistantId } = startExchange(input, sendAttachments);
+    composerRef.current?.clear();
+    setComposer("");
+    setSkillIds([]);
+    setAttachments([]);
 
     // 使用 pi AgentHarness 驱动多轮工具调用（历史由 pi Session 原生管理）。
     // 此处不 await 阻塞 UI——promptAgent 会在后台持续运行，
@@ -262,6 +282,7 @@ export function ChatPage({
         messageId: assistantId,
         skillIds: sendSkillIds,
         filePaths: sendFilePaths,
+        attachments: sendAttachments,
       },
     );
   };
@@ -297,11 +318,12 @@ export function ChatPage({
             onPickFile={(file) => composerRef.current?.insertFile(file)}
             onSend={() => void handleSend()}
             onSkillsChange={setSkillIds}
-            onFilesChange={setFilePaths}
+            onFilesChange={setAttachments}
             setValue={setComposer}
             value={composer}
             workingDir={workingDir}
             sessionFilesDir={sessionFilesDir}
+            attachmentCount={attachments.length}
           />
         </section>
 
@@ -344,6 +366,7 @@ function Composer({
   value,
   workingDir,
   sessionFilesDir,
+  attachmentCount,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -351,16 +374,17 @@ function Composer({
   onEnter: () => void;
   onPickDir: () => void;
   onPickSkill: (skill: { id: string; name: string }) => void;
-  onPickFile: (file: { path: string; name: string }) => void;
+  onPickFile: (file: ChatAttachment) => void;
   onSend: () => void;
   onSkillsChange: (skillIds: string[]) => void;
-  onFilesChange: (filePaths: string[]) => void;
+  onFilesChange: (files: ChatAttachment[]) => void;
   setValue: (value: string) => void;
   value: string;
   workingDir: string;
   sessionFilesDir: string;
+  attachmentCount: number;
 }) {
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
   // 仅展示工作目录的末级名称，hover 时完整路径见 title
   const isTempDir =

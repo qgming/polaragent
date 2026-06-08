@@ -1,8 +1,7 @@
 // 对话标题自动生成
 // src/ai/title-generator.ts
 
-import { agentManager } from "./agent-manager";
-import { initializeAiRuntime } from "@/lib/app-init";
+import { firstModelService, resolveModelService } from "./model-router";
 import { chatCompletion, isElectronRuntime } from "@/lib/electron/electron-api";
 
 /** 标题建议字数上限（放宽，不做硬截断，仅在明显超长时按完整词收口） */
@@ -12,18 +11,6 @@ const MAX_TITLE_LENGTH = 20;
 export interface TitleHistoryMessage {
   role: "assistant" | "user";
   content: string;
-}
-
-/**
- * 取运行时 Agent 配置（带兜底：内存丢失时重建运行时）
- */
-function getRuntimeAgentConfig(agentId: string) {
-  let config = agentManager.getAgentConfig(agentId);
-  if (!config) {
-    initializeAiRuntime();
-    config = agentManager.getAgentConfig(agentId);
-  }
-  return config ?? agentManager.getFirstAgentConfig();
 }
 
 /**
@@ -75,8 +62,8 @@ export async function generateConversationTitle(
     return null;
   }
 
-  const runtimeConfig = getRuntimeAgentConfig(agentId);
-  if (!runtimeConfig) {
+  const service = resolveModelService(agentId) ?? firstModelService();
+  if (!service) {
     return null;
   }
 
@@ -99,9 +86,9 @@ export async function generateConversationTitle(
   try {
     // 非流式一次性请求 + JSON 输出，拿到完整文本后直接 parse 判断可用
     const result = await chatCompletion({
-      baseUrl: runtimeConfig.baseURL,
-      apiKey: runtimeConfig.apiKey,
-      model: runtimeConfig.model,
+      baseUrl: service.provider.baseURL,
+      apiKey: service.provider.apiKey,
+      model: service.model.id,
       systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
       temperature: 0.3,

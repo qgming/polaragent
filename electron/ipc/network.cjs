@@ -1,7 +1,124 @@
 // IPC：网络相关（跨域代理、技能广场搜索、内置助手广场、网络搜索）
+const { net } = require("electron");
+const fsp = require("node:fs/promises");
+const path = require("node:path");
 const { projectResourcePath } = require("../lib/app-paths.cjs");
 const { readText } = require("../lib/fs-utils.cjs");
-const { normalizeWebUrl } = require("../lib/http-utils.cjs");
+const { errorMessage, normalizeBaseUrl, normalizeWebUrl } = require("../lib/http-utils.cjs");
+
+const IMAGE_REQUEST_TIMEOUT_MS = 600000;
+const CORS_MAX_TIMEOUT_MS = 600000;
+const DEFAULT_TIMEOUT_MS = 120000;
+const MIN_TIMEOUT_MS = 3000;
+// 响应体大小上限（字节）：防止下载超大响应撑爆主进程内存
+const MAX_RESPONSE_BYTES = 100 * 1024 * 1024;
+
+// 把外部传入的超时值钳制到 [MIN, max] 区间，并对 NaN/非法值兜底为默认值。
+function clampTimeout(value, max = CORS_MAX_TIMEOUT_MS) {
+  const num = Number(value);
+  const base = Number.isFinite(num) && num > 0 ? num : DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.max(base, MIN_TIMEOUT_MS), max);
+}
+
+// 错误信息中的 URL 脱敏：去掉 query，避免潜在密钥写入日志/错误链路
+function redactUrl(url) {
+  try {
+    const parsed = new URL(String(url));
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return String(url).split("?")[0];
+  }
+}
+
+function electronRequest(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    const request = net.request({
+      url: String(url),
+      method: options.method || "GET",
+      redirect: "follow",
+    });
+    const headers = options.headers || {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== undefined && value !== null) request.setHeader(key, String(value));
+    }
+
+    let settled = false;
+    const timeoutMs = clampTimeout(options.timeoutMs, options.maxTimeoutMs || CORS_MAX_TIMEOUT_MS);
+    const maxBytes = Number(options.maxResponseBytes) > 0
+      ? Number(options.maxResponseBytes)
+      : MAX_RESPONSE_BYTES;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      request.abort();
+      reject(new Error(`请求超时（${timeoutMs}ms）：${redactUrl(url)}`));
+    }, timeoutMs);
+
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+
+    request.on("response", (response) => {
+      const chunks = [];
+      let received = 0;
+      response.on("data", (chunk) => {
+        if (settled) return;
+        const buf = Buffer.from(chunk);
+        received += buf.length;
+        if (received > maxBytes) {
+          finish(() =>
+            reject(new Error(`响应体超过大小上限（${maxBytes} 字节）：${redactUrl(url)}`)),
+          );
+          request.abort();
+          return;
+        }
+        chunks.push(buf);
+      });
+      response.on("end", () => {
+        finish(() =>
+          resolve({
+            status: response.statusCode || 0,
+            statusText: response.statusMessage || "",
+            headers: response.headers || {},
+            body: Buffer.concat(chunks),
+          }),
+        );
+      });
+      response.on("error", (error) => finish(() => reject(error)));
+    });
+    request.on("error", (error) => finish(() => reject(error)));
+
+    if (options.body !== undefined && options.body !== null) request.write(options.body);
+    request.end();
+  });
+}
+
+function headerValue(headers, name) {
+  const value = headers?.[name] ?? headers?.[name.toLowerCase()];
+  return Array.isArray(value) ? value.join(", ") : String(value || "");
+}
+
+function responseHeadersArray(headers) {
+  return Object.entries(headers || {})
+    .filter(([key]) => !["content-length", "transfer-encoding"].includes(key.toLowerCase()))
+    .map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : String(value)]);
+}
+
+function responseText(response) {
+  return response.body.toString("utf8");
+}
+
+function responseJson(response, label) {
+  const text = responseText(response);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${label} 返回了非 JSON 内容（HTTP ${response.status}）：${text.slice(0, 300)}`);
+  }
+}
 
 // 跨域代理请求（过滤危险/受控请求头）
 async function corsFetch(request) {
@@ -17,18 +134,154 @@ async function corsFetch(request) {
       headers[key] = value;
     }
   }
-  const response = await fetch(url, {
+  const response = await electronRequest(url, {
     method,
     headers,
     body: request.body,
-    signal: AbortSignal.timeout(Math.min(Math.max(Number(request.timeoutMs || 120000), 3000), 300000)),
+    timeoutMs: Math.min(Math.max(Number(request.timeoutMs || 120000), 3000), CORS_MAX_TIMEOUT_MS),
   });
   return {
     status: response.status,
     statusText: response.statusText,
-    headers: Array.from(response.headers.entries()).filter(([key]) => !["content-length", "transfer-encoding"].includes(key)),
-    body: await response.text(),
+    headers: responseHeadersArray(response.headers),
+    body: response.body.toString("utf8"),
   };
+}
+
+function imageMimeType(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".bmp") return "image/bmp";
+  return "image/png";
+}
+
+function appendOptionalPart(parts, key, value) {
+  if (value === undefined || value === null || value === "") return;
+  parts.push({ name: key, value: String(value) });
+}
+
+function parseImageResponse(response) {
+  const body = response.body.toString("utf8");
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    throw new Error(`图片接口返回了非 JSON 内容（HTTP ${response.status}）：${body.slice(0, 300)}`);
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`图片接口请求失败（${response.status}）：${errorMessage(payload)}`);
+  }
+  return payload;
+}
+
+function imageExtensionFromContentType(contentType) {
+  const value = String(contentType || "").toLowerCase();
+  if (value.includes("image/jpeg")) return "jpg";
+  if (value.includes("image/webp")) return "webp";
+  if (value.includes("image/gif")) return "gif";
+  return "png";
+}
+
+async function downloadUrlAsBase64(request) {
+  const url = normalizeWebUrl(request.url);
+  const response = await electronRequest(url, {
+    method: "GET",
+    timeoutMs: Number(request.timeoutMs || IMAGE_REQUEST_TIMEOUT_MS),
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const body = response.body.toString("utf8");
+    throw new Error(`下载文件失败（${response.status}）：${body.slice(0, 300) || response.statusText}`);
+  }
+  const contentType = headerValue(response.headers, "content-type");
+  return {
+    base64: response.body.toString("base64"),
+    contentType,
+    extension: imageExtensionFromContentType(contentType),
+  };
+}
+
+function multipartEscape(value) {
+  return String(value).replace(/"/g, "%22").replace(/\r?\n/g, " ");
+}
+
+function buildMultipartBody(parts) {
+  const boundary = `----PolarAgentForm${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const chunks = [];
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    if (part.buffer) {
+      chunks.push(Buffer.from(
+        `Content-Disposition: form-data; name="${multipartEscape(part.name)}"; filename="${multipartEscape(part.filename)}"\r\n` +
+        `Content-Type: ${part.contentType || "application/octet-stream"}\r\n\r\n`,
+      ));
+      chunks.push(part.buffer);
+      chunks.push(Buffer.from("\r\n"));
+    } else {
+      chunks.push(Buffer.from(
+        `Content-Disposition: form-data; name="${multipartEscape(part.name)}"\r\n\r\n${String(part.value)}\r\n`,
+      ));
+    }
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    body: Buffer.concat(chunks),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+async function openaiImageEdit(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  const model = String(request.model || "").trim();
+  const prompt = String(request.prompt || "").trim();
+  const imagePath = String(request.imagePath || "").trim();
+  if (!apiKey) throw new Error("图片生成 API Key 未配置。");
+  if (!model) throw new Error("图片编辑模型未配置。");
+  if (!prompt) throw new Error("图片编辑提示词不能为空。");
+  if (!imagePath) throw new Error("图片编辑源文件不能为空。");
+
+  async function buildMultipart() {
+    const parts = [
+      { name: "model", value: model },
+      { name: "prompt", value: prompt },
+    ];
+    appendOptionalPart(parts, "n", request.n);
+    appendOptionalPart(parts, "size", request.size);
+    appendOptionalPart(parts, "quality", request.quality);
+    appendOptionalPart(parts, "response_format", request.responseFormat);
+    const imageBuffer = await fsp.readFile(imagePath);
+    parts.push({
+      name: "image",
+      filename: path.basename(imagePath),
+      contentType: imageMimeType(imagePath),
+      buffer: imageBuffer,
+    });
+
+    if (request.maskPath) {
+      const maskPath = String(request.maskPath).trim();
+      const maskBuffer = await fsp.readFile(maskPath);
+      parts.push({
+        name: "mask",
+        filename: path.basename(maskPath),
+        contentType: imageMimeType(maskPath),
+        buffer: maskBuffer,
+      });
+    }
+    return buildMultipartBody(parts);
+  }
+
+  const multipart = await buildMultipart();
+  const response = await electronRequest(`${normalizeBaseUrl(request.baseURL)}/images/edits`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": multipart.contentType,
+    },
+    body: multipart.body,
+    timeoutMs: IMAGE_REQUEST_TIMEOUT_MS,
+  });
+  return parseImageResponse(response);
 }
 
 // 技能广场搜索（skillsmp.com）
@@ -47,9 +300,9 @@ async function skillsMarketSearch(request) {
   if (request.occupation) url.searchParams.set("occupation", request.occupation);
   const headers = {};
   if (String(request.apiKey || "").trim()) headers.Authorization = `Bearer ${request.apiKey.trim()}`;
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`技能广场请求失败（${response.status}）：${body}`);
+  const response = await electronRequest(url, { headers, timeoutMs: 30000 });
+  const body = responseText(response);
+  if (response.status < 200 || response.status >= 300) throw new Error(`技能广场请求失败（${response.status}）：${body}`);
   return body;
 }
 
@@ -114,15 +367,15 @@ async function tavilySearch(request) {
   if (request.includeRawContent) body.include_raw_content = true;
   if (request.includeImages) body.include_images = true;
 
-  const response = await fetch(url, {
+  const response = await electronRequest(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(`Tavily 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+  const data = responseJson(response, "Tavily 搜索");
+  if (response.status < 200 || response.status >= 300) throw new Error(`Tavily 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
   const results = (data.results || []).map((item) => ({
     title: item.title || "",
@@ -167,18 +420,18 @@ async function exaSearch(request) {
     };
   }
 
-  const response = await fetch(url, {
+  const response = await electronRequest(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(`Exa 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+  const data = responseJson(response, "Exa 搜索");
+  if (response.status < 200 || response.status >= 300) throw new Error(`Exa 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
   const results = (data.results || []).map((item) => ({
     title: item.title || "",
@@ -208,18 +461,18 @@ async function serperSearch(request) {
   if (request.gl) body.gl = request.gl;
   if (request.hl) body.hl = request.hl;
 
-  const response = await fetch(url, {
+  const response = await electronRequest(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-API-KEY": apiKey,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(`Serper 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+  const data = responseJson(response, "Serper 搜索");
+  if (response.status < 200 || response.status >= 300) throw new Error(`Serper 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
   const results = (data.organic || []).map((item) => ({
     title: item.title || "",
@@ -292,14 +545,14 @@ async function searxngSearch(request) {
       url.searchParams.set("format", "json");
       url.searchParams.set("pageno", "1");
 
-      const response = await fetch(url, {
+      const response = await electronRequest(url, {
         method: "GET",
-        signal: AbortSignal.timeout(15000),
+        timeoutMs: 15000,
       });
 
-      if (!response.ok) continue;
+      if (response.status < 200 || response.status >= 300) continue;
 
-      const data = await response.json();
+      const data = responseJson(response, "SearXNG 搜索");
       const results = (data.results || [])
         .slice(0, limit)
         .map((item) => ({
@@ -330,17 +583,17 @@ async function braveSearch(request) {
   if (request.country) url.searchParams.set("country", request.country);
   if (request.searchLang) url.searchParams.set("search_lang", request.searchLang);
 
-  const response = await fetch(url, {
+  const response = await electronRequest(url, {
     method: "GET",
     headers: {
       "Accept": "application/json",
       "X-Subscription-Token": apiKey,
     },
-    signal: AbortSignal.timeout(30000),
+    timeoutMs: 30000,
   });
 
-  const data = await response.json();
-  if (!response.ok) throw new Error(`Brave 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
+  const data = responseJson(response, "Brave 搜索");
+  if (response.status < 200 || response.status >= 300) throw new Error(`Brave 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
   const results = (data.web?.results || []).map((item) => ({
     title: item.title || "",
@@ -357,6 +610,8 @@ function register(ipcMain) {
   ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
   ipcMain.handle("network:fetch-agent-category", (_event, { fileName }) => fetchAgentCategory(fileName));
   ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));
+  ipcMain.handle("network:download-url-as-base64", (_event, { request }) => downloadUrlAsBase64(request));
+  ipcMain.handle("network:openai-image-edit", (_event, { request }) => openaiImageEdit(request));
 }
 
 module.exports = { register };

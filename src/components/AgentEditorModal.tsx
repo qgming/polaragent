@@ -49,18 +49,23 @@ export function AgentEditorModal({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const allSkillsEnabled = hasAllSkills(enabledSkills);
 
-  // 已配置的供应商及其模型（供下拉选择）
+  // 已配置的模型服务及其模型（供下拉选择）
   const providers = useConfigStore((state) => state.providers);
   const providerOptions = useMemo(
-    () =>
-      providers.providers.map((item) => ({
+    () => [
+      { value: "", label: "跟随模型设置" },
+      ...providers.providers.map((item) => ({
         value: item.id,
         label: item.name,
       })),
+    ],
     [providers.providers],
   );
-  // 当前所选供应商下的模型选项
+  // 当前所选模型服务下的模型选项
   const modelOptions = useMemo(() => {
+    if (!provider) {
+      return [{ value: "", label: "跟随默认路由模型" }];
+    }
     const current = providers.providers.find((item) => item.id === provider);
     return (current?.models ?? []).map((item) => ({
       value: item.id,
@@ -137,16 +142,16 @@ export function AgentEditorModal({
               />
             </Field>
 
-            {/* 供应商与模型 */}
+            {/* 模型服务与模型 */}
             <div className="grid gap-6 sm:grid-cols-2">
-              <Field icon={Zap} label="供应商">
+              <Field icon={Zap} label="模型服务">
                 <SettingDropdown
                   value={provider}
-                  placeholder="选择供应商"
+                  placeholder="选择模型服务"
                   options={providerOptions}
                   onChange={(value) => {
                     setProvider(value);
-                    // 切换供应商后清空模型，避免残留不属于该供应商的模型 id
+                    // 切换模型服务后清空模型，避免残留不属于该服务的模型 id
                     setModel("");
                   }}
                   className="h-11 w-full justify-between"
@@ -166,7 +171,7 @@ export function AgentEditorModal({
                     value={model}
                     onChange={(event) => setModel(event.target.value)}
                     className="h-11 w-full rounded-lg border border-input bg-background px-4 text-sm outline-none transition-colors focus:border-ring"
-                    placeholder="该供应商暂无模型，可手动输入"
+                    placeholder="该服务暂无模型，可手动输入"
                   />
                 )}
               </Field>

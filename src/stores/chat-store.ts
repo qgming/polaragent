@@ -26,6 +26,12 @@ export type ChatRole = "assistant" | "user";
 
 export type ChatMessageStatus = "complete" | "streaming" | "error";
 
+export interface ChatAttachment {
+  path: string;
+  name: string;
+  kind: "text" | "image";
+}
+
 // 助手消息的「有序段」——复用 pi 的 AssistantMessage.content block 顺序。
 // text：正文（渲染成 markdown）；thinking：深度思考；tool：工具调用。
 export type Segment =
@@ -52,6 +58,7 @@ export interface ChatMessage {
   status: ChatMessageStatus;
   model?: string;
   tokenCount?: number;
+  attachments?: ChatAttachment[];
   // 助手消息的过程结构（思考/工具/正文有序）。用户消息无此字段。
   segments?: Segment[];
 }
@@ -114,7 +121,7 @@ interface ChatState {
   showHome: () => void;
   renameThread: (threadId: string, title: string) => void;
   setComposer: (value: string) => void;
-  startExchange: (userText: string) => ExchangeStart;
+  startExchange: (userText: string, attachments?: ChatAttachment[]) => ExchangeStart;
   // 标记某会话为运行中（开始响应时调用）
   markRunning: (threadId: string) => void;
   // 结束某会话的运行态（完成/出错/手动停止时调用）
@@ -433,7 +440,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ composer: value });
   },
 
-  startExchange: (userText) => {
+  startExchange: (userText, attachments = []) => {
     const threadId = get().activeThreadId;
     const assistantId = createId();
     const userMessage: ChatMessage = {
@@ -442,6 +449,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content: userText,
       createdAt: Date.now(),
       status: "complete",
+      attachments,
     };
     const assistantMessage: ChatMessage = {
       id: assistantId,

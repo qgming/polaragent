@@ -7,9 +7,17 @@ const { ensureDir, readText } = require("../lib/fs-utils.cjs");
 
 function register(ipcMain) {
   ipcMain.handle("fs:read-file", (_event, { path: target }) => readText(target));
+  ipcMain.handle("fs:read-base64-file", async (_event, { path: target }) => {
+    const buffer = await fsp.readFile(target);
+    return buffer.toString("base64");
+  });
   ipcMain.handle("fs:write-file", async (_event, { path: target, content }) => {
     await ensureDir(path.dirname(target));
     await fsp.writeFile(target, content, "utf8");
+  });
+  ipcMain.handle("fs:write-base64-file", async (_event, { path: target, content }) => {
+    await ensureDir(path.dirname(target));
+    await fsp.writeFile(target, Buffer.from(String(content || ""), "base64"));
   });
   ipcMain.handle("fs:append-file", async (_event, { path: target, content }) => {
     await ensureDir(path.dirname(target));

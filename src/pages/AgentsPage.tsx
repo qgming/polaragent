@@ -592,7 +592,7 @@ function AgentRow({
         <div className="flex items-center gap-2">
           <h3 className="truncate text-base font-semibold">{agent.name}</h3>
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {agent.config.model || "未配置模型"}
+            {agent.config.model || "跟随模型设置"}
           </span>
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">

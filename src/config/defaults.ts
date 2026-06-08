@@ -56,6 +56,14 @@ export const defaultSettings: Settings = {
     searxng: { instances: "" },
     brave: { apiKey: "" },
   },
+  imageGeneration: {
+    provider: "openai",
+    openai: {
+      apiKey: "",
+      baseURL: "https://api.openai.com/v1",
+      model: "gpt-image-1",
+    },
+  },
 };
 
 /**

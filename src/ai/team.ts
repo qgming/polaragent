@@ -42,6 +42,7 @@ import {
   type TeamMessage,
 } from "@/stores/team/team-chat-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
+import type { ChatAttachment } from "@/stores/chat-store";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 const createId = () =>
@@ -151,6 +152,7 @@ async function runMemberTurn(
   userTask: string,
   isFirstTurn: boolean,
   workingDir: string | undefined,
+  attachments?: ChatAttachment[],
   privateMessage?: string,
 ): Promise<{ content: string; control: TeamControlSignal | null }> {
   const store = useTeamChatStore.getState();
@@ -228,6 +230,8 @@ async function runMemberTurn(
         threadId,
         workingDir,
         messageId: assistantId,
+        filePaths: textAttachmentPaths(attachments),
+        attachments,
         teamContext,
       },
     );
@@ -265,12 +269,35 @@ function pickMentionedSpeaker(
     : undefined;
 }
 
+function serializeUserInputWithAttachments(
+  userInput: string,
+  attachments: ChatAttachment[] = [],
+): string {
+  const attachmentBlocks = attachments.map((attachment) => {
+    const tag = attachment.kind === "image" ? "image" : "file";
+    const label = attachment.kind === "image"
+      ? "图片附件已随本消息以多模态内容发送。"
+      : "文本附件已随首轮成员发言读取并发送。";
+    return `<${tag} path="${attachment.path}" name="${attachment.name}">${label}</${tag}>`;
+  });
+  return attachmentBlocks.length > 0
+    ? `${attachmentBlocks.join("\n\n")}\n\n${userInput}`
+    : userInput;
+}
+
+function textAttachmentPaths(attachments?: ChatAttachment[]): string[] {
+  return (attachments ?? [])
+    .filter((attachment) => attachment.kind === "text")
+    .map((attachment) => attachment.path);
+}
+
 /**
  * 团队领导模式主流程。userInput 为用户本轮输入（含可能的 @成员）。
  */
 async function promptTeamLeader(
   threadId: string,
   userInput: string,
+  attachments: ChatAttachment[] = [],
 ): Promise<void> {
   const thread = useTeamChatStore
     .getState()
@@ -316,9 +343,10 @@ async function promptTeamLeader(
     content: userInput,
     createdAt: Date.now(),
     status: "complete",
+    attachments,
   };
   store.appendMessage(threadId, userMessage);
-  await appendTeamUserMessage(threadId, userInput);
+  await appendTeamUserMessage(threadId, serializeUserInputWithAttachments(userInput, attachments));
 
   // 2) 首个发言者：用户 @ 指定 > 领导
   const leader = members.find((m) => m.id === team.leaderId) ?? members[0];
@@ -339,6 +367,7 @@ async function promptTeamLeader(
       userInput,
       round === 0,
       workingDir,
+      round === 0 ? attachments : undefined,
       privateMessage,
     );
     const currentId: string = speaker.id;
@@ -376,6 +405,7 @@ function selectRandomSpeaker(
 async function promptTeamEqual(
   threadId: string,
   userInput: string,
+  attachments: ChatAttachment[] = [],
 ): Promise<void> {
   const thread = useTeamChatStore
     .getState()
@@ -421,9 +451,10 @@ async function promptTeamEqual(
     content: userInput,
     createdAt: Date.now(),
     status: "complete",
+    attachments,
   };
   store.appendMessage(threadId, userMessage);
-  await appendTeamUserMessage(threadId, userInput);
+  await appendTeamUserMessage(threadId, serializeUserInputWithAttachments(userInput, attachments));
 
   // 2) 首个发言者：用户 @ 指定 > 随机选择
   let speaker: AgentConfig | undefined =
@@ -445,6 +476,7 @@ async function promptTeamEqual(
       userInput,
       round === 0,
       workingDir,
+      round === 0 ? attachments : undefined,
       privateMessage,
     );
     const currentId: string = speaker.id;
@@ -478,6 +510,7 @@ async function promptTeamEqual(
 async function promptTeamParallel(
   threadId: string,
   userInput: string,
+  attachments: ChatAttachment[] = [],
 ): Promise<void> {
   const thread = useTeamChatStore
     .getState()
@@ -522,9 +555,10 @@ async function promptTeamParallel(
     content: userInput,
     createdAt: Date.now(),
     status: "complete",
+    attachments,
   };
   store.appendMessage(threadId, userMessage);
-  await appendTeamUserMessage(threadId, userInput);
+  await appendTeamUserMessage(threadId, serializeUserInputWithAttachments(userInput, attachments));
 
   const mentionedIds = parseMentions(userInput, members);
   const speakers =
@@ -544,6 +578,7 @@ async function promptTeamParallel(
         userInput,
         true,
         workingDir,
+        attachments,
       ),
     ),
   );
@@ -560,6 +595,7 @@ async function promptTeamParallel(
     userInput,
     false,
     workingDir,
+    undefined,
     "请阅读公开团队讨论，综合所有并行成员的观点。输出最终汇总、关键分歧、推荐方案和下一步；不要再次展开发散。",
   );
 }
@@ -570,6 +606,7 @@ async function promptTeamParallel(
 export async function promptTeam(
   threadId: string,
   userInput: string,
+  attachments: ChatAttachment[] = [],
 ): Promise<void> {
   const store = useTeamChatStore.getState();
   if (store.runningThreadIds.includes(threadId)) {
@@ -593,11 +630,11 @@ export async function promptTeam(
   try {
     // 根据模式路由
     if (team.mode === "parallel") {
-      await promptTeamParallel(threadId, userInput);
+      await promptTeamParallel(threadId, userInput, attachments);
     } else if (team.mode === "equal") {
-      await promptTeamEqual(threadId, userInput);
+      await promptTeamEqual(threadId, userInput, attachments);
     } else {
-      await promptTeamLeader(threadId, userInput);
+      await promptTeamLeader(threadId, userInput, attachments);
     }
   } finally {
     useTeamChatStore.getState().stopResponding(threadId);

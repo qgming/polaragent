@@ -11,7 +11,12 @@ import { AgentHarness } from "@earendil-works/pi-agent-core";
 import { formatSkillsForSystemPrompt } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentConfig, TeamConfig } from "@/types/config";
-import { providerManager } from "./providers";
+import {
+  firstModelService,
+  requireModelService,
+  resolveModelService,
+  resolveRuntimeModelId,
+} from "./model-router";
 import { buildAgentTools, type ToolContext } from "./tools";
 import {
   openOrCreateSession,
@@ -20,6 +25,8 @@ import {
 import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
 import { useToolsStore } from "@/stores/tools-store";
+import { useChatStore } from "@/stores/chat-store";
+import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { skillLoader } from "@/lib/skill/skill-loader";
 import { resolveSkillSelection } from "@/lib/skill/skill-selection";
 
@@ -61,6 +68,7 @@ export interface RuntimeAgentConfig {
 
 interface CachedHarness {
   promise: Promise<AgentHarness>;
+  configSignature: string;
   toolsRuntimeSignature: string;
   workingDirSignature: string;
 }
@@ -76,6 +84,42 @@ function harnessBelongsToThread(key: string, threadId: string): boolean {
 
 function normalizeWorkingDir(dir?: string): string {
   return (dir ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+// 判断某线程当前是否正在运行（普通会话或团队会话）。
+// 用于配置变更时决定是否 abort 旧 harness：运行中则不 abort，避免打断在途响应。
+function isThreadRunning(threadId: string, sessionId?: string): boolean {
+  const chatRunning = useChatStore.getState().runningThreadIds;
+  const teamRunning = useTeamChatStore.getState().runningThreadIds;
+  return (
+    chatRunning.includes(threadId) ||
+    teamRunning.includes(threadId) ||
+    (sessionId ? teamRunning.includes(sessionId) : false)
+  );
+}
+
+function runtimeConfigSignature(agentId: string, teamContext?: TeamContext): string {
+  const state = useConfigStore.getState();
+  const agent = state.agents.find((item) => item.id === agentId);
+  const lockedProviderId = agent?.config.provider?.trim() || "";
+  const lockedModelId = agent?.config.model?.trim() || "";
+  const service = resolveModelService(agentId);
+
+  return JSON.stringify({
+    agentId,
+    lockedProviderId,
+    lockedModelId,
+    providerId: service?.provider.id ?? "",
+    providerType: service?.provider.type ?? "",
+    baseURL: service?.provider.baseURL ?? "",
+    apiKey: service?.provider.apiKey ?? "",
+    modelId: service?.model.id ?? "",
+    systemPrompt: agent?.config.systemPrompt ?? "",
+    enabledSkills: agent?.config.enabledSkills ?? [],
+    teamSystemPrompt: teamContext?.teamSystemPrompt ?? "",
+    teamExtraSkills: teamContext?.extraSkillIds ?? [],
+    teamVoteCasting: Boolean(teamContext?.voteCasting),
+  });
 }
 
 /**
@@ -95,37 +139,27 @@ export class AgentManager {
     this.configs.clear();
   }
 
+  getRuntimeModelId(agentId: string): string {
+    return resolveRuntimeModelId(agentId);
+  }
+
   /**
    * 登记某个 Agent 的运行时配置（不创建 harness，仅记录 provider/model 等）。
    * 在应用初始化时为每个 Agent 调用一次。
    */
   registerAgentConfig(config: AgentConfig): void {
-    let provider = providerManager.getProvider(config.config.provider);
-    let usingDefaultProvider = false;
-    if (!provider) {
-      provider = providerManager.getDefaultProvider() ?? undefined;
-      usingDefaultProvider = true;
-    }
-    if (!provider) {
+    const service = resolveModelService(config.id);
+    if (!service) {
       // 无可用 provider 时不登记；发送时会再行兜底报错
-      return;
-    }
-
-    // agent 未指定模型时：回退到全局默认模型（仅当落在默认 provider 上）
-    const wantedModel =
-      config.config.model?.trim() ||
-      (usingDefaultProvider ? providerManager.getDefaultModelId() : undefined);
-    const model = provider.getModel(wantedModel);
-    if (!model) {
       return;
     }
 
     this.configs.set(config.id, {
       id: config.id,
-      providerId: provider.id,
-      baseURL: provider.baseURL,
-      apiKey: provider.apiKey,
-      model: model.id,
+      providerId: service.provider.id,
+      baseURL: service.provider.baseURL,
+      apiKey: service.provider.apiKey,
+      model: service.model.id,
       systemPrompt: config.config.systemPrompt,
       enabledSkills: config.config.enabledSkills ?? [],
     });
@@ -141,25 +175,33 @@ export class AgentManager {
     options?: { workingDir?: string; teamContext?: TeamContext },
   ): Promise<AgentHarness> {
     const key = harnessKey(options?.teamContext?.sessionId ?? threadId, agentId);
+    const configSignature = runtimeConfigSignature(agentId, options?.teamContext);
     const toolsRuntimeSignature = useToolsStore.getState().runtimeSignature;
     const workingDirSignature = normalizeWorkingDir(options?.workingDir);
     const cached = this.harnesses.get(key);
     if (cached) {
       if (
+        cached.configSignature === configSignature &&
         cached.toolsRuntimeSignature === toolsRuntimeSignature &&
         cached.workingDirSignature === workingDirSignature
       ) {
         return cached.promise;
       }
 
-      // 工具目录或工作目录已经变化。旧 harness 的工具列表/工具上下文是创建时固定的；
-      // 重新打开同一个 pi Session 可保留历史并装配最新工具上下文。
+      // 模型配置、工具目录或工作目录已经变化。旧 harness 的 model / 工具上下文是创建时固定的；
+      // 重新打开同一个 pi Session 可保留历史并装配最新运行时配置。
+      // 仅在该会话当前无在途 run 时才 abort 旧 harness：若正在响应中直接 abort 会让
+      // 在途请求抛错且无 UI 反馈，这里只移除缓存引用，让在途 run 自然结束后被 GC。
+      if (!isThreadRunning(threadId, options?.teamContext?.sessionId)) {
+        void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+      }
       this.harnesses.delete(key);
     }
 
     const promise = this.createHarness(threadId, agentId, options);
     this.harnesses.set(key, {
       promise,
+      configSignature,
       toolsRuntimeSignature,
       workingDirSignature,
     });
@@ -178,28 +220,9 @@ export class AgentManager {
       .getState()
       .agents.find((item) => item.id === agentId);
 
-    let provider = providerManager.getProvider(
-      agentConfig?.config.provider ?? "",
-    );
-    let usingDefaultProvider = false;
-    if (!provider) {
-      provider = providerManager.getDefaultProvider() ?? undefined;
-      usingDefaultProvider = true;
-    }
-    if (!provider) {
-      throw new Error(
-        "没有可用助手。请先在设置中保存 Base URL、API Key 和模型名称后再发送。",
-      );
-    }
-
-    // agent 未指定模型时：回退到全局默认模型（仅当落在默认 provider 上）
-    const wantedModel =
-      agentConfig?.config.model?.trim() ||
-      (usingDefaultProvider ? providerManager.getDefaultModelId() : undefined);
-    const model = provider.getModel(wantedModel);
-    if (!model) {
-      throw new Error("请先在设置中配置模型名称");
-    }
+    const service = requireModelService(agentId);
+    const provider = service.provider;
+    const model = service.model;
 
     const teamContext = options?.teamContext;
     const requesterName = teamContext
@@ -356,7 +379,19 @@ export class AgentManager {
   }
 
   getFirstAgentConfig(): RuntimeAgentConfig | undefined {
-    return this.configs.values().next().value;
+    const cached = this.configs.values().next().value;
+    if (cached) return cached;
+    const service = firstModelService();
+    if (!service) return undefined;
+    return {
+      id: "default",
+      providerId: service.provider.id,
+      baseURL: service.provider.baseURL,
+      apiKey: service.provider.apiKey,
+      model: service.model.id,
+      systemPrompt: "",
+      enabledSkills: [],
+    };
   }
 }
 

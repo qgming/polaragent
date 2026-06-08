@@ -1,7 +1,7 @@
-// 模型设置面板（多供应商 + 多模型 + 默认模型）
+// 模型设置面板（多模型服务 + 默认路由模型）
 // src/components/settings/ModelPanel.tsx
 //
-// 供应商卡片与「添加供应商」弹窗拆分至 model/ 子目录。
+// 模型服务卡片与「添加模型服务」弹窗拆分至 model/ 子目录。
 
 import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
@@ -35,7 +35,7 @@ export function ModelPanel({
     <section>
       <PageTitle
         title="模型设置"
-        description="管理供应商与模型，支持任意兼容 OpenAI Chat Completions / Responses / Anthropic Messages 的服务。"
+        description="统一管理模型服务与默认路由模型，聊天、团队和标题生成会通过这里切换服务商和模型。"
       />
 
       <DefaultModelCard
@@ -44,10 +44,10 @@ export function ModelPanel({
       />
 
       <div className="mt-8 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">供应商</h2>
+        <h2 className="text-sm font-semibold">模型服务</h2>
         <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
           <Plus className="size-4" />
-          添加供应商
+          添加服务
         </Button>
       </div>
 
@@ -64,7 +64,7 @@ export function ModelPanel({
         </div>
       ) : (
         <div className="mt-4 rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center text-sm text-muted-foreground">
-          还没有供应商，点击右上角「添加供应商」开始配置。
+          还没有模型服务，点击右上角「添加服务」开始配置。
         </div>
       )}
 
@@ -81,8 +81,8 @@ export function ModelPanel({
       {removingId ? (
         <ConfirmDialog
           isOpen
-          title="删除供应商"
-          description="删除后该供应商及其模型配置将被移除，使用它的助手需要重新选择模型。确定删除吗？"
+          title="删除模型服务"
+          description="删除后该模型服务及其模型配置将被移除，使用它的助手会回退到模型设置里的默认路由模型。确定删除吗？"
           confirmLabel="删除"
           variant="destructive"
           onConfirm={async () => {
@@ -96,7 +96,7 @@ export function ModelPanel({
   );
 }
 
-// 顶部「默认模型」卡片：聚合所有供应商的所有模型，选中即设为全局默认
+// 顶部「默认路由模型」卡片：聚合所有模型服务的所有模型，选中即设为全局默认
 function DefaultModelCard({
   providers,
   onSetDefaultModel,
@@ -127,15 +127,15 @@ function DefaultModelCard({
     <div className="mt-8 rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">默认模型</h3>
+          <h3 className="text-sm font-semibold">默认路由模型</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            未单独配置模型的助手将使用此模型。
+            未单独锁定模型的助手会自动使用这里选择的服务和模型，切换后后续调用立即生效。
           </p>
         </div>
         {options.length > 0 ? (
           <SettingDropdown
             value={currentValue}
-            placeholder="选择默认模型"
+            placeholder="选择默认路由模型"
             options={options}
             onChange={(value) => {
               const [providerId, modelId] = value.split("::");
@@ -144,7 +144,7 @@ function DefaultModelCard({
           />
         ) : (
           <span className="text-xs text-muted-foreground">
-            请先在下方添加供应商和模型
+            请先在下方添加模型服务和模型
           </span>
         )}
       </div>

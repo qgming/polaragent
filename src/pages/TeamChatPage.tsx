@@ -10,7 +10,7 @@ import {
   Square as SquareIcon,
   Users,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence } from "motion/react";
 
 import { abortTeamThread, promptTeam, steerTeamThread } from "@/ai/team";
@@ -22,8 +22,13 @@ import {
   type ToolSeg,
 } from "@/components/chat/AgentTrace";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { UserAttachments } from "@/components/chat/MessageRenderer";
 import { IconButton } from "@/components/IconButton";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import {
+  SkillComposerInput,
+  type SkillComposerHandle,
+} from "@/components/skill/SkillComposerInput";
 import { TeamMonitorPanel } from "@/components/team/TeamMonitorPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,8 +46,9 @@ import { checkProviderConfig } from "@/lib/app-init";
 import { cn } from "@/lib/utils";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { getTeamSessionFilesDir } from "@/lib/session/session-operations";
+import { materializeAttachments } from "@/lib/session/attachment-files";
 import { useConfigStore } from "@/stores/config-store";
-import { type Segment } from "@/stores/chat-store";
+import { type ChatAttachment, type Segment } from "@/stores/chat-store";
 import {
   useIsTeamThreadResponding,
   useTeamChatStore,
@@ -50,6 +56,7 @@ import {
   type TeamMessage,
 } from "@/stores/team/team-chat-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
+import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { useAlert } from "@/hooks/useAlert";
 
@@ -81,6 +88,8 @@ export function TeamChatPage({
   const isResponding = useIsTeamThreadResponding(threadId);
   const composer = useTeamChatStore((state) => state.composer);
   const setComposer = useTeamChatStore((state) => state.setComposer);
+  const composerRef = useRef<SkillComposerHandle>(null);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
 
   // 面板开合状态
   const panelOpen = useTeamPanelStore((state) =>
@@ -157,10 +166,22 @@ export function TeamChatPage({
     const running = useTeamChatStore
       .getState()
       .runningThreadIds.includes(threadId);
-    if (!input || !threadId) return;
+    if ((!input && attachments.length === 0) || !threadId) return;
 
     if (isResponding || running) {
+      // 引导插队是纯文本语义：带附件时无法随引导发送，避免静默丢弃，给出明确提示。
+      if (attachments.length > 0) {
+        await showAlert({
+          title: "引导不支持附件",
+          message: "团队任务进行中只能发送文本引导。请等任务结束后，再带附件作为新消息发送。",
+          variant: "warning",
+        });
+        return;
+      }
+      if (!input) return;
+      composerRef.current?.clear();
       setComposer("");
+      setAttachments([]);
       const accepted = await steerTeamThread(threadId, input);
       if (!accepted) {
         setComposer(input);
@@ -193,15 +214,24 @@ export function TeamChatPage({
       return;
     }
 
+    const sendAttachments = await materializeAttachments(
+      attachments,
+      workingDir ||
+        useTeamMonitorStore.getState().getMonitor(threadId).workingDir ||
+        useTeamChatStore.getState().threads.find((thread) => thread.id === threadId)?.workingDir ||
+        sessionFilesDir ||
+        await getTeamSessionFilesDir(threadId),
+    );
+    composerRef.current?.clear();
     setComposer("");
+    setAttachments([]);
     // 后台运行团队编排循环，不阻塞 UI
-    void promptTeam(threadId, input);
+    void promptTeam(threadId, input, sendAttachments);
   };
 
   // 点击成员菜单项：把 @名称 插入输入框末尾
   const insertMention = (name: string) => {
-    const next = composer ? `${composer.trimEnd()} @${name} ` : `@${name} `;
-    setComposer(next);
+    composerRef.current?.insertText(composer ? ` @${name} ` : `@${name} `);
   };
 
   // 选择工作目录：绑定到当前团队会话（团队协作都在该目录下进行）
@@ -250,10 +280,14 @@ export function TeamChatPage({
             sessionFilesDir={sessionFilesDir}
             onAbort={() => abortTeamThread(threadId)}
             onInsertMention={insertMention}
+            onFilesChange={setAttachments}
+            onPickFile={(file) => composerRef.current?.insertFile(file)}
             onPickDir={() => void handlePickDir()}
             onSend={handleSend}
+            composerRef={composerRef}
             setValue={setComposer}
             value={composer}
+            attachmentCount={attachments.length}
           />
         </section>
 
@@ -301,7 +335,8 @@ const TeamMessageView = memo(function TeamMessageView({
     return (
       <div className="flex justify-end">
         <div className="max-w-[78%] rounded-lg bg-muted px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
-          {message.content}
+          {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
+          <UserAttachments attachments={message.attachments ?? []} />
         </div>
       </div>
     );
@@ -491,29 +526,37 @@ function ProcessFold({
 }
 
 function Composer({
+  composerRef,
   members,
   isResponding,
   workingDir,
   sessionFilesDir,
   onAbort,
+  onFilesChange,
   onInsertMention,
+  onPickFile,
   onPickDir,
   onSend,
   setValue,
   value,
+  attachmentCount,
 }: {
+  composerRef: RefObject<SkillComposerHandle | null>;
   members: Array<{ avatar: string; name: string }>;
   isResponding: boolean;
   workingDir: string;
   sessionFilesDir: string;
   onAbort: () => void;
+  onFilesChange: (files: ChatAttachment[]) => void;
   onInsertMention: (name: string) => void;
+  onPickFile: (file: ChatAttachment) => void;
   onPickDir: () => void;
   onSend: () => void;
   setValue: (value: string) => void;
   value: string;
+  attachmentCount: number;
 }) {
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
   // 工作目录仅显示末级名称，hover 看完整路径
   const isTempDir =
@@ -529,15 +572,13 @@ function Composer({
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-12">
       <div className="pointer-events-auto w-full max-w-[820px] rounded-lg border border-border bg-card shadow-[0_18px_70px_rgba(31,35,31,0.12)]">
-        <textarea
+        <SkillComposerInput
+          ref={composerRef}
           value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
+          onChange={setValue}
+          onSkillsChange={() => undefined}
+          onFilesChange={onFilesChange}
+          onEnter={onSend}
           placeholder={isResponding ? "输入引导，发送后会加入后续协作" : "描述任务，/ 调用技能，@ 添加文件，选成员指定发言"}
           className="app-scrollbar max-h-[220px] min-h-[74px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 outline-none"
         />
@@ -547,7 +588,7 @@ function Composer({
             {/* "/" 技能 + "@" 文件，与对话页完全一致 */}
             <ComposerToolbar
               onPickSkill={(skill) => onInsertMention(skill.name)}
-              onPickFile={() => undefined}
+              onPickFile={onPickFile}
             />
 
             {/* 成员菜单：所有成员收进一个图标按钮，点击选成员插入 @名称 */}

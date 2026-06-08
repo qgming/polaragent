@@ -11,6 +11,7 @@ interface Window {
       fileUrl: (path: string) => Promise<string>;
       pickWorkingDirectory: () => Promise<string | null>;
       pickTextFile: () => Promise<string | null>;
+      pickImageFile: () => Promise<string | null>;
     };
     window: {
       minimize: () => Promise<void>;
@@ -25,7 +26,9 @@ interface Window {
     };
     fs: {
       readFile: (path: string) => Promise<string>;
+      readBase64File: (path: string) => Promise<string>;
       writeFile: (path: string, content: string) => Promise<void>;
+      writeBase64File: (path: string, content: string) => Promise<void>;
       appendFile: (path: string, content: string) => Promise<void>;
       createDirectory: (path: string) => Promise<void>;
       deletePath: (path: string) => Promise<void>;
@@ -118,6 +121,8 @@ interface Window {
         }>;
         answer?: string;
       }>;
+      downloadUrlAsBase64: (request: import("@/lib/electron/electron-api").DownloadUrlAsBase64Request) => Promise<import("@/lib/electron/electron-api").DownloadUrlAsBase64Response>;
+      openaiImageEdit: (request: import("@/lib/electron/electron-api").OpenAiImageEditRequest) => Promise<import("@/lib/electron/electron-api").OpenAiImageResponse>;
     };
     skills: {
       list: (skillType: "builtin" | "custom") => Promise<string[]>;

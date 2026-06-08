@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ProvidersConfig, ProviderConfig } from "@/types/config";
 
-type RuntimeProvider = {
+export type RuntimeProvider = {
   id: string;
   name: string;
   type: ProviderConfig["type"];
@@ -77,7 +77,10 @@ export class ProviderManager {
           provider: providerSlug(config.type, baseURL),
           baseUrl: baseURL,
           reasoning: false,
-          input: ["text"],
+          // 用户手动添加的 OpenAI/Anthropic 兼容模型无法可靠从 /models 判断能力。
+          // 这里声明支持图片输入，让真正的多模态模型可以接收图片；若后端模型不支持，
+          // 会由上游接口返回明确错误，而不是被本地运行时提前拦下。
+          input: ["text", "image"],
           cost: {
             input: 0,
             output: 0,

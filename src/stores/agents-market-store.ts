@@ -33,7 +33,7 @@ interface AgentsMarketState {
   setActiveGroup: (group: string) => void;
   // 确保某分类的助手已加载（命中内存缓存则跳过）
   ensureCategory: (group: string) => Promise<void>;
-  // 以某条提示词创建一个自定义助手（沿用默认 provider/model 配置）
+  // 以某条提示词创建一个自定义助手（默认跟随模型设置路由）
   install: (agent: MarketAgent) => Promise<boolean>;
   clearError: () => void;
 }
@@ -114,9 +114,6 @@ export const useAgentsMarketStore = create<AgentsMarketState>((set, get) => ({
         id = `market-${toSlug(agent.name)}-${suffix++}`;
       }
 
-      // 新装助手沿用当前默认供应商作为运行配置骨架，仅覆盖身份与提示词
-      const defaultProvider =
-        useConfigStore.getState().providers.defaultProvider;
       const newAgent: AgentConfig = {
         id,
         name: agent.name,
@@ -131,7 +128,7 @@ export const useAgentsMarketStore = create<AgentsMarketState>((set, get) => ({
         },
         config: {
           systemPrompt: agent.prompt,
-          provider: defaultProvider,
+          provider: "",
           model: "",
           enabledSkills: [],
         },

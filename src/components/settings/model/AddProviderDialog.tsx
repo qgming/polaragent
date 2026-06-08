@@ -1,4 +1,4 @@
-// 添加供应商弹窗
+// 添加模型服务弹窗
 import { useState } from "react";
 import { Bot, KeyRound, Loader2, Plug, Settings2, X } from "lucide-react";
 import {
@@ -46,10 +46,10 @@ export function AddProviderDialog({
   return (
     <Modal open onOpenChange={(open) => { if (!open) onClose(); }}>
       <ModalContent size="md" showCloseButton={false} className="max-w-[460px] rounded-xl bg-card">
-        <ModalTitle className="sr-only">添加供应商</ModalTitle>
+        <ModalTitle className="sr-only">添加模型服务</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Settings2 className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium">添加供应商</span>
+          <span className="min-w-0 truncate text-sm font-medium">添加模型服务</span>
 
           <div className="ml-auto flex h-full items-center gap-0.5">
             <button

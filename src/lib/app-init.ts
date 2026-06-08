@@ -52,7 +52,7 @@ export async function initializeApp() {
     await useSkillsStore.getState().loadSkills();
     console.log("✓ Skills 初始化完成");
 
-    // 3.2 初始化 Providers / Agents
+    // 3.2 初始化模型服务 / Agents
     initializeAiRuntime();
 
     // 3.3 加载并刷新 MCP。内置 MCP 来自 {dataDir}/mcp/builtin，
@@ -77,7 +77,7 @@ export async function initializeApp() {
 export function initializeAiRuntime() {
   const providersConfig = useConfigStore.getState().providers;
   providerManager.initialize(providersConfig);
-  console.log("✓ Providers 初始化完成");
+  console.log("✓ 模型服务初始化完成");
 
   const agents = useConfigStore.getState().agents;
 
@@ -93,34 +93,37 @@ export function initializeAiRuntime() {
 }
 
 /**
- * 检查 Provider 配置是否完整
+ * 检查模型设置的默认路由是否可用
  */
 export function checkProviderConfig(): {
   isConfigured: boolean;
   message: string;
 } {
   const providers = useConfigStore.getState().providers;
+  const defaultProvider = providers.providers.find(
+    (p) => p.id === providers.defaultProvider,
+  );
 
-  const enabledProviders = providers.providers.filter((p) => p.enabled);
-
-  if (enabledProviders.length === 0) {
+  if (!defaultProvider) {
     return {
       isConfigured: false,
-      message: "请先在设置中配置至少一个 AI Provider",
+      message: "请先在设置 > 模型设置中选择默认路由模型",
     };
   }
 
-  const configuredProvider = enabledProviders.find(
-    (p) =>
-      p.config.apiKey.trim().length > 0 &&
-      p.config.baseURL.trim().length > 0 &&
-      (p.config.defaultModel?.trim() || p.models[0]?.id?.trim()),
-  );
+  const defaultModel = providers.defaultModel.trim() ||
+    defaultProvider.config.defaultModel?.trim() ||
+    defaultProvider.models[0]?.id?.trim();
 
-  if (!configuredProvider) {
+  if (
+    !defaultProvider.enabled ||
+    defaultProvider.config.apiKey.trim().length === 0 ||
+    defaultProvider.config.baseURL.trim().length === 0 ||
+    !defaultModel
+  ) {
     return {
       isConfigured: false,
-      message: "请在设置中完整配置 Base URL、API Key 和模型名称",
+      message: "请在设置 > 模型设置中完整配置默认模型服务的 Base URL、API Key 和模型名称",
     };
   }
 

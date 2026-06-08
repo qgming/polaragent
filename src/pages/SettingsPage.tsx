@@ -2,17 +2,18 @@
 // src/pages/SettingsPage.tsx
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, Bot, Database, Info, Search, Settings2 } from "lucide-react";
+import { ArrowLeft, Bot, Database, Image, Info, Search, Settings2 } from "lucide-react";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
 import { cn } from "@/lib/utils";
 import { ModelPanel } from "@/components/settings/ModelPanel";
 import { PreferencesPanel } from "@/components/settings/PreferencesPanel";
+import { ImageGenerationPanel } from "@/components/settings/ImageGenerationPanel";
 import { WebSearchPanel } from "@/components/settings/WebSearchPanel";
 import { AdvancedPanel } from "@/components/settings/AdvancedPanel";
 import { AboutPanel } from "@/components/settings/AboutPanel";
 
-export type SettingsSection = "preferences" | "models" | "webSearch" | "data" | "about";
+export type SettingsSection = "preferences" | "models" | "imageGeneration" | "webSearch" | "data" | "about";
 
 // 左侧导航按分组组织（通用 / 高级）
 const navGroups: Array<{
@@ -24,6 +25,7 @@ const navGroups: Array<{
     items: [
       { id: "preferences", label: "偏好设置", icon: Settings2 },
       { id: "models", label: "模型设置", icon: Bot },
+      { id: "imageGeneration", label: "图片模式", icon: Image },
       { id: "webSearch", label: "网络搜索", icon: Search },
     ],
   },
@@ -117,6 +119,9 @@ export function SettingsPage({
           ) : null}
           {activeSection === "webSearch" ? (
             <WebSearchPanel settings={settings} onUpdate={updateSettings} />
+          ) : null}
+          {activeSection === "imageGeneration" ? (
+            <ImageGenerationPanel settings={settings} onUpdate={updateSettings} />
           ) : null}
           {activeSection === "data" ? <AdvancedPanel /> : null}
           {activeSection === "about" ? <AboutPanel /> : null}

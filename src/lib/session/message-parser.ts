@@ -2,7 +2,7 @@
 // ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ChatMessage, Segment } from "@/stores/chat-store";
+import type { ChatAttachment, ChatMessage, Segment } from "@/stores/chat-store";
 import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
 import type { TeamMessage } from "@/stores/team/team-chat-store";
 import { toolDisplayName } from "@/ai/tools";
@@ -279,6 +279,7 @@ async function loadChatMessagesImpl(
 
     if (message.role === "user") {
       const text = userMessageText(message);
+      const attachments = userMessageAttachments(message);
       const guidanceIndex = pendingGuidance.findIndex(
         (guidance) => guidance.text === text.trim(),
       );
@@ -302,13 +303,15 @@ async function loadChatMessagesImpl(
 
       // 新的用户消息 -> 先落地累积的助手消息，断开合并
       flushPending();
-      if (text.trim().length === 0) continue;
+      // 仅当正文与附件都为空时才跳过；纯附件消息（只发图片/文件无文字）需保留
+      if (text.trim().length === 0 && attachments.length === 0) continue;
       messages.push({
         id: entry.id,
         role: "user",
         content: text,
         createdAt: timestamp,
         status: "complete",
+        attachments,
       });
     } else if (message.role === "assistant") {
       const segments = assistantSegments(message, toolResults);
@@ -376,7 +379,50 @@ function stripSkillBlocks(text: string): string {
   return text
     .replace(/<skill\b[^>]*>[\s\S]*?<\/skill>\s*/g, "")
     .replace(/<file\b[^>]*>[\s\S]*?<\/file>\s*/g, "")
+    .replace(/<image\b[^>]*>[\s\S]*?<\/image>\s*/g, "")
     .trim();
+}
+
+function attrValue(source: string, name: string): string | undefined {
+  const match = source.match(new RegExp(`${name}="([^"]*)"`));
+  return match?.[1];
+}
+
+function userMessageAttachments(
+  message: Extract<AgentMessage, { role: "user" }>,
+): ChatAttachment[] {
+  const rawText =
+    typeof message.content === "string"
+      ? message.content
+      : message.content
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .filter(Boolean)
+          .join("\n");
+  const attachments: ChatAttachment[] = [];
+  const seen = new Set<string>();
+  for (const match of rawText.matchAll(/<file\b([^>]*)>[\s\S]*?<\/file>/g)) {
+    const attrs = match[1] ?? "";
+    const path = attrValue(attrs, "path");
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    attachments.push({
+      path,
+      name: attrValue(attrs, "name") ?? path.split(/[\\/]/).pop() ?? path,
+      kind: "text",
+    });
+  }
+  for (const match of rawText.matchAll(/<image\b([^>]*)>[\s\S]*?<\/image>/g)) {
+    const attrs = match[1] ?? "";
+    const path = attrValue(attrs, "path");
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    attachments.push({
+      path,
+      name: attrValue(attrs, "name") ?? path.split(/[\\/]/).pop() ?? path,
+      kind: "image",
+    });
+  }
+  return attachments;
 }
 
 // 取用户消息的纯文本（content 可能是 string 或 (text|image)[]），并剥离技能块

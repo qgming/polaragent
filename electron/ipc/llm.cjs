@@ -1,6 +1,11 @@
 // IPC：LLM 调用（chat completion 同步/流式、模型列表）
 // 走 OpenAI 兼容接口。
+const { net } = require("electron");
 const { normalizeBaseUrl, errorMessage } = require("../lib/http-utils.cjs");
+
+function electronFetch(url, options) {
+  return net.fetch(url, options);
+}
 
 // 组装 messages（system + 非空内容的对话消息）
 function buildMessages(systemPrompt, messages) {
@@ -42,7 +47,7 @@ function usageFrom(raw) {
 async function chatCompletion(request) {
   if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
   if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
-  const response = await fetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
+  const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${request.apiKey.trim()}`,
@@ -65,7 +70,7 @@ async function chatCompletionStream(event, request) {
   if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
   if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
   const requestId = request.requestId || `llm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const response = await fetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
+  const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${request.apiKey.trim()}`,
@@ -116,7 +121,7 @@ async function chatCompletionStream(event, request) {
 // 读取模型列表
 async function listModels(request) {
   if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
-  const response = await fetch(`${normalizeBaseUrl(request.baseUrl)}/models`, {
+  const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/models`, {
     headers: { Authorization: `Bearer ${request.apiKey.trim()}` },
     signal: AbortSignal.timeout(30000),
   });

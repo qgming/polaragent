@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     fileUrl: (path) => invoke("app:file-url", { path }),
     pickWorkingDirectory: () => invoke("dialog:pick-directory"),
     pickTextFile: () => invoke("dialog:pick-text-file"),
+    pickImageFile: () => invoke("dialog:pick-image-file"),
   },
   window: {
     minimize: () => invoke("window:minimize"),
@@ -30,7 +31,9 @@ contextBridge.exposeInMainWorld("polaragent", {
   },
   fs: {
     readFile: (path) => invoke("fs:read-file", { path }),
+    readBase64File: (path) => invoke("fs:read-base64-file", { path }),
     writeFile: (path, content) => invoke("fs:write-file", { path, content }),
+    writeBase64File: (path, content) => invoke("fs:write-base64-file", { path, content }),
     appendFile: (path, content) => invoke("fs:append-file", { path, content }),
     createDirectory: (path) => invoke("fs:create-directory", { path }),
     deletePath: (path) => invoke("fs:delete-path", { path }),
@@ -72,6 +75,8 @@ contextBridge.exposeInMainWorld("polaragent", {
     fetchAgentIndex: () => invoke("network:fetch-agent-index"),
     fetchAgentCategory: (fileName) => invoke("network:fetch-agent-category", { fileName }),
     webSearch: (request) => invoke("network:web-search", { request }),
+    downloadUrlAsBase64: (request) => invoke("network:download-url-as-base64", { request }),
+    openaiImageEdit: (request) => invoke("network:openai-image-edit", { request }),
   },
   skills: {
     list: (skillType) => invoke("skills:list", { skillType }),

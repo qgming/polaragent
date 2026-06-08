@@ -104,6 +104,7 @@ export function listRemoteModels(baseUrl: string, apiKey: string) {
 
 export const pickWorkingDirectory = () => api().app.pickWorkingDirectory();
 export const pickTextFile = () => api().app.pickTextFile();
+export const pickImageFile = () => api().app.pickImageFile();
 export const getDataDir = () => api().app.getDataDir();
 export const openDataDir = () => api().app.openDataDir();
 export const openPath = (path: string) => api().app.openPath(path);
@@ -113,8 +114,10 @@ export const ensureDataDir = () => api().app.ensureDataDir();
 export const listDirectory = (path: string) => api().fs.listDirectory(path);
 export const listDirectoryEntries = (path: string) => api().fs.listDirectoryEntries(path);
 export const readFile = (path: string) => api().fs.readFile(path);
+export const readBase64File = (path: string) => api().fs.readBase64File(path);
 export const fileExists = (path: string): Promise<boolean> => api().fs.exists(path);
 export const writeFile = (path: string, content: string) => api().fs.writeFile(path, content);
+export const writeBase64File = (path: string, content: string) => api().fs.writeBase64File(path, content);
 export const createDirectory = (path: string) => api().fs.createDirectory(path);
 export const deleteFile = (path: string) => api().fs.deletePath(path);
 export const installSkillFromGit = (repoUrl: string) => api().skills.installFromGit(repoUrl);
@@ -403,6 +406,49 @@ export interface WebSearchResponse {
 
 export function webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
   return api().network.webSearch(request);
+}
+
+export interface DownloadUrlAsBase64Request {
+  url: string;
+  timeoutMs?: number;
+}
+
+export interface DownloadUrlAsBase64Response {
+  base64: string;
+  contentType: string;
+  extension: string;
+}
+
+export function downloadUrlAsBase64(
+  request: DownloadUrlAsBase64Request,
+): Promise<DownloadUrlAsBase64Response> {
+  return api().network.downloadUrlAsBase64(request);
+}
+
+export interface OpenAiImageEditRequest {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  prompt: string;
+  imagePath: string;
+  maskPath?: string;
+  n?: number;
+  size?: string;
+  quality?: string;
+  responseFormat?: "b64_json" | "url";
+}
+
+export interface OpenAiImageResponse {
+  created?: number;
+  data?: Array<{
+    b64_json?: string;
+    url?: string;
+    revised_prompt?: string;
+  }>;
+}
+
+export function openAiImageEdit(request: OpenAiImageEditRequest): Promise<OpenAiImageResponse> {
+  return api().network.openaiImageEdit(request);
 }
 
 // 跨域代理请求 —— 由主进程统一发起 HTTP 请求并回传原始响应。

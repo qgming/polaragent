@@ -45,7 +45,7 @@ interface ConfigState {
   saveSettings: (settings: Settings) => Promise<void>;
   updateSettings: (updates: Partial<Settings>) => Promise<void>;
 
-  // Providers 操作
+  // 模型服务操作
   loadProviders: () => Promise<void>;
   saveProviders: (providers: ProvidersConfig) => Promise<void>;
   addProvider: (provider: ProviderConfig) => Promise<void>;
@@ -115,7 +115,10 @@ export const useConfigStore = create<ConfigState>()(
       // 加载设置
       loadSettings: async () => {
         try {
-          const settings = await readConfig<Settings>("settings.json");
+          const settings = normalizeSettings(
+            await readConfig<Settings>("settings.json"),
+            get().dataDir,
+          );
           set({ settings });
         } catch (error) {
           console.warn("无法加载设置，使用默认值");
@@ -145,33 +148,33 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveSettings(settings);
       },
 
-      // 加载 Providers
+      // 加载模型服务
       loadProviders: async () => {
         try {
           const providers = await readConfig<ProvidersConfig>("providers.json");
-          set({ providers });
+          set({ providers: normalizeProviders(providers) });
         } catch (error) {
-          console.warn("无法加载 Providers，使用默认值");
+          console.warn("无法加载模型服务，使用默认值");
           // 保存默认配置
           await writeConfig("providers.json", defaultProviders);
           set({ providers: defaultProviders });
         }
       },
 
-      // 保存 Providers
+      // 保存模型服务
       saveProviders: async (providers) => {
         try {
           await writeConfig("providers.json", providers);
           set({ providers });
         } catch (error) {
           const message =
-            error instanceof Error ? error.message : "保存 Providers 失败";
+            error instanceof Error ? error.message : "保存模型服务失败";
           set({ error: message });
           throw error;
         }
       },
 
-      // 添加 Provider
+      // 添加模型服务
       addProvider: async (provider) => {
         const providers = {
           ...get().providers,
@@ -180,7 +183,7 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 更新 Provider
+      // 更新模型服务
       updateProvider: async (id, updates) => {
         const providers = {
           ...get().providers,
@@ -191,16 +194,27 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 删除 Provider
+      // 删除模型服务
       removeProvider: async (id) => {
+        const remaining = get().providers.providers.filter((p) => p.id !== id);
+        const defaultRemoved = get().providers.defaultProvider === id;
+        const nextDefault = defaultRemoved
+          ? remaining.find((p) => p.enabled && p.models.length > 0) ?? remaining[0]
+          : undefined;
         const providers = {
           ...get().providers,
-          providers: get().providers.providers.filter((p) => p.id !== id),
+          providers: remaining,
+          defaultProvider: nextDefault?.id ?? (defaultRemoved ? "" : get().providers.defaultProvider),
+          defaultModel: nextDefault
+            ? nextDefault.config.defaultModel?.trim() || nextDefault.models[0]?.id || ""
+            : defaultRemoved
+              ? ""
+              : get().providers.defaultModel,
         };
         await get().saveProviders(providers);
       },
 
-      // 设置默认 Provider
+      // 设置默认模型服务
       setDefaultProvider: async (id) => {
         const providers = {
           ...get().providers,
@@ -209,7 +223,7 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 设置默认模型（供应商 + 模型 二元组）
+      // 设置默认路由模型（模型服务 + 模型 二元组）
       setDefaultModel: async (providerId, modelId) => {
         const providers = {
           ...get().providers,
@@ -289,6 +303,82 @@ function normalizeAgent(agent: AgentConfig): AgentConfig {
       ...agent.config,
       model: agent.config.model ?? "",
       enabledSkills: shouldUseAllSkills ? [ALL_SKILLS_ID] : enabledSkills,
+    },
+  };
+}
+
+// 归一化 providers 配置：补齐旧版 providers.json 可能缺失的 defaultProvider/defaultModel
+// 字段，避免 checkProviderConfig 等处对 defaultModel.trim() 在 undefined 上崩溃。
+function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
+  return {
+    providers: Array.isArray(providers?.providers) ? providers.providers : [],
+    defaultProvider: providers?.defaultProvider ?? "",
+    defaultModel: providers?.defaultModel ?? "",
+  };
+}
+
+function normalizeSettings(settings: Settings, dataDir: string): Settings {
+  const defaultWebSearch = defaultSettings.webSearch!;
+  const defaultImageGeneration = defaultSettings.imageGeneration!;
+  return {
+    ...defaultSettings,
+    ...settings,
+    appearance: {
+      ...defaultSettings.appearance,
+      ...settings.appearance,
+    },
+    behavior: {
+      ...defaultSettings.behavior,
+      ...settings.behavior,
+    },
+    window: {
+      ...defaultSettings.window,
+      ...settings.window,
+    },
+    dataDirectory: settings.dataDirectory ?? dataDir,
+    webSearch: {
+      ...defaultWebSearch,
+      ...settings.webSearch,
+      usage: {
+        ...defaultWebSearch.usage,
+        ...settings.webSearch?.usage,
+      },
+      tavily: {
+        ...defaultWebSearch.tavily!,
+        ...settings.webSearch?.tavily,
+        apiKey: settings.webSearch?.tavily?.apiKey ?? defaultWebSearch.tavily!.apiKey,
+      },
+      exa: {
+        ...defaultWebSearch.exa!,
+        ...settings.webSearch?.exa,
+        apiKey: settings.webSearch?.exa?.apiKey ?? defaultWebSearch.exa!.apiKey,
+      },
+      serper: {
+        ...defaultWebSearch.serper!,
+        ...settings.webSearch?.serper,
+        apiKey: settings.webSearch?.serper?.apiKey ?? defaultWebSearch.serper!.apiKey,
+      },
+      searxng: {
+        ...defaultWebSearch.searxng!,
+        ...settings.webSearch?.searxng,
+        instances: settings.webSearch?.searxng?.instances ?? defaultWebSearch.searxng!.instances,
+      },
+      brave: {
+        ...defaultWebSearch.brave!,
+        ...settings.webSearch?.brave,
+        apiKey: settings.webSearch?.brave?.apiKey ?? defaultWebSearch.brave!.apiKey,
+      },
+    },
+    imageGeneration: {
+      ...defaultImageGeneration,
+      ...settings.imageGeneration,
+      openai: {
+        ...defaultImageGeneration.openai,
+        ...settings.imageGeneration?.openai,
+        apiKey: settings.imageGeneration?.openai?.apiKey ?? defaultImageGeneration.openai.apiKey,
+        baseURL: settings.imageGeneration?.openai?.baseURL ?? defaultImageGeneration.openai.baseURL,
+        model: settings.imageGeneration?.openai?.model ?? defaultImageGeneration.openai.model,
+      },
     },
   };
 }

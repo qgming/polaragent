@@ -3,10 +3,9 @@
 // "/" 按钮：纯图标按钮，点击弹出技能选择下拉（样式与助手选择下拉一致）。
 //   列出全部技能（内置 + 已安装，即技能页两类），菜单项只显示名称，
 //   hover 用 tooltip 显示该技能介绍。选中后通过 onPickSkill 通知上层插入 chip。
-// "@" 按钮：点击打开文件选择器，选中文本文件后通过 onPickFile 通知上层插入文件 chip，
-//   该文件内容会在发送时随用户提问一起发给模型。
+// "@" 按钮：选择文本文件或图片，选中后通过 onPickFile 通知上层插入附件 chip。
 
-import { AtSign, Slash } from "lucide-react";
+import { AtSign, FileText, Image, Slash } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -19,7 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { pickTextFile } from "@/lib/electron/electron-api";
+import { pickImageFile, pickTextFile } from "@/lib/electron/electron-api";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 
 // 从绝对路径取文件名（兼容正反斜杠）
@@ -37,17 +36,23 @@ export function ComposerToolbar({
 }: {
   // 选中某个技能时回调（上层据此在富文本输入区插入 chip）
   onPickSkill: (skill: { id: string; name: string }) => void;
-  // 选中某个文件时回调（上层据此在富文本输入区插入文件 chip）
-  onPickFile: (file: { path: string; name: string }) => void;
+  // 选中某个附件时回调（上层据此在富文本输入区插入附件 chip）
+  onPickFile: (file: { path: string; name: string; kind: "text" | "image" }) => void;
 }) {
   // 全部技能（内置 + 已安装），与技能页两类一致；store 为空时回退空列表
   const skills = useSkillsStore((state) => state.skills);
 
-  // 点击 "@"：打开文件选择器，选中后插入文件 chip
-  const handlePickFile = async () => {
+  const handlePickTextFile = async () => {
     const path = await pickTextFile();
     if (path) {
-      onPickFile({ path, name: basename(path) });
+      onPickFile({ path, name: basename(path), kind: "text" });
+    }
+  };
+
+  const handlePickImageFile = async () => {
+    const path = await pickImageFile();
+    if (path) {
+      onPickFile({ path, name: basename(path), kind: "image" });
     }
   };
 
@@ -94,19 +99,29 @@ export function ComposerToolbar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* "@"：选择文本文件，其内容随提问一起发送 */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className={toolBtnClass}
-            onClick={() => void handlePickFile()}
-          >
-            <AtSign className="size-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>添加文件（随提问发送）</TooltipContent>
-      </Tooltip>
+      {/* "@"：选择文本或图片附件 */}
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className={toolBtnClass}>
+                <AtSign className="size-4" />
+              </button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>添加附件</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="start" className="w-44">
+          <DropdownMenuItem onSelect={() => void handlePickTextFile()}>
+            <FileText className="size-4" />
+            <span>文本文件</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void handlePickImageFile()}>
+            <Image className="size-4" />
+            <span>图片</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

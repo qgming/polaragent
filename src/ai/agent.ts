@@ -15,13 +15,14 @@ import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { skillLoader } from "@/lib/skill/skill-loader";
-import { readFile } from "@/lib/electron/electron-api";
+import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import {
   appendGuidanceMessage,
   appendTeamGuidanceMessage,
 } from "@/lib/session/session-operations";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import type { Segment } from "@/stores/chat-store";
+import type { ChatAttachment, Segment } from "@/stores/chat-store";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 
@@ -55,6 +56,7 @@ export interface PromptOptions {
   // 输入框 "@" 选中的文件绝对路径。发送时读取其内容拼到发送内容里（后台注入），
   // 同样不进入 UI 显示——UI 只展示用户原始问题与文件 chip 标记。
   filePaths?: string[];
+  attachments?: ChatAttachment[];
   // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
   teamContext?: TeamContext;
 }
@@ -68,6 +70,7 @@ async function buildModelInput(
   input: string,
   skillIds?: string[],
   filePaths?: string[],
+  imageAttachments?: ChatAttachment[],
 ): Promise<string> {
   const blocks: string[] = [];
 
@@ -92,8 +95,40 @@ async function buildModelInput(
     }
   }
 
+  for (const attachment of imageAttachments ?? []) {
+    blocks.push(
+      `<image path="${attachment.path}" name="${attachment.name}">图片附件已随本消息以多模态内容发送。</image>`,
+    );
+  }
+
   if (blocks.length === 0) return input;
   return `${blocks.join("\n\n")}\n\n${input}`;
+}
+
+function imageMimeType(path: string): string {
+  const ext = path.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "bmp") return "image/bmp";
+  return "image/png";
+}
+
+async function buildImageInputs(attachments?: ChatAttachment[]): Promise<ImageContent[]> {
+  const images: ImageContent[] = [];
+  for (const attachment of attachments ?? []) {
+    if (attachment.kind !== "image") continue;
+    try {
+      images.push({
+        type: "image",
+        data: await readBase64File(attachment.path),
+        mimeType: imageMimeType(attachment.path),
+      });
+    } catch (error) {
+      console.error(`读取图片附件失败，已跳过: ${attachment.path}`, error);
+    }
+  }
+  return images;
 }
 
 /**
@@ -176,6 +211,7 @@ export async function promptAgent(
       });
     }
 
+    const runtimeModelId = agentManager.getRuntimeModelId(agentId);
     const monitor = useTaskMonitorStore.getState();
     let assistantText = "";
     // 本次 run 内按真实顺序产生的可渲染过程：assistant 轮次 + 中途引导状态。
@@ -332,7 +368,7 @@ export async function promptAgent(
           if (assistants.length === 0) {
             handlers.onDone({
               content: assistantText,
-              model: "",
+              model: runtimeModelId,
               usage: { input: 0, output: 0, totalTokens: 0 },
               segments: assistantText
                 ? [{ kind: "text", text: assistantText }]
@@ -372,7 +408,7 @@ export async function promptAgent(
 
           handlers.onDone({
             content,
-            model: lastAssistant.model,
+            model: lastAssistant.model?.trim() || runtimeModelId,
             usage: {
               input: lastAssistant.usage?.input ?? 0,
               output: lastAssistant.usage?.output ?? 0,
@@ -391,8 +427,14 @@ export async function promptAgent(
       input,
       options.skillIds,
       options.filePaths,
+      options.attachments?.filter((attachment) => attachment.kind === "image"),
     );
-    await harness.prompt(modelInput);
+    const imageInputs = await buildImageInputs(options.attachments);
+    if (imageInputs.length > 0) {
+      await harness.prompt(modelInput || "请查看这些图片。", { images: imageInputs });
+    } else {
+      await harness.prompt(modelInput);
+    }
     await harness.waitForIdle();
     unsubscribe();
     cancelFlush();

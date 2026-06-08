@@ -24,8 +24,9 @@ import {
   getSessionFilesDir,
   setSessionWorkingDir,
 } from "@/lib/session/session-operations";
+import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
-import { type Segment, useChatStore } from "@/stores/chat-store";
+import { type ChatAttachment, type Segment, useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { AgentConfig } from "@/types/config";
 import { useAlert } from "@/hooks/useAlert";
@@ -62,7 +63,7 @@ export function HomePage({
   ) => void;
   setActiveAgent: (agentId: string) => void;
   setComposer: (value: string) => void;
-  startExchange: (userText: string) => {
+  startExchange: (userText: string, attachments?: ChatAttachment[]) => {
     assistantId: string;
     threadId: string;
   };
@@ -75,7 +76,7 @@ export function HomePage({
   // 富文本输入区句柄；本次发送临时选中的技能 id / 文件路径（输入框 "/" 与 "@"）
   const composerRef = useRef<SkillComposerHandle>(null);
   const [skillIds, setSkillIds] = useState<string[]>([]);
-  const [filePaths, setFilePaths] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   // 自定义对话框
   const { alert: showAlert, AlertDialog } = useAlert();
 
@@ -88,7 +89,7 @@ export function HomePage({
 
   const handleSend = async () => {
     const input = composer.trim();
-    if (!input) {
+    if (!input && attachments.length === 0) {
       return;
     }
 
@@ -103,20 +104,25 @@ export function HomePage({
     }
 
     createThread(activeAgent?.id);
-    const { assistantId, threadId } = startExchange(input);
+    const pendingAttachments = attachments;
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
-    const sendFilePaths = filePaths;
-    composerRef.current?.clear();
-    setComposer("");
-    setSkillIds([]);
-    setFilePaths([]);
 
+    const threadId = useChatStore.getState().activeThreadId;
     let workingDir = useChatStore.getState().workingDir || undefined;
     if (!workingDir) {
       workingDir = await getSessionFilesDir(threadId);
       await ensureSessionFilesDir(threadId);
     }
+    const sendAttachments = await materializeAttachments(pendingAttachments, workingDir);
+    const sendFilePaths = sendAttachments
+      .filter((attachment) => attachment.kind === "text")
+      .map((attachment) => attachment.path);
+    const { assistantId } = startExchange(input, sendAttachments);
+    composerRef.current?.clear();
+    setComposer("");
+    setSkillIds([]);
+    setAttachments([]);
 
     useTaskMonitorStore.getState().setWorkingDir(threadId, workingDir);
     // 持久化到新会话 meta，使重开/切回该对话能恢复其工作目录
@@ -143,6 +149,7 @@ export function HomePage({
         messageId: assistantId,
         skillIds: sendSkillIds,
         filePaths: sendFilePaths,
+        attachments: sendAttachments,
       },
     );
   };
@@ -171,7 +178,7 @@ export function HomePage({
             value={composer}
             onChange={setComposer}
             onSkillsChange={setSkillIds}
-            onFilesChange={setFilePaths}
+            onFilesChange={setAttachments}
             onEnter={() => void handleSend()}
             placeholder="描述任务，/ 快捷调用，@ 添加文件"
             className="app-scrollbar max-h-[240px] min-h-[96px] overflow-y-auto px-5 py-4 text-base"

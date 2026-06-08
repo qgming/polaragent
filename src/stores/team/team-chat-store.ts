@@ -21,7 +21,7 @@ import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
 import { useTeamsStore } from "@/stores/team/teams-store";
-import type { ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
+import type { ChatAttachment, ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
 
 // 团队消息：在普通消息基础上，assistant 消息携带发言成员 id + 支持投票
 export interface TeamMessage {
@@ -32,6 +32,7 @@ export interface TeamMessage {
   status: ChatMessageStatus;
   model?: string;
   tokenCount?: number;
+  attachments?: ChatAttachment[];
   segments?: Segment[];
   // 发言成员的 agentId（assistant 消息）。用户消息无此字段。
   speakerAgentId?: string;

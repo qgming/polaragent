@@ -1,4 +1,4 @@
-// 单个供应商卡片：可展开编辑 baseURL/apiKey/格式，并增删模型
+// 单个模型服务卡片：可展开编辑 baseURL/apiKey/格式，并增删模型
 import { useEffect, useRef, useState } from "react";
 import {
   Bot,
@@ -79,7 +79,7 @@ export function ProviderCard({
       }
       savedTimerRef.current = window.setTimeout(() => setSaveState("idle"), 1200);
     } catch (error) {
-      console.error("保存供应商连接配置失败:", error);
+      console.error("保存模型服务连接配置失败:", error);
       setSaveState("error");
     }
   };
