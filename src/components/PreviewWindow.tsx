@@ -25,7 +25,7 @@ import {
 
 import { fileIconFor } from "@/lib/file-icons";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
-import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import { MarkdownPreview } from "@/components/markdown/MarkdownPreview";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp } from "@/lib/app-init";
 import { fileUrl, readFile, writeFile, openPath, openExternal } from "@/lib/electron/electron-api";
@@ -418,7 +418,7 @@ function PreviewContent({
   if (kind === "markdown") {
     return (
       <div className="mx-auto max-w-4xl px-8 py-6">
-        <MarkdownContent content={content} />
+        <MarkdownPreview content={content} filePath={filePath} />
       </div>
     );
   }

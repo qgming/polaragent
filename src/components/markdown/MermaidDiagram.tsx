@@ -5,7 +5,7 @@
 //   - 渲染失败（语法错误/源码不完整）时回退为原始代码块
 //   - 工具条：复制源码 / 下载 SVG / 下载 PNG / 点击放大查看
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { Check, Copy, Download, Maximize2, FileImage } from "lucide-react";
 
@@ -30,36 +30,60 @@ function isDarkTheme(): boolean {
   return document.documentElement.classList.contains("dark");
 }
 
-// 宽高比超过该阈值视为「很宽的图」，让其宽度撑满容器以减少留白
-const WIDE_ASPECT_RATIO = 2.5;
+const MIN_SCALE_WIDTH = 58;
+const MAX_SCALE_WIDTH = 100;
 
-// 后处理 mermaid SVG：宽高比悬殊（很宽）时移除 max-width 限制、宽度撑满；
-// 比例正常的图保持原样（居中，不强行放大以免小图模糊）。
-function fitSvgWidth(svg: string): string {
+function scaleWidthForRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio <= 0) return 86;
+  const normalized = ratio >= 1 ? ratio : 1 / ratio;
+  const distance = Math.max(0, normalized - 1);
+  const scale = MAX_SCALE_WIDTH - distance * 18;
+  return Math.max(MIN_SCALE_WIDTH, Math.min(MAX_SCALE_WIDTH, Math.round(scale)));
+}
+
+function getSvgRatio(el: SVGElement): number {
+  const viewBox = el.getAttribute("viewBox");
+  if (viewBox) {
+    const parts = viewBox.split(/[\s,]+/).map(Number);
+    const [, , width, height] = parts;
+    if (width > 0 && height > 0) return width / height;
+  }
+
+  const width = Number.parseFloat(el.getAttribute("width") || "");
+  const height = Number.parseFloat(el.getAttribute("height") || "");
+  if (width > 0 && height > 0) return width / height;
+
+  return 0;
+}
+
+function cleanSvgStyle(style: string): string {
+  return style
+    .replace(/max-width:[^;]+;?/g, "")
+    .replace(/width:[^;]+;?/g, "")
+    .replace(/height:[^;]+;?/g, "")
+    .replace(/display:[^;]+;?/g, "")
+    .replace(/margin:[^;]+;?/g, "");
+}
+
+// 后处理 mermaid SVG：根据宽高比智能缩放。越接近正方形越接近 100%，
+// 越扁或越高则适当收小，避免在聊天流里过度占屏。
+function fitSvgWidth(svg: string, fullBleed = false): string {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
     const el = doc.querySelector("svg");
     if (!el) return svg;
 
-    // 从 viewBox 取原始宽高，计算宽高比
-    const viewBox = el.getAttribute("viewBox");
-    let ratio = 0;
-    if (viewBox) {
-      const parts = viewBox.split(/[\s,]+/).map(Number);
-      const [, , w, h] = parts;
-      if (w > 0 && h > 0) ratio = w / h;
-    }
+    const ratio = getSvgRatio(el);
+    const widthPercent = fullBleed ? 100 : scaleWidthForRatio(ratio);
+    const cleanedStyle = cleanSvgStyle(el.getAttribute("style") || "");
 
-    if (ratio >= WIDE_ASPECT_RATIO) {
-      // 很宽的图：去掉固定宽度与 mermaid 默认的 max-width，宽度撑满容器
-      el.removeAttribute("width");
-      el.removeAttribute("height");
-      const style = (el.getAttribute("style") || "").replace(
-        /max-width:[^;]+;?/g,
-        "",
-      );
-      el.setAttribute("style", `${style};width:100%;height:auto;`.trim());
-    }
+    el.removeAttribute("width");
+    el.removeAttribute("height");
+
+    el.setAttribute(
+      "style",
+      `${cleanedStyle};width:${widthPercent}%;max-width:100%;height:auto;display:block;margin:0 auto;`.trim(),
+    );
 
     return el.outerHTML;
   } catch {
@@ -77,19 +101,37 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const renderId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
 
   const [svg, setSvg] = useState<string | null>(null);
+  const [zoomSvg, setZoomSvg] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [themeVersion, setThemeVersion] = useState(0);
+  const [debouncedCode, setDebouncedCode] = useState(code);
 
   // 避免异步渲染竞态：只采纳最后一次渲染结果
   const renderSeq = useRef(0);
+  const theme = useMemo(() => (isDarkTheme() ? "dark" : "default"), [themeVersion]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedCode(code), 250);
+    return () => window.clearTimeout(timer);
+  }, [code]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setThemeVersion((value) => value + 1));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const seq = ++renderSeq.current;
 
     async function render() {
-      const source = code.trim();
+      const source = debouncedCode.trim();
       if (!source) {
         setSvg(null);
         setFailed(false);
@@ -103,7 +145,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
           startOnLoad: false,
           securityLevel: "strict",
           suppressErrorRendering: true,
-          theme: isDarkTheme() ? "dark" : "default",
+          theme,
         });
 
         // 先做语法校验，不合法直接走回退（流式未完成时常见）
@@ -112,10 +154,12 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
         if (cancelled || seq !== renderSeq.current) return;
         setSvg(fitSvgWidth(rendered));
+        setZoomSvg(fitSvgWidth(rendered, true));
         setFailed(false);
       } catch {
         if (cancelled || seq !== renderSeq.current) return;
         setSvg(null);
+        setZoomSvg(null);
         setFailed(true);
       }
     }
@@ -124,7 +168,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
     return () => {
       cancelled = true;
     };
-  }, [code, renderId]);
+  }, [debouncedCode, renderId, theme]);
 
   // 复制 mermaid 源码
   const handleCopy = async () => {
@@ -135,8 +179,9 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
   // 下载 SVG 文件
   const handleDownloadSvg = () => {
-    if (!svg) return;
-    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const downloadSvg = zoomSvg ?? svg;
+    if (!downloadSvg) return;
+    const blob = new Blob([downloadSvg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     triggerDownload(url, "diagram.svg");
     URL.revokeObjectURL(url);
@@ -146,7 +191,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const handleDownloadPng = async () => {
     if (!svg) return;
     try {
-      const png = await svgToPngDataUrl(svg);
+      const png = await svgToPngDataUrl(zoomSvg ?? svg);
       triggerDownload(png, "diagram.png");
     } catch (error) {
       console.error("导出 PNG 失败:", error);
@@ -161,7 +206,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
   return (
     <>
       <div className="app-scrollbar group relative my-4 overflow-x-auto rounded-lg border border-border bg-card p-4">
-        {/* 渲染结果：宽图已设 width:100% 撑满，正常图居中显示 */}
+        {/* 渲染结果：根据图形比例自适应缩放并居中显示 */}
         <div
           className="mermaid-svg flex w-full justify-center [&_svg]:h-auto [&_svg]:max-w-full"
           // mermaid 产出的 SVG 已在 strict 模式下消毒，可安全注入
@@ -190,7 +235,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         <DialogContent className="app-scrollbar max-h-[90vh] max-w-[90vw] overflow-auto sm:max-w-[90vw]">
           <div
             className="flex justify-center [&_svg]:h-auto [&_svg]:max-w-full"
-            dangerouslySetInnerHTML={{ __html: svg }}
+            dangerouslySetInnerHTML={{ __html: zoomSvg ?? svg }}
           />
         </DialogContent>
       </Dialog>
