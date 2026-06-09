@@ -18,7 +18,7 @@ import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { stripMarkdown } from "@/lib/markdown";
 import { fileUrl } from "@/lib/electron/electron-api";
 import { copyText } from "@/lib/electron/electron-window";
-import { type ChatAttachment, type ChatMessage, type Segment } from "@/stores/chat-store";
+import type { ChatAttachment, ChatMessage, Segment } from "@/lib/chat";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;

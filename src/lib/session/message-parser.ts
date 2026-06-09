@@ -2,13 +2,13 @@
 // ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ChatAttachment, ChatMessage, Segment } from "@/stores/chat-store";
+import type { ChatAttachment, ChatMessage, Segment } from "@/lib/chat";
 import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
-import type { TeamMessage } from "@/stores/team/team-chat-store";
+import type { TeamMessage } from "@/lib/team";
 import { toolDisplayName } from "@/ai/tools";
 import { getRepo, getTeamRepo } from "./session-repo";
 import { pickBestMeta } from "./meta-selection";
-import { openOrCreateSession } from "./session-operations";
+import { openOrCreateSession } from "./personal";
 import { GUIDANCE_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY } from "./entries";
 
 // 团队会话消息：在普通 ChatMessage 基础上附带发言成员 id / 投票信息。

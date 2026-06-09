@@ -10,7 +10,7 @@ import { TeamActionsMenu } from "@/components/team/TeamActionsMenu";
 import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import { Button } from "@/components/ui/button";
 import { initializeAiRuntime } from "@/lib/app-init";
-import { clearTeamSessions } from "@/lib/session/session-operations";
+import { clearTeamSessions } from "@/lib/session/team";
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import type { TeamConfig } from "@/types/config";

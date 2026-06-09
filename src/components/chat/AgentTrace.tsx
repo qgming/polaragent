@@ -22,7 +22,7 @@ import {
 import { AudioBar } from "@/components/chat/AudioBar";
 import { cn } from "@/lib/utils";
 import type { StepItem } from "@/stores/task-monitor-store";
-import type { Segment } from "@/stores/chat-store";
+import type { Segment } from "@/lib/chat";
 
 // 工具步骤轨迹：默认折叠，标题显示步骤数
 export function StepTrace({ steps }: { steps: StepItem[] }) {

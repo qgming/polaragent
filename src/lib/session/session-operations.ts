@@ -2,7 +2,7 @@
 // 普通会话与团队会话成对提供（团队版走独立 repo），共用一组 *Impl 内部实现。
 import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { TeamMessage } from "@/stores/team/team-chat-store";
+import type { TeamMessage } from "@/lib/team";
 import {
   getExecutionEnv,
   getRepo,

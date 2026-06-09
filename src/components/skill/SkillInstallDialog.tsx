@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/useToast";
-import { skillLoader } from "@/lib/skill/skill-loader";
+import { skillLoader } from "@/lib/skill";
 
 interface SkillInstallDialogProps {
   isOpen: boolean;

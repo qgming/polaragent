@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import type { SkillConfig } from "@/types/config";
-import { skillLoader } from "@/lib/skill/skill-loader";
+import { skillLoader } from "@/lib/skill";
 
 interface SkillsState {
   // 状态

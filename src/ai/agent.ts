@@ -14,14 +14,16 @@ import { agentManager, type TeamContext } from "./agent-manager";
 import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
 import { initializeAiRuntime } from "@/lib/app-init";
-import { skillLoader } from "@/lib/skill/skill-loader";
+import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import {
   appendGuidanceMessage,
+} from "@/lib/session/personal";
+import {
   appendTeamGuidanceMessage,
-} from "@/lib/session/session-operations";
+} from "@/lib/session/team";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import type { ChatAttachment, Segment } from "@/stores/chat-store";
+import type { ChatAttachment, Segment } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";

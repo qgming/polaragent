@@ -8,13 +8,12 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { ChatMessage, ChatThread } from "@/stores/chat-store";
+import type { ChatMessage, ChatThread } from "@/lib/chat";
 import { useChatStore } from "@/stores/chat-store";
 import {
-  type TeamMessage,
-  type TeamThread,
   useTeamChatStore,
 } from "@/stores/team/team-chat-store";
+import type { TeamMessage, TeamThread } from "@/lib/team";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { cn } from "@/lib/utils";
 

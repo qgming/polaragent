@@ -6,9 +6,10 @@ import {
   getSessionWorkingDir,
   getSessionToolPermissionMode,
   setSessionToolPermissionMode,
-} from "@/lib/session/session-operations";
+} from "@/lib/session/personal";
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
+import type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -37,62 +38,7 @@ async function restoreThreadPermissionMode(threadId: string): Promise<void> {
   });
 }
 
-export type ChatRole = "assistant" | "user";
-
-export type ChatMessageStatus = "complete" | "streaming" | "error";
-
-export interface ChatAttachment {
-  path: string;
-  name: string;
-  kind: "text" | "image" | "audio";
-  // 音频附件时长（秒），用于语音条展示；其它类型可不填
-  duration?: number;
-}
-
-// 助手消息的「有序段」——复用 pi 的 AssistantMessage.content block 顺序。
-// text：正文（渲染成 markdown）；thinking：深度思考；tool：工具调用。
-export type Segment =
-  | { kind: "text"; text: string }
-  | { kind: "thinking"; text: string }
-  | { kind: "guidance"; text: string; createdAt: number }
-  | {
-      kind: "tool";
-      toolCallId: string;
-      toolName: string;
-      label: string;
-      status: "running" | "done" | "error";
-      // 工具调用的完整结果文本，供步骤项点击展开查看（无则不展示展开）
-      resultText?: string;
-      // 仅 update_todos：该次调用写入的完整待办快照，用于把后续段按待办分组折叠
-      todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
-      // 工具调用的详细结果数据（如语音合成的音频路径、时长等）
-      details?: Record<string, unknown>;
-    };
-
-export interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  createdAt: number;
-  status: ChatMessageStatus;
-  model?: string;
-  tokenCount?: number;
-  attachments?: ChatAttachment[];
-  // 助手消息的过程结构（思考/工具/正文有序）。用户消息无此字段。
-  segments?: Segment[];
-}
-
-export interface ChatThread {
-  id: string;
-  title: string;
-  subtitle: string;
-  messages: ChatMessage[];
-  updatedAt: number;
-  agentId?: string; // 关联的 Agent ID
-  permissionMode: ToolPermissionMode;
-  loaded?: boolean; // 是否已从磁盘 JSONL 回读过消息
-  autoTitled?: boolean; // 是否已基于对话历史自动生成过标题
-}
+export type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
 
 interface ExchangeStart {
   assistantId: string;

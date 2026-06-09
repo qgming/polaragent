@@ -32,17 +32,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { checkProviderConfig } from "@/lib/app-init";
-import { setSessionWorkingDir, getSessionFilesDir, ensureSessionFilesDir } from "@/lib/session/session-operations";
+import { setSessionWorkingDir, getSessionFilesDir, ensureSessionFilesDir } from "@/lib/session/personal";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import {
-  type ChatAttachment,
-  type Segment,
   useChatStore,
   useIsThreadResponding,
   useThreadMessages,
   useThreadPermissionMode,
 } from "@/stores/chat-store";
+import type { ChatAttachment, Segment } from "@/lib/chat";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useConfigStore } from "@/stores/config-store";

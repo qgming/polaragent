@@ -9,7 +9,7 @@
 // 因此 saveMessage 不再手动写消息（harness 已写），仅保留为兼容空操作。
 
 import { create } from "zustand";
-import type { ChatMessage } from "./chat-store";
+import type { ChatMessage } from "@/lib/chat";
 import {
   deleteSession,
   listSessions,
@@ -17,7 +17,7 @@ import {
   setSessionTitle,
   ensureSessionFilesDir,
   deleteSessionFilesDir,
-} from "@/lib/session/session-operations";
+} from "@/lib/session/personal";
 import { loadChatMessages } from "@/lib/session/message-parser";
 import {
   removeTitleIndex,

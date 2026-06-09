@@ -18,76 +18,19 @@ import {
   deleteTeamSessionFilesDir,
   getTeamSessionToolPermissionMode,
   setTeamSessionToolPermissionMode,
-} from "@/lib/session/session-operations";
+} from "@/lib/session/team";
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
 import { useTeamsStore } from "@/stores/team/teams-store";
-import type { ChatAttachment, ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
+import type { Segment } from "@/lib/chat";
+import type { TeamMessage, TeamThread } from "@/lib/team";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
 } from "@/types/permissions";
 
-// 团队消息：在普通消息基础上，assistant 消息携带发言成员 id + 支持投票
-export interface TeamMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  createdAt: number;
-  status: ChatMessageStatus;
-  model?: string;
-  tokenCount?: number;
-  attachments?: ChatAttachment[];
-  segments?: Segment[];
-  // 发言成员的 agentId（assistant 消息）。用户消息无此字段。
-  speakerAgentId?: string;
-  // 投票相关（通用投票，不限于结束对话）
-  vote?: {
-    // 投票主题/问题
-    topic: string;
-    // 发起人 agentId
-    initiatorId: string;
-    // 投票选项（灵活支持多选项）
-    options: Array<{
-      id: string;
-      label: string; // 例如："同意"、"反对"、"方案A"、"方案B"
-    }>;
-    // 各成员的投票
-    votes: Array<{
-      agentId: string;
-      optionId: string;
-      timestamp: number;
-    }>;
-    // 成员投票进度。AI 只通过消息正文获取上下文；这里的实时票据用于用户界面展示。
-    memberStatuses?: Array<{
-      agentId: string;
-      status: "pending" | "voting" | "voted" | "failed";
-      updatedAt: number;
-      error?: string;
-    }>;
-    // 投票状态
-    status: "pending" | "completed" | "cancelled";
-    // 投票结果（completed 时）
-    result?: {
-      topOptionIds: string[]; // 最高票选项；平票时包含多个
-      maxVotes: number;
-    };
-  };
-}
-
-export interface TeamThread {
-  id: string;
-  teamId: string;
-  title: string;
-  messages: TeamMessage[];
-  updatedAt: number;
-  loaded?: boolean; // 是否已从磁盘回读过消息
-  autoTitled?: boolean; // 是否已基于对话历史自动生成过标题
-  // 该会话绑定的工作目录（会话级覆盖；空则回退团队配置的 workspaceDir）
-  workingDir?: string;
-  permissionMode: ToolPermissionMode;
-}
+export type { TeamMessage, TeamThread } from "@/lib/team";
 
 interface TeamChatState {
   threads: TeamThread[];

@@ -35,7 +35,7 @@ import {
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
-import { clearTeamSessions } from "@/lib/session/session-operations";
+import { clearTeamSessions } from "@/lib/session/team";
 import type { SettingsSection } from "@/pages/SettingsPage";
 
 function App() {

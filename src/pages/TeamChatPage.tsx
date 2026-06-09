@@ -47,17 +47,17 @@ import {
 import { checkProviderConfig } from "@/lib/app-init";
 import { cn } from "@/lib/utils";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
-import { getTeamSessionFilesDir } from "@/lib/session/session-operations";
+import { getTeamSessionFilesDir } from "@/lib/session/team";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { useConfigStore } from "@/stores/config-store";
-import { type ChatAttachment, type Segment } from "@/stores/chat-store";
+import type { ChatAttachment, Segment } from "@/lib/chat";
 import {
   useIsTeamThreadResponding,
   useTeamChatStore,
   useTeamThreadMessages,
   useTeamThreadPermissionMode,
-  type TeamMessage,
 } from "@/stores/team/team-chat-store";
+import type { TeamMessage } from "@/lib/team";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";

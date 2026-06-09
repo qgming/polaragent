@@ -2,9 +2,10 @@
 // src/ai/team-vote.ts
 
 import { agentManager, type TeamContext } from "./agent-manager";
-import { appendTeamVoteMessage } from "@/lib/session/session-operations";
+import { appendTeamVoteMessage } from "@/lib/session/team";
 import { useConfigStore } from "@/stores/config-store";
-import { useTeamChatStore, type TeamMessage } from "@/stores/team/team-chat-store";
+import { useTeamChatStore } from "@/stores/team/team-chat-store";
+import type { TeamMessage } from "@/lib/team";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 type TeamVoteState = NonNullable<TeamMessage["vote"]>;

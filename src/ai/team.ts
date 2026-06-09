@@ -30,15 +30,15 @@ import {
   appendTeamUserMessage,
   getTeamSessionFilesDir,
   ensureTeamSessionFilesDir,
-} from "@/lib/session/session-operations";
+} from "@/lib/session/team";
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import {
   useTeamChatStore,
-  type TeamMessage,
 } from "@/stores/team/team-chat-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
-import type { ChatAttachment } from "@/stores/chat-store";
+import type { ChatAttachment } from "@/lib/chat";
+import type { TeamMessage } from "@/lib/team";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 import { DEFAULT_TOOL_PERMISSION_MODE } from "@/types/permissions";
 

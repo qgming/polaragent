@@ -4,7 +4,7 @@ import {
   readBase64File,
   writeBase64File,
 } from "@/lib/electron/electron-api";
-import type { ChatAttachment } from "@/stores/chat-store";
+import type { ChatAttachment } from "@/lib/chat";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;

@@ -18,17 +18,14 @@ import {
   resolveRuntimeModelId,
 } from "./model-router";
 import { buildAgentTools, type ToolContext } from "./tools";
-import {
-  openOrCreateSession,
-  openOrCreateTeamSession,
-} from "@/lib/session/session-operations";
+import { openOrCreateSession } from "@/lib/session/personal";
+import { openOrCreateTeamSession } from "@/lib/session/team";
 import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { useChatStore } from "@/stores/chat-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
-import { skillLoader } from "@/lib/skill/skill-loader";
-import { resolveSkillSelection } from "@/lib/skill/skill-selection";
+import { resolveSkillSelection, skillLoader } from "@/lib/skill";
 import { reviewToolPermission } from "./tool-permissions";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,

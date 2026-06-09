@@ -10,7 +10,7 @@ import {
   writeConfig,
   type MarketSkill,
 } from "@/lib/electron/electron-api";
-import { skillLoader } from "@/lib/skill/skill-loader";
+import { skillLoader } from "@/lib/skill";
 import { useConfigStore } from "@/stores/config-store";
 
 // 预置分类：label 展示，query 作搜索词（q 必填），category 作 API 过滤 slug

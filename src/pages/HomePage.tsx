@@ -31,12 +31,15 @@ import {
   ensureSessionFilesDir,
   getSessionFilesDir,
   setSessionWorkingDir,
-  getTeamSessionFilesDir,
+} from "@/lib/session/personal";
+import {
   ensureTeamSessionFilesDir,
-} from "@/lib/session/session-operations";
+  getTeamSessionFilesDir,
+} from "@/lib/session/team";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
-import { type ChatAttachment, type Segment, useChatStore } from "@/stores/chat-store";
+import type { ChatAttachment, Segment } from "@/lib/chat";
+import { useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";

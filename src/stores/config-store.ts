@@ -26,7 +26,7 @@ import {
 import {
   ALL_SKILLS_ID,
   normalizeSkillSelection,
-} from "@/lib/skill/skill-selection";
+} from "@/lib/skill";
 
 interface ConfigState {
   // 状态

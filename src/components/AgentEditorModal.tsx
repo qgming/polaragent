@@ -20,7 +20,7 @@ import {
   hasAllSkills,
   normalizeSkillSelection,
   ALL_SKILLS_ID,
-} from "@/lib/skill/skill-selection";
+} from "@/lib/skill";
 import { useConfigStore } from "@/stores/config-store";
 import type { AgentConfig } from "@/types/config";
 
