@@ -33,6 +33,10 @@ function audioDefaults(): AudioConfig {
           },
         ],
       },
+      inputOptimization: {
+        autoSend: false,
+        refineText: false,
+      },
     }
   );
 }
@@ -60,19 +64,65 @@ export function AudioPanel({
   const [voices, setVoices] = useState<VoiceConfig[]>(config.tts.voices ?? []);
   const [defaultVoice, setDefaultVoice] = useState(config.tts.defaultVoice ?? "bingtang");
 
+  // 语音输入优化选项
+  const [autoSend, setAutoSend] = useState(config.inputOptimization?.autoSend ?? false);
+  const [refineText, setRefineText] = useState(config.inputOptimization?.refineText ?? false);
+
+  // 自动保存语音输入优化选项
+  const handleAutoSendChange = async (checked: boolean) => {
+    setAutoSend(checked);
+    const currentAudio = settings.audio ?? audioDefaults();
+    await onUpdate({
+      audio: {
+        ...currentAudio,
+        inputOptimization: {
+          ...currentAudio.inputOptimization,
+          autoSend: checked,
+        },
+      },
+    }).catch((error) => {
+      console.error("保存自动发送配置失败", error);
+      // 保存失败时恢复原值
+      setAutoSend(!checked);
+    });
+  };
+
+  const handleRefineTextChange = async (checked: boolean) => {
+    setRefineText(checked);
+    const currentAudio = settings.audio ?? audioDefaults();
+    await onUpdate({
+      audio: {
+        ...currentAudio,
+        inputOptimization: {
+          ...currentAudio.inputOptimization,
+          refineText: checked,
+        },
+      },
+    }).catch((error) => {
+      console.error("保存口语优化配置失败", error);
+      // 保存失败时恢复原值
+      setRefineText(!checked);
+    });
+  };
+
   // 编辑音色弹窗状态
   const [editingVoice, setEditingVoice] = useState<VoiceConfig | null>(null);
   const [showVoiceDialog, setShowVoiceDialog] = useState(false);
 
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // 各区域独立的保存状态
+  const [asrSaveState, setAsrSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [ttsSaveState, setTtsSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
   const mountedRef = useRef(true);
-  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const asrResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ttsResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      if (asrResetTimerRef.current) clearTimeout(asrResetTimerRef.current);
+      if (ttsResetTimerRef.current) clearTimeout(ttsResetTimerRef.current);
     };
   }, []);
 
@@ -86,19 +136,49 @@ export function AudioPanel({
     setTtsBaseURL(next.tts.baseURL ?? "https://api.xiaomimimo.com/v1");
     setVoices(next.tts.voices ?? []);
     setDefaultVoice(next.tts.defaultVoice ?? "bingtang");
+    setAutoSend(next.inputOptimization?.autoSend ?? false);
+    setRefineText(next.inputOptimization?.refineText ?? false);
   }, [settings.audio]);
 
-  const handleSave = async () => {
-    setSaveState("saving");
+  const handleSaveAsr = async () => {
+    setAsrSaveState("saving");
     try {
+      // 获取当前完整配置，只更新 ASR 部分
+      const currentAudio = settings.audio ?? audioDefaults();
       await onUpdate({
         audio: {
+          ...currentAudio,
           asr: {
             apiKey: asrApiKey.trim(),
             baseURL: asrBaseURL.trim().replace(/\/+$/, ""),
             model: asrModel.trim(),
             language: asrLanguage.trim(),
           },
+        },
+      });
+      if (!mountedRef.current) return;
+      setAsrSaveState("saved");
+      asrResetTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setAsrSaveState("idle");
+      }, 1500);
+    } catch (error) {
+      console.error("保存 ASR 配置失败", error);
+      if (!mountedRef.current) return;
+      setAsrSaveState("error");
+      asrResetTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setAsrSaveState("idle");
+      }, 2500);
+    }
+  };
+
+  const handleSaveTts = async () => {
+    setTtsSaveState("saving");
+    try {
+      // 获取当前完整配置，只更新 TTS 部分
+      const currentAudio = settings.audio ?? audioDefaults();
+      await onUpdate({
+        audio: {
+          ...currentAudio,
           tts: {
             apiKey: ttsApiKey.trim(),
             baseURL: ttsBaseURL.trim().replace(/\/+$/, ""),
@@ -108,16 +188,16 @@ export function AudioPanel({
         },
       });
       if (!mountedRef.current) return;
-      setSaveState("saved");
-      resetTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) setSaveState("idle");
+      setTtsSaveState("saved");
+      ttsResetTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setTtsSaveState("idle");
       }, 1500);
     } catch (error) {
-      console.error("保存音频配置失败", error);
+      console.error("保存 TTS 配置失败", error);
       if (!mountedRef.current) return;
-      setSaveState("error");
-      resetTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) setSaveState("idle");
+      setTtsSaveState("error");
+      ttsResetTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setTtsSaveState("idle");
       }, 2500);
     }
   };
@@ -243,6 +323,85 @@ export function AudioPanel({
               className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
             />
           </div>
+
+          {/* ASR 保存按钮 */}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            {asrSaveState === "error" ? (
+              <span className="flex items-center gap-1.5 text-xs text-destructive">
+                <AlertCircle className="size-3.5" />
+                保存失败，请重试
+              </span>
+            ) : null}
+            <Button onClick={() => void handleSaveAsr()} disabled={asrSaveState === "saving"}>
+              {asrSaveState === "saving" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : asrSaveState === "saved" ? (
+                <Check className="size-4" />
+              ) : asrSaveState === "error" ? (
+                <AlertCircle className="size-4" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              保存配置
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 语音输入优化卡片 */}
+      <div className="mt-6 rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <Mic className="size-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">语音输入优化</h3>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            优化语音输入体验，支持自动发送和口语优化。
+          </p>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          {/* 自动发送开关 */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-sm font-medium">转文字后自动发送</label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                语音识别完成后，自动发送消息（与口语优化配合使用时，会在整理文本后自动发送）
+              </p>
+            </div>
+            <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                checked={autoSend}
+                onChange={(e) => void handleAutoSendChange(e.target.checked)}
+                className="peer sr-only"
+              />
+              <div className="peer h-6 w-11 rounded-full bg-muted after:absolute after:left-[2px] after:top-[2px] after:size-5 after:rounded-full after:bg-background after:transition-all after:content-[''] peer-checked:bg-primary peer-checked:after:translate-x-5 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-ring peer-focus:ring-offset-2"></div>
+            </label>
+          </div>
+
+          {/* 口语优化开关 */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-sm font-medium">语音转文字口语优化</label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                转文字后，调用 AI 模型整理文本，去除口头语、语气词，使内容更清晰正式
+              </p>
+            </div>
+            <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                checked={refineText}
+                onChange={(e) => void handleRefineTextChange(e.target.checked)}
+                className="peer sr-only"
+              />
+              <div className="peer h-6 w-11 rounded-full bg-muted after:absolute after:left-[2px] after:top-[2px] after:size-5 after:rounded-full after:bg-background after:transition-all after:content-[''] peer-checked:bg-primary peer-checked:after:translate-x-5 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-ring peer-focus:ring-offset-2"></div>
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+            💡 建议：启用两个选项可实现「语音输入 → 文本整理 → 自动发送」的流畅体验。口语优化需要消耗少量 token。
+          </div>
         </div>
       </div>
 
@@ -366,18 +525,18 @@ export function AudioPanel({
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
-            {saveState === "error" ? (
+            {ttsSaveState === "error" ? (
               <span className="flex items-center gap-1.5 text-xs text-destructive">
                 <AlertCircle className="size-3.5" />
                 保存失败，请重试
               </span>
             ) : null}
-            <Button onClick={() => void handleSave()} disabled={saveState === "saving"}>
-              {saveState === "saving" ? (
+            <Button onClick={() => void handleSaveTts()} disabled={ttsSaveState === "saving"}>
+              {ttsSaveState === "saving" ? (
                 <Loader2 className="size-4 animate-spin" />
-              ) : saveState === "saved" ? (
+              ) : ttsSaveState === "saved" ? (
                 <Check className="size-4" />
-              ) : saveState === "error" ? (
+              ) : ttsSaveState === "error" ? (
                 <AlertCircle className="size-4" />
               ) : (
                 <Save className="size-4" />

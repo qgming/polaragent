@@ -92,6 +92,11 @@ export interface AudioConfig {
     defaultVoice: string; // 默认音色 ID，对应 voices 列表中的某个 id
     voices: VoiceConfig[]; // 音色列表
   };
+  // 语音输入优化选项
+  inputOptimization?: {
+    autoSend?: boolean; // 转文字后自动发送
+    refineText?: boolean; // 转文字后调用模型整理文本（去除口头语）
+  };
 }
 
 /**

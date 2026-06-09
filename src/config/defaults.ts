@@ -89,6 +89,11 @@ export const defaultSettings: Settings = {
         },
       ],
     },
+    // 语音输入优化选项
+    inputOptimization: {
+      autoSend: false,
+      refineText: false,
+    },
   },
 };
 

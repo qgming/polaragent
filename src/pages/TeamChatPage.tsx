@@ -22,6 +22,7 @@ import {
   type ToolSeg,
 } from "@/components/chat/AgentTrace";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { UserAttachments } from "@/components/chat/MessageRenderer";
 import { IconButton } from "@/components/IconButton";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
@@ -558,6 +559,22 @@ function Composer({
 }) {
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
+
+  const handleVoiceTranscription = (text: string, shouldAutoSend: boolean) => {
+    // 插入文本到输入框
+    if (composerRef.current) {
+      composerRef.current.clear();
+      composerRef.current.insertText(text);
+    }
+
+    // 如果启用了自动发送，延迟一小段时间后自动发送
+    if (shouldAutoSend) {
+      setTimeout(() => {
+        onSend();
+      }, 300); // 给用户一点时间看到文本
+    }
+  };
+
   // 工作目录仅显示末级名称，hover 看完整路径
   const isTempDir =
     workingDir &&
@@ -643,12 +660,13 @@ function Composer({
             </Tooltip>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-2">
             {isResponding ? (
               <IconButton label="停止" onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
             ) : null}
+            {!isResponding && <VoiceRecordButton onTranscriptionComplete={handleVoiceTranscription} />}
             {showSendButton ? (
               <Button
                 className="size-8 rounded-full"

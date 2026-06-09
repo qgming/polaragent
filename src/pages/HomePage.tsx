@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { promptAgent } from "@/ai/agent";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { IconButton } from "@/components/IconButton";
 import {
   SkillComposerInput,
@@ -84,6 +85,21 @@ export function HomePage({
     const dir = await pickWorkingDirectory();
     if (dir) {
       setWorkingDir(dir);
+    }
+  };
+
+  const handleVoiceTranscription = (text: string, shouldAutoSend: boolean) => {
+    // 插入文本到输入框
+    if (composerRef.current) {
+      composerRef.current.clear();
+      composerRef.current.insertText(text);
+    }
+
+    // 如果启用了自动发送，延迟一小段时间后自动发送
+    if (shouldAutoSend) {
+      setTimeout(() => {
+        void handleSend();
+      }, 300); // 给用户一点时间看到文本
     }
   };
 
@@ -224,7 +240,8 @@ export function HomePage({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              <VoiceRecordButton onTranscriptionComplete={handleVoiceTranscription} />
               <IconButton
                 className="size-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
                 label="发送"

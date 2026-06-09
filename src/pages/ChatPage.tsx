@@ -3,8 +3,6 @@
 
 import {
   FolderOpen,
-  Mic,
-  MicOff,
   SendHorizontal,
   Square as SquareIcon,
 } from "lucide-react";
@@ -48,6 +46,7 @@ import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useConfigStore } from "@/stores/config-store";
 import { useAlert } from "@/hooks/useAlert";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
 
 export function ChatPage({
   activeThreadTitle,
@@ -390,6 +389,7 @@ function Composer({
 }) {
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isRefining, setIsRefining] = useState(false);
 
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
@@ -453,11 +453,41 @@ function Composer({
         });
 
         if (transcription.text && transcription.text.trim()) {
-          const text = transcription.text.trim();
-          // 清空输入框，插入识别的文字
+          let text = transcription.text.trim();
+
+          // 获取语音输入优化选项
+          const inputOptimization = settings?.inputOptimization;
+          const shouldRefine = inputOptimization?.refineText ?? false;
+          const shouldAutoSend = inputOptimization?.autoSend ?? false;
+
+          // 如果启用了口语优化，调用模型整理文本
+          if (shouldRefine) {
+            try {
+              setIsRefining(true);
+              const { refineVoiceText } = await import("@/ai/voice-text-refine");
+              const refinedText = await refineVoiceText(text);
+              if (refinedText.trim()) {
+                text = refinedText.trim();
+              }
+            } catch (err) {
+              console.warn("文本整理失败，使用原始识别结果", err);
+              // 整理失败时继续使用原始文本
+            } finally {
+              setIsRefining(false);
+            }
+          }
+
+          // 插入文本到输入框
           if (composerRef.current) {
             composerRef.current.clear();
             composerRef.current.insertText(text);
+          }
+
+          // 如果启用了自动发送，延迟一小段时间后自动发送
+          if (shouldAutoSend) {
+            setTimeout(() => {
+              onSend();
+            }, 300); // 给用户一点时间看到文本
           }
         }
 
@@ -518,7 +548,7 @@ function Composer({
             </Tooltip>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             {isResponding ? (
               <IconButton label="停止" onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
@@ -527,31 +557,36 @@ function Composer({
             {!isResponding && (
               <Button
                 onClick={() => void handleToggleRecording()}
-                disabled={isTranscribing}
-                size={audioRecorder.isRecording || isTranscribing ? "sm" : "icon"}
+                disabled={isTranscribing || isRefining}
+                size={audioRecorder.isRecording || isTranscribing || isRefining ? "sm" : "icon"}
                 className={
-                  audioRecorder.isRecording || isTranscribing
-                    ? "h-8 gap-1.5 rounded-full px-3"
+                  audioRecorder.isRecording || isTranscribing || isRefining
+                    ? "h-8 min-w-[80px] gap-1.5 rounded-full px-3"
                     : "size-8 rounded-full"
                 }
-                variant={audioRecorder.isRecording ? "destructive" : "default"}
+                variant="default"
                 type="button"
               >
                 {audioRecorder.isRecording ? (
                   <>
-                    <MicOff className="size-4" />
+                    <AudioLines animate loop size={16} />
                     <span className="text-xs">{audioRecorder.duration}s</span>
+                  </>
+                ) : isRefining ? (
+                  <>
+                    <AudioLines animate loop size={16} />
+                    <span className="text-xs">优化中</span>
                   </>
                 ) : isTranscribing ? (
                   <>
-                    <Mic className="size-4" />
+                    <AudioLines animate loop size={16} />
                     <span className="text-xs">转换中</span>
                   </>
                 ) : (
-                  <Mic className="size-4" />
+                  <AudioLines size={16} />
                 )}
                 <span className="sr-only">
-                  {audioRecorder.isRecording ? "停止录音" : isTranscribing ? "转换中" : "开始录音"}
+                  {audioRecorder.isRecording ? "录音中" : isRefining ? "优化中" : isTranscribing ? "转换中" : "开始录音"}
                 </span>
               </Button>
             )}
