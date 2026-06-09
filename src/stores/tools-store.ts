@@ -7,14 +7,22 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
-  deleteMcpConfig,
+  allMcpRemoteToolNames,
+  cloneMcpDisabledToolNames,
+  cloneMcpDiscoveredTools,
+  cloneMcpServer,
+  deleteInstalledMcpConfig,
+  detectMcpTool,
+  discoverMcpToolOrThrow,
   fetchBuiltinMcpConfigs,
-  listMcpConfigs,
-  mcpListTools,
-  readMcpConfig,
-  writeMcpConfig,
-} from "@/lib/electron/electron-api";
-import type { McpServerConfig, McpToolConfig } from "@/types/config";
+  listInstalledMcpConfigIds,
+  mcpServerKey,
+  normalizeMcpToolForSignature,
+  readInstalledMcpConfig,
+  uniqueMcpToolId,
+  writeInstalledMcpConfig,
+} from "@/lib/mcp";
+import type { McpToolConfig } from "@/lib/mcp";
 
 interface ToolsState {
   // 工具运行时签名。工具目录真实变化时改变，用于让已打开会话下次发送前重建 AgentHarness。
@@ -28,6 +36,7 @@ interface ToolsState {
   // 用户已安装 / 自定义的 MCP 工具配置
   customTools: McpToolConfig[];
   isInstalledLoading: boolean;
+  checkingMcpIds: string[];
   // 展开的工具分组 key 列表（UI 状态，不持久化）
   expandedGroups: string[];
 
@@ -51,6 +60,8 @@ interface ToolsState {
   loadInstalledMcpTools: () => Promise<void>;
   // 新增自定义 MCP 工具
   addCustomTool: (tool: McpToolConfig) => Promise<void>;
+  // 批量新增自定义 MCP 工具
+  addCustomTools: (tools: McpToolConfig[]) => Promise<void>;
   // 更新 MCP 工具配置
   updateCustomTool: (oldId: string, tool: McpToolConfig) => Promise<void>;
   // 启用/禁用某个 MCP server 下的远端工具
@@ -63,85 +74,10 @@ interface ToolsState {
   refreshInstalledMcpTools: () => Promise<void>;
   // 刷新内置 MCP 的远端工具 schema，供 AI 运行时同步装配
   refreshBuiltinMcpTools: () => Promise<void>;
+  // 手动检测某个 MCP server 是否可用（内置 / 已安装通用）
+  checkMcpTool: (id: string) => Promise<void>;
   // 删除已安装 MCP 工具
   removeCustomTool: (id: string) => void;
-}
-
-function uniqueToolId(baseId: string, existingIds: Set<string>): string {
-  const clean =
-    baseId
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "mcp-tool";
-  let id = clean;
-  let suffix = 1;
-  while (existingIds.has(id)) {
-    id = `${clean}-${suffix++}`;
-  }
-  return id;
-}
-
-function cloneServer(server: McpServerConfig): McpServerConfig {
-  return {
-    transport: server.transport,
-    command: server.command ?? "",
-    args: [...(server.args ?? [])],
-    env: { ...(server.env ?? {}) },
-    url: server.url ?? "",
-    headers: { ...(server.headers ?? {}) },
-  };
-}
-
-async function discoverMcpTools(tool: McpToolConfig): Promise<McpToolConfig> {
-  const discoveredTools = await mcpListTools(tool.server);
-  if (discoveredTools.length === 0) {
-    throw new Error(`MCP server「${tool.name}」没有返回任何可用工具。`);
-  }
-  return { ...tool, discoveredTools };
-}
-
-function cloneDiscoveredTools(tool: McpToolConfig): McpToolConfig["discoveredTools"] {
-  return (tool.discoveredTools ?? []).map((item) => ({
-    ...item,
-    inputSchema: item.inputSchema ? { ...item.inputSchema } : undefined,
-  }));
-}
-
-function cloneDisabledToolNames(tool: McpToolConfig): string[] | undefined {
-  return tool.disabledToolNames ? [...tool.disabledToolNames] : undefined;
-}
-
-function sortedRecord(record?: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(record ?? {})
-      .filter(([key, value]) => key.trim() !== "" && value.trim() !== "")
-      .sort(([a], [b]) => a.localeCompare(b)),
-  );
-}
-
-function normalizeToolForSignature(tool: McpToolConfig) {
-  return {
-    id: tool.id,
-    origin: tool.origin,
-    server: {
-      transport: tool.server.transport,
-      command: tool.server.command ?? "",
-      args: [...(tool.server.args ?? [])],
-      env: sortedRecord(tool.server.env),
-      url: tool.server.url ?? "",
-      headers: sortedRecord(tool.server.headers),
-    },
-    disabledToolNames: [...(tool.disabledToolNames ?? [])].sort(),
-    discoveredTools: (tool.discoveredTools ?? [])
-      .map((item) => ({
-        name: item.name,
-        title: item.title ?? "",
-        description: item.description ?? "",
-        inputSchema: item.inputSchema ?? null,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  };
 }
 
 function toolsRuntimeSignature(state: Pick<
@@ -152,19 +88,15 @@ function toolsRuntimeSignature(state: Pick<
     disabledTools: normalizeDisabledToolKeys(state.disabledTools),
     builtinMcpTools: [...state.builtinMcpTools]
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(normalizeToolForSignature),
+      .map(normalizeMcpToolForSignature),
     customTools: [...state.customTools]
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map(normalizeToolForSignature),
+      .map(normalizeMcpToolForSignature),
   });
 }
 
 function builtinToolKey(id: string): string {
   return `builtin:${id}`;
-}
-
-function mcpServerKey(id: string): string {
-  return `mcp:${id}`;
 }
 
 function normalizeDisabledToolKeys(keys: string[]): string[] {
@@ -183,10 +115,6 @@ function updateDisabledKey(keys: string[], key: string, enabled: boolean): strin
     set.add(key);
   }
   return Array.from(set).sort();
-}
-
-function allRemoteToolNames(tool: McpToolConfig): string[] {
-  return (tool.discoveredTools ?? []).map((item) => item.name).sort();
 }
 
 function withRuntimeSignature<T extends Partial<ToolsState>>(
@@ -213,6 +141,7 @@ export const useToolsStore = create<ToolsState>()(
       builtinMcpTools: [],
       customTools: [],
       isInstalledLoading: false,
+      checkingMcpIds: [],
       expandedGroups: [], // 默认全部收起
 
       toggleBuiltinTool: (id, enabled) => {
@@ -262,7 +191,7 @@ export const useToolsStore = create<ToolsState>()(
         const nextDisabledToolNames = enabled
           ? []
           : target
-            ? allRemoteToolNames(target)
+            ? allMcpRemoteToolNames(target)
             : undefined;
 
         set((state) => {
@@ -306,7 +235,7 @@ export const useToolsStore = create<ToolsState>()(
         const installed = get().customTools.find((tool) => tool.id === id);
         if (installed && nextDisabledToolNames) {
           const updated = { ...installed, disabledToolNames: nextDisabledToolNames };
-          void writeMcpConfig(updated.id, updated).catch((error) => {
+          void writeInstalledMcpConfig(updated.id, updated).catch((error) => {
             console.error(`写入 MCP 总开关失败: ${updated.name}`, error);
           });
         }
@@ -346,9 +275,9 @@ export const useToolsStore = create<ToolsState>()(
       loadInstalledMcpTools: async () => {
         set({ isInstalledLoading: true });
         try {
-          const ids = await listMcpConfigs();
+          const ids = await listInstalledMcpConfigIds();
           const loaded = await Promise.all(
-            ids.map((id) => readMcpConfig<McpToolConfig>(id)),
+            ids.map((id) => readInstalledMcpConfig<McpToolConfig>(id)),
           );
           set((state) => withRuntimeSignature(state, {
             customTools: loaded,
@@ -361,26 +290,53 @@ export const useToolsStore = create<ToolsState>()(
       },
 
       addCustomTool: async (tool) => {
-        const discovered = await discoverMcpTools(tool);
+        const discovered = await discoverMcpToolOrThrow(tool);
         const existingIds = new Set(get().customTools.map((item) => item.id));
-        const id = uniqueToolId(discovered.id || discovered.name, existingIds);
+        const id = uniqueMcpToolId(discovered.id || discovered.name, existingIds);
         const installed: McpToolConfig = {
           ...discovered,
           id,
           type: "mcp",
           origin: "custom",
-          server: cloneServer(discovered.server),
-          discoveredTools: cloneDiscoveredTools(discovered),
-          disabledToolNames: cloneDisabledToolNames(discovered),
+          server: cloneMcpServer(discovered.server),
+          discoveredTools: cloneMcpDiscoveredTools(discovered),
+          disabledToolNames: cloneMcpDisabledToolNames(discovered),
         };
-        await writeMcpConfig(id, installed);
+        await writeInstalledMcpConfig(id, installed);
         set((state) => withRuntimeSignature(state, {
           customTools: [...state.customTools, installed],
         }));
       },
 
+      addCustomTools: async (tools) => {
+        if (tools.length === 0) return;
+        const existingIds = new Set(get().customTools.map((item) => item.id));
+        const installedTools: McpToolConfig[] = [];
+
+        for (const tool of tools) {
+          const discovered = await discoverMcpToolOrThrow(tool);
+          const id = uniqueMcpToolId(discovered.id || discovered.name, existingIds);
+          existingIds.add(id);
+          const installed: McpToolConfig = {
+            ...discovered,
+            id,
+            type: "mcp",
+            origin: "custom",
+            server: cloneMcpServer(discovered.server),
+            discoveredTools: cloneMcpDiscoveredTools(discovered),
+            disabledToolNames: cloneMcpDisabledToolNames(discovered),
+          };
+          await writeInstalledMcpConfig(id, installed);
+          installedTools.push(installed);
+        }
+
+        set((state) => withRuntimeSignature(state, {
+          customTools: [...state.customTools, ...installedTools],
+        }));
+      },
+
       updateCustomTool: async (oldId, tool) => {
-        const discovered = await discoverMcpTools(tool);
+        const discovered = await discoverMcpToolOrThrow(tool);
         const previous = get().customTools.find((item) => item.id === oldId);
         const discoveredNames = new Set(
           (discovered.discoveredTools ?? []).map((item) => item.name),
@@ -391,13 +347,13 @@ export const useToolsStore = create<ToolsState>()(
         const updated: McpToolConfig = {
           ...discovered,
           type: "mcp",
-          server: cloneServer(discovered.server),
-          discoveredTools: cloneDiscoveredTools(discovered),
+          server: cloneMcpServer(discovered.server),
+          discoveredTools: cloneMcpDiscoveredTools(discovered),
           disabledToolNames,
         };
-        await writeMcpConfig(updated.id, updated);
+        await writeInstalledMcpConfig(updated.id, updated);
         if (oldId !== updated.id) {
-          await deleteMcpConfig(oldId);
+          await deleteInstalledMcpConfig(oldId);
         }
         set((state) => withRuntimeSignature(state, {
           customTools: state.customTools.map((item) =>
@@ -419,8 +375,8 @@ export const useToolsStore = create<ToolsState>()(
           }
           const updated: McpToolConfig = {
             ...builtinTarget,
-            server: cloneServer(builtinTarget.server),
-            discoveredTools: cloneDiscoveredTools(builtinTarget),
+            server: cloneMcpServer(builtinTarget.server),
+            discoveredTools: cloneMcpDiscoveredTools(builtinTarget),
             disabledToolNames: Array.from(disabled).sort(),
           };
           set((state) => withRuntimeSignature(state, {
@@ -447,12 +403,12 @@ export const useToolsStore = create<ToolsState>()(
 
         const updated: McpToolConfig = {
           ...target,
-          server: cloneServer(target.server),
-          discoveredTools: cloneDiscoveredTools(target),
+          server: cloneMcpServer(target.server),
+          discoveredTools: cloneMcpDiscoveredTools(target),
           disabledToolNames: Array.from(disabled).sort(),
         };
 
-        await writeMcpConfig(updated.id, updated);
+        await writeInstalledMcpConfig(updated.id, updated);
         set((state) => withRuntimeSignature(state, {
           customTools: state.customTools.map((tool) =>
             tool.id === serverId ? updated : tool,
@@ -467,15 +423,16 @@ export const useToolsStore = create<ToolsState>()(
         const refreshed = await Promise.all(
           tools.map(async (tool) => {
             try {
-              const discovered = await discoverMcpTools(tool);
+              const discovered = await detectMcpTool(tool);
+              if (discovered.installCheck?.status !== "installed") return discovered;
               const refreshedTool = {
                 ...discovered,
                 type: "mcp" as const,
-                server: cloneServer(discovered.server),
-                discoveredTools: cloneDiscoveredTools(discovered),
-                disabledToolNames: cloneDisabledToolNames(discovered),
+                server: cloneMcpServer(discovered.server),
+                discoveredTools: cloneMcpDiscoveredTools(discovered),
+                disabledToolNames: cloneMcpDisabledToolNames(discovered),
               };
-              await writeMcpConfig(refreshedTool.id, refreshedTool);
+              await writeInstalledMcpConfig(refreshedTool.id, refreshedTool);
               return refreshedTool;
             } catch (error) {
               console.error(`刷新 MCP 工具失败: ${tool.name}`, error);
@@ -494,15 +451,15 @@ export const useToolsStore = create<ToolsState>()(
         const refreshed = await Promise.all(
           tools.map(async (tool) => {
             try {
-              const discovered = await discoverMcpTools(tool);
+              const discovered = await detectMcpTool(tool);
               const disabledToolNames = get().builtinMcpDisabledToolNames[tool.id]
-                ?? cloneDisabledToolNames(discovered);
+                ?? cloneMcpDisabledToolNames(discovered);
               return {
                 ...discovered,
                 type: "mcp" as const,
                 origin: "builtin" as const,
-                server: cloneServer(discovered.server),
-                discoveredTools: cloneDiscoveredTools(discovered),
+                server: cloneMcpServer(discovered.server),
+                discoveredTools: cloneMcpDiscoveredTools(discovered),
                 disabledToolNames,
               };
             } catch (error) {
@@ -515,6 +472,51 @@ export const useToolsStore = create<ToolsState>()(
         set((state) => withRuntimeSignature(state, { builtinMcpTools: refreshed }));
       },
 
+      checkMcpTool: async (id) => {
+        const target = [...get().builtinMcpTools, ...get().customTools].find(
+          (tool) => tool.id === id,
+        );
+        if (!target) return;
+
+        set((state) => ({
+          checkingMcpIds: Array.from(new Set([...state.checkingMcpIds, id])),
+          builtinMcpTools: state.builtinMcpTools.map((tool) =>
+            tool.id === id
+              ? { ...tool, installCheck: { ...tool.installCheck, status: "checking" } }
+              : tool,
+          ),
+          customTools: state.customTools.map((tool) =>
+            tool.id === id
+              ? { ...tool, installCheck: { ...tool.installCheck, status: "checking" } }
+              : tool,
+          ),
+        }));
+
+        const detected = await detectMcpTool(target);
+        const updated: McpToolConfig = {
+          ...detected,
+          server: cloneMcpServer(detected.server),
+          discoveredTools: cloneMcpDiscoveredTools(detected),
+          disabledToolNames: cloneMcpDisabledToolNames(detected),
+        };
+
+        if (target.origin !== "builtin") {
+          await writeInstalledMcpConfig(updated.id, updated).catch((error) => {
+            console.error(`写入 MCP 检测结果失败: ${updated.name}`, error);
+          });
+        }
+
+        set((state) => withRuntimeSignature(state, {
+          checkingMcpIds: state.checkingMcpIds.filter((item) => item !== id),
+          builtinMcpTools: state.builtinMcpTools.map((tool) =>
+            tool.id === id ? { ...updated, origin: "builtin" as const } : tool,
+          ),
+          customTools: state.customTools.map((tool) =>
+            tool.id === id ? updated : tool,
+          ),
+        }));
+      },
+
       removeCustomTool: (id) => {
         set((state) => withRuntimeSignature(state, {
           customTools: state.customTools.filter((item) => item.id !== id),
@@ -522,7 +524,7 @@ export const useToolsStore = create<ToolsState>()(
             (item) => item !== id && item !== mcpServerKey(id),
           ),
         }));
-        void deleteMcpConfig(id);
+        void deleteInstalledMcpConfig(id);
       },
     }),
     {

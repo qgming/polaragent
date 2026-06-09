@@ -1,6 +1,3 @@
-import { mcpSdkCallTool, mcpSdkListTools } from "@/lib/mcp-sdk-client";
-import type { McpServerConfig, McpToolConfig } from "@/types/config";
-
 export interface LlmChatMessage {
   role: "assistant" | "user";
   content: string;
@@ -309,22 +306,6 @@ export async function fetchAgentCategory(fileName: string): Promise<MarketAgent[
     .filter((agent): agent is MarketAgent => agent !== null);
 }
 
-export interface McpRemoteTool {
-  name: string;
-  title?: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
-
-export const mcpListTools = (server: McpServerConfig): Promise<McpRemoteTool[]> =>
-  mcpSdkListTools(server);
-
-export const mcpCallTool = (params: {
-  server: McpServerConfig;
-  toolName: string;
-  arguments?: Record<string, unknown>;
-}): Promise<unknown> => mcpSdkCallTool(params);
-
 export const listAgents = (): Promise<string[]> => api().config.listAgents();
 export async function readAgentConfig<T = any>(agentId: string): Promise<T> {
   return JSON.parse(await api().config.readAgent(agentId)) as T;
@@ -332,17 +313,6 @@ export async function readAgentConfig<T = any>(agentId: string): Promise<T> {
 export const writeAgentConfig = (agentId: string, content: any) =>
   api().config.writeAgent(agentId, JSON.stringify(content, null, 2));
 export const deleteAgentConfig = (agentId: string) => api().config.deleteAgent(agentId);
-
-export async function fetchBuiltinMcpConfigs(): Promise<McpToolConfig[]> {
-  return JSON.parse(await api().config.fetchBuiltinMcpConfigs()) as McpToolConfig[];
-}
-export const listMcpConfigs = (): Promise<string[]> => api().config.listMcp();
-export async function readMcpConfig<T = any>(mcpId: string): Promise<T> {
-  return JSON.parse(await api().config.readMcp(mcpId)) as T;
-}
-export const writeMcpConfig = (mcpId: string, content: any) =>
-  api().config.writeMcp(mcpId, JSON.stringify(content, null, 2));
-export const deleteMcpConfig = (mcpId: string) => api().config.deleteMcp(mcpId);
 
 export const listTeams = (): Promise<string[]> => api().config.listTeams();
 export async function readTeamConfig<T = any>(teamId: string): Promise<T> {

@@ -3,8 +3,8 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
-import { mcpCallTool } from "@/lib/electron/electron-api";
-import type { McpDiscoveredTool, McpToolConfig } from "@/types/config";
+import { callMcpTool } from "@/lib/mcp";
+import type { McpDiscoveredTool, McpToolConfig } from "@/lib/mcp";
 import { text, type ToolContext } from "./tool-context";
 
 export function buildMcpTools(
@@ -48,7 +48,7 @@ function buildSingleMcpTool(
         params && typeof params === "object" && !Array.isArray(params)
           ? (params as Record<string, unknown>)
           : {};
-      const result = await mcpCallTool({
+      const result = await callMcpTool({
         server: config.server,
         toolName: remoteTool.name,
         arguments: argumentsObject,

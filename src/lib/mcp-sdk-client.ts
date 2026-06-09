@@ -3,7 +3,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
-import type { McpServerConfig } from "@/types/config";
+import type { McpServerConfig } from "@/lib/mcp";
 
 const CLIENT_INFO = {
   name: "PolarAgent",

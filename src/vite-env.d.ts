@@ -135,9 +135,9 @@ interface Window {
       installFromLocal: (sourcePath: string) => Promise<string>;
     };
     mcp: {
-      stdioListTools: (server: import("@/types/config").McpServerConfig) => Promise<import("@/lib/electron/electron-api").McpRemoteTool[]>;
+      stdioListTools: (server: import("@/lib/mcp").McpServerConfig) => Promise<import("@/lib/mcp").McpDiscoveredTool[]>;
       stdioCallTool: (request: {
-        server: import("@/types/config").McpServerConfig;
+        server: import("@/lib/mcp").McpServerConfig;
         toolName: string;
         arguments?: Record<string, unknown>;
       }) => Promise<unknown>;

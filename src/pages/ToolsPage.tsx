@@ -7,6 +7,7 @@ import {
   Edit3,
   FolderOpen,
   Plus,
+  RefreshCw,
   Trash2,
   Wrench,
 } from "lucide-react";
@@ -16,14 +17,16 @@ import {
   McpToolEditorModal,
   type McpEditorMode,
 } from "@/components/mcp/McpToolEditorModal";
+import { McpInstallStatusBadge } from "@/components/mcp/McpInstallStatusBadge";
 import { McpProviderDiscovery } from "@/components/mcp/McpProviderDiscovery";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/useToast";
 import { openExternal } from "@/lib/electron/electron-api";
+import { createEmptyMcpTool, mcpTransportLabel } from "@/lib/mcp";
 import { useToolsStore } from "@/stores/tools-store";
-import type { McpToolConfig, McpTransport } from "@/types/config";
+import type { McpToolConfig } from "@/lib/mcp";
 
 type ToolTab = "discover" | "builtin" | "installed";
 
@@ -39,9 +42,11 @@ export function ToolsPage() {
   const builtinMcpTools = useToolsStore((state) => state.builtinMcpTools);
   const customTools = useToolsStore((state) => state.customTools);
   const addCustomTool = useToolsStore((state) => state.addCustomTool);
+  const addCustomTools = useToolsStore((state) => state.addCustomTools);
   const updateCustomTool = useToolsStore((state) => state.updateCustomTool);
   const toggleMcpRemoteTool = useToolsStore((state) => state.toggleMcpRemoteTool);
   const removeCustomTool = useToolsStore((state) => state.removeCustomTool);
+  const checkMcpTool = useToolsStore((state) => state.checkMcpTool);
   const expandedGroups = useToolsStore((state) => state.expandedGroups);
   const toggleGroupExpand = useToolsStore((state) => state.toggleGroupExpand);
   const toggleGroup = useToolsStore((state) => state.toggleGroup);
@@ -78,6 +83,12 @@ export function ToolsPage() {
       await addCustomTool({ ...tool, origin: "market" });
       setActiveTab("installed");
     }
+    setEditor(null);
+  };
+
+  const saveManyMcpTools = async (tools: McpToolConfig[]) => {
+    await addCustomTools(tools);
+    setActiveTab("installed");
     setEditor(null);
   };
 
@@ -130,6 +141,7 @@ export function ToolsPage() {
                     onToggleRemoteTool={(remoteToolName, enabled) =>
                       void toggleMcpRemoteTool(tool.id, remoteToolName, enabled)
                     }
+                    onCheck={() => void checkMcpTool(tool.id)}
                   />
                 ))}
                 {groupedTools
@@ -188,6 +200,7 @@ export function ToolsPage() {
                   onToggleRemoteTool={(remoteToolName, enabled) =>
                     void toggleMcpRemoteTool(tool.id, remoteToolName, enabled)
                   }
+                  onCheck={() => void checkMcpTool(tool.id)}
                 />
               ))
             ) : (
@@ -209,6 +222,7 @@ export function ToolsPage() {
           if (!open) setEditor(null);
         }}
         onSave={saveMcpTool}
+        onSaveMany={saveManyMcpTools}
       />
     </div>
   );
@@ -240,7 +254,7 @@ function PageHero() {
         <div className="relative min-h-[116px] px-7 py-7">
           <h2 className="text-lg font-semibold">给助手接上外部工具箱</h2>
           <p className="mt-3 max-w-[640px] text-sm text-muted-foreground">
-            先去发现页看看有哪些 MCP 提供商，找到合适的服务后，粘贴配置就能让助手用起来。
+            先去发现页看看有哪些 MCP 提供商，也可以直接粘贴 mcpServers 配置手动安装。
           </p>
           <div className="absolute right-10 top-4 hidden rotate-[-12deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
             <Wrench className="size-7" />
@@ -303,6 +317,7 @@ function McpToolRow({
   expanded,
   onDelete,
   onEdit,
+  onCheck,
   onToggleExpand,
   onToggleRemoteTool,
   tool,
@@ -310,6 +325,7 @@ function McpToolRow({
   expanded?: boolean;
   onDelete?: () => void;
   onEdit?: () => void;
+  onCheck?: () => void;
   onToggleExpand?: () => void;
   onToggleRemoteTool?: (remoteToolName: string, enabled: boolean) => void;
   tool: McpToolConfig;
@@ -325,6 +341,7 @@ function McpToolRow({
         (item) => !disabledRemoteTools.has(item.name),
       ).length
     : 0;
+  const isChecking = tool.installCheck?.status === "checking";
 
   return (
     <div className="border-b border-border last:border-b-0">
@@ -335,7 +352,7 @@ function McpToolRow({
           meta={[
             "MCP",
             tool.category,
-            transportLabel(tool.server.transport),
+            mcpTransportLabel(tool.server.transport),
             tool.configFields?.some((field) => field.required) ? "需要配置" : null,
           ]
             .filter(Boolean)
@@ -343,6 +360,7 @@ function McpToolRow({
           badges={[
             `${enabledToolCount}/${tool.discoveredTools?.length ?? 0}`,
           ]}
+          status={<McpInstallStatusBadge check={tool.installCheck} />}
         />
         <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
           <Button
@@ -361,6 +379,16 @@ function McpToolRow({
               编辑
             </Button>
           ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            title="检测 MCP 是否可用"
+            onClick={onCheck}
+            disabled={isChecking}
+          >
+            <RefreshCw className={`size-4 ${isChecking ? "animate-spin" : ""}`} />
+            {isChecking ? "检测中" : "检测"}
+          </Button>
           {tool.origin !== "builtin" ? (
             <Button variant="outline" size="sm" title="删除" onClick={onDelete}>
               <Trash2 className="size-4" />
@@ -465,11 +493,13 @@ function ToolIdentity({
   description,
   meta,
   name,
+  status,
 }: {
   badges?: string[];
   description: string;
   meta?: string;
   name: string;
+  status?: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 items-center">
@@ -489,6 +519,7 @@ function ToolIdentity({
               {badge}
             </span>
           ))}
+          {status}
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
           {description || "暂无描述"}
@@ -532,26 +563,6 @@ function EmptyCloudState({
       </p>
     </div>
   );
-}
-
-function createEmptyMcpTool(): McpToolConfig {
-  return {
-    id: "",
-    name: "",
-    description: "",
-    type: "mcp",
-    origin: "custom",
-    category: "custom",
-    icon: "Plug",
-    server: {
-      transport: "stdio",
-      command: "npx",
-      args: ["-y", ""],
-      env: {},
-      headers: {},
-      url: "",
-    },
-  };
 }
 
 function ToolGroupRow({
@@ -628,10 +639,3 @@ function ToolGroupRow({
     </div>
   );
 }
-
-function transportLabel(transport: McpTransport): string {
-  if (transport === "streamable-http") return "HTTP";
-  if (transport === "sse") return "SSE";
-  return "stdio";
-}
-
