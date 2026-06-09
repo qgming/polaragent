@@ -12,6 +12,7 @@ import {
   StepTrace,
   type ToolSeg,
 } from "@/components/chat/AgentTrace";
+import { AudioBar } from "@/components/chat/AudioBar";
 import { IconButton } from "@/components/IconButton";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { stripMarkdown } from "@/lib/markdown";
@@ -94,13 +95,20 @@ export const ChatMessageView = memo(function ChatMessageView({
         </>
       )}
       {message.status === "streaming" ? null : (
-        <div className="mt-3 flex items-center gap-1 text-muted-foreground">
-          <IconButton
-            label="复制纯文本"
-            onClick={() => void copyText(stripMarkdown(message.content))}
-          >
-            <Copy className="size-3.5" />
-          </IconButton>
+        <>
+          {/* 语音合成音频条 */}
+          {message.segments && message.segments.length > 0 ? (
+            <SynthesizedAudioBars segments={message.segments} />
+          ) : null}
+
+          {/* 复制按钮 */}
+          <div className="mt-3 flex items-center gap-1 text-muted-foreground">
+            <IconButton
+              label="复制纯文本"
+              onClick={() => void copyText(stripMarkdown(message.content))}
+            >
+              <Copy className="size-3.5" />
+            </IconButton>
           <IconButton
             label="复制 Markdown"
             onClick={() => void copyText(message.content)}
@@ -113,7 +121,8 @@ export const ChatMessageView = memo(function ChatMessageView({
               {message.tokenCount ? ` · ${message.tokenCount} tokens` : ""}
             </span>
           ) : null}
-        </div>
+          </div>
+        </>
       )}
     </article>
   );
@@ -121,13 +130,22 @@ export const ChatMessageView = memo(function ChatMessageView({
 
 export function UserAttachments({ attachments }: { attachments: ChatAttachment[] }) {
   const images = attachments.filter((attachment) => attachment.kind === "image");
-  const files = attachments.filter((attachment) => attachment.kind !== "image");
-  if (images.length === 0 && files.length === 0) return null;
+  const audios = attachments.filter((attachment) => attachment.kind === "audio");
+  const files = attachments.filter((attachment) => attachment.kind !== "image" && attachment.kind !== "audio");
+  if (images.length === 0 && audios.length === 0 && files.length === 0) return null;
 
   return (
-    <div className={messageAttachmentClass(Boolean(images.length))}>
+    <div className={messageAttachmentClass(Boolean(images.length || audios.length))}>
       {images.map((attachment) => (
         <UserImageAttachment key={attachment.path} attachment={attachment} />
+      ))}
+      {audios.map((attachment) => (
+        <AudioBar
+          key={attachment.path}
+          audioPath={attachment.path}
+          duration={attachment.duration}
+          variant="user"
+        />
       ))}
       {files.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
@@ -394,6 +412,79 @@ function TaskGroupInner({
         }
         // 工具段逐个平铺（沿用单行项 + 点击展开结果，不再二次折叠）
         return <ToolStepItem key={seg.toolCallId} tool={seg} />;
+      })}
+    </div>
+  );
+}
+
+// 提取并显示语音合成的音频条
+function SynthesizedAudioBars({ segments }: { segments: Segment[] }) {
+  const [existingAudios, setExistingAudios] = useState<Set<string>>(new Set());
+  const [checkedPaths, setCheckedPaths] = useState<Set<string>>(new Set());
+
+  const audioSegments = segments.filter(
+    (seg): seg is Extract<Segment, { kind: "tool" }> =>
+      seg.kind === "tool" &&
+      seg.toolName === "speech_synthesis" &&
+      seg.status === "done" &&
+      seg.details !== undefined &&
+      typeof seg.details === "object" &&
+      "audioPath" in seg.details &&
+      typeof seg.details.audioPath === "string",
+  );
+
+  // 检查音频文件是否存在
+  useEffect(() => {
+    const checkFiles = async () => {
+      const newCheckedPaths = new Set(checkedPaths);
+      const newExistingAudios = new Set(existingAudios);
+
+      for (const seg of audioSegments) {
+        const audioPath = seg.details!.audioPath as string;
+        if (!newCheckedPaths.has(audioPath)) {
+          newCheckedPaths.add(audioPath);
+          try {
+            const exists = await fileUrl(audioPath).then(
+              () => true,
+              () => false,
+            );
+            if (exists) {
+              newExistingAudios.add(audioPath);
+            }
+          } catch {
+            // 文件不存在，不添加到 existingAudios
+          }
+        }
+      }
+
+      setCheckedPaths(newCheckedPaths);
+      setExistingAudios(newExistingAudios);
+    };
+
+    void checkFiles();
+  }, [audioSegments]);
+
+  const visibleSegments = audioSegments.filter((seg) => {
+    const audioPath = seg.details!.audioPath as string;
+    return existingAudios.has(audioPath);
+  });
+
+  if (visibleSegments.length === 0) return null;
+
+  return (
+    <div className="mt-3 space-y-2">
+      {visibleSegments.map((seg) => {
+        const audioPath = seg.details!.audioPath as string;
+        const duration =
+          typeof seg.details!.duration === "number" ? seg.details!.duration : undefined;
+        return (
+          <AudioBar
+            key={seg.toolCallId}
+            audioPath={audioPath}
+            duration={duration}
+            variant="assistant"
+          />
+        );
       })}
     </div>
   );

@@ -141,7 +141,7 @@ export async function promptAgent(
   options: PromptOptions,
 ) {
   let settled = false;
-  // 收集本轮工具结果摘要：toolCallId -> { label, isError, resultText, todos? }
+  // 收集本轮工具结果摘要：toolCallId -> { label, isError, resultText, todos?, details? }
   const toolResults = new Map<
     string,
     {
@@ -152,6 +152,7 @@ export async function promptAgent(
         content: string;
         status: "pending" | "in_progress" | "completed";
       }>;
+      details?: Record<string, unknown>;
     }
   >();
 
@@ -325,11 +326,13 @@ export async function promptAgent(
 
         case "tool_execution_end": {
           const label = summarizeToolResult(event.toolName, event.result);
+          const resultDetails = extractToolDetails(event.result);
           toolResults.set(event.toolCallId, {
             label,
             isError: event.isError,
             resultText: toolResultText(event.result),
             todos: extractTodos(event.toolName, event.result),
+            details: resultDetails,
           });
           monitor.finishStep(options.threadId, event.toolCallId, {
             label,
@@ -472,6 +475,7 @@ function extractSegments(
         content: string;
         status: "pending" | "in_progress" | "completed";
       }>;
+      details?: Record<string, unknown>;
     }
   >,
 ): Segment[] {
@@ -497,6 +501,7 @@ function extractSegments(
         status: result ? (result.isError ? "error" : "done") : "running",
         resultText: result?.resultText,
         todos: result?.todos,
+        details: result?.details,
       });
     }
   }
@@ -549,6 +554,13 @@ function extractTodos(
     );
 
   return todos.length > 0 ? todos : undefined;
+}
+
+// 从工具结果中提取 details 对象
+function extractToolDetails(result: unknown): Record<string, unknown> | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const details = (result as { details?: Record<string, unknown> }).details;
+  return details && typeof details === "object" ? details : undefined;
 }
 
 // 工具结果 -> 步骤面板里的单行摘要

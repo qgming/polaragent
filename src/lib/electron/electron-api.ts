@@ -105,6 +105,7 @@ export function listRemoteModels(baseUrl: string, apiKey: string) {
 export const pickWorkingDirectory = () => api().app.pickWorkingDirectory();
 export const pickTextFile = () => api().app.pickTextFile();
 export const pickImageFile = () => api().app.pickImageFile();
+export const pickAudioFile = () => api().app.pickAudioFile();
 export const getDataDir = () => api().app.getDataDir();
 export const openDataDir = () => api().app.openDataDir();
 export const openPath = (path: string) => api().app.openPath(path);
@@ -449,6 +450,69 @@ export interface OpenAiImageResponse {
 
 export function openAiImageEdit(request: OpenAiImageEditRequest): Promise<OpenAiImageResponse> {
   return api().network.openaiImageEdit(request);
+}
+
+// 音频转写（语音识别 ASR）—— OpenAI /audio/transcriptions
+export interface OpenAiTranscriptionRequest {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  audioPath: string;
+  language?: string;
+  responseFormat?: "json" | "text" | "srt" | "verbose_json" | "vtt";
+}
+
+export interface OpenAiTranscriptionResponse {
+  text: string;
+}
+
+export function openAiTranscription(
+  request: OpenAiTranscriptionRequest,
+): Promise<OpenAiTranscriptionResponse> {
+  return api().network.openaiTranscription(request);
+}
+
+// 语音合成（TTS）—— OpenAI /audio/speech
+export interface OpenAiSpeechRequest {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  input: string;
+  voice: string;
+  speed?: number;
+  responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16";
+}
+
+export interface OpenAiSpeechResponse {
+  base64: string;
+  contentType: string;
+  extension: string;
+}
+
+export function openAiSpeech(request: OpenAiSpeechRequest): Promise<OpenAiSpeechResponse> {
+  return api().network.openaiSpeech(request);
+}
+
+// 语音合成（TTS）—— MiMo /chat/completions
+export interface MimoSpeechRequest {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  input: string;
+  voice: string;
+  speed?: number; // MiMo 不支持，保留兼容
+  responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16";
+  stylePrompt?: string; // 风格控制提示词
+}
+
+export interface MimoSpeechResponse {
+  base64: string;
+  contentType: string;
+  extension: string;
+}
+
+export function mimoSpeech(request: MimoSpeechRequest): Promise<MimoSpeechResponse> {
+  return api().network.mimoSpeech(request);
 }
 
 // 跨域代理请求 —— 由主进程统一发起 HTTP 请求并回传原始响应。

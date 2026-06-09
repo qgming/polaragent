@@ -27,7 +27,8 @@ import { cn } from "@/lib/utils";
 export interface ComposerAttachment {
   path: string;
   name: string;
-  kind: "text" | "image";
+  kind: "text" | "image" | "audio";
+  duration?: number; // 音频附件时长（秒）
 }
 
 export interface SkillComposerHandle {

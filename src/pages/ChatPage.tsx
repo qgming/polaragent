@@ -3,6 +3,8 @@
 
 import {
   FolderOpen,
+  Mic,
+  MicOff,
   SendHorizontal,
   Square as SquareIcon,
 } from "lucide-react";
@@ -43,7 +45,9 @@ import {
 } from "@/stores/chat-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
+import { useConfigStore } from "@/stores/config-store";
 import { useAlert } from "@/hooks/useAlert";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 
 export function ChatPage({
   activeThreadTitle,
@@ -384,6 +388,9 @@ function Composer({
   sessionFilesDir: string;
   attachmentCount: number;
 }) {
+  const audioRecorder = useAudioRecorder();
+  const [isTranscribing, setIsTranscribing] = useState(false);
+
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
   // 仅展示工作目录的末级名称，hover 时完整路径见 title
@@ -396,6 +403,85 @@ function Composer({
     : workingDir
       ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
       : "选择工作目录";
+
+  // 录音处理：点击切换录音状态
+  const handleToggleRecording = async () => {
+    if (audioRecorder.isRecording) {
+      // 结束录音并转文字
+      setIsTranscribing(true);
+      let tempPath: string | null = null;
+      try {
+        const blob = await audioRecorder.stopRecording();
+        if (!blob) {
+          setIsTranscribing(false);
+          return;
+        }
+
+        if (blob.size === 0) {
+          setIsTranscribing(false);
+          return;
+        }
+
+        // 获取 ASR 配置
+        const settings = useConfigStore.getState().settings.audio;
+        const asr = settings?.asr;
+
+        if (!asr?.apiKey?.trim() || !asr.model?.trim()) {
+          throw new Error("语音识别未配置，请在设置中配置 ASR");
+        }
+
+        // 将 Blob 转为 base64
+        const arrayBuffer = await blob.arrayBuffer();
+        const base64 = btoa(
+          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ""),
+        );
+
+        // 保存临时文件用于转写
+        const { writeBase64File, deleteFile, openAiTranscription } = await import("@/lib/electron/electron-api");
+        const timestamp = Date.now();
+        tempPath = `audio-recording-${timestamp}.webm`;
+        await writeBase64File(tempPath, base64);
+
+        // 调用语音识别 API
+        const transcription = await openAiTranscription({
+          apiKey: asr.apiKey.trim(),
+          baseURL: asr.baseURL,
+          model: asr.model.trim(),
+          audioPath: tempPath,
+          language: asr.language?.trim() || undefined,
+          responseFormat: "json",
+        });
+
+        if (transcription.text && transcription.text.trim()) {
+          const text = transcription.text.trim();
+          // 清空输入框，插入识别的文字
+          if (composerRef.current) {
+            composerRef.current.clear();
+            composerRef.current.insertText(text);
+          }
+        }
+
+        // 删除临时文件
+        if (tempPath) {
+          await deleteFile(tempPath).catch((err) => console.warn("删除临时录音文件失败", err));
+        }
+      } catch (err) {
+        console.error("语音识别失败", err);
+        const message = err instanceof Error ? err.message : "语音识别失败";
+        alert(message);
+        // 出错时也删除临时文件
+        if (tempPath) {
+          const { deleteFile } = await import("@/lib/electron/electron-api");
+          await deleteFile(tempPath).catch(() => {});
+        }
+      } finally {
+        setIsTranscribing(false);
+      }
+    } else {
+      // 开始录音
+      await audioRecorder.startRecording();
+    }
+  };
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-12">
@@ -411,6 +497,7 @@ function Composer({
           className="app-scrollbar max-h-[220px] min-h-[74px] overflow-y-auto px-4 py-3"
         />
 
+        {/* 底部工具栏 */}
         <div className="flex items-center justify-between px-3 py-2">
           <div className="flex min-w-0 items-center gap-1">
             {/* "/" 技能选择 + "@" 添加文件 */}
@@ -437,6 +524,37 @@ function Composer({
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
             ) : null}
+            {!isResponding && (
+              <Button
+                onClick={() => void handleToggleRecording()}
+                disabled={isTranscribing}
+                size={audioRecorder.isRecording || isTranscribing ? "sm" : "icon"}
+                className={
+                  audioRecorder.isRecording || isTranscribing
+                    ? "h-8 gap-1.5 rounded-full px-3"
+                    : "size-8 rounded-full"
+                }
+                variant={audioRecorder.isRecording ? "destructive" : "default"}
+                type="button"
+              >
+                {audioRecorder.isRecording ? (
+                  <>
+                    <MicOff className="size-4" />
+                    <span className="text-xs">{audioRecorder.duration}s</span>
+                  </>
+                ) : isTranscribing ? (
+                  <>
+                    <Mic className="size-4" />
+                    <span className="text-xs">转换中</span>
+                  </>
+                ) : (
+                  <Mic className="size-4" />
+                )}
+                <span className="sr-only">
+                  {audioRecorder.isRecording ? "停止录音" : isTranscribing ? "转换中" : "开始录音"}
+                </span>
+              </Button>
+            )}
             {showSendButton ? (
               <Button
                 className="size-8 rounded-full"

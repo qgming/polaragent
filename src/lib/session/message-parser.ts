@@ -162,6 +162,7 @@ async function loadChatMessagesImpl(
         content: string;
         status: "pending" | "in_progress" | "completed";
       }>;
+      details?: Record<string, unknown>;
     }
   >();
   for (const entry of branch) {
@@ -174,6 +175,8 @@ async function loadChatMessagesImpl(
         resultText: toolResultDetailsText(message.details),
         // 还原 update_todos 的待办快照，供重启后历史对话仍能按任务分组折叠
         todos: extractTodosFromDetails(message.toolName, message.details),
+        // 保存完整的 details 对象，供语音合成等功能恢复使用
+        details: extractDetails(message.details),
       });
     }
   }
@@ -450,6 +453,7 @@ function assistantSegments(
         content: string;
         status: "pending" | "in_progress" | "completed";
       }>;
+      details?: Record<string, unknown>;
     }
   >,
 ): Segment[] {
@@ -474,6 +478,8 @@ function assistantSegments(
         resultText: result?.resultText,
         // 还原 update_todos 的待办快照，使重启后历史对话仍能按任务分组折叠
         todos: result?.todos,
+        // 恢复工具结果的 details，供语音合成等功能使用
+        details: result?.details,
       });
     }
   }
@@ -539,6 +545,12 @@ function extractTodosFromDetails(
     );
 
   return todos.length > 0 ? todos : undefined;
+}
+
+// 从 toolResult.details 中提取完整的 details 对象
+function extractDetails(details: unknown): Record<string, unknown> | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  return details as Record<string, unknown>;
 }
 
 // 工具结果 details -> 完整可读文本（供步骤项点击展开查看）

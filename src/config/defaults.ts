@@ -64,6 +64,32 @@ export const defaultSettings: Settings = {
       model: "gpt-image-1",
     },
   },
+  audio: {
+    // 语音识别（ASR）：默认 OpenAI Whisper 接口
+    asr: {
+      apiKey: "",
+      baseURL: "https://api.openai.com/v1",
+      model: "whisper-1",
+      language: "",
+    },
+    // 语音合成（TTS）：默认 MiMo TTS 接口，预置冰糖音色
+    tts: {
+      apiKey: "",
+      baseURL: "https://api.xiaomimimo.com/v1",
+      defaultVoice: "bingtang",
+      voices: [
+        {
+          id: "bingtang",
+          name: "冰糖",
+          provider: "mimo",
+          model: "mimo-v2.5-tts",
+          voice: "冰糖",
+          speed: 1.0,
+          format: "mp3",
+        },
+      ],
+    },
+  },
 };
 
 /**

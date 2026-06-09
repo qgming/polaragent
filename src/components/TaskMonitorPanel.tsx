@@ -13,6 +13,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { fileIconFor } from "@/lib/file-icons";
 import { isPreviewable, openPreviewWindow } from "@/lib/preview";
+import { AudioPlayerDialog } from "@/components/audio/AudioPlayerDialog";
 import { WorkspaceTree } from "@/components/WorkspaceTree";
 import {
   useTaskMonitorStore,
@@ -287,44 +288,69 @@ function ArtifactGroup({
   files: ArtifactItem[];
   workingDir?: string;
 }) {
+  const [playingAudio, setPlayingAudio] = useState<{ path: string; name: string } | null>(null);
+
   return (
     <div>
       <p className="mb-0.5 px-3 text-xs text-muted-foreground">{label}</p>
-      <ul className="space-y-1">
+      <ul className="space-y-0.5">
         {files.map((file) => {
           // 按扩展名取图标（中性灰，不彩色）
           const Icon = fileIconFor(file.name);
           // 可预览类型（md/html/文本/图片）点击打开预览窗口
           const previewable = isPreviewable(file.name);
+          // 音频文件判断
+          const isAudio = /\.(mp3|wav|ogg|webm|m4a|aac|flac|opus)$/i.test(file.name);
 
           // 解析相对路径为绝对路径（file.path 可能是相对的）
           const absolutePath = resolvePath(file.path, workingDir);
 
+          const handleClick = () => {
+            if (isAudio) {
+              setPlayingAudio({ path: absolutePath, name: file.name });
+            } else if (previewable) {
+              void openPreviewWindow(absolutePath);
+            }
+          };
+
+          const clickable = previewable || isAudio;
+
           return (
-            <li key={file.path} className="px-3">
+            <li key={file.path} className="px-2">
               <button
                 type="button"
-                onClick={
-                  previewable
-                    ? () => void openPreviewWindow(absolutePath)
-                    : undefined
-                }
-                disabled={!previewable}
+                onClick={handleClick}
+                disabled={!clickable}
                 className={cn(
                   "flex w-full items-center gap-1.5 rounded-md px-2 py-0.5 text-left text-sm text-sidebar-foreground transition-colors",
-                  previewable
+                  clickable
                     ? "cursor-pointer hover:bg-muted hover:text-foreground"
                     : "cursor-default",
                 )}
-                title={previewable ? `预览 ${absolutePath}` : absolutePath}
+                title={
+                  isAudio
+                    ? `播放 ${file.name}`
+                    : previewable
+                      ? `预览 ${absolutePath}`
+                      : absolutePath
+                }
               >
                 <Icon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{file.name}</span>
+                <span className="min-w-0 flex-1 truncate">{file.name}</span>
               </button>
             </li>
           );
         })}
       </ul>
+
+      {/* 音频播放器弹窗 */}
+      {playingAudio && (
+        <AudioPlayerDialog
+          audioPath={playingAudio.path}
+          fileName={playingAudio.name}
+          onClose={() => setPlayingAudio(null)}
+        />
+      )}
     </div>
   );
 }

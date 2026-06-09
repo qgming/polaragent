@@ -604,6 +604,195 @@ async function braveSearch(request) {
   return { success: true, provider: "brave", results };
 }
 
+// 音频转写（语音识别 ASR）—— OpenAI /audio/transcriptions 接口
+// 读取本地音频文件，multipart 上传，返回 JSON { text: "..." }
+async function openaiTranscription(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  const model = String(request.model || "").trim();
+  const audioPath = String(request.audioPath || "").trim();
+  if (!apiKey) throw new Error("语音识别 API Key 未配置。");
+  if (!model) throw new Error("语音识别模型未配置。");
+  if (!audioPath) throw new Error("音频文件路径不能为空。");
+
+  const parts = [
+    { name: "model", value: model },
+  ];
+  if (request.language) {
+    appendOptionalPart(parts, "language", request.language);
+  }
+  appendOptionalPart(parts, "response_format", request.responseFormat || "json");
+
+  const audioBuffer = await fsp.readFile(audioPath);
+  parts.push({
+    name: "file",
+    filename: path.basename(audioPath),
+    contentType: audioMimeType(audioPath),
+    buffer: audioBuffer,
+  });
+
+  const multipart = buildMultipartBody(parts);
+  const response = await electronRequest(`${normalizeBaseUrl(request.baseURL)}/audio/transcriptions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": multipart.contentType,
+    },
+    body: multipart.body,
+    timeoutMs: 120000,
+  });
+
+  const body = response.body.toString("utf8");
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    throw new Error(`语音识别接口返回了非 JSON 内容（HTTP ${response.status}）：${body.slice(0, 300)}`);
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`语音识别失败（${response.status}）：${errorMessage(payload)}`);
+  }
+  return payload;
+}
+
+// 音频 MIME 类型判断（基于文件扩展名）
+function audioMimeType(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  if (ext === ".mp3") return "audio/mpeg";
+  if (ext === ".m4a") return "audio/mp4";
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".webm") return "audio/webm";
+  if (ext === ".ogg") return "audio/ogg";
+  return "audio/mpeg"; // 默认
+}
+
+// 语音合成（TTS）—— OpenAI /audio/speech 接口
+// POST JSON，返回二进制音频流，转为 base64 返回给渲染进程
+async function openaiSpeech(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  const model = String(request.model || "").trim();
+  const input = String(request.input || "").trim();
+  const voice = String(request.voice || "alloy").trim();
+  if (!apiKey) throw new Error("语音合成 API Key 未配置。");
+  if (!model) throw new Error("语音合成模型未配置。");
+  if (!input) throw new Error("合成文本不能为空。");
+
+  const requestBody = {
+    model,
+    input,
+    voice,
+  };
+  if (request.speed !== undefined && request.speed !== null) {
+    requestBody.speed = Number(request.speed);
+  }
+  if (request.responseFormat) {
+    requestBody.response_format = request.responseFormat;
+  }
+
+  const response = await electronRequest(`${normalizeBaseUrl(request.baseURL)}/audio/speech`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+    timeoutMs: 120000,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    const body = response.body.toString("utf8");
+    throw new Error(`语音合成失败（${response.status}）：${body.slice(0, 300) || response.statusText}`);
+  }
+
+  // 从响应头推断音频格式
+  const contentType = headerValue(response.headers, "content-type");
+  const ext = audioExtensionFromContentType(contentType, request.responseFormat);
+
+  return {
+    base64: response.body.toString("base64"),
+    contentType,
+    extension: ext,
+  };
+}
+
+// MiMo TTS —— /chat/completions 接口
+// MiMo 使用 chat completions 格式，audio 在 response.choices[0].message.audio.data
+async function mimoSpeech(request) {
+  const apiKey = String(request.apiKey || "").trim();
+  const model = String(request.model || "").trim();
+  const input = String(request.input || "").trim();
+  const voice = String(request.voice || "冰糖").trim();
+  if (!apiKey) throw new Error("语音合成 API Key 未配置。");
+  if (!model) throw new Error("语音合成模型未配置。");
+  if (!input) throw new Error("合成文本不能为空。");
+
+  // MiMo 格式：messages + audio 参数
+  const requestBody = {
+    model,
+    messages: [
+      { role: "user", content: request.stylePrompt || "" }, // 风格控制（可选）
+      { role: "assistant", content: input },
+    ],
+    audio: {
+      format: request.responseFormat || "mp3",
+      voice,
+    },
+  };
+
+  // MiMo 不支持 speed 参数（通过自然语言控制）
+
+  const response = await electronRequest(`${normalizeBaseUrl(request.baseURL)}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "api-key": apiKey, // MiMo 使用 api-key 而非 Authorization
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+    timeoutMs: 120000,
+  });
+
+  const body = response.body.toString("utf8");
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    throw new Error(`MiMo 语音合成接口返回了非 JSON 内容（HTTP ${response.status}）：${body.slice(0, 300)}`);
+  }
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`MiMo 语音合成失败（${response.status}）：${errorMessage(payload)}`);
+  }
+
+  // 提取 audio.data
+  const audioData = payload?.choices?.[0]?.message?.audio?.data;
+  if (!audioData) {
+    throw new Error("MiMo 语音合成响应中未找到 audio.data 字段。");
+  }
+
+  const format = request.responseFormat || "mp3";
+  const ext = format === "pcm16" ? "pcm" : format;
+
+  return {
+    base64: audioData,
+    contentType: `audio/${ext}`,
+    extension: ext,
+  };
+}
+
+// 从 Content-Type 或 responseFormat 推断音频扩展名
+function audioExtensionFromContentType(contentType, responseFormat) {
+  const ct = String(contentType || "").toLowerCase();
+  if (ct.includes("audio/mpeg") || ct.includes("audio/mp3")) return "mp3";
+  if (ct.includes("audio/wav")) return "wav";
+  if (ct.includes("audio/opus")) return "opus";
+  if (ct.includes("audio/aac")) return "aac";
+  if (ct.includes("audio/flac")) return "flac";
+  if (ct.includes("audio/webm")) return "webm";
+  // 回退到 responseFormat
+  const fmt = String(responseFormat || "").toLowerCase();
+  if (fmt === "mp3" || fmt === "wav" || fmt === "opus" || fmt === "aac" || fmt === "flac") return fmt;
+  return "mp3"; // 默认
+}
+
 function register(ipcMain) {
   ipcMain.handle("network:cors-fetch", (_event, { request }) => corsFetch(request));
   ipcMain.handle("network:skills-market-search", (_event, { request }) => skillsMarketSearch(request));
@@ -612,6 +801,9 @@ function register(ipcMain) {
   ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));
   ipcMain.handle("network:download-url-as-base64", (_event, { request }) => downloadUrlAsBase64(request));
   ipcMain.handle("network:openai-image-edit", (_event, { request }) => openaiImageEdit(request));
+  ipcMain.handle("network:openai-transcription", (_event, { request }) => openaiTranscription(request));
+  ipcMain.handle("network:openai-speech", (_event, { request }) => openaiSpeech(request));
+  ipcMain.handle("network:mimo-speech", (_event, { request }) => mimoSpeech(request));
 }
 
 module.exports = { register };

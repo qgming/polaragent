@@ -6,6 +6,7 @@
 
 import {
   File as FileIcon,
+  FileAudio,
   FileCode,
   FileCog,
   FileImage,
@@ -66,6 +67,15 @@ const EXT_MAP: Record<string, LucideIcon> = {
   svg: FileImage,
   webp: FileImage,
   ico: FileImage,
+  // 音频
+  mp3: FileAudio,
+  wav: FileAudio,
+  ogg: FileAudio,
+  webm: FileAudio,
+  m4a: FileAudio,
+  aac: FileAudio,
+  flac: FileAudio,
+  opus: FileAudio,
 };
 
 /** 根据文件名返回图标组件（未知类型回退通用文件图标） */

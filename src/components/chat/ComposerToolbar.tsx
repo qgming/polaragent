@@ -5,7 +5,7 @@
 //   hover 用 tooltip 显示该技能介绍。选中后通过 onPickSkill 通知上层插入 chip。
 // "@" 按钮：选择文本文件或图片，选中后通过 onPickFile 通知上层插入附件 chip。
 
-import { AtSign, FileText, Image, Slash } from "lucide-react";
+import { AtSign, FileText, Image, Music, Slash } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -18,7 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { pickImageFile, pickTextFile } from "@/lib/electron/electron-api";
+import { pickImageFile, pickTextFile, pickAudioFile } from "@/lib/electron/electron-api";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 
 // 从绝对路径取文件名（兼容正反斜杠）
@@ -37,7 +37,7 @@ export function ComposerToolbar({
   // 选中某个技能时回调（上层据此在富文本输入区插入 chip）
   onPickSkill: (skill: { id: string; name: string }) => void;
   // 选中某个附件时回调（上层据此在富文本输入区插入附件 chip）
-  onPickFile: (file: { path: string; name: string; kind: "text" | "image" }) => void;
+  onPickFile: (file: { path: string; name: string; kind: "text" | "image" | "audio" }) => void;
 }) {
   // 全部技能（内置 + 已安装），与技能页两类一致；store 为空时回退空列表
   const skills = useSkillsStore((state) => state.skills);
@@ -53,6 +53,13 @@ export function ComposerToolbar({
     const path = await pickImageFile();
     if (path) {
       onPickFile({ path, name: basename(path), kind: "image" });
+    }
+  };
+
+  const handlePickAudioFile = async () => {
+    const path = await pickAudioFile();
+    if (path) {
+      onPickFile({ path, name: basename(path), kind: "audio" });
     }
   };
 
@@ -119,6 +126,10 @@ export function ComposerToolbar({
           <DropdownMenuItem onSelect={() => void handlePickImageFile()}>
             <Image className="size-4" />
             <span>图片</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void handlePickAudioFile()}>
+            <Music className="size-4" />
+            <span>音频</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

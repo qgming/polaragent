@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { fileIconFor } from "@/lib/file-icons";
 import { isPreviewable, openPreviewWindow } from "@/lib/preview";
+import { AudioPlayerDialog } from "@/components/audio/AudioPlayerDialog";
 import {
   listDirectoryEntries,
   openPath,
@@ -37,6 +38,11 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
   const [error, setError] = useState<string | null>(null);
   // 用于强制刷新（点刷新按钮时 +1，触发根层重新读取）
   const [reloadKey, setReloadKey] = useState(0);
+  // 音频播放状态
+  const [playingAudio, setPlayingAudio] = useState<{
+    path: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +70,10 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
     <div>
       {/* 根路径 + 在资源管理器打开工作区目录 + 刷新 */}
       <div className="flex items-center gap-1 px-3">
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={rootDir}>
+        <p
+          className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+          title={rootDir}
+        >
           {rootDir}
         </p>
         <button
@@ -103,6 +112,7 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
                 entry={entry}
                 parentPath={rootDir}
                 depth={0}
+                onPlayAudio={setPlayingAudio}
               />
             ))}
           </ul>
@@ -112,6 +122,15 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
           </p>
         )}
       </div>
+
+      {/* 音频播放器弹窗 */}
+      {playingAudio && (
+        <AudioPlayerDialog
+          audioPath={playingAudio.path}
+          fileName={playingAudio.name}
+          onClose={() => setPlayingAudio(null)}
+        />
+      )}
     </div>
   );
 }
@@ -121,10 +140,12 @@ function TreeNode({
   entry,
   parentPath,
   depth,
+  onPlayAudio,
 }: {
   entry: DirEntry;
   parentPath: string;
   depth: number;
+  onPlayAudio: (audio: { path: string; name: string }) => void;
 }) {
   const fullPath = joinPath(parentPath, entry.name);
   const [open, setOpen] = useState(false);
@@ -134,11 +155,18 @@ function TreeNode({
 
   // 文件是否可在预览窗口打开（md/html/文本/图片）
   const previewable = !entry.isDir && isPreviewable(entry.name);
+  // 文件是否为音频
+  const isAudio =
+    !entry.isDir && /\.(mp3|wav|ogg|webm|m4a|aac|flac|opus)$/i.test(entry.name);
 
   const toggle = useCallback(() => {
-    // 文件：可预览类型则打开预览窗口；不可预览则无操作
+    // 文件：音频打开播放器，可预览打开预览窗口，其他无操作
     if (!entry.isDir) {
-      if (previewable) void openPreviewWindow(fullPath);
+      if (isAudio) {
+        onPlayAudio({ path: fullPath, name: entry.name });
+      } else if (previewable) {
+        void openPreviewWindow(fullPath);
+      }
       return;
     }
     setOpen((prev) => {
@@ -156,25 +184,38 @@ function TreeNode({
       }
       return next;
     });
-  }, [entry.isDir, previewable, children, loading, fullPath]);
+  }, [
+    entry.isDir,
+    entry.name,
+    previewable,
+    isAudio,
+    children,
+    loading,
+    fullPath,
+    onPlayAudio,
+  ]);
 
-  // 每层缩进 12px，从 depth*12 + 基础 px-3 起算
-  const indentStyle = { paddingLeft: `${12 + depth * 12}px` };
+  const clickable = entry.isDir || previewable || isAudio;
 
   return (
-    <li>
+    <li className="px-2">
       <button
         type="button"
         onClick={toggle}
-        disabled={!entry.isDir && !previewable}
-        style={indentStyle}
+        disabled={!clickable}
         className={cn(
-          "flex w-full items-center gap-1.5 rounded-md py-0.5 pr-2 text-left text-sm text-sidebar-foreground transition-colors",
-          entry.isDir || previewable
+          "flex w-full items-center gap-1.5 rounded-md px-2 py-0.5 text-left text-sm text-sidebar-foreground transition-colors",
+          clickable
             ? "cursor-pointer hover:bg-muted hover:text-foreground"
             : "cursor-default",
         )}
-        title={previewable ? `预览 ${fullPath}` : fullPath}
+        title={
+          isAudio
+            ? `播放 ${entry.name}`
+            : previewable
+              ? `预览 ${fullPath}`
+              : fullPath
+        }
       >
         {entry.isDir ? (
           <ChevronRight
@@ -183,10 +224,7 @@ function TreeNode({
               open && "rotate-90",
             )}
           />
-        ) : (
-          // 文件：占位对齐（无展开箭头）
-          <span className="size-3.5 shrink-0" />
-        )}
+        ) : null}
         {entry.isDir ? (
           open ? (
             <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
@@ -200,7 +238,7 @@ function TreeNode({
             return <Icon className="size-4 shrink-0 text-muted-foreground" />;
           })()
         )}
-        <span className="truncate">{entry.name}</span>
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
         {loading ? (
           <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
         ) : null}
@@ -208,10 +246,7 @@ function TreeNode({
 
       {open ? (
         error ? (
-          <p
-            className="py-0.5 pr-2 text-xs text-destructive"
-            style={{ paddingLeft: `${12 + (depth + 1) * 12}px` }}
-          >
+          <p className="px-2 py-0.5 text-xs text-destructive">
             {error}
           </p>
         ) : children && children.length > 0 ? (
@@ -222,14 +257,12 @@ function TreeNode({
                 entry={child}
                 parentPath={fullPath}
                 depth={depth + 1}
+                onPlayAudio={onPlayAudio}
               />
             ))}
           </ul>
         ) : children && children.length === 0 ? (
-          <p
-            className="py-0.5 pr-2 text-xs text-muted-foreground"
-            style={{ paddingLeft: `${12 + (depth + 1) * 12}px` }}
-          >
+          <p className="px-2 py-0.5 text-xs text-muted-foreground">
             空文件夹
           </p>
         ) : null

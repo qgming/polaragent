@@ -29,7 +29,9 @@ export type ChatMessageStatus = "complete" | "streaming" | "error";
 export interface ChatAttachment {
   path: string;
   name: string;
-  kind: "text" | "image";
+  kind: "text" | "image" | "audio";
+  // 音频附件时长（秒），用于语音条展示；其它类型可不填
+  duration?: number;
 }
 
 // 助手消息的「有序段」——复用 pi 的 AssistantMessage.content block 顺序。
@@ -48,6 +50,8 @@ export type Segment =
       resultText?: string;
       // 仅 update_todos：该次调用写入的完整待办快照，用于把后续段按待办分组折叠
       todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
+      // 工具调用的详细结果数据（如语音合成的音频路径、时长等）
+      details?: Record<string, unknown>;
     };
 
 export interface ChatMessage {

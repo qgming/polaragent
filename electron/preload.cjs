@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     pickWorkingDirectory: () => invoke("dialog:pick-directory"),
     pickTextFile: () => invoke("dialog:pick-text-file"),
     pickImageFile: () => invoke("dialog:pick-image-file"),
+    pickAudioFile: () => invoke("dialog:pick-audio-file"),
   },
   window: {
     minimize: () => invoke("window:minimize"),
@@ -77,6 +78,9 @@ contextBridge.exposeInMainWorld("polaragent", {
     webSearch: (request) => invoke("network:web-search", { request }),
     downloadUrlAsBase64: (request) => invoke("network:download-url-as-base64", { request }),
     openaiImageEdit: (request) => invoke("network:openai-image-edit", { request }),
+    openaiTranscription: (request) => invoke("network:openai-transcription", { request }),
+    openaiSpeech: (request) => invoke("network:openai-speech", { request }),
+    mimoSpeech: (request) => invoke("network:mimo-speech", { request }),
   },
   skills: {
     list: (skillType) => invoke("skills:list", { skillType }),

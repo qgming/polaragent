@@ -26,6 +26,7 @@ import {
 import { searchWebTool } from "./web-search";
 import { readWebPageTool } from "./web-fetch";
 import { editImageTool, generateImageTool } from "./image-generation";
+import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 
@@ -48,10 +49,11 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 2 },
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 3 },
   image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 4 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 5 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 6 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 7 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 8 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 5 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 6 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 7 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 8 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 9 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -184,6 +186,20 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "调用图片编辑模型，基于本地源图和可选蒙版编辑图片并保存结果。",
     factory: editImageTool,
     group: "image",
+  },
+  {
+    id: "speech_recognition",
+    name: "语音识别",
+    description: "将音频文件转写为文字，支持常见音频格式（mp3/wav/m4a/webm/ogg 等）。",
+    factory: speechRecognitionTool,
+    group: "audio",
+  },
+  {
+    id: "speech_synthesis",
+    name: "语音合成",
+    description: "将文字合成为语音并保存到工作目录，登记为产物。",
+    factory: speechSynthesisTool,
+    group: "audio",
   },
   {
     id: "run_bash",

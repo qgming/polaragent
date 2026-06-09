@@ -320,6 +320,7 @@ function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
 function normalizeSettings(settings: Settings, dataDir: string): Settings {
   const defaultWebSearch = defaultSettings.webSearch!;
   const defaultImageGeneration = defaultSettings.imageGeneration!;
+  const defaultAudio = defaultSettings.audio!;
   return {
     ...defaultSettings,
     ...settings,
@@ -378,6 +379,25 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
         apiKey: settings.imageGeneration?.openai?.apiKey ?? defaultImageGeneration.openai.apiKey,
         baseURL: settings.imageGeneration?.openai?.baseURL ?? defaultImageGeneration.openai.baseURL,
         model: settings.imageGeneration?.openai?.model ?? defaultImageGeneration.openai.model,
+      },
+    },
+    audio: {
+      ...defaultAudio,
+      ...settings.audio,
+      asr: {
+        ...defaultAudio.asr,
+        ...settings.audio?.asr,
+        apiKey: settings.audio?.asr?.apiKey ?? defaultAudio.asr.apiKey,
+        baseURL: settings.audio?.asr?.baseURL ?? defaultAudio.asr.baseURL,
+        model: settings.audio?.asr?.model ?? defaultAudio.asr.model,
+      },
+      tts: {
+        ...defaultAudio.tts,
+        ...settings.audio?.tts,
+        apiKey: settings.audio?.tts?.apiKey ?? defaultAudio.tts.apiKey,
+        baseURL: settings.audio?.tts?.baseURL ?? defaultAudio.tts.baseURL,
+        defaultVoice: settings.audio?.tts?.defaultVoice ?? defaultAudio.tts.defaultVoice,
+        voices: settings.audio?.tts?.voices ?? defaultAudio.tts.voices,
       },
     },
   };

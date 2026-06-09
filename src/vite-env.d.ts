@@ -12,6 +12,7 @@ interface Window {
       pickWorkingDirectory: () => Promise<string | null>;
       pickTextFile: () => Promise<string | null>;
       pickImageFile: () => Promise<string | null>;
+      pickAudioFile: () => Promise<string | null>;
     };
     window: {
       minimize: () => Promise<void>;
@@ -123,6 +124,9 @@ interface Window {
       }>;
       downloadUrlAsBase64: (request: import("@/lib/electron/electron-api").DownloadUrlAsBase64Request) => Promise<import("@/lib/electron/electron-api").DownloadUrlAsBase64Response>;
       openaiImageEdit: (request: import("@/lib/electron/electron-api").OpenAiImageEditRequest) => Promise<import("@/lib/electron/electron-api").OpenAiImageResponse>;
+      openaiTranscription: (request: import("@/lib/electron/electron-api").OpenAiTranscriptionRequest) => Promise<import("@/lib/electron/electron-api").OpenAiTranscriptionResponse>;
+      openaiSpeech: (request: import("@/lib/electron/electron-api").OpenAiSpeechRequest) => Promise<import("@/lib/electron/electron-api").OpenAiSpeechResponse>;
+      mimoSpeech: (request: import("@/lib/electron/electron-api").MimoSpeechRequest) => Promise<import("@/lib/electron/electron-api").MimoSpeechResponse>;
     };
     skills: {
       list: (skillType: "builtin" | "custom") => Promise<string[]>;

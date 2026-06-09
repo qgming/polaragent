@@ -19,6 +19,7 @@ import {
   Wrench,
 } from "lucide-react";
 
+import { AudioBar } from "@/components/chat/AudioBar";
 import { cn } from "@/lib/utils";
 import type { StepItem } from "@/stores/task-monitor-store";
 import type { Segment } from "@/stores/chat-store";
@@ -194,6 +195,12 @@ export function ToolStepItem({ tool }: { tool: ToolSeg }) {
   const [open, setOpen] = useState(false);
   const expandable = Boolean(tool.resultText && tool.resultText.trim());
 
+  // 检查是否是 speech_synthesis 工具，且有 audioPath
+  const isSpeechSynthesis = tool.toolName === "speech_synthesis";
+  const audioDetails = (tool as any).details; // details 是 any 类型，运行时从工具返回值获取
+  const audioPath = audioDetails?.audioPath;
+  const audioDuration = audioDetails?.duration;
+
   return (
     <div className="text-sm">
       <button
@@ -225,6 +232,12 @@ export function ToolStepItem({ tool }: { tool: ToolSeg }) {
           />
         ) : null}
       </button>
+      {/* 语音合成工具：直接显示音频条（微信风格） */}
+      {isSpeechSynthesis && audioPath && tool.status === "done" ? (
+        <div className="ml-6 mt-2">
+          <AudioBar audioPath={audioPath} duration={audioDuration} variant="assistant" />
+        </div>
+      ) : null}
       {expandable && open ? (
         <pre className="app-scrollbar mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted px-3 py-2 font-mono text-xs leading-5 text-muted-foreground">
           {tool.resultText}
