@@ -24,7 +24,6 @@ import type { TeamConfig } from "@/types/config";
 const MODE_OPTIONS = [
   { value: "leader", label: "👑 领导模式 - 中心化调度" },
   { value: "equal", label: "💡 头脑风暴 - 平等发散" },
-  { value: "parallel", label: "⚡ 并行模式 - 多助手同时触发" },
 ];
 
 type TeamMode = TeamConfig["mode"];
@@ -180,9 +179,7 @@ export function TeamEditorModal({
               <p className="mt-2 text-xs text-muted-foreground">
                 {mode === "leader"
                   ? "中心化调度，成员通过控制工具交接或结束，适合复杂项目推进"
-                  : mode === "parallel"
-                    ? "多个成员同时处理同一任务，完成后由领导汇总，适合调研、评审和方案比较"
-                    : "平等发散观点，成员通过控制工具交接或收束，适合头脑风暴和方向探索"}
+                  : "平等发散观点，成员通过控制工具交接或收束，适合头脑风暴和方向探索"}
               </p>
             </Field>
 

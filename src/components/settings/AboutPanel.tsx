@@ -1,52 +1,48 @@
 // 关于软件面板
 // src/components/settings/AboutPanel.tsx
 
-import { Info, Sparkles } from "lucide-react";
-
 import { PageTitle } from "./settings-shared";
+import logo from "@/assets/logo.png";
 
 export function AboutPanel() {
   return (
     <section>
       <PageTitle title="关于软件" description="PolarAgent 的版本与应用信息。" />
 
-      <div className="mt-8 rounded-xl border border-border bg-card">
-        <div className="px-5 py-5">
-          <div className="flex items-center gap-2">
-            <Info className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">PolarAgent</h3>
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            面向本地工作的 AI Agent 桌面应用，支持普通会话、团队协作、技能与工具扩展。
-          </p>
+      {/* 主卡片 - Logo 和基本信息 */}
+      <div className="mt-8 rounded-xl border border-border bg-gradient-to-br from-card to-muted/20">
+        <div className="px-8 py-8">
+          {/* Logo 和名称布局 */}
+          <div className="flex items-center gap-6">
+            {/* 左侧 Logo - 纯 logo，无边框无背景 */}
+            <div className="size-20 shrink-0">
+              <img src={logo} alt="PolarAgent Logo" className="size-full object-contain" />
+            </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <InfoItem label="当前版本" value="0.1.0" />
-            <InfoItem label="运行模式" value="本地桌面应用" />
+            {/* 右侧名称和版本 */}
+            <div className="flex flex-1 items-center gap-3">
+              <h2 className="text-2xl font-bold tracking-tight">PolarAgent</h2>
+              <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                0.1.0
+              </span>
+            </div>
+          </div>
+
+          {/* 下方介绍 - 无背景卡片 */}
+          <div className="mt-6">
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              面向本地工作的 AI Agent 桌面应用，支持普通会话、团队协作、技能与工具扩展。
+            </p>
           </div>
         </div>
       </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card">
-        <div className="px-5 py-5">
-          <div className="flex items-center gap-2">
-            <Sparkles className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">能力概览</h3>
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            聚合多模型 Provider、会话持久化、团队 Agent 协作、技能市场与本地文件工作流。
-          </p>
-        </div>
+      {/* 底部版权 */}
+      <div className="mt-8 text-center">
+        <p className="text-xs text-muted-foreground">
+          © 2025 PolarAgent. All rights reserved.
+        </p>
       </div>
     </section>
-  );
-}
-
-function InfoItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-sm font-medium text-foreground">{value}</p>
-    </div>
   );
 }

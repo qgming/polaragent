@@ -83,9 +83,7 @@ export function TeamChatPage({
   const emptyHint =
     team?.mode === "leader"
       ? "领导会调度成员协作完成"
-      : team?.mode === "parallel"
-        ? "多个成员会同时处理并由领导汇总"
-        : "成员会平等发散并用控制工具交接";
+      : "成员会平等发散并用控制工具交接";
   const isResponding = useIsTeamThreadResponding(threadId);
   const composer = useTeamChatStore((state) => state.composer);
   const setComposer = useTeamChatStore((state) => state.setComposer);
@@ -615,7 +613,7 @@ function Composer({
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      className="flex size-7 items-center justify-center rounded-md bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      className="flex size-7 items-center justify-center rounded-md bg-muted/50 text-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
                     >
                       <Users className="size-4" />
                     </button>
@@ -647,7 +645,7 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="h-7 min-w-0 max-w-[260px] gap-1.5 bg-muted/50 px-2 text-xs text-muted-foreground"
+                  className="h-7 min-w-0 max-w-[260px] gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground"
                   onClick={onPickDir}
                   type="button"
                   variant="ghost"

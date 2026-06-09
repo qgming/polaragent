@@ -1,10 +1,11 @@
 // 首页：新对话入口（任务输入框 + Agent 选择 + 工作目录）
 // src/pages/HomePage.tsx
 
-import { ChevronDown, FolderOpen, SendHorizontal } from "lucide-react";
-import { useRef, useState } from "react";
+import { ChevronDown, FolderOpen, SendHorizontal, MessageCircle, Users } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { promptAgent } from "@/ai/agent";
+import { promptTeam } from "@/ai/team";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { IconButton } from "@/components/IconButton";
@@ -19,16 +20,25 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { checkProviderConfig } from "@/lib/app-init";
 import {
   ensureSessionFilesDir,
   getSessionFilesDir,
   setSessionWorkingDir,
+  getTeamSessionFilesDir,
+  ensureTeamSessionFilesDir,
 } from "@/lib/session/session-operations";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { type ChatAttachment, type Segment, useChatStore } from "@/stores/chat-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
+import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import type { AgentConfig } from "@/types/config";
 import { useAlert } from "@/hooks/useAlert";
 
@@ -45,6 +55,7 @@ export function HomePage({
   setActiveAgent,
   setComposer,
   startExchange,
+  onCreateTeamThread,
 }: {
   activeAgentId: string;
   agents: AgentConfig[];
@@ -68,11 +79,31 @@ export function HomePage({
     assistantId: string;
     threadId: string;
   };
+  onCreateTeamThread: (teamId: string, threadId: string) => void;
 }) {
   const activeAgent =
     agents.find((agent) => agent.id === activeAgentId) ?? agents[0];
   const workingDir = useChatStore((state) => state.workingDir);
   const setWorkingDir = useChatStore((state) => state.setWorkingDir);
+
+  // 团队相关
+  const teams = useTeamsStore((state) => state.teams);
+  const createTeamThread = useTeamChatStore((state) => state.createTeamThread);
+  const selectTeamThread = useTeamChatStore((state) => state.selectTeamThread);
+
+  // 类型选择：通用 / 团队
+  type ChatType = "general" | "team";
+  const [chatType, setChatType] = useState<ChatType>("general");
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(teams[0]?.id || "");
+
+  // 当团队列表变化时，确保 selectedTeamId 仍然有效
+  useEffect(() => {
+    if (!selectedTeamId && teams.length > 0) {
+      setSelectedTeamId(teams[0].id);
+    } else if (selectedTeamId && !teams.find((t) => t.id === selectedTeamId)) {
+      setSelectedTeamId(teams[0]?.id || "");
+    }
+  }, [teams, selectedTeamId]);
 
   // 富文本输入区句柄；本次发送临时选中的技能 id / 文件路径（输入框 "/" 与 "@"）
   const composerRef = useRef<SkillComposerHandle>(null);
@@ -119,6 +150,47 @@ export function HomePage({
       return;
     }
 
+    // 根据类型选择创建通用对话或团队对话
+    if (chatType === "team") {
+      // 创建团队对话
+      if (!selectedTeamId || !teams.find((t) => t.id === selectedTeamId)) {
+        await showAlert({
+          title: "未选择团队",
+          message: "请先选择一个团队",
+          variant: "warning",
+        });
+        return;
+      }
+
+      const threadId = createTeamThread(selectedTeamId);
+      selectTeamThread(threadId);
+
+      // 准备附件
+      const pendingAttachments = attachments;
+
+      // 获取工作目录
+      let workingDir = teams.find((t) => t.id === selectedTeamId)?.workspaceDir || undefined;
+      if (!workingDir) {
+        workingDir = await getTeamSessionFilesDir(threadId);
+        await ensureTeamSessionFilesDir(threadId);
+      }
+
+      const sendAttachments = await materializeAttachments(pendingAttachments, workingDir);
+
+      composerRef.current?.clear();
+      setComposer("");
+      setSkillIds([]);
+      setAttachments([]);
+
+      // 通知 App.tsx 切换到团队聊天视图
+      onCreateTeamThread(selectedTeamId, threadId);
+
+      // 自动发送消息
+      void promptTeam(threadId, input, sendAttachments);
+      return;
+    }
+
+    // 通用对话逻辑（原有逻辑）
     createThread(activeAgent?.id);
     const pendingAttachments = attachments;
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
@@ -201,49 +273,133 @@ export function HomePage({
           />
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center gap-2">
-              {/* "/" 技能选择 + "@" 添加文件，在助手选择左侧 */}
+              {/* "/" 技能选择 + "@" 添加文件 */}
               <ComposerToolbar
                 onPickSkill={(skill) => composerRef.current?.insertSkill(skill)}
                 onPickFile={(file) => composerRef.current?.insertFile(file)}
               />
+
+              {/* 类型选择器：通用 / 团队 */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="sm"
                     type="button"
-                    className="bg-muted/50"
+                    className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
                   >
-                    <span className="text-base leading-none">
-                      {activeAgent?.avatar || "⚡"}
-                    </span>
-                    {activeAgent?.name || "默认助手"}
-                    <ChevronDown className="size-3.5" />
+                    {chatType === "general" ? (
+                      <MessageCircle className="size-3.5" />
+                    ) : (
+                      <Users className="size-3.5" />
+                    )}
+                    <span className="text-sm">{chatType === "general" ? "通用" : "团队"}</span>
+                    <ChevronDown className="size-3" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56">
-                  {agents.length > 0 ? (
-                    agents.map((agent) => (
-                      <DropdownMenuItem
-                        key={agent.id}
-                        onSelect={() => setActiveAgent(agent.id)}
-                      >
-                        <span className="text-base leading-none">
-                          {agent.avatar || "⚡"}
-                        </span>
-                        <span className="truncate">{agent.name}</span>
-                      </DropdownMenuItem>
-                    ))
-                  ) : (
-                    <DropdownMenuItem disabled>暂无助手</DropdownMenuItem>
-                  )}
+                <DropdownMenuContent align="start" className="w-32">
+                  <DropdownMenuItem onSelect={() => setChatType("general")}>
+                    <MessageCircle className="size-4" />
+                    <span>通用</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setChatType("team")}>
+                    <Users className="size-4" />
+                    <span>团队</span>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              {/* 根据类型显示不同的选择器 */}
+              {chatType === "general" ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
+                    >
+                      <span className="text-sm leading-none">
+                        {activeAgent?.avatar || "⚡"}
+                      </span>
+                      <span className="text-sm">{activeAgent?.name || "默认助手"}</span>
+                      <ChevronDown className="size-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    {agents.length > 0 ? (
+                      agents.map((agent) => (
+                        <Tooltip key={agent.id}>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuItem
+                              onSelect={() => setActiveAgent(agent.id)}
+                            >
+                              <span className="text-base leading-none">
+                                {agent.avatar || "⚡"}
+                              </span>
+                              <span className="truncate">{agent.name}</span>
+                            </DropdownMenuItem>
+                          </TooltipTrigger>
+                          {agent.description ? (
+                            <TooltipContent side="right" className="max-w-xs">
+                              {agent.description}
+                            </TooltipContent>
+                          ) : null}
+                        </Tooltip>
+                      ))
+                    ) : (
+                      <DropdownMenuItem disabled>暂无助手</DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
+                    >
+                      <span className="text-sm leading-none">
+                        {teams.find((t) => t.id === selectedTeamId)?.avatar || "👥"}
+                      </span>
+                      <span className="text-sm">{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</span>
+                      <ChevronDown className="size-3" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    {teams.length > 0 ? (
+                      teams.map((team) => (
+                        <Tooltip key={team.id}>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuItem
+                              onSelect={() => setSelectedTeamId(team.id)}
+                            >
+                              <span className="text-base leading-none">
+                                {team.avatar || "👥"}
+                              </span>
+                              <span className="truncate">{team.name}</span>
+                            </DropdownMenuItem>
+                          </TooltipTrigger>
+                          {team.description ? (
+                            <TooltipContent side="right" className="max-w-xs">
+                              {team.description}
+                            </TooltipContent>
+                          ) : null}
+                        </Tooltip>
+                      ))
+                    ) : (
+                      <DropdownMenuItem disabled>暂无团队</DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <VoiceRecordButton onTranscriptionComplete={handleVoiceTranscription} />
               <IconButton
-                className="size-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+                className="size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
                 label="发送"
                 onClick={() => void handleSend()}
               >

@@ -225,8 +225,8 @@ export interface TeamConfig {
   avatar: string; // emoji
   description: string;
   version: string;
-  // 协作模式：领导模式、头脑风暴模式或并行模式
-  mode: "leader" | "equal" | "parallel";
+  // 协作模式：领导模式或头脑风暴模式
+  mode: "leader" | "equal";
   // 领导成员的 agentId（必须是 memberIds 之一，仅领导模式需要）
   leaderId: string;
   // 成员 agentId 列表（含领导）

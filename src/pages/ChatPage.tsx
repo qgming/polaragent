@@ -535,7 +535,7 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="h-7 min-w-0 max-w-[260px] gap-1.5 bg-muted/50 px-2 text-xs text-muted-foreground"
+                  className="h-7 min-w-0 max-w-[260px] gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground"
                   onClick={onPickDir}
                   type="button"
                   variant="ghost"

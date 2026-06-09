@@ -3,7 +3,7 @@
 //
 // 列表项子组件拆分至同目录：SidebarButton / ThreadItem / TeamList。
 
-import { MessageSquare, Settings, Users } from "lucide-react";
+import { MessageCircle, Settings, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 
@@ -108,7 +108,7 @@ export function AppSidebar({
         <div className="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5">
           {tabOrder.map((tab) => {
             const active = sidebarTab === tab;
-            const Icon = tab === "tasks" ? MessageSquare : Users;
+            const Icon = tab === "tasks" ? MessageCircle : Users;
             const label = tab === "tasks" ? "对话" : "团队";
             return (
               <button

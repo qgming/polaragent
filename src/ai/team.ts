@@ -1,4 +1,4 @@
-// 团队运行时 —— 支持领导模式、头脑风暴模式与并行模式
+// 团队运行时 —— 支持领导模式与头脑风暴模式
 // src/ai/team.ts
 //
 // 领导模式（中心化 group chat 编排 + LLM 自动点名）：
@@ -16,10 +16,6 @@
 //   - 成员自由补充观点，用 control_team_flow 工具交接/结束
 //   - 无指定时随机选人（排除刚说过的）
 //   - 支持投票决策机制
-//
-// 并行模式：
-//   - 用户 @ 指定多个成员时并发触发这些成员，否则并发触发全员
-//   - 成员输出互不等待，完成后由领导/首位成员做一次汇总
 
 import { promptAgent } from "./agent";
 import { agentManager, type TeamContext } from "./agent-manager";
@@ -83,9 +79,7 @@ function buildIdentityPrefix(
     `团队成员名单：\n${roster}`,
     team.mode === "leader"
       ? "协作模式：本团队采用领导模式。领导负责统筹全局、分配任务；你应聚焦自己的专长。需要交接、结束或标记阻塞时，优先调用 control_team_flow 工具。"
-      : team.mode === "parallel"
-        ? "协作模式：本团队采用并行模式。你会和其他成员同时处理同一任务，请只输出你的独立观点、证据、风险或产物，不要替其他成员汇总。"
-        : "协作模式：本团队采用头脑风暴模式。所有成员地位平等，自由提出不同角度、补充想法和质疑。需要交接、结束或标记阻塞时，优先调用 control_team_flow 工具。",
+      : "协作模式：本团队采用头脑风暴模式。所有成员地位平等，自由提出不同角度、补充想法和质疑。需要交接、结束或标记阻塞时，优先调用 control_team_flow 工具。",
     "control_team_flow 是团队流程控制工具：用它选择下一位发言人、传递只给下一位成员看的私聊提示或结束本轮协作。私聊提示不会进入公开讨论转写。",
     "ask_user 是面向用户的独立输入工具：当缺少用户偏好、确认、素材或选项决策时，用它向用户请求纯文本、单选或多选输入；不要把询问用户塞进 control_team_flow。",
     "所有团队协作模式都可以调用 request_team_vote 工具发起投票；需要共同决策、选择方案或确认是否结束任务时必须用工具发起投票，不要用 [VOTE:...] 这类文本暗号触发投票。",
@@ -505,102 +499,6 @@ async function promptTeamEqual(
 }
 
 /**
- * 团队并行模式主流程
- */
-async function promptTeamParallel(
-  threadId: string,
-  userInput: string,
-  attachments: ChatAttachment[] = [],
-): Promise<void> {
-  const thread = useTeamChatStore
-    .getState()
-    .threads.find((x) => x.id === threadId);
-  const team = thread
-    ? useTeamsStore.getState().teams.find((t) => t.id === thread.teamId)
-    : undefined;
-  if (!team) {
-    console.error("找不到团队会话对应的团队:", threadId);
-    return;
-  }
-
-  const allAgents = useConfigStore.getState().agents;
-  const members = team.memberIds
-    .map((id) => allAgents.find((a) => a.id === id))
-    .filter((a): a is AgentConfig => !!a);
-  if (members.length === 0) {
-    console.error("团队没有可用成员:", team.id);
-    return;
-  }
-
-  const store = useTeamChatStore.getState();
-
-  // 工作目录：会话级绑定优先，回退团队配置的 workspaceDir；
-  // 若仍无，则自动使用团队会话临时目录（自动创建并绑定）。
-  let workingDir =
-    thread?.workingDir?.trim() || team.workspaceDir?.trim() || undefined;
-
-  if (!workingDir) {
-    // 无工作目录时：使用临时目录（团队会话文件目录）作为默认工作目录
-    const tempDir = await getTeamSessionFilesDir(threadId);
-    await ensureTeamSessionFilesDir(threadId); // 确保目录存在
-    workingDir = tempDir;
-    // 绑定到当前团队会话
-    store.setTeamThreadWorkingDir(threadId, tempDir);
-    useTeamMonitorStore.getState().setWorkingDir(threadId, tempDir);
-  }
-
-  const userMessage: TeamMessage = {
-    id: createId(),
-    role: "user",
-    content: userInput,
-    createdAt: Date.now(),
-    status: "complete",
-    attachments,
-  };
-  store.appendMessage(threadId, userMessage);
-  await appendTeamUserMessage(threadId, serializeUserInputWithAttachments(userInput, attachments));
-
-  const mentionedIds = parseMentions(userInput, members);
-  const speakers =
-    mentionedIds.length > 0
-      ? mentionedIds
-          .map((id) => members.find((member) => member.id === id))
-          .filter((member): member is AgentConfig => !!member)
-      : members;
-
-  await Promise.allSettled(
-    speakers.map((speaker) =>
-      runMemberTurn(
-        threadId,
-        team,
-        speaker,
-        members,
-        userInput,
-        true,
-        workingDir,
-        attachments,
-      ),
-    ),
-  );
-
-  if (speakers.length <= 1) return;
-
-  const reducer =
-    members.find((member) => member.id === team.leaderId) ?? members[0];
-  await runMemberTurn(
-    threadId,
-    team,
-    reducer,
-    members,
-    userInput,
-    false,
-    workingDir,
-    undefined,
-    "请阅读公开团队讨论，综合所有并行成员的观点。输出最终汇总、关键分歧、推荐方案和下一步；不要再次展开发散。",
-  );
-}
-
-/**
  * 团队主入口 —— 根据模式路由到不同实现
  */
 export async function promptTeam(
@@ -629,9 +527,7 @@ export async function promptTeam(
 
   try {
     // 根据模式路由
-    if (team.mode === "parallel") {
-      await promptTeamParallel(threadId, userInput, attachments);
-    } else if (team.mode === "equal") {
+    if (team.mode === "equal") {
       await promptTeamEqual(threadId, userInput, attachments);
     } else {
       await promptTeamLeader(threadId, userInput, attachments);

@@ -28,7 +28,7 @@ function basename(path: string): string {
 
 // 工具栏小按钮：常驻圆角浅背景，hover 加深
 const toolBtnClass =
-  "flex size-7 items-center justify-center rounded-md bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+  "flex size-7 items-center justify-center rounded-md bg-muted/50 text-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
 
 export function ComposerToolbar({
   onPickSkill,

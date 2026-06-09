@@ -309,6 +309,9 @@ function App() {
                   setActiveAgent={setActiveAgent}
                   setComposer={setComposer}
                   startExchange={startExchange}
+                  onCreateTeamThread={(teamId: string, threadId: string) => {
+                    setTeamChatView({ teamId, threadId });
+                  }}
                 />
               ) : null}
               {activePage === "skills" ? <SkillsPage /> : null}

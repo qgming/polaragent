@@ -145,11 +145,7 @@ function TeamCard({
       ? `+${hiddenMemberCount}`
       : `${team.memberIds.length}`;
   const modeLabel =
-    team.mode === "leader"
-      ? "领导调度"
-      : team.mode === "parallel"
-        ? "并行协作"
-        : "头脑风暴";
+    team.mode === "leader" ? "领导调度" : "头脑风暴";
 
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-[#9b6fe0]/30 hover:shadow-sm">
