@@ -2,9 +2,17 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { useConversationStore } from "./conversation-store";
 import { useTaskMonitorStore } from "./task-monitor-store";
-import { getSessionWorkingDir } from "@/lib/session/session-operations";
+import {
+  getSessionWorkingDir,
+  getSessionToolPermissionMode,
+  setSessionToolPermissionMode,
+} from "@/lib/session/session-operations";
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
+import {
+  DEFAULT_TOOL_PERMISSION_MODE,
+  type ToolPermissionMode,
+} from "@/types/permissions";
 
 // 切到某对话时从会话 jsonl 恢复右侧任务监控（工作目录 + 待办 + 产物），
 // 使重启/切回后侧边栏与上次保持一致。仅在运行期尚无对应数据时回填，不覆盖。
@@ -20,6 +28,13 @@ async function restoreThreadMonitor(threadId: string): Promise<void> {
   // 待办 + 产物：从 jsonl 回读重建后灌入（hydrateThread 内部会跳过已有数据的会话）
   const snapshot = await loadThreadMonitor(threadId);
   useTaskMonitorStore.getState().hydrateThread(threadId, snapshot);
+}
+
+async function restoreThreadPermissionMode(threadId: string): Promise<void> {
+  const mode = await getSessionToolPermissionMode(threadId);
+  useChatStore.getState().setThreadPermissionMode(threadId, mode, {
+    persist: false,
+  });
 }
 
 export type ChatRole = "assistant" | "user";
@@ -74,6 +89,7 @@ export interface ChatThread {
   messages: ChatMessage[];
   updatedAt: number;
   agentId?: string; // 关联的 Agent ID
+  permissionMode: ToolPermissionMode;
   loaded?: boolean; // 是否已从磁盘 JSONL 回读过消息
   autoTitled?: boolean; // 是否已基于对话历史自动生成过标题
 }
@@ -112,7 +128,11 @@ interface ChatState {
   ) => void;
   clearActiveThread: () => void;
   clearThread: (threadId: string) => void;
-  createThread: (agentId?: string, initialText?: string) => string;
+  createThread: (
+    agentId?: string,
+    initialText?: string,
+    permissionMode?: ToolPermissionMode,
+  ) => string;
   deleteThread: (threadId: string) => void;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
   finishAssistant: (
@@ -125,6 +145,11 @@ interface ChatState {
   showHome: () => void;
   renameThread: (threadId: string, title: string) => void;
   setComposer: (value: string) => void;
+  setThreadPermissionMode: (
+    threadId: string,
+    mode: ToolPermissionMode,
+    options?: { persist?: boolean },
+  ) => void;
   startExchange: (userText: string, attachments?: ChatAttachment[]) => ExchangeStart;
   // 标记某会话为运行中（开始响应时调用）
   markRunning: (threadId: string) => void;
@@ -262,7 +287,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void useConversationStore.getState().clearConversation(threadId);
   },
 
-  createThread: (agentId?: string, initialText?: string) => {
+  createThread: (
+    agentId?: string,
+    initialText?: string,
+    permissionMode = DEFAULT_TOOL_PERMISSION_MODE,
+  ) => {
     const id = `thread-${createId()}`;
     const trimmedInitialText = initialText?.trim();
     const userMessage: ChatMessage | null = trimmedInitialText
@@ -282,6 +311,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: userMessage ? [userMessage] : [],
       updatedAt: Date.now(),
       agentId: agentId || get().activeAgentId, // 关联当前 Agent
+      permissionMode,
       loaded: true, // 新建会话，内存即权威，无需从磁盘回读
     };
     set((state) => ({
@@ -294,6 +324,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void useConversationStore
       .getState()
       .createNewConversation(id, thread.title, agentId || get().activeAgentId);
+    void setSessionToolPermissionMode(id, thread.permissionMode);
 
     if (userMessage) {
       void useConversationStore
@@ -416,6 +447,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void get().loadThreadMessages(threadId);
     // 从会话 jsonl 恢复该对话的任务监控（工作目录 + 待办 + 产物）
     void restoreThreadMonitor(threadId);
+    void restoreThreadPermissionMode(threadId);
   },
 
   showHome: () => {
@@ -442,6 +474,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setComposer: (value) => {
     set({ composer: value });
+  },
+
+  setThreadPermissionMode: (threadId, mode, options) => {
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, permissionMode: mode } : thread,
+      ),
+    }));
+    if (options?.persist !== false) {
+      void setSessionToolPermissionMode(threadId, mode);
+    }
   },
 
   startExchange: (userText, attachments = []) => {
@@ -547,6 +590,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           subtitle: "对话",
           messages: [], // 占位，进入会话时再从 JSONL 回读
           updatedAt: meta.updatedAt,
+          permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
           loaded: false,
           autoTitled: true, // 已持久化的会话沿用其标题，不再自动改名
         }));
@@ -673,6 +717,14 @@ export function useThreadTitle(threadId: string): string {
 export function useThreadAgentId(threadId: string): string | undefined {
   return useChatStore(
     (state) => state.threads.find((t) => t.id === threadId)?.agentId,
+  );
+}
+
+export function useThreadPermissionMode(threadId: string): ToolPermissionMode {
+  return useChatStore(
+    (state) =>
+      state.threads.find((t) => t.id === threadId)?.permissionMode ??
+      DEFAULT_TOOL_PERMISSION_MODE,
   );
 }
 

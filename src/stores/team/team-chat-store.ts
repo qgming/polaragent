@@ -16,12 +16,18 @@ import {
   setTeamSessionWorkingDir,
   ensureTeamSessionFilesDir,
   deleteTeamSessionFilesDir,
+  getTeamSessionToolPermissionMode,
+  setTeamSessionToolPermissionMode,
 } from "@/lib/session/session-operations";
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import type { ChatAttachment, ChatMessageStatus, ChatRole, Segment } from "@/stores/chat-store";
+import {
+  DEFAULT_TOOL_PERMISSION_MODE,
+  type ToolPermissionMode,
+} from "@/types/permissions";
 
 // 团队消息：在普通消息基础上，assistant 消息携带发言成员 id + 支持投票
 export interface TeamMessage {
@@ -80,6 +86,7 @@ export interface TeamThread {
   autoTitled?: boolean; // 是否已基于对话历史自动生成过标题
   // 该会话绑定的工作目录（会话级覆盖；空则回退团队配置的 workspaceDir）
   workingDir?: string;
+  permissionMode: ToolPermissionMode;
 }
 
 interface TeamChatState {
@@ -93,7 +100,10 @@ interface TeamChatState {
   setComposer: (value: string) => void;
 
   // 会话生命周期
-  createTeamThread: (teamId: string) => string;
+  createTeamThread: (
+    teamId: string,
+    permissionMode?: ToolPermissionMode,
+  ) => string;
   selectTeamThread: (threadId: string) => void;
   deleteTeamThread: (threadId: string) => void;
   clearTeamThreadsOfTeam: (teamId: string) => void;
@@ -101,6 +111,8 @@ interface TeamChatState {
   // 设置某会话的工作目录（内存 + 持久化），并按需从会话回读初始值
   setTeamThreadWorkingDir: (threadId: string, dir: string) => void;
   loadTeamThreadWorkingDir: (threadId: string) => Promise<void>;
+  setTeamThreadPermissionMode: (threadId: string, mode: ToolPermissionMode) => void;
+  loadTeamThreadPermissionMode: (threadId: string) => Promise<void>;
 
   // 消息流式
   appendMessage: (threadId: string, message: TeamMessage) => void;
@@ -148,7 +160,10 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
 
   setComposer: (value) => set({ composer: value }),
 
-  createTeamThread: (teamId) => {
+  createTeamThread: (
+    teamId,
+    permissionMode = DEFAULT_TOOL_PERMISSION_MODE,
+  ) => {
     const id = `teamthread-${createId()}`;
     const thread: TeamThread = {
       id,
@@ -157,6 +172,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       messages: [],
       updatedAt: Date.now(),
       loaded: true, // 新建会话，内存即权威
+      permissionMode,
     };
     set((state) => ({
       activeTeamThreadId: id,
@@ -169,6 +185,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       await openOrCreateTeamSession(id);
       await ensureTeamSessionFilesDir(id);
       await setTeamSessionTeamRef(id, teamId);
+      await setTeamSessionToolPermissionMode(id, thread.permissionMode);
       await upsertTitleIndex(id, "新会话", thread.updatedAt, "team", { teamId });
     })();
 
@@ -179,6 +196,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     set({ activeTeamThreadId: threadId, composer: "" });
     void get().loadTeamThreadMessages(threadId);
     void get().loadTeamThreadWorkingDir(threadId);
+    void get().loadTeamThreadPermissionMode(threadId);
   },
 
   deleteTeamThread: (threadId) => {
@@ -246,6 +264,24 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
         ),
       }));
     }
+  },
+
+  setTeamThreadPermissionMode: (threadId, mode) => {
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId ? { ...t, permissionMode: mode } : t,
+      ),
+    }));
+    void setTeamSessionToolPermissionMode(threadId, mode);
+  },
+
+  loadTeamThreadPermissionMode: async (threadId) => {
+    const mode = await getTeamSessionToolPermissionMode(threadId);
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId ? { ...t, permissionMode: mode } : t,
+      ),
+    }));
   },
 
   appendMessage: (threadId, message) => {
@@ -384,6 +420,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
           messages: [],
           // 优先用索引里的 updatedAt（反映重命名等活动），缺失则回退创建时间
           updatedAt: s.updatedAt ?? (Date.parse(s.createdAt) || 0),
+          permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
           loaded: false,
           // 已持久化、且标题不是默认「新会话」的，视为已命名，不再自动改名
           autoTitled: !!(s.title && s.title !== "新会话"),
@@ -493,5 +530,13 @@ export function useTeamThreadMessages(threadId: string): TeamMessage[] {
 export function useIsTeamThreadResponding(threadId: string): boolean {
   return useTeamChatStore((state) =>
     state.runningThreadIds.includes(threadId),
+  );
+}
+
+export function useTeamThreadPermissionMode(threadId: string): ToolPermissionMode {
+  return useTeamChatStore(
+    (state) =>
+      state.threads.find((t) => t.id === threadId)?.permissionMode ??
+      DEFAULT_TOOL_PERMISSION_MODE,
   );
 }

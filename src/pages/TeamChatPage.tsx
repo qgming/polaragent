@@ -22,6 +22,7 @@ import {
   type ToolSeg,
 } from "@/components/chat/AgentTrace";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { UserAttachments } from "@/components/chat/MessageRenderer";
 import { IconButton } from "@/components/IconButton";
@@ -54,12 +55,14 @@ import {
   useIsTeamThreadResponding,
   useTeamChatStore,
   useTeamThreadMessages,
+  useTeamThreadPermissionMode,
   type TeamMessage,
 } from "@/stores/team/team-chat-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { useAlert } from "@/hooks/useAlert";
+import type { ToolPermissionMode } from "@/types/permissions";
 
 const createUiMessageId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -85,8 +88,12 @@ export function TeamChatPage({
       ? "领导会调度成员协作完成"
       : "成员会平等发散并用控制工具交接";
   const isResponding = useIsTeamThreadResponding(threadId);
+  const permissionMode = useTeamThreadPermissionMode(threadId);
   const composer = useTeamChatStore((state) => state.composer);
   const setComposer = useTeamChatStore((state) => state.setComposer);
+  const setTeamThreadPermissionMode = useTeamChatStore(
+    (state) => state.setTeamThreadPermissionMode,
+  );
   const composerRef = useRef<SkillComposerHandle>(null);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
 
@@ -284,6 +291,10 @@ export function TeamChatPage({
             onPickDir={() => void handlePickDir()}
             onSend={handleSend}
             composerRef={composerRef}
+            onPermissionModeChange={(mode) =>
+              setTeamThreadPermissionMode(threadId, mode)
+            }
+            permissionMode={permissionMode}
             setValue={setComposer}
             value={composer}
             attachmentCount={attachments.length}
@@ -536,8 +547,10 @@ function Composer({
   onPickFile,
   onPickDir,
   onSend,
+  onPermissionModeChange,
   setValue,
   value,
+  permissionMode,
   attachmentCount,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
@@ -551,8 +564,10 @@ function Composer({
   onPickFile: (file: ChatAttachment) => void;
   onPickDir: () => void;
   onSend: () => void;
+  onPermissionModeChange: (mode: ToolPermissionMode) => void;
   setValue: (value: string) => void;
   value: string;
+  permissionMode: ToolPermissionMode;
   attachmentCount: number;
 }) {
   const canSend = value.trim().length > 0 || attachmentCount > 0;
@@ -604,6 +619,10 @@ function Composer({
             <ComposerToolbar
               onPickSkill={(skill) => onInsertMention(skill.name)}
               onPickFile={onPickFile}
+            />
+            <PermissionModeMenu
+              mode={permissionMode}
+              onChange={onPermissionModeChange}
             />
 
             {/* 成员菜单：所有成员收进一个图标按钮，点击选成员插入 @名称 */}

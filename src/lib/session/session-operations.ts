@@ -12,9 +12,20 @@ import {
   getSessionsRoot,
 } from "./session-repo";
 import { pickBestMeta, readLastCustomEntryString, type SessionMeta } from "./meta-selection";
-import { GUIDANCE_ENTRY, TEAM_REF_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
+import {
+  GUIDANCE_ENTRY,
+  TEAM_REF_ENTRY,
+  TEAM_SPEAKER_ENTRY,
+  TEAM_VOTE_ENTRY,
+  TOOL_PERMISSION_MODE_ENTRY,
+  WORKING_DIR_ENTRY,
+} from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
 import { createDirectory, deleteFile, fileExists } from "@/lib/electron/electron-api";
+import {
+  DEFAULT_TOOL_PERMISSION_MODE,
+  type ToolPermissionMode,
+} from "@/types/permissions";
 
 /**
  * 打开已存在的会话；若不存在则按给定 id 新建。
@@ -403,6 +414,74 @@ export async function setTeamSessionWorkingDir(
   } catch (error) {
     console.error(`写入团队会话工作目录失败 ${sessionId}:`, error);
   }
+}
+
+/** 读取普通会话持久化的工具权限模式（取最后一次写入）。 */
+export async function getSessionToolPermissionMode(
+  sessionId: string,
+): Promise<ToolPermissionMode> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    return readToolPermissionModeFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取会话工具权限失败 ${sessionId}:`, error);
+    return DEFAULT_TOOL_PERMISSION_MODE;
+  }
+}
+
+/** 把工具权限模式持久化到普通会话。 */
+export async function setSessionToolPermissionMode(
+  sessionId: string,
+  mode: ToolPermissionMode,
+): Promise<void> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    await session.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode });
+  } catch (error) {
+    console.error(`写入会话工具权限失败 ${sessionId}:`, error);
+  }
+}
+
+/** 读取团队会话持久化的工具权限模式（取最后一次写入）。 */
+export async function getTeamSessionToolPermissionMode(
+  sessionId: string,
+): Promise<ToolPermissionMode> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    return readToolPermissionModeFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取团队会话工具权限失败 ${sessionId}:`, error);
+    return DEFAULT_TOOL_PERMISSION_MODE;
+  }
+}
+
+/** 把工具权限模式持久化到团队会话。 */
+export async function setTeamSessionToolPermissionMode(
+  sessionId: string,
+  mode: ToolPermissionMode,
+): Promise<void> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    await session.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode });
+  } catch (error) {
+    console.error(`写入团队会话工具权限失败 ${sessionId}:`, error);
+  }
+}
+
+function readToolPermissionModeFromEntries(
+  entries: Awaited<ReturnType<Session["getEntries"]>>,
+): ToolPermissionMode {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type !== "custom" || entry.customType !== TOOL_PERMISSION_MODE_ENTRY) {
+      continue;
+    }
+    const data = entry.data as { mode?: unknown } | undefined;
+    if (data?.mode === "readonly" || data?.mode === "full" || data?.mode === "ai_review") {
+      return data.mode;
+    }
+  }
+  return DEFAULT_TOOL_PERMISSION_MODE;
 }
 
 /** 标记普通会话中一条运行时引导。该条目应写在对应 user message 之前。 */

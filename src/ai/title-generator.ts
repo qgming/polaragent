@@ -4,8 +4,9 @@
 import { firstModelService, resolveModelService } from "./model-router";
 import { chatCompletion, isElectronRuntime } from "@/lib/electron/electron-api";
 
-/** 标题建议字数上限（放宽，不做硬截断，仅在明显超长时按完整词收口） */
-const MAX_TITLE_LENGTH = 20;
+/** 标题建议字数范围（放宽，不做硬截断，仅在明显超长时按完整词收口） */
+const MIN_TITLE_LENGTH = 5;
+const MAX_TITLE_LENGTH = 15;
 
 /** 用于生成标题的历史消息（角色 + 内容） */
 export interface TitleHistoryMessage {
@@ -77,8 +78,8 @@ export async function generateConversationTitle(
     .join("\n");
 
   const systemPrompt =
-    "你是一个对话标题生成器。根据给定的「用户问题 + 助手正文回复」，生成一个能概括对话主题的简短中文标题。" +
-    `要求：尽量控制在 ${MAX_TITLE_LENGTH} 个字以内（可保留完整词语，不要为凑字数生硬截断）；标题中不要包含引号或多余标点。` +
+    "你是一个对话标题生成器。根据给定的「用户问题 + 助手正文回复」，生成一个能概括核心任务或结论的中文标题。" +
+    `要求：标题长度控制在 ${MIN_TITLE_LENGTH}-${MAX_TITLE_LENGTH} 个字，优先使用具体名词和动作，避免“问题解答”“方案讨论”等空泛标题；标题中不要包含引号、句号或多余标点。` +
     '只输出一个 JSON 对象，格式为 {"title": "标题内容"}，不要包含任何额外解释或代码块标记。';
 
   const userPrompt = `请为以下对话生成标题：\n\n${transcript}`;

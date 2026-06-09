@@ -22,6 +22,7 @@ import {
 } from "@/lib/session/session-operations";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { ChatAttachment, Segment } from "@/stores/chat-store";
+import type { ToolPermissionMode } from "@/types/permissions";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
@@ -57,6 +58,7 @@ export interface PromptOptions {
   // 同样不进入 UI 显示——UI 只展示用户原始问题与文件 chip 标记。
   filePaths?: string[];
   attachments?: ChatAttachment[];
+  permissionMode?: ToolPermissionMode;
   // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
   teamContext?: TeamContext;
 }
@@ -201,6 +203,7 @@ export async function promptAgent(
     try {
       harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
         workingDir: options.workingDir,
+        permissionMode: options.permissionMode,
         teamContext: options.teamContext,
       });
     } catch (error) {
@@ -208,6 +211,7 @@ export async function promptAgent(
       initializeAiRuntime();
       harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
         workingDir: options.workingDir,
+        permissionMode: options.permissionMode,
         teamContext: options.teamContext,
       });
     }

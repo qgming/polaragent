@@ -18,6 +18,7 @@ import { abortAgentThread, promptAgent, steerAgentThread } from "@/ai/agent";
 import { AnimatePresence } from "motion/react";
 import { ChatMessageView } from "@/components/chat/MessageRenderer";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
 import { IconButton } from "@/components/IconButton";
 import {
   SkillComposerInput,
@@ -40,6 +41,7 @@ import {
   useChatStore,
   useIsThreadResponding,
   useThreadMessages,
+  useThreadPermissionMode,
 } from "@/stores/chat-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
@@ -47,6 +49,7 @@ import { useConfigStore } from "@/stores/config-store";
 import { useAlert } from "@/hooks/useAlert";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
+import type { ToolPermissionMode } from "@/types/permissions";
 
 export function ChatPage({
   activeThreadTitle,
@@ -84,6 +87,10 @@ export function ChatPage({
   // 本会话的消息直接从 store 按 threadId 订阅——其它后台会话的流式更新
   // 不会换本会话 messages 的引用，因而不会触发本页重渲染。
   const messages = useThreadMessages(threadId);
+  const permissionMode = useThreadPermissionMode(threadId);
+  const setThreadPermissionMode = useChatStore(
+    (state) => state.setThreadPermissionMode,
+  );
   // 当前会话是否正在运行（响应中）——per-thread，切换会话各自独立
   const isResponding = useIsThreadResponding(threadId);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -286,6 +293,7 @@ export function ChatPage({
         skillIds: sendSkillIds,
         filePaths: sendFilePaths,
         attachments: sendAttachments,
+        permissionMode,
       },
     );
   };
@@ -322,8 +330,12 @@ export function ChatPage({
             onSend={() => void handleSend()}
             onSkillsChange={setSkillIds}
             onFilesChange={setAttachments}
+            onPermissionModeChange={(mode) =>
+              setThreadPermissionMode(threadId, mode)
+            }
             setValue={setComposer}
             value={composer}
+            permissionMode={permissionMode}
             workingDir={workingDir}
             sessionFilesDir={sessionFilesDir}
             attachmentCount={attachments.length}
@@ -365,8 +377,10 @@ function Composer({
   onSend,
   onSkillsChange,
   onFilesChange,
+  onPermissionModeChange,
   setValue,
   value,
+  permissionMode,
   workingDir,
   sessionFilesDir,
   attachmentCount,
@@ -381,8 +395,10 @@ function Composer({
   onSend: () => void;
   onSkillsChange: (skillIds: string[]) => void;
   onFilesChange: (files: ChatAttachment[]) => void;
+  onPermissionModeChange: (mode: ToolPermissionMode) => void;
   setValue: (value: string) => void;
   value: string;
+  permissionMode: ToolPermissionMode;
   workingDir: string;
   sessionFilesDir: string;
   attachmentCount: number;
@@ -532,6 +548,10 @@ function Composer({
           <div className="flex min-w-0 items-center gap-1">
             {/* "/" 技能选择 + "@" 添加文件 */}
             <ComposerToolbar onPickSkill={onPickSkill} onPickFile={onPickFile} />
+            <PermissionModeMenu
+              mode={permissionMode}
+              onChange={onPermissionModeChange}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

@@ -29,6 +29,11 @@ import { useChatStore } from "@/stores/chat-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { skillLoader } from "@/lib/skill/skill-loader";
 import { resolveSkillSelection } from "@/lib/skill/skill-selection";
+import { reviewToolPermission } from "./tool-permissions";
+import {
+  DEFAULT_TOOL_PERMISSION_MODE,
+  type ToolPermissionMode,
+} from "@/types/permissions";
 
 // 团队上下文：成员发言时叠加到该成员自身配置之上。
 export interface TeamContext {
@@ -172,12 +177,19 @@ export class AgentManager {
   async getOrCreateHarness(
     threadId: string,
     agentId: string,
-    options?: { workingDir?: string; teamContext?: TeamContext },
+    options?: {
+      workingDir?: string;
+      permissionMode?: ToolPermissionMode;
+      teamContext?: TeamContext;
+    },
   ): Promise<AgentHarness> {
     const key = harnessKey(options?.teamContext?.sessionId ?? threadId, agentId);
     const configSignature = runtimeConfigSignature(agentId, options?.teamContext);
     const toolsRuntimeSignature = useToolsStore.getState().runtimeSignature;
-    const workingDirSignature = normalizeWorkingDir(options?.workingDir);
+    const workingDirSignature = JSON.stringify({
+      dir: normalizeWorkingDir(options?.workingDir),
+      permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
+    });
     const cached = this.harnesses.get(key);
     if (cached) {
       if (
@@ -213,7 +225,11 @@ export class AgentManager {
   private async createHarness(
     threadId: string,
     agentId: string,
-    options?: { workingDir?: string; teamContext?: TeamContext },
+    options?: {
+      workingDir?: string;
+      permissionMode?: ToolPermissionMode;
+      teamContext?: TeamContext;
+    },
   ): Promise<AgentHarness> {
     // 解析 Agent 配置（优先用户配置）
     const agentConfig = useConfigStore
@@ -245,6 +261,7 @@ export class AgentManager {
     const toolCtx: ToolContext = {
       threadId,
       workingDir: options?.workingDir,
+      permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
       isTeam: !!teamContext,
       requester: {
         id: agentId,
@@ -320,6 +337,25 @@ export class AgentManager {
         apiKey,
         headers: m.headers,
       }),
+    });
+
+    harness.on("tool_call", async (event) => {
+      const decision = await reviewToolPermission({
+        agentId,
+        requesterName,
+        threadId,
+        toolName: event.toolName,
+        input: event.input,
+        permissionMode: toolCtx.permissionMode,
+        workingDir: options?.workingDir,
+        isTeam: !!teamContext,
+      });
+      return decision.allow
+        ? undefined
+        : {
+            block: true,
+            reason: decision.reason ?? "工具调用未通过权限审查。",
+          };
     });
 
     return harness;

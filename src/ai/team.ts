@@ -40,6 +40,7 @@ import {
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import type { ChatAttachment } from "@/stores/chat-store";
 import type { AgentConfig, TeamConfig } from "@/types/config";
+import { DEFAULT_TOOL_PERMISSION_MODE } from "@/types/permissions";
 
 const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -192,6 +193,11 @@ async function runMemberTurn(
   let finalContent = "";
 
   await new Promise<void>((resolve) => {
+    const permissionMode =
+      useTeamChatStore
+        .getState()
+        .threads.find((item) => item.id === threadId)?.permissionMode ??
+      DEFAULT_TOOL_PERMISSION_MODE;
     void promptAgent(
       finalModelInput,
       {
@@ -226,6 +232,7 @@ async function runMemberTurn(
         messageId: assistantId,
         filePaths: textAttachmentPaths(attachments),
         attachments,
+        permissionMode,
         teamContext,
       },
     );

@@ -6,11 +6,13 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Skill } from "@earendil-works/pi-agent-core";
 import type { AgentConfig, TeamConfig } from "@/types/config";
+import type { ToolPermissionMode } from "@/types/permissions";
 
 // 工具执行时的会话上下文：把产物/待办归属到正确的会话与工作目录
 export interface ToolContext {
   threadId: string;
   workingDir?: string;
+  permissionMode: ToolPermissionMode;
   isTeam?: boolean;
   requester?: {
     id: string;

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { promptAgent } from "@/ai/agent";
 import { promptTeam } from "@/ai/team";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
+import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { IconButton } from "@/components/IconButton";
 import {
@@ -41,6 +42,10 @@ import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import type { AgentConfig } from "@/types/config";
 import { useAlert } from "@/hooks/useAlert";
+import {
+  DEFAULT_TOOL_PERMISSION_MODE,
+  type ToolPermissionMode,
+} from "@/types/permissions";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 
@@ -65,7 +70,11 @@ export function HomePage({
     update: { appendDelta?: string; segments?: Segment[] },
   ) => void;
   composer: string;
-  createThread: (agentId?: string, initialText?: string) => string;
+  createThread: (
+    agentId?: string,
+    initialText?: string,
+    permissionMode?: ToolPermissionMode,
+  ) => string;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
   finishAssistant: (
     threadId: string,
@@ -95,6 +104,9 @@ export function HomePage({
   type ChatType = "general" | "team";
   const [chatType, setChatType] = useState<ChatType>("general");
   const [selectedTeamId, setSelectedTeamId] = useState<string>(teams[0]?.id || "");
+  const [permissionMode, setPermissionMode] = useState<ToolPermissionMode>(
+    DEFAULT_TOOL_PERMISSION_MODE,
+  );
 
   // 当团队列表变化时，确保 selectedTeamId 仍然有效
   useEffect(() => {
@@ -162,7 +174,7 @@ export function HomePage({
         return;
       }
 
-      const threadId = createTeamThread(selectedTeamId);
+      const threadId = createTeamThread(selectedTeamId, permissionMode);
       selectTeamThread(threadId);
 
       // 准备附件
@@ -191,7 +203,7 @@ export function HomePage({
     }
 
     // 通用对话逻辑（原有逻辑）
-    createThread(activeAgent?.id);
+    createThread(activeAgent?.id, undefined, permissionMode);
     const pendingAttachments = attachments;
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
@@ -238,6 +250,7 @@ export function HomePage({
         skillIds: sendSkillIds,
         filePaths: sendFilePaths,
         attachments: sendAttachments,
+        permissionMode,
       },
     );
   };
@@ -308,6 +321,11 @@ export function HomePage({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              <PermissionModeMenu
+                mode={permissionMode}
+                onChange={setPermissionMode}
+              />
 
               {/* 根据类型显示不同的选择器 */}
               {chatType === "general" ? (
