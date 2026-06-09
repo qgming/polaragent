@@ -156,7 +156,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     void removeTitleIndex(threadId, "team");
   },
 
-  // 清空某团队的所有会话（磁盘删除由 session-operations.clearTeamSessions 负责，这里清内存）
+  // 清空某团队的所有会话（磁盘删除由 team session facade 负责，这里清内存）
 	  clearTeamThreadsOfTeam: (teamId) => {
 	    set((state) => ({
 	      threads: state.threads.filter((t) => t.teamId !== teamId),

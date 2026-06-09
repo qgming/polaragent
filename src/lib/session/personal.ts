@@ -1,14 +1,20 @@
 export {
   deleteSession,
-  deleteSessionFilesDir,
-  ensureSessionFilesDir,
-  getSessionFilesDir,
-  getSessionToolPermissionMode,
-  getSessionWorkingDir,
   listSessions,
   openOrCreateSession,
   setSessionTitle,
+} from "./lifecycle";
+export {
+  deleteSessionFilesDir,
+  ensureSessionFilesDir,
+  getSessionFilesDir,
+} from "./files";
+export {
+  getSessionToolPermissionMode,
+  getSessionWorkingDir,
   setSessionToolPermissionMode,
   setSessionWorkingDir,
+} from "./preferences";
+export {
   appendGuidanceMessage,
-} from "./session-operations";
+} from "./messages";

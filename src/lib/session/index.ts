@@ -1,5 +1,9 @@
 export * as personalSession from "./personal";
 export * as teamSession from "./team";
+export * from "./lifecycle";
+export * from "./files";
+export * from "./preferences";
+export * from "./messages";
 export * from "./message-parser";
 export * from "./attachment-files";
 export * from "./entries";

@@ -5,7 +5,7 @@ import { agentManager, type TeamContext } from "./agent-manager";
 import { appendTeamVoteMessage } from "@/lib/session/team";
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
-import type { TeamMessage } from "@/lib/team";
+import { buildTranscript, type TeamMessage } from "@/lib/team";
 import type { AgentConfig, TeamConfig } from "@/types/config";
 
 type TeamVoteState = NonNullable<TeamMessage["vote"]>;
@@ -177,7 +177,7 @@ async function collectMemberVoteByTool({
   const optionsText = options
     .map((option) => `- ${option.id}: ${option.label}`)
     .join("\n");
-  const transcript = buildTranscript(threadId, members);
+  const transcript = buildVoteTranscript(threadId, members);
   const teamContext: TeamContext = {
     isTeam: true,
     extraSkillIds: [],
@@ -240,7 +240,7 @@ async function collectMemberVoteByTool({
   return selectedOptionId;
 }
 
-function buildTranscript(
+function buildVoteTranscript(
   threadId: string,
   members: AgentConfig[],
   limit = 14,
@@ -250,18 +250,11 @@ function buildTranscript(
     .threads.find((item) => item.id === threadId);
   if (!thread) return "";
 
-  const nameOf = (agentId?: string) =>
-    members.find((member) => member.id === agentId)?.name ?? "成员";
-
-  return thread.messages
-    .filter((message) => message.content.trim().length > 0 && !message.vote)
-    .slice(-limit)
-    .map((message) => {
-      const speaker =
-        message.role === "user" ? "用户" : nameOf(message.speakerAgentId);
-      return `${speaker}：${message.content.replace(/\s+/g, " ").trim().slice(0, 1200)}`;
-    })
-    .join("\n");
+  return buildTranscript(
+    thread.messages.filter((message) => !message.vote),
+    members,
+    limit,
+  );
 }
 
 function setMemberVoteStatus(

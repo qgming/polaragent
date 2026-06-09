@@ -1,20 +1,26 @@
 export {
+  clearTeamSessions,
+  deleteTeamSession,
+  listTeamSessions,
+  openOrCreateTeamSession,
+  setTeamSessionTeamRef,
+  setTeamSessionTitle,
+} from "./lifecycle";
+export {
+  deleteTeamSessionFilesDir,
+  ensureTeamSessionFilesDir,
+  getTeamSessionFilesDir,
+} from "./files";
+export {
+  getTeamSessionToolPermissionMode,
+  getTeamSessionWorkingDir,
+  setTeamSessionToolPermissionMode,
+  setTeamSessionWorkingDir,
+} from "./preferences";
+export {
   appendTeamAssistantMessage,
   appendTeamGuidanceMessage,
   appendTeamSpeaker,
   appendTeamUserMessage,
   appendTeamVoteMessage,
-  clearTeamSessions,
-  deleteTeamSession,
-  deleteTeamSessionFilesDir,
-  ensureTeamSessionFilesDir,
-  getTeamSessionFilesDir,
-  getTeamSessionToolPermissionMode,
-  getTeamSessionWorkingDir,
-  listTeamSessions,
-  openOrCreateTeamSession,
-  setTeamSessionTeamRef,
-  setTeamSessionTitle,
-  setTeamSessionToolPermissionMode,
-  setTeamSessionWorkingDir,
-} from "./session-operations";
+} from "./messages";
