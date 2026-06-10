@@ -56,6 +56,8 @@ export interface TeamContext {
     options: Array<{ id: string; label: string }>;
     onCast: (optionId: string) => void;
   };
+  // 团队会话选中的知识库 ID 列表
+  knowledgeBaseIds?: string[];
 }
 
 export interface RuntimeAgentConfig {
@@ -177,6 +179,7 @@ export class AgentManager {
     options?: {
       workingDir?: string;
       permissionMode?: ToolPermissionMode;
+      knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
     },
   ): Promise<AgentHarness> {
@@ -186,6 +189,7 @@ export class AgentManager {
     const workingDirSignature = JSON.stringify({
       dir: normalizeWorkingDir(options?.workingDir),
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
+      knowledgeBaseIds: [...(options?.knowledgeBaseIds ?? [])].sort(),
     });
     const cached = this.harnesses.get(key);
     if (cached) {
@@ -225,6 +229,7 @@ export class AgentManager {
     options?: {
       workingDir?: string;
       permissionMode?: ToolPermissionMode;
+      knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
     },
   ): Promise<AgentHarness> {
@@ -254,7 +259,7 @@ export class AgentManager {
     const mergedSkillIds = resolveSkillSelection(rawSkillIds, allSkillIds);
     const skills = skillLoader.toPiSkills(mergedSkillIds);
 
-    // 装配工具（全局工具，受工具页开关过滤；团队投票工具仅团队上下文可见）。
+    // 装配工具（全局工具，受工具页开关过滤;团队投票工具仅团队上下文可见）。
     const toolCtx: ToolContext = {
       threadId,
       workingDir: options?.workingDir,
@@ -265,6 +270,7 @@ export class AgentManager {
         name: requesterName,
       },
       skills,
+      knowledgeBaseIds: options?.knowledgeBaseIds,
       teamVote:
         !teamContext?.voteCasting &&
         teamContext?.teamConfig &&

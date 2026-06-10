@@ -8,6 +8,13 @@ const { dataDir, ensureDataDir } = require("../lib/app-paths.cjs");
 const { ensureDir } = require("../lib/fs-utils.cjs");
 const { getMainWindow, createWindow, loadApp } = require("../lib/windows.cjs");
 
+const DOCUMENT_EXTENSIONS = [
+  "txt", "md", "markdown", "mdx", "json", "csv", "log", "xml", "yaml", "yml",
+  "pdf", "docx", "toml", "ini", "html", "htm", "css", "scss", "less", "ts",
+  "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "sh", "rb",
+  "php", "sql", "env",
+];
+
 // 已打开的预览窗口：key -> BrowserWindow
 const previewWindows = new Map();
 
@@ -37,9 +44,26 @@ function register(ipcMain) {
   ipcMain.handle("dialog:pick-text-file", async () => {
     const result = await dialog.showOpenDialog(getMainWindow(), {
       properties: ["openFile"],
-      filters: [{ name: "文本文件", extensions: ["txt", "md", "markdown", "json", "csv", "log", "xml", "yaml", "yml", "toml", "ini", "html", "css", "ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "sh"] }],
+      filters: [
+        {
+          name: "文档文件",
+          extensions: DOCUMENT_EXTENSIONS,
+        },
+      ],
     });
     return result.canceled ? null : result.filePaths[0] || null;
+  });
+  ipcMain.handle("dialog:pick-multiple-files", async () => {
+    const result = await dialog.showOpenDialog(getMainWindow(), {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        {
+          name: "文档文件",
+          extensions: DOCUMENT_EXTENSIONS,
+        },
+      ],
+    });
+    return result.canceled ? [] : result.filePaths;
   });
   ipcMain.handle("dialog:pick-image-file", async () => {
     const result = await dialog.showOpenDialog(getMainWindow(), {

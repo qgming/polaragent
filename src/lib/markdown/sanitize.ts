@@ -54,7 +54,7 @@ export const markdownSanitizeSchema: SanitizeSchema = {
   },
   protocols: {
     ...defaultSchema.protocols,
-    href: ["http", "https", "mailto"],
+    href: ["http", "https", "mailto", "file"],
     src: ["http", "https", "data", "blob", "file"],
   },
   clobberPrefix: "md-",

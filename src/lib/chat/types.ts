@@ -46,6 +46,7 @@ export interface ChatThread {
   updatedAt: number;
   agentId?: string;
   permissionMode: ToolPermissionMode;
+  knowledgeBaseIds?: string[]; // 当前会话选中的知识库 ID 列表
   loaded?: boolean;
   autoTitled?: boolean;
 }

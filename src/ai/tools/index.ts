@@ -29,6 +29,7 @@ import { editImageTool, generateImageTool } from "./image-generation";
 import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
+import { searchKnowledgeTool } from "./knowledge";
 
 export type { ToolContext } from "./tool-context";
 
@@ -48,12 +49,13 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 1 },
   network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 2 },
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 3 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 4 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 5 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 6 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 7 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 8 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 9 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 4 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 5 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 6 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 7 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 8 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 9 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 10 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -207,6 +209,13 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "在会话工作目录下执行 shell 命令，返回标准输出与错误输出。高危命令会被拦截。",
     factory: runBashTool,
     group: "dev",
+  },
+  {
+    id: "search_knowledge",
+    name: "检索知识库",
+    description: "在已启用的知识库中检索相关文档片段，获取项目文档、技术规范等上下文信息。",
+    factory: searchKnowledgeTool,
+    group: "knowledge",
   },
 ];
 

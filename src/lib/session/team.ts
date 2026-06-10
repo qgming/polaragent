@@ -16,6 +16,8 @@ export {
   getTeamSessionWorkingDir,
   setTeamSessionToolPermissionMode,
   setTeamSessionWorkingDir,
+  getTeamSessionKnowledgeBaseIds,
+  setTeamSessionKnowledgeBaseIds,
 } from "./preferences";
 export {
   appendTeamAssistantMessage,

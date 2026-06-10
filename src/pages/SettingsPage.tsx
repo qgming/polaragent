@@ -11,10 +11,11 @@ import { PreferencesPanel } from "@/components/settings/PreferencesPanel";
 import { ImageGenerationPanel } from "@/components/settings/ImageGenerationPanel";
 import { AudioPanel } from "@/components/settings/AudioPanel";
 import { WebSearchPanel } from "@/components/settings/WebSearchPanel";
+import { KnowledgePanel } from "@/components/settings/KnowledgePanel";
 import { AdvancedPanel } from "@/components/settings/AdvancedPanel";
 import { AboutPanel } from "@/components/settings/AboutPanel";
 
-export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "data" | "about";
+export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "data" | "about";
 
 // 左侧导航按分组组织（通用 / 高级）
 const navGroups: Array<{
@@ -29,6 +30,7 @@ const navGroups: Array<{
       { id: "imageGeneration", label: "图片模式", icon: Image },
       { id: "audio", label: "音频设置", icon: AudioLines },
       { id: "webSearch", label: "网络搜索", icon: Search },
+      { id: "knowledge", label: "嵌入配置", icon: Database },
     ],
   },
   {
@@ -127,6 +129,9 @@ export function SettingsPage({
           ) : null}
           {activeSection === "audio" ? (
             <AudioPanel settings={settings} onUpdate={updateSettings} />
+          ) : null}
+          {activeSection === "knowledge" ? (
+            <KnowledgePanel settings={settings} onUpdate={updateSettings} />
           ) : null}
           {activeSection === "data" ? <AdvancedPanel /> : null}
           {activeSection === "about" ? <AboutPanel /> : null}

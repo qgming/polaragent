@@ -23,6 +23,7 @@ import {
 } from "@/components/chat/AgentTrace";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
+import { KnowledgeBaseSelector } from "@/components/knowledge";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { UserAttachments } from "@/components/chat/MessageRenderer";
 import { IconButton } from "@/components/IconButton";
@@ -56,6 +57,7 @@ import {
   useTeamChatStore,
   useTeamThreadMessages,
   useTeamThreadPermissionMode,
+  useTeamThreadKnowledgeBaseIds,
 } from "@/stores/team/team-chat-store";
 import type { TeamMessage } from "@/lib/team";
 import { useTeamsStore } from "@/stores/team/teams-store";
@@ -96,6 +98,10 @@ export function TeamChatPage({
   );
   const composerRef = useRef<SkillComposerHandle>(null);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const knowledgeBaseIds = useTeamThreadKnowledgeBaseIds(threadId);
+  const setThreadKnowledgeBaseIds = useTeamChatStore(
+    (state) => state.setThreadKnowledgeBaseIds,
+  );
 
   // 面板开合状态
   const panelOpen = useTeamPanelStore((state) =>
@@ -246,6 +252,14 @@ export function TeamChatPage({
     if (dir) setTeamThreadWorkingDir(threadId, dir);
   };
 
+  const handleKnowledgeChange = (ids: string[]) => {
+    setThreadKnowledgeBaseIds(threadId, ids);
+  };
+
+  const handleOpenKnowledgeSettings = () => {
+    window.location.hash = "#/knowledge";
+  };
+
   return (
     <>
       <div className="flex h-full min-w-0">
@@ -298,6 +312,9 @@ export function TeamChatPage({
             setValue={setComposer}
             value={composer}
             attachmentCount={attachments.length}
+            knowledgeBaseIds={knowledgeBaseIds}
+            onKnowledgeChange={handleKnowledgeChange}
+            onOpenKnowledgeSettings={handleOpenKnowledgeSettings}
           />
         </section>
 
@@ -552,6 +569,9 @@ function Composer({
   value,
   permissionMode,
   attachmentCount,
+  knowledgeBaseIds,
+  onKnowledgeChange,
+  onOpenKnowledgeSettings,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   members: Array<{ avatar: string; name: string }>;
@@ -569,6 +589,9 @@ function Composer({
   value: string;
   permissionMode: ToolPermissionMode;
   attachmentCount: number;
+  knowledgeBaseIds: string[];
+  onKnowledgeChange: (ids: string[]) => void;
+  onOpenKnowledgeSettings: () => void;
 }) {
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
@@ -620,6 +643,14 @@ function Composer({
               onPickSkill={(skill) => onInsertMention(skill.name)}
               onPickFile={onPickFile}
             />
+
+            {/* 知识库多选 */}
+            <KnowledgeBaseSelector
+              selectedIds={knowledgeBaseIds}
+              onChange={onKnowledgeChange}
+              onOpenSettings={onOpenKnowledgeSettings}
+            />
+
             <PermissionModeMenu
               mode={permissionMode}
               onChange={onPermissionModeChange}

@@ -3,7 +3,11 @@ import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
 } from "@/types/permissions";
-import { TOOL_PERMISSION_MODE_ENTRY, WORKING_DIR_ENTRY } from "./entries";
+import {
+  TOOL_PERMISSION_MODE_ENTRY,
+  WORKING_DIR_ENTRY,
+  KNOWLEDGE_BASE_IDS_ENTRY,
+} from "./entries";
 import { openOrCreateSession, openOrCreateTeamSession } from "./lifecycle";
 
 export async function getSessionWorkingDir(
@@ -132,4 +136,68 @@ function readToolPermissionModeFromEntries(
     }
   }
   return DEFAULT_TOOL_PERMISSION_MODE;
+}
+
+export async function getSessionKnowledgeBaseIds(
+  sessionId: string,
+): Promise<string[]> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    return readKnowledgeBaseIdsFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取会话知识库失败 ${sessionId}:`, error);
+    return [];
+  }
+}
+
+export async function setSessionKnowledgeBaseIds(
+  sessionId: string,
+  ids: string[],
+): Promise<void> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    await session.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids });
+  } catch (error) {
+    console.error(`写入会话知识库失败 ${sessionId}:`, error);
+  }
+}
+
+export async function getTeamSessionKnowledgeBaseIds(
+  sessionId: string,
+): Promise<string[]> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    return readKnowledgeBaseIdsFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取团队会话知识库失败 ${sessionId}:`, error);
+    return [];
+  }
+}
+
+export async function setTeamSessionKnowledgeBaseIds(
+  sessionId: string,
+  ids: string[],
+): Promise<void> {
+  try {
+    const session = await openOrCreateTeamSession(sessionId);
+    await session.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids });
+  } catch (error) {
+    console.error(`写入团队会话知识库失败 ${sessionId}:`, error);
+  }
+}
+
+function readKnowledgeBaseIdsFromEntries(
+  entries: Awaited<ReturnType<Session["getEntries"]>>,
+): string[] {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type !== "custom" || entry.customType !== KNOWLEDGE_BASE_IDS_ENTRY) {
+      continue;
+    }
+    const data = entry.data as { ids?: unknown } | undefined;
+    if (data && Array.isArray(data.ids)) {
+      return data.ids.filter((id): id is string => typeof id === "string");
+    }
+  }
+  return [];
 }

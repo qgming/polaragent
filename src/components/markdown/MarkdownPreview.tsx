@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ImgHTMLAttributes,
+  type MouseEvent,
 } from "react";
 import { Streamdown } from "streamdown";
 
@@ -15,6 +16,7 @@ import {
   downloadUrlAsBase64,
   fileUrl,
   isElectronRuntime,
+  openExternal,
 } from "@/lib/electron/electron-api";
 import {
   markdownSanitizeSchema,
@@ -52,6 +54,11 @@ function isDataOrRemoteUrl(value?: string): boolean {
   return /^(https?:|data:|blob:|file:)/i.test(value);
 }
 
+function isExternalLink(value?: string): boolean {
+  if (!value) return false;
+  return /^(https?:|mailto:|file:)/i.test(value);
+}
+
 function isAbsoluteLocalPath(value?: string): boolean {
   if (!value) return false;
   return /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(value);
@@ -68,6 +75,24 @@ function joinPath(base: string, child: string): string {
   const normalizedBase = base.replace(/\\/g, "/").replace(/\/+$/, "");
   const normalizedChild = child.replace(/\\/g, "/").replace(/^\.?\//, "");
   return `${normalizedBase}/${normalizedChild}`;
+}
+
+function resolveLocalPath(reference: string, baseDir?: string): string {
+  const decoded = decodeURIComponent(reference);
+  if (isAbsoluteLocalPath(decoded) || !baseDir) return decoded;
+  return joinPath(baseDir, decoded);
+}
+
+function splitLocalReference(reference: string): {
+  pathPart: string;
+  suffix: string;
+} {
+  const markerIndex = reference.search(/[?#]/);
+  if (markerIndex === -1) return { pathPart: reference, suffix: "" };
+  return {
+    pathPart: reference.slice(0, markerIndex),
+    suffix: reference.slice(markerIndex),
+  };
 }
 
 function contentTypeToDataUrl(contentType: string, base64: string): string {
@@ -144,12 +169,7 @@ function MarkdownPreviewImage({
         return;
       }
 
-      const decoded = decodeURIComponent(src);
-      const absolutePath = isAbsoluteLocalPath(decoded)
-        ? decoded
-        : baseDir
-          ? joinPath(baseDir, decoded)
-          : decoded;
+      const absolutePath = resolveLocalPath(src, baseDir);
 
       try {
         const url = await resolveImage(absolutePath, () => fileUrl(absolutePath));
@@ -182,6 +202,48 @@ function MarkdownPreviewImage({
   );
 }
 
+function MarkdownPreviewLink({
+  href,
+  children,
+  baseDir,
+}: {
+  href?: string;
+  children: React.ReactNode;
+  baseDir?: string;
+}) {
+  const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!href || !isElectronRuntime()) return;
+    if (href.startsWith("#")) return;
+
+    if (isExternalLink(href)) {
+      event.preventDefault();
+      await openExternal(href);
+      return;
+    }
+
+    event.preventDefault();
+    const { pathPart, suffix } = splitLocalReference(href);
+    if (!pathPart) return;
+    const resolvedPath = resolveLocalPath(pathPart, baseDir);
+    const url = await fileUrl(resolvedPath);
+    await openExternal(`${url}${suffix}`);
+  };
+
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        void handleClick(event);
+      }}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent-foreground underline-offset-2 hover:underline"
+    >
+      {children}
+    </a>
+  );
+}
+
 export function MarkdownPreview({
   content,
   filePath,
@@ -192,7 +254,7 @@ export function MarkdownPreview({
     () =>
       normalizeMarkdownContent(content, {
         convertLatex: true,
-        stripFileProtocol: true,
+        stripFileProtocol: false,
         rewriteExternalMediaUrls: true,
         encodeHtmlMediaAttributes: true,
       }),
@@ -225,6 +287,16 @@ export function MarkdownPreview({
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={{
+          a({ href, children }) {
+            return (
+              <MarkdownPreviewLink
+                href={typeof href === "string" ? href : undefined}
+                baseDir={baseDir}
+              >
+                {children}
+              </MarkdownPreviewLink>
+            );
+          },
           img({ src, alt, ...props }) {
             return (
               <MarkdownPreviewImage

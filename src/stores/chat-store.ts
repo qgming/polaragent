@@ -7,6 +7,10 @@ import {
   getSessionToolPermissionMode,
   setSessionToolPermissionMode,
 } from "@/lib/session/personal";
+import {
+  getSessionKnowledgeBaseIds,
+  setSessionKnowledgeBaseIds,
+} from "@/lib/session/preferences";
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
 import type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
@@ -34,6 +38,13 @@ async function restoreThreadMonitor(threadId: string): Promise<void> {
 async function restoreThreadPermissionMode(threadId: string): Promise<void> {
   const mode = await getSessionToolPermissionMode(threadId);
   useChatStore.getState().setThreadPermissionMode(threadId, mode, {
+    persist: false,
+  });
+}
+
+async function restoreThreadKnowledgeBaseIds(threadId: string): Promise<void> {
+  const ids = await getSessionKnowledgeBaseIds(threadId);
+  useChatStore.getState().setThreadKnowledgeBaseIds(threadId, ids, {
     persist: false,
   });
 }
@@ -94,6 +105,11 @@ interface ChatState {
   setThreadPermissionMode: (
     threadId: string,
     mode: ToolPermissionMode,
+    options?: { persist?: boolean },
+  ) => void;
+  setThreadKnowledgeBaseIds: (
+    threadId: string,
+    ids: string[],
     options?: { persist?: boolean },
   ) => void;
   startExchange: (userText: string, attachments?: ChatAttachment[]) => ExchangeStart;
@@ -258,6 +274,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updatedAt: Date.now(),
       agentId: agentId || get().activeAgentId, // 关联当前 Agent
       permissionMode,
+      knowledgeBaseIds: [], // 初始化知识库 ID 列表
       loaded: true, // 新建会话，内存即权威，无需从磁盘回读
     };
     set((state) => ({
@@ -388,12 +405,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectThread: (threadId) => {
-    set({ activeThreadId: threadId, composer: "" });
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId && !t.knowledgeBaseIds
+          ? { ...t, knowledgeBaseIds: [] }
+          : t
+      ),
+      activeThreadId: threadId,
+      composer: "",
+    }));
     // 切换会话时按需从 JSONL 回读历史消息
     void get().loadThreadMessages(threadId);
     // 从会话 jsonl 恢复该对话的任务监控（工作目录 + 待办 + 产物）
     void restoreThreadMonitor(threadId);
     void restoreThreadPermissionMode(threadId);
+    void restoreThreadKnowledgeBaseIds(threadId);
   },
 
   showHome: () => {
@@ -430,6 +456,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     if (options?.persist !== false) {
       void setSessionToolPermissionMode(threadId, mode);
+    }
+  },
+
+  setThreadKnowledgeBaseIds: (threadId, ids, options) => {
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, knowledgeBaseIds: ids } : thread,
+      ),
+    }));
+    if (options?.persist !== false) {
+      void setSessionKnowledgeBaseIds(threadId, ids);
     }
   },
 
@@ -671,6 +708,13 @@ export function useThreadPermissionMode(threadId: string): ToolPermissionMode {
     (state) =>
       state.threads.find((t) => t.id === threadId)?.permissionMode ??
       DEFAULT_TOOL_PERMISSION_MODE,
+  );
+}
+
+export function useThreadKnowledgeBaseIds(threadId: string): string[] {
+  return useChatStore(
+    (state) =>
+      state.threads.find((t) => t.id === threadId)?.knowledgeBaseIds ?? []
   );
 }
 

@@ -11,6 +11,7 @@ interface Window {
       fileUrl: (path: string) => Promise<string>;
       pickWorkingDirectory: () => Promise<string | null>;
       pickTextFile: () => Promise<string | null>;
+      pickMultipleFiles: () => Promise<string[]>;
       pickImageFile: () => Promise<string | null>;
       pickAudioFile: () => Promise<string | null>;
     };
@@ -157,6 +158,176 @@ interface Window {
         error?: string;
         blocked?: boolean;
       }>;
+    };
+    knowledge: {
+      create: (request: {
+        kbId: string;
+        name: string;
+        description?: string;
+        chunkSize?: number;
+        overlap?: number;
+      }) => Promise<{
+        success: boolean;
+        knowledgeBase: {
+          id: string;
+          name: string;
+          description?: string;
+          enabled: boolean;
+          createdAt: number;
+          updatedAt: number;
+          chunkSize: number;
+          overlap: number;
+          fileCount: number;
+          chunkCount: number;
+        };
+      }>;
+      update: (request: {
+        kbId: string;
+        updates: Partial<{
+          name: string;
+          description: string;
+          enabled: boolean;
+          chunkSize: number;
+          overlap: number;
+        }>;
+      }) => Promise<{
+        success: boolean;
+        knowledgeBase: {
+          id: string;
+          name: string;
+          description?: string;
+          enabled: boolean;
+          createdAt: number;
+          updatedAt: number;
+          chunkSize: number;
+          overlap: number;
+          fileCount: number;
+          chunkCount: number;
+        };
+      }>;
+      addFiles: (request: {
+        kbId: string;
+        filePaths: string[];
+        config: {
+          chunkSize?: number;
+          overlap?: number;
+          embedding: {
+            apiKey: string;
+            baseURL: string;
+            model: string;
+            dimension: number;
+          };
+        };
+      }) => Promise<{
+        success: boolean;
+        addedFiles: Array<{
+          id: string;
+          kbId: string;
+          name: string;
+          path: string;
+          size: number;
+          type: string;
+          status: "pending" | "processing" | "ready" | "error";
+          error?: string;
+          chunkCount: number;
+          createdAt: number;
+          updatedAt: number;
+        }>;
+        totalFiles: number;
+        totalChunks: number;
+      }>;
+      removeFile: (request: { kbId: string; fileId: string }) => Promise<{ success: boolean }>;
+      getFiles: (kbId: string) => Promise<Array<{
+        id: string;
+        kbId: string;
+        name: string;
+        path: string;
+        size: number;
+        type: string;
+        status: "pending" | "processing" | "ready" | "error" | "incompatible";
+        error?: string;
+        chunkCount: number;
+        createdAt: number;
+        updatedAt: number;
+      }>>;
+      checkCompatibility: (kbId: string, config: {
+        embedding: {
+          apiKey: string;
+          baseURL: string;
+          model: string;
+          dimension: number;
+        };
+      }) => Promise<Array<{
+        id: string;
+        kbId: string;
+        name: string;
+        path: string;
+        size: number;
+        type: string;
+        status: "pending" | "processing" | "ready" | "error" | "incompatible";
+        error?: string;
+        chunkCount: number;
+        createdAt: number;
+        updatedAt: number;
+      }>>;
+      reembedIncompatible: (request: {
+        kbId: string;
+        config: {
+          embedding: {
+            apiKey: string;
+            baseURL: string;
+            model: string;
+            dimension: number;
+          };
+        };
+      }) => Promise<{ success: boolean; reembedded: number }>;
+      rebuild: (request: {
+        kbId: string;
+        config: {
+          embedding: {
+            apiKey: string;
+            baseURL: string;
+            model: string;
+            dimension: number;
+          };
+        };
+      }) => Promise<{ success: boolean; fileCount: number; chunkCount: number }>;
+      query: (request: {
+        kbId: string;
+        query: string;
+        config: {
+          embedding: {
+            apiKey: string;
+            baseURL: string;
+            model: string;
+            dimension: number;
+          };
+        };
+        topK?: number;
+        threshold?: number;
+      }) => Promise<{
+        success: boolean;
+        results: Array<{
+          id: string;
+          file: string;
+          chunk: number;
+          text: string;
+          score: number;
+        }>;
+      }>;
+      delete: (kbId: string) => Promise<{ success: boolean }>;
+      list: () => Promise<Array<{
+        id: string;
+        name: string;
+        description?: string;
+        enabled: boolean;
+        createdAt: number;
+        updatedAt: number;
+        chunkSize: number;
+        overlap: number;
+        fileCount: number;
+        chunkCount: number;
+      }>>;
     };
   };
 }

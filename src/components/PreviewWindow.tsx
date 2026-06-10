@@ -404,15 +404,8 @@ function PreviewContent({
   }
 
   if (kind === "html") {
-    // 本地 HTML 文件用 srcDoc
-    return (
-      <iframe
-        title="HTML 预览"
-        srcDoc={content}
-        sandbox="allow-same-origin"
-        className="size-full border-0 bg-white dark:bg-background"
-      />
-    );
+    // 本地 HTML 文件用 src，以支持加载相对路径的 CSS/JS 资源
+    return <HtmlPreview filePath={filePath} />;
   }
 
   if (kind === "markdown") {
@@ -456,6 +449,31 @@ function ImagePreview({ filePath }: { filePath: string }) {
       ) : null}
     </div>
   );
+}
+
+// HTML 预览：使用 file:// URL 以支持加载本地资源
+function HtmlPreview({ filePath }: { filePath: string }) {
+  const [src, setSrc] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void fileUrl(filePath).then((url) => {
+      if (!cancelled) setSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath]);
+
+  return src ? (
+    <iframe
+      title="HTML 预览"
+      src={src}
+      sandbox="allow-scripts allow-forms allow-modals allow-popups"
+      referrerPolicy="no-referrer"
+      className="size-full border-0 bg-white dark:bg-background"
+    />
+  ) : null;
 }
 
 // 代码/文本只读展示,支持搜索词高亮（命中处黄色背景）

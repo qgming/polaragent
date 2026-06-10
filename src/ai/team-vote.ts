@@ -201,6 +201,7 @@ async function collectMemberVoteByTool({
 
   const harness = await agentManager.getOrCreateHarness(threadId, member.id, {
     teamContext,
+    knowledgeBaseIds: teamContext.knowledgeBaseIds,
   });
 
   const unsubscribe = harness.subscribe((event) => {

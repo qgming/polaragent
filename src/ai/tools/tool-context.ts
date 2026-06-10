@@ -20,6 +20,8 @@ export interface ToolContext {
   };
   // 当前助手/团队上下文允许使用的技能。技能工具只能读取这里列出的技能。
   skills?: Skill[];
+  // 当前会话选中的知识库 ID 列表
+  knowledgeBaseIds?: string[];
   // 团队成员工具上下文。存在时团队成员可发起投票。
   teamVote?: {
     team: TeamConfig;

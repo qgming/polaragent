@@ -21,6 +21,7 @@ import type { TeamConfig } from "@/types/config";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { HomePage } from "@/pages/HomePage";
+import { KnowledgePage } from "@/pages/KnowledgePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
 import { TeamPage } from "@/pages/TeamPage";
@@ -316,6 +317,7 @@ function App() {
               ) : null}
               {activePage === "skills" ? <SkillsPage /> : null}
               {activePage === "tools" ? <ToolsPage /> : null}
+              {activePage === "knowledge" ? <KnowledgePage /> : null}
               {activePage === "agent" ? (
                 <AgentsPage
                   onStartChat={(agentId) => {

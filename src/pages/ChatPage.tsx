@@ -19,6 +19,7 @@ import { AnimatePresence } from "motion/react";
 import { ChatMessageView } from "@/components/chat/MessageRenderer";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
+import { KnowledgeBaseSelector } from "@/components/knowledge";
 import { IconButton } from "@/components/IconButton";
 import {
   SkillComposerInput,
@@ -40,6 +41,7 @@ import {
   useIsThreadResponding,
   useThreadMessages,
   useThreadPermissionMode,
+  useThreadKnowledgeBaseIds,
 } from "@/stores/chat-store";
 import type { ChatAttachment, Segment } from "@/lib/chat";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
@@ -87,6 +89,7 @@ export function ChatPage({
   // 不会换本会话 messages 的引用，因而不会触发本页重渲染。
   const messages = useThreadMessages(threadId);
   const permissionMode = useThreadPermissionMode(threadId);
+  const knowledgeBaseIds = useThreadKnowledgeBaseIds(threadId);
   const setThreadPermissionMode = useChatStore(
     (state) => state.setThreadPermissionMode,
   );
@@ -153,6 +156,14 @@ export function ChatPage({
       useTaskMonitorStore.getState().setWorkingDir(threadId, dir);
       void setSessionWorkingDir(threadId, dir);
     }
+  };
+
+  const handleKnowledgeChange = (ids: string[]) => {
+    useChatStore.getState().setThreadKnowledgeBaseIds(threadId, ids);
+  };
+
+  const handleOpenKnowledgeSettings = () => {
+    window.location.hash = "#/knowledge";
   };
 
   // 监听滚动：实时判断用户是否处于底部附近（留 80px 容差，避免像素误差）
@@ -293,6 +304,7 @@ export function ChatPage({
         filePaths: sendFilePaths,
         attachments: sendAttachments,
         permissionMode,
+        knowledgeBaseIds,
       },
     );
   };
@@ -338,6 +350,9 @@ export function ChatPage({
             workingDir={workingDir}
             sessionFilesDir={sessionFilesDir}
             attachmentCount={attachments.length}
+            knowledgeBaseIds={knowledgeBaseIds}
+            onKnowledgeChange={handleKnowledgeChange}
+            onOpenKnowledgeSettings={handleOpenKnowledgeSettings}
           />
         </section>
 
@@ -383,6 +398,9 @@ function Composer({
   workingDir,
   sessionFilesDir,
   attachmentCount,
+  knowledgeBaseIds,
+  onKnowledgeChange,
+  onOpenKnowledgeSettings,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -401,6 +419,9 @@ function Composer({
   workingDir: string;
   sessionFilesDir: string;
   attachmentCount: number;
+  knowledgeBaseIds: string[];
+  onKnowledgeChange: (ids: string[]) => void;
+  onOpenKnowledgeSettings: () => void;
 }) {
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -547,6 +568,14 @@ function Composer({
           <div className="flex min-w-0 items-center gap-1">
             {/* "/" 技能选择 + "@" 添加文件 */}
             <ComposerToolbar onPickSkill={onPickSkill} onPickFile={onPickFile} />
+
+            {/* 知识库多选 */}
+            <KnowledgeBaseSelector
+              selectedIds={knowledgeBaseIds}
+              onChange={onKnowledgeChange}
+              onOpenSettings={onOpenKnowledgeSettings}
+            />
+
             <PermissionModeMenu
               mode={permissionMode}
               onChange={onPermissionModeChange}

@@ -100,7 +100,8 @@ export function listRemoteModels(baseUrl: string, apiKey: string) {
 }
 
 export const pickWorkingDirectory = () => api().app.pickWorkingDirectory();
-export const pickTextFile = () => api().app.pickTextFile();
+export const pickTextFile = (): Promise<string | null> => api().app.pickTextFile();
+export const pickMultipleFiles = (): Promise<string[]> => api().app.pickMultipleFiles();
 export const pickImageFile = () => api().app.pickImageFile();
 export const pickAudioFile = () => api().app.pickAudioFile();
 export const getDataDir = () => api().app.getDataDir();

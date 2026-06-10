@@ -16,6 +16,7 @@ const ipcModules = [
   require("./ipc/skills.cjs"),
   require("./ipc/mcp.cjs"),
   require("./ipc/shell.cjs"),
+  require("./ipc/knowledge.cjs"),
 ];
 
 // 注册全部 IPC 处理器

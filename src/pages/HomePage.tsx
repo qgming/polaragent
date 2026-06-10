@@ -8,6 +8,7 @@ import { promptAgent } from "@/ai/agent";
 import { promptTeam } from "@/ai/team";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
+import { KnowledgeBaseSelector } from "@/components/knowledge";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
 import { IconButton } from "@/components/IconButton";
 import {
@@ -110,6 +111,7 @@ export function HomePage({
   const [permissionMode, setPermissionMode] = useState<ToolPermissionMode>(
     DEFAULT_TOOL_PERMISSION_MODE,
   );
+  const [knowledgeBaseIds, setKnowledgeBaseIds] = useState<string[]>([]);
 
   // 当团队列表变化时，确保 selectedTeamId 仍然有效
   useEffect(() => {
@@ -180,6 +182,9 @@ export function HomePage({
       const threadId = createTeamThread(selectedTeamId, permissionMode);
       selectTeamThread(threadId);
 
+      // 设置知识库
+      useTeamChatStore.getState().setThreadKnowledgeBaseIds(threadId, knowledgeBaseIds);
+
       // 准备附件
       const pendingAttachments = attachments;
 
@@ -212,6 +217,10 @@ export function HomePage({
     const sendSkillIds = skillIds;
 
     const threadId = useChatStore.getState().activeThreadId;
+
+    // 设置知识库
+    useChatStore.getState().setThreadKnowledgeBaseIds(threadId, knowledgeBaseIds);
+
     let workingDir = useChatStore.getState().workingDir || undefined;
     if (!workingDir) {
       workingDir = await getSessionFilesDir(threadId);
@@ -254,6 +263,7 @@ export function HomePage({
         filePaths: sendFilePaths,
         attachments: sendAttachments,
         permissionMode,
+        knowledgeBaseIds,
       },
     );
   };
@@ -293,6 +303,13 @@ export function HomePage({
               <ComposerToolbar
                 onPickSkill={(skill) => composerRef.current?.insertSkill(skill)}
                 onPickFile={(file) => composerRef.current?.insertFile(file)}
+              />
+
+              {/* 知识库多选 */}
+              <KnowledgeBaseSelector
+                selectedIds={knowledgeBaseIds}
+                onChange={setKnowledgeBaseIds}
+                onOpenSettings={() => (window.location.hash = "#/knowledge")}
               />
 
               {/* 类型选择器：通用 / 团队 */}

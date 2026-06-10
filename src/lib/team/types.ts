@@ -53,4 +53,5 @@ export interface TeamThread {
   autoTitled?: boolean;
   workingDir?: string;
   permissionMode: ToolPermissionMode;
+  knowledgeBaseIds?: string[]; // 当前会话选中的知识库 ID 列表
 }

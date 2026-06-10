@@ -321,6 +321,7 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
   const defaultWebSearch = defaultSettings.webSearch!;
   const defaultImageGeneration = defaultSettings.imageGeneration!;
   const defaultAudio = defaultSettings.audio!;
+  const defaultKnowledge = defaultSettings.knowledge!;
   return {
     ...defaultSettings,
     ...settings,
@@ -398,6 +399,18 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
         baseURL: settings.audio?.tts?.baseURL ?? defaultAudio.tts.baseURL,
         defaultVoice: settings.audio?.tts?.defaultVoice ?? defaultAudio.tts.defaultVoice,
         voices: settings.audio?.tts?.voices ?? defaultAudio.tts.voices,
+      },
+    },
+    knowledge: {
+      ...defaultKnowledge,
+      ...settings.knowledge,
+      embedding: {
+        ...defaultKnowledge.embedding,
+        ...settings.knowledge?.embedding,
+      },
+      retrieval: {
+        ...defaultKnowledge.retrieval,
+        ...settings.knowledge?.retrieval,
       },
     },
   };

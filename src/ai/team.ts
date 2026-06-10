@@ -111,6 +111,9 @@ async function runMemberTurn(
   const finalModelInput = privateBlock
     ? `${privateBlock}\n\n${modelInput}`
     : modelInput;
+  const knowledgeBaseIds =
+    useTeamChatStore.getState().threads.find((t) => t.id === threadId)
+      ?.knowledgeBaseIds ?? [];
 
   const teamContext: TeamContext = {
     isTeam: true,
@@ -121,6 +124,7 @@ async function runMemberTurn(
     teamConfig: team,
     currentAgentId: speaker.id,
     members,
+    knowledgeBaseIds,
   };
 
   let finalContent = "";
@@ -166,6 +170,7 @@ async function runMemberTurn(
         filePaths: textAttachmentPaths(attachments),
         attachments,
         permissionMode,
+        knowledgeBaseIds,
         teamContext,
       },
     );

@@ -61,6 +61,8 @@ export interface PromptOptions {
   filePaths?: string[];
   attachments?: ChatAttachment[];
   permissionMode?: ToolPermissionMode;
+  // 当前会话选中的知识库 ID 列表
+  knowledgeBaseIds?: string[];
   // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
   teamContext?: TeamContext;
 }
@@ -206,6 +208,7 @@ export async function promptAgent(
       harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
+        knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
       });
     } catch (error) {
@@ -214,6 +217,7 @@ export async function promptAgent(
       harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
+        knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
       });
     }

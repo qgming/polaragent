@@ -54,6 +54,7 @@ async function ensureDataDir() {
     "conversations",
     "teams",
     "teams/conversations",
+    "knowledge",
     "memory/project-context",
     "memory/user-preferences",
     "logs",

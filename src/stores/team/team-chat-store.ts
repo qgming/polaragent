@@ -18,6 +18,8 @@ import {
   deleteTeamSessionFilesDir,
   getTeamSessionToolPermissionMode,
   setTeamSessionToolPermissionMode,
+  getTeamSessionKnowledgeBaseIds,
+  setTeamSessionKnowledgeBaseIds,
 } from "@/lib/session/team";
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
@@ -56,6 +58,8 @@ interface TeamChatState {
   loadTeamThreadWorkingDir: (threadId: string) => Promise<void>;
   setTeamThreadPermissionMode: (threadId: string, mode: ToolPermissionMode) => void;
   loadTeamThreadPermissionMode: (threadId: string) => Promise<void>;
+  setThreadKnowledgeBaseIds: (threadId: string, ids: string[]) => void;
+  loadTeamThreadKnowledgeBaseIds: (threadId: string) => Promise<void>;
 
   // 消息流式
   appendMessage: (threadId: string, message: TeamMessage) => void;
@@ -140,6 +144,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     void get().loadTeamThreadMessages(threadId);
     void get().loadTeamThreadWorkingDir(threadId);
     void get().loadTeamThreadPermissionMode(threadId);
+    void get().loadTeamThreadKnowledgeBaseIds(threadId);
   },
 
   deleteTeamThread: (threadId) => {
@@ -223,6 +228,24 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     set((state) => ({
       threads: state.threads.map((t) =>
         t.id === threadId ? { ...t, permissionMode: mode } : t,
+      ),
+    }));
+  },
+
+  setThreadKnowledgeBaseIds: (threadId, ids) => {
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId ? { ...t, knowledgeBaseIds: ids } : t,
+      ),
+    }));
+    void setTeamSessionKnowledgeBaseIds(threadId, ids);
+  },
+
+  loadTeamThreadKnowledgeBaseIds: async (threadId) => {
+    const ids = await getTeamSessionKnowledgeBaseIds(threadId);
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId ? { ...t, knowledgeBaseIds: ids } : t,
       ),
     }));
   },
@@ -483,3 +506,13 @@ export function useTeamThreadPermissionMode(threadId: string): ToolPermissionMod
       DEFAULT_TOOL_PERMISSION_MODE,
   );
 }
+
+export function useTeamThreadKnowledgeBaseIds(threadId: string): string[] {
+  return useTeamChatStore(
+    (state) =>
+      state.threads.find((t) => t.id === threadId)?.knowledgeBaseIds ??
+      EMPTY_TEAM_KNOWLEDGE_BASE_IDS,
+  );
+}
+
+const EMPTY_TEAM_KNOWLEDGE_BASE_IDS: string[] = [];

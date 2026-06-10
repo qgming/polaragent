@@ -95,6 +95,19 @@ export const defaultSettings: Settings = {
       refineText: false,
     },
   },
+  knowledge: {
+    embedding: {
+      apiKey: "",
+      baseURL: "https://api.openai.com/v1",
+      model: "text-embedding-3-small",
+      dimension: 0, // 0 表示使用模型默认维度，不传 dimensions 参数
+    },
+    retrieval: {
+      topK: 5,
+      threshold: 0.6,
+      reranker: "none",
+    },
+  },
 };
 
 /**

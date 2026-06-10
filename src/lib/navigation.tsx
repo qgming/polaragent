@@ -1,7 +1,7 @@
 // 导航相关的共享类型与常量
 // src/lib/navigation.tsx
 
-import { Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
+import { BookOpen, Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type IconComponent = ComponentType<{
@@ -15,6 +15,7 @@ export type PageId =
   | "tools"
   | "agent"
   | "team"
+  | "knowledge"
   | "settings";
 
 // 各页面的标题/描述/图标（用于标题栏面包屑）
@@ -47,6 +48,11 @@ export const pages: Record<
     description: "编排多个助手协作完成复杂任务",
     icon: Users,
   },
+  knowledge: {
+    title: "知识库",
+    description: "管理可被 AI 检索的文档与资料",
+    icon: BookOpen,
+  },
   settings: {
     title: "设置",
     description: "配置模型、窗口行为、外观和本地数据",
@@ -65,4 +71,5 @@ export const primaryNav: Array<{
   { id: "tools", label: "工具", icon: Wrench },
   { id: "agent", label: "助手", icon: Bot },
   { id: "team", label: "团队", icon: Users },
+  { id: "knowledge", label: "知识库", icon: BookOpen },
 ];

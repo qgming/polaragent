@@ -114,6 +114,25 @@ export interface VoiceConfig {
 }
 
 /**
+ * 知识库配置
+ */
+export interface KnowledgeConfig {
+  // 嵌入模型配置
+  embedding: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+    dimension: number; // OpenAI embeddings dimensions 参数，按模型能力自行填写
+  };
+  // 检索配置
+  retrieval: {
+    topK: number; // 每次检索返回的最大结果数 (1-20)
+    threshold: number; // 相似度阈值 (0.5-0.95)
+    reranker: "none" | "main-model" | "custom"; // 重排序策略
+  };
+}
+
+/**
  * 全局应用设置
  */
 export interface Settings {
@@ -147,6 +166,8 @@ export interface Settings {
   imageGeneration?: ImageGenerationConfig;
   // 音频配置（ASR / TTS）
   audio?: AudioConfig;
+  // 知识库配置
+  knowledge?: KnowledgeConfig;
 }
 
 /**

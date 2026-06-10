@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     fileUrl: (path) => invoke("app:file-url", { path }),
     pickWorkingDirectory: () => invoke("dialog:pick-directory"),
     pickTextFile: () => invoke("dialog:pick-text-file"),
+    pickMultipleFiles: () => invoke("dialog:pick-multiple-files"),
     pickImageFile: () => invoke("dialog:pick-image-file"),
     pickAudioFile: () => invoke("dialog:pick-audio-file"),
   },
@@ -94,5 +95,18 @@ contextBridge.exposeInMainWorld("polaragent", {
   },
   shell: {
     exec: (request) => invoke("shell:exec", { request }),
+  },
+  knowledge: {
+    create: (request) => invoke("knowledge:create", { request }),
+    update: (request) => invoke("knowledge:update", { request }),
+    addFiles: (request) => invoke("knowledge:addFiles", { request }),
+    removeFile: (request) => invoke("knowledge:removeFile", { request }),
+    getFiles: (kbId) => invoke("knowledge:getFiles", { kbId }),
+    rebuild: (request) => invoke("knowledge:rebuild", { request }),
+    query: (request) => invoke("knowledge:query", { request }),
+    delete: (kbId) => invoke("knowledge:delete", { kbId }),
+    list: () => invoke("knowledge:list"),
+    checkCompatibility: (kbId, config) => invoke("knowledge:checkCompatibility", { kbId, config }),
+    reembedIncompatible: (request) => invoke("knowledge:reembedIncompatible", { request }),
   },
 });
