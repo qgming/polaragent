@@ -9,6 +9,7 @@ import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { useToolsStore } from "@/stores/tools-store";
+import { useKnowledgeStore } from "@/stores/knowledge-store";
 import { providerManager } from "@/ai/providers";
 import { agentManager } from "@/ai/agent-manager";
 
@@ -38,6 +39,12 @@ export async function initializeApp() {
         await useTeamChatStore.getState().hydrateTeamThreads();
         console.log("✓ 团队及团队会话加载完成");
       })(),
+      // 知识库列表：仅依赖数据目录，与会话/团队同级并行预加载，
+      // 启动后即就绪，避免进入知识库页或对话引用知识库时才加载。
+      useKnowledgeStore
+        .getState()
+        .loadKnowledgeBases()
+        .then(() => console.log("✓ 知识库列表加载完成")),
     ]).catch((error) => console.error("侧边栏加载失败:", error));
 
     // 紧随侧边栏发起广场 hydrate（不阻塞启动），提前到 MCP 之前发起，

@@ -12,6 +12,7 @@ interface Window {
       pickWorkingDirectory: () => Promise<string | null>;
       pickTextFile: () => Promise<string | null>;
       pickMultipleFiles: () => Promise<string[]>;
+      getPathForFile: (file: File) => string;
       pickImageFile: () => Promise<string | null>;
       pickAudioFile: () => Promise<string | null>;
     };
@@ -292,6 +293,35 @@ interface Window {
           };
         };
       }) => Promise<{ success: boolean; fileCount: number; chunkCount: number }>;
+      rebuildFile: (request: {
+        kbId: string;
+        fileId: string;
+        config: {
+          embedding: {
+            apiKey: string;
+            baseURL: string;
+            model: string;
+            dimension: number;
+          };
+        };
+      }) => Promise<{
+        success: boolean;
+        file: {
+          id: string;
+          kbId: string;
+          name: string;
+          path: string;
+          size: number;
+          type: string;
+          status: "pending" | "processing" | "ready" | "error" | "incompatible";
+          error?: string;
+          chunkCount: number;
+          createdAt: number;
+          updatedAt: number;
+        };
+        fileCount: number;
+        chunkCount: number;
+      }>;
       query: (request: {
         kbId: string;
         query: string;

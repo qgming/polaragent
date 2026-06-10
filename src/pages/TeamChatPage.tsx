@@ -256,10 +256,6 @@ export function TeamChatPage({
     setThreadKnowledgeBaseIds(threadId, ids);
   };
 
-  const handleOpenKnowledgeSettings = () => {
-    window.location.hash = "#/knowledge";
-  };
-
   return (
     <>
       <div className="flex h-full min-w-0">
@@ -314,7 +310,6 @@ export function TeamChatPage({
             attachmentCount={attachments.length}
             knowledgeBaseIds={knowledgeBaseIds}
             onKnowledgeChange={handleKnowledgeChange}
-            onOpenKnowledgeSettings={handleOpenKnowledgeSettings}
           />
         </section>
 
@@ -571,7 +566,6 @@ function Composer({
   attachmentCount,
   knowledgeBaseIds,
   onKnowledgeChange,
-  onOpenKnowledgeSettings,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   members: Array<{ avatar: string; name: string }>;
@@ -591,7 +585,6 @@ function Composer({
   attachmentCount: number;
   knowledgeBaseIds: string[];
   onKnowledgeChange: (ids: string[]) => void;
-  onOpenKnowledgeSettings: () => void;
 }) {
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
@@ -648,7 +641,6 @@ function Composer({
             <KnowledgeBaseSelector
               selectedIds={knowledgeBaseIds}
               onChange={onKnowledgeChange}
-              onOpenSettings={onOpenKnowledgeSettings}
             />
 
             <PermissionModeMenu

@@ -48,6 +48,10 @@ export interface RebuildKnowledgeRequest {
   };
 }
 
+export interface RebuildKnowledgeFileRequest extends RebuildKnowledgeRequest {
+  fileId: string;
+}
+
 export interface UpdateKnowledgeBaseRequest {
   kbId: string;
   updates: Partial<{
@@ -110,14 +114,10 @@ export async function removeFileFromKnowledge(
 
 // 获取知识库文件列表
 export async function getKnowledgeFiles(kbId: string): Promise<KnowledgeFile[]> {
-  console.log("api.getKnowledgeFiles called, kbId:", kbId, "type:", typeof kbId);
   if (!kbId) {
     throw new Error("getKnowledgeFiles: kbId is required");
   }
-  console.log("calling api().knowledge.getFiles with kbId:", kbId);
-  const result = api().knowledge.getFiles(kbId);
-  console.log("api().knowledge.getFiles result:", result);
-  return result;
+  return api().knowledge.getFiles(kbId);
 }
 
 // 重建知识库索引
@@ -125,6 +125,18 @@ export async function rebuildKnowledge(
   request: RebuildKnowledgeRequest,
 ): Promise<{ success: boolean; fileCount: number; chunkCount: number }> {
   return api().knowledge.rebuild(request);
+}
+
+// 重建单个文件索引
+export async function rebuildKnowledgeFile(
+  request: RebuildKnowledgeFileRequest,
+): Promise<{
+  success: boolean;
+  file: KnowledgeFile;
+  fileCount: number;
+  chunkCount: number;
+}> {
+  return api().knowledge.rebuildFile(request);
 }
 
 // 查询知识库

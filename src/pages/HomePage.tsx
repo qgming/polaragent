@@ -309,7 +309,6 @@ export function HomePage({
               <KnowledgeBaseSelector
                 selectedIds={knowledgeBaseIds}
                 onChange={setKnowledgeBaseIds}
-                onOpenSettings={() => (window.location.hash = "#/knowledge")}
               />
 
               {/* 类型选择器：通用 / 团队 */}

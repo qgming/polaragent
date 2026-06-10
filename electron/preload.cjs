@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     pickWorkingDirectory: () => invoke("dialog:pick-directory"),
     pickTextFile: () => invoke("dialog:pick-text-file"),
     pickMultipleFiles: () => invoke("dialog:pick-multiple-files"),
+    getPathForFile: (file) => webUtils.getPathForFile(file),
     pickImageFile: () => invoke("dialog:pick-image-file"),
     pickAudioFile: () => invoke("dialog:pick-audio-file"),
   },
@@ -103,6 +104,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     removeFile: (request) => invoke("knowledge:removeFile", { request }),
     getFiles: (kbId) => invoke("knowledge:getFiles", { kbId }),
     rebuild: (request) => invoke("knowledge:rebuild", { request }),
+    rebuildFile: (request) => invoke("knowledge:rebuildFile", { request }),
     query: (request) => invoke("knowledge:query", { request }),
     delete: (kbId) => invoke("knowledge:delete", { kbId }),
     list: () => invoke("knowledge:list"),

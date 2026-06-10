@@ -9,6 +9,7 @@ import {
   removeFileFromKnowledge,
   getKnowledgeFiles,
   rebuildKnowledge,
+  rebuildKnowledgeFile,
   deleteKnowledge,
   listKnowledge,
   isElectronRuntime,
@@ -65,6 +66,9 @@ interface KnowledgeState {
 
   // 重建当前知识库索引
   rebuildCurrentKnowledgeBase: () => Promise<void>;
+
+  // 重建当前知识库中的单个文件索引
+  rebuildFile: (fileId: string) => Promise<void>;
 
   // 检查文件兼容性
   checkCompatibility: () => Promise<void>;
@@ -182,7 +186,6 @@ export const useKnowledgeStore = create<KnowledgeState>()(
 
       setCurrentKnowledgeBase: async (kbId) => {
         requireElectron();
-        console.log("setCurrentKnowledgeBase called with kbId:", kbId);
         if (kbId === null) {
           set({ currentKbId: null, currentFiles: [] });
           return;
@@ -190,7 +193,6 @@ export const useKnowledgeStore = create<KnowledgeState>()(
 
         set({ isLoading: true, error: null, currentKbId: kbId });
         try {
-          console.log("calling getKnowledgeFiles with kbId:", kbId);
           const files = await getKnowledgeFiles(kbId);
           set({ currentFiles: files, isLoading: false });
         } catch (error) {
@@ -288,6 +290,74 @@ export const useKnowledgeStore = create<KnowledgeState>()(
         } catch (error) {
           set({
             error: error instanceof Error ? error.message : "删除文件失败",
+            isLoading: false,
+          });
+          throw error;
+        }
+      },
+
+      rebuildFile: async (fileId) => {
+        requireElectron();
+        const { currentKbId } = get();
+        if (!currentKbId) {
+          set({ error: "请先选择一个知识库" });
+          return;
+        }
+
+        try {
+          const embedding = useConfigStore.getState().settings.knowledge?.embedding;
+          if (!embedding || !embedding.apiKey) {
+            throw new Error("请先在设置中配置嵌入模型");
+          }
+
+          set((state) => ({
+            isLoading: true,
+            error: null,
+            currentFiles: state.currentFiles.map((file) =>
+              file.id === fileId
+                ? { ...file, status: "processing" as const, error: undefined }
+                : file,
+            ),
+          }));
+
+          const result = await rebuildKnowledgeFile({
+            kbId: currentKbId,
+            fileId,
+            config: {
+              embedding: {
+                apiKey: embedding.apiKey,
+                baseURL: embedding.baseURL,
+                model: embedding.model,
+                dimension: embedding.dimension,
+              },
+            },
+          });
+
+          const files = await getKnowledgeFiles(currentKbId);
+          const nextError = result.success
+            ? null
+            : result.file.error ?? "重建文件索引失败";
+
+          set((state) => ({
+            knowledgeBases: state.knowledgeBases.map((kb) =>
+              kb.id === currentKbId
+                ? {
+                    ...kb,
+                    fileCount: result.fileCount,
+                    chunkCount: result.chunkCount,
+                    updatedAt: Date.now(),
+                  }
+                : kb,
+            ),
+            currentFiles: files,
+            error: nextError,
+            isLoading: false,
+          }));
+        } catch (error) {
+          const files = await getKnowledgeFiles(currentKbId).catch(() => null);
+          set({
+            currentFiles: files ?? get().currentFiles,
+            error: error instanceof Error ? error.message : "重建文件索引失败",
             isLoading: false,
           });
           throw error;

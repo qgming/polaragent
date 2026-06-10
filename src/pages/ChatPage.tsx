@@ -162,10 +162,6 @@ export function ChatPage({
     useChatStore.getState().setThreadKnowledgeBaseIds(threadId, ids);
   };
 
-  const handleOpenKnowledgeSettings = () => {
-    window.location.hash = "#/knowledge";
-  };
-
   // 监听滚动：实时判断用户是否处于底部附近（留 80px 容差，避免像素误差）
   useEffect(() => {
     const element = scrollAreaRef.current;
@@ -352,7 +348,6 @@ export function ChatPage({
             attachmentCount={attachments.length}
             knowledgeBaseIds={knowledgeBaseIds}
             onKnowledgeChange={handleKnowledgeChange}
-            onOpenKnowledgeSettings={handleOpenKnowledgeSettings}
           />
         </section>
 
@@ -400,7 +395,6 @@ function Composer({
   attachmentCount,
   knowledgeBaseIds,
   onKnowledgeChange,
-  onOpenKnowledgeSettings,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -421,7 +415,6 @@ function Composer({
   attachmentCount: number;
   knowledgeBaseIds: string[];
   onKnowledgeChange: (ids: string[]) => void;
-  onOpenKnowledgeSettings: () => void;
 }) {
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -573,7 +566,6 @@ function Composer({
             <KnowledgeBaseSelector
               selectedIds={knowledgeBaseIds}
               onChange={onKnowledgeChange}
-              onOpenSettings={onOpenKnowledgeSettings}
             />
 
             <PermissionModeMenu

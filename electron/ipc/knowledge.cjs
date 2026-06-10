@@ -264,7 +264,6 @@ function cosineSimilarity(a, b) {
 
 async function searchVectors(kbId, queryVector, topK = 5, threshold = 0.6) {
   const records = await loadVectors(kbId);
-  console.log(`[searchVectors] kbId=${kbId}, records=${records.length}, queryVector dim=${queryVector.length}, threshold=${threshold}`);
   const scored = records
     .map((r) => ({
       ...r,
@@ -272,18 +271,13 @@ async function searchVectors(kbId, queryVector, topK = 5, threshold = 0.6) {
     }))
     .sort((a, b) => b.score - a.score);
 
-  // 调试：显示前 5 个最高分
-  console.log(`[searchVectors] 前5个最高分:`, scored.slice(0, 5).map(r => r.score.toFixed(4)));
-
   let results = scored.filter((r) => r.score >= threshold).slice(0, topK);
 
   // 即使没有达到阈值，也至少返回 1 个最相似的结果
   if (results.length === 0 && scored.length > 0) {
     results = [scored[0]];
-    console.log(`[searchVectors] 无结果达到阈值，返回最高分: ${scored[0].score.toFixed(4)}`);
   }
 
-  console.log(`[searchVectors] 匹配结果数: ${results.length}, 阈值: ${threshold}`);
   return results.map(({ vector, ...rest }) => rest);
 }
 
@@ -551,6 +545,106 @@ async function rebuildKnowledge(request) {
   return { success: true, fileCount: meta.fileCount, chunkCount: meta.chunkCount };
 }
 
+// 重建单个文件索引
+async function rebuildKnowledgeFile(request) {
+  const { kbId, fileId, config } = request;
+  const meta = await loadMetadata(kbId);
+  const files = await loadFilesList(kbId);
+  const vectors = await loadVectors(kbId);
+
+  if (!meta) throw new Error(`知识库不存在: ${kbId}`);
+
+  const targetFile = files.find((file) => file.id === fileId);
+  if (!targetFile) throw new Error(`文件不存在: ${fileId}`);
+
+  const remainingVectors = vectors.filter((record) => record.fileId !== fileId);
+  let updatedFile;
+  let newRecords = [];
+
+  try {
+    const text = await parseDocument(targetFile.path);
+    const chunks = chunkText(text, meta.chunkSize, meta.overlap);
+
+    newRecords = chunks.map((chunk, index) => ({
+      id: `${targetFile.id}_${index}`,
+      fileId: targetFile.id,
+      file: targetFile.path,
+      chunk: index,
+      text: chunk,
+      vector: null,
+    }));
+
+    if (newRecords.length > 0) {
+      const texts = newRecords.map((record) => record.text);
+      const newVectors = await embedTexts(texts, config.embedding);
+      const actualDim = newVectors[0]?.length;
+
+      if (!meta.embeddingConfig && actualDim) {
+        meta.embeddingConfig = {
+          model: config.embedding.model,
+          dimension: actualDim,
+        };
+      } else if (
+        meta.embeddingConfig &&
+        actualDim &&
+        actualDim !== meta.embeddingConfig.dimension &&
+        remainingVectors.length > 0
+      ) {
+        throw new Error(
+          `向量维度不匹配：知识库使用 ${meta.embeddingConfig.dimension} 维，当前模型生成 ${actualDim} 维。请重建整个知识库。`
+        );
+      } else if (actualDim) {
+        meta.embeddingConfig = {
+          model: config.embedding.model,
+          dimension: actualDim,
+        };
+      }
+
+      newRecords.forEach((record, index) => {
+        record.vector = newVectors[index];
+      });
+    }
+
+    updatedFile = {
+      ...targetFile,
+      status: "ready",
+      error: undefined,
+      chunkCount: chunks.length,
+      updatedAt: Date.now(),
+    };
+  } catch (error) {
+    console.error(`重建文件失败 ${targetFile.path}:`, error);
+    updatedFile = {
+      ...targetFile,
+      status: "error",
+      error: error.message,
+      chunkCount: 0,
+      updatedAt: Date.now(),
+    };
+    newRecords = [];
+  }
+
+  const updatedFiles = files.map((file) =>
+    file.id === fileId ? updatedFile : file,
+  );
+  const allVectors = [...remainingVectors, ...newRecords];
+
+  await saveVectors(kbId, allVectors);
+  await saveFilesList(kbId, updatedFiles);
+
+  meta.fileCount = updatedFiles.filter((file) => file.status === "ready").length;
+  meta.chunkCount = allVectors.length;
+  meta.updatedAt = Date.now();
+  await saveMetadata(kbId, meta);
+
+  return {
+    success: updatedFile.status === "ready",
+    file: updatedFile,
+    fileCount: meta.fileCount,
+    chunkCount: meta.chunkCount,
+  };
+}
+
 // 检查文件向量是否与当前嵌入配置兼容
 async function checkFilesCompatibility(kbId, config) {
   const meta = await loadMetadata(kbId);
@@ -666,14 +760,12 @@ async function reembedIncompatibleFiles(request) {
 
 async function queryKnowledge(request) {
   const { kbId, query, config, topK = 5, threshold = 0.7 } = request;
-  console.log(`[queryKnowledge] kbId=${kbId}, query="${query}", topK=${topK}, threshold=${threshold}`);
   const meta = await loadMetadata(kbId);
 
   // 验证嵌入配置一致性
   if (meta?.embeddingConfig) {
     const queryVectors = await embedTexts([query], config.embedding);
     const queryDim = queryVectors[0].length;
-    console.log(`[queryKnowledge] 查询向量维度: ${queryDim}, 知识库维度: ${meta.embeddingConfig.dimension}`);
     if (queryDim !== meta.embeddingConfig.dimension) {
       throw new Error(
         `向量维度不匹配：知识库使用 ${meta.embeddingConfig.dimension} 维（${meta.embeddingConfig.model}），查询向量为 ${queryDim} 维。请使用相同的嵌入模型。`
@@ -684,7 +776,6 @@ async function queryKnowledge(request) {
   }
 
   const [queryVector] = await embedTexts([query], config.embedding);
-  console.log(`[queryKnowledge] 查询向量维度: ${queryVector.length}`);
   const results = await searchVectors(kbId, queryVector, topK, threshold);
   return { success: true, results };
 }
@@ -739,15 +830,12 @@ function register(ipcMain) {
   ipcMain.handle("knowledge:addFiles", (_event, { request }) => addFilesToKnowledge(request));
   ipcMain.handle("knowledge:removeFile", (_event, { request }) => removeFileFromKnowledge(request));
   ipcMain.handle("knowledge:getFiles", (_event, params) => {
-    console.log("knowledge:getFiles params:", params);
     return getKnowledgeFiles(params?.kbId);
   });
   ipcMain.handle("knowledge:rebuild", (_event, { request }) => rebuildKnowledge(request));
+  ipcMain.handle("knowledge:rebuildFile", (_event, { request }) => rebuildKnowledgeFile(request));
   ipcMain.handle("knowledge:query", (_event, { request }) => queryKnowledge(request));
-  ipcMain.handle("knowledge:delete", (_event, params) => {
-    console.log("knowledge:delete params:", params);
-    return deleteKnowledge(params?.kbId);
-  });
+  ipcMain.handle("knowledge:delete", (_event, params) => deleteKnowledge(params?.kbId));
   ipcMain.handle("knowledge:list", () => listKnowledge());
   ipcMain.handle("knowledge:checkCompatibility", (_event, { kbId, config }) => checkFilesCompatibility(kbId, config));
   ipcMain.handle("knowledge:reembedIncompatible", (_event, { request }) => reembedIncompatibleFiles(request));

@@ -65,13 +65,13 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-sm text-muted-foreground">描述</span>
-              <input
-                type="text"
+              <span className="mb-1.5 block text-sm text-muted-foreground">简介</span>
+              <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="简要描述这个知识库的用途"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+                placeholder="简要说明这个知识库的内容范围"
+                rows={3}
+                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               />
             </label>
 

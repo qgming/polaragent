@@ -1,11 +1,11 @@
 // 知识库多选下拉菜单
 import { useMemo } from "react";
-import { BookOpen, Check, Settings } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -15,13 +15,11 @@ import { cn } from "@/lib/utils";
 interface KnowledgeBaseSelectorProps {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
-  onOpenSettings?: () => void;
 }
 
 export function KnowledgeBaseSelector({
   selectedIds,
   onChange,
-  onOpenSettings,
 }: KnowledgeBaseSelectorProps) {
   const allSources = useKnowledgeStore((state) => state.knowledgeBases);
   const sources = useMemo(
@@ -47,6 +45,10 @@ export function KnowledgeBaseSelector({
 
   const count = selectedIds.length;
   const hasSelection = count > 0;
+  const selectedKnowledgeBase = useMemo(
+    () => allSources.find((kb) => kb.id === selectedIds[0]),
+    [allSources, selectedIds],
+  );
 
   return (
     <DropdownMenu>
@@ -55,34 +57,38 @@ export function KnowledgeBaseSelector({
           variant="ghost"
           size="sm"
           type="button"
+          title={selectedKnowledgeBase?.name ?? "知识库"}
           className={cn(
-            "h-7 gap-1 px-2",
+            "h-7 min-w-0 max-w-[180px] gap-1.5 px-2 hover:bg-muted hover:text-foreground",
             hasSelection
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground"
+              ? "bg-muted text-foreground"
+              : "bg-muted/50 text-foreground/70",
           )}
         >
-          <BookOpen className="size-3.5" />
-          {hasSelection ? (
-            <>
-              <span className="text-xs">{count}</span>
-              <Check className="size-3" />
-            </>
+          <BookOpen className="size-3.5 shrink-0" />
+          {hasSelection && selectedKnowledgeBase ? (
+            <span className="truncate text-sm">{selectedKnowledgeBase.name}</span>
           ) : null}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         {sources.length === 0 ? (
           <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-            暂无已启用的知识库
+            暂无可用知识库
           </div>
         ) : (
           <>
             {sources.map((kb) => (
-              <DropdownMenuCheckboxItem
+              <DropdownMenuItem
                 key={kb.id}
-                checked={selectedIds.includes(kb.id)}
-                onCheckedChange={() => handleToggle(kb.id)}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  handleToggle(kb.id);
+                }}
+                className={cn(
+                  "items-start",
+                  selectedIds.includes(kb.id) && "bg-muted text-foreground",
+                )}
               >
                 <div className="flex flex-col gap-0.5">
                   <span className="text-sm">{kb.name}</span>
@@ -90,28 +96,20 @@ export function KnowledgeBaseSelector({
                     {kb.chunkCount} 块 · {kb.fileCount} 文档
                   </span>
                 </div>
-              </DropdownMenuCheckboxItem>
+              </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={selectedIds.length === sources.length}
-              onCheckedChange={handleToggleAll}
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                handleToggleAll();
+              }}
+              className={cn(
+                selectedIds.length === sources.length && "bg-muted text-foreground",
+              )}
             >
               {selectedIds.length === sources.length ? "全部禁用" : "全部选中"}
-            </DropdownMenuCheckboxItem>
-          </>
-        )}
-        {onOpenSettings && (
-          <>
-            <DropdownMenuSeparator />
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Settings className="size-4" />
-              管理知识库
-            </button>
+            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>
