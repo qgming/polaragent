@@ -1,7 +1,7 @@
 // 导航相关的共享类型与常量
 // src/lib/navigation.tsx
 
-import { BookOpen, Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
+import { Blocks, BookOpen, Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type IconComponent = ComponentType<{
@@ -60,16 +60,34 @@ export const pages: Record<
   },
 };
 
-// 左侧栏主导航项
-export const primaryNav: Array<{
+export type NavItem = {
   id: PageId;
   label: string;
   icon: IconComponent;
-}> = [
+};
+
+// 左侧栏顶层导航项（始终平级展示）
+export const primaryNav: NavItem[] = [
   { id: "chat", label: "新对话", icon: Plus },
-  { id: "skills", label: "技能", icon: Zap },
-  { id: "tools", label: "工具", icon: Wrench },
-  { id: "agent", label: "助手", icon: Bot },
-  { id: "team", label: "团队", icon: Users },
+];
+
+// 顶层导航项（排在「扩展」折叠组之后）
+export const secondaryNav: NavItem[] = [
   { id: "knowledge", label: "知识库", icon: BookOpen },
 ];
+
+// 「扩展」折叠分组：收纳技能 / 工具 / 助手 / 团队
+export const extensionNav: {
+  label: string;
+  icon: IconComponent;
+  items: NavItem[];
+} = {
+  label: "扩展",
+  icon: Blocks,
+  items: [
+    { id: "skills", label: "技能", icon: Zap },
+    { id: "tools", label: "工具", icon: Wrench },
+    { id: "agent", label: "助手", icon: Bot },
+    { id: "team", label: "团队", icon: Users },
+  ],
+};

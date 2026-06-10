@@ -27,7 +27,7 @@ const navGroups: Array<{
     items: [
       { id: "preferences", label: "偏好设置", icon: Settings2 },
       { id: "models", label: "模型设置", icon: Bot },
-      { id: "imageGeneration", label: "图片模式", icon: Image },
+      { id: "imageGeneration", label: "图片设置", icon: Image },
       { id: "audio", label: "音频设置", icon: AudioLines },
       { id: "webSearch", label: "网络搜索", icon: Search },
       { id: "knowledge", label: "嵌入配置", icon: Database },

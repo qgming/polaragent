@@ -9,10 +9,12 @@ import { useEffect, useRef } from "react";
 
 import {
   primaryNav,
+  secondaryNav,
   type PageId,
 } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { SidebarButton } from "./SidebarButton";
+import { ExtensionNavGroup } from "./ExtensionNavGroup";
 import { ThreadItem } from "./ThreadItem";
 import { TeamList } from "./TeamList";
 
@@ -96,6 +98,23 @@ export function AppSidebar({
                   ? activePage === "chat" && !activeThreadId && !activeTeamId
                   : activePage === item.id && !activeTeamId
               }
+              icon={item.icon}
+              key={item.id}
+              label={item.label}
+              onClick={() => onOpenPage(item.id)}
+            />
+          ))}
+
+          {/* 「扩展」折叠组：技能 / 工具 / 助手 / 团队 */}
+          <ExtensionNavGroup
+            activePage={activePage}
+            activeTeamId={activeTeamId}
+            onOpenPage={onOpenPage}
+          />
+
+          {secondaryNav.map((item) => (
+            <SidebarButton
+              active={activePage === item.id && !activeTeamId}
               icon={item.icon}
               key={item.id}
               label={item.label}

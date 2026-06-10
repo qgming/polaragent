@@ -12,6 +12,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/EmptyState";
+import { PageHero } from "@/components/PageHero";
 import { useKnowledgeStore } from "@/stores/knowledge-store";
 import { getPathForFile, pickMultipleFiles } from "@/lib/electron/electron-api";
 import type { KnowledgeBase } from "@/lib/knowledge";
@@ -95,7 +96,13 @@ export function KnowledgePage() {
           disabled={isLoading}
         />
 
-        <PageHero />
+        <PageHero
+          title="知识库"
+          bannerTitle="让助手记住你的专属资料"
+          bannerDescription="导入你的资料，助手就能照着你的内容来回答。"
+          icon={Database}
+          kitLabel="Knowledge Kit"
+        />
 
         {error && (
           <div className="mt-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
@@ -148,7 +155,7 @@ function TopToolbar({
   disabled: boolean;
 }) {
   return (
-    <div className="mb-12 flex flex-wrap items-center justify-end gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -163,29 +170,6 @@ function TopToolbar({
         新建知识库
       </Button>
     </div>
-  );
-}
-
-function PageHero() {
-  return (
-    <>
-      <h1 className="text-3xl font-semibold tracking-normal">知识库</h1>
-      <p className="mt-3 text-base text-muted-foreground">
-        管理可被 AI 检索的文档与资料。
-      </p>
-      <div className="mt-6 overflow-hidden rounded-lg bg-accent">
-        <div className="relative min-h-[116px] px-7 py-7">
-          <h2 className="text-lg font-semibold">把资料整理成可检索的上下文</h2>
-          <p className="mt-3 max-w-[580px] text-sm text-muted-foreground">
-            导入文档、维护分块索引，让助手在回答时能引用稳定且专属的知识来源。
-          </p>
-          <div className="absolute right-10 top-4 hidden rotate-[10deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
-            <Database className="size-7" />
-            <p className="mt-2 text-xs font-medium">Knowledge Kit</p>
-          </div>
-        </div>
-      </div>
-    </>
   );
 }
 

@@ -27,6 +27,7 @@ import {
   useSkillsMarketStore,
 } from "@/stores/skills/skills-market-store";
 import { SkillDetailModal } from "@/components/skill/SkillDetailModal";
+import { PageHero } from "@/components/PageHero";
 import { SkillInstallDialog } from "@/components/skill/SkillInstallDialog";
 import type { SkillConfig } from "@/types/config";
 import type { MarketSkill } from "@/lib/electron/electron-api";
@@ -103,14 +104,16 @@ export function SkillsPage() {
 
         <PageHero
           title="技能"
-          description="安装与管理技能，在对话中扩展 PolarAgent 的能力。"
-          bannerTitle="给助手加上顺手的新本领"
-          bannerDescription="找一个合适的技能装上，写作、检索、整理资料这些事就能少走很多弯路。"
+          bannerTitle="让助手学会更多本事"
+          bannerDescription="装上合适的技能，写作、检索、整理这些事就能放心交给它。"
+          icon={Zap}
+          kitLabel="Skill Hub"
+          rotate="left"
         />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SkillTab)}>
-          <TabsList className="mt-6 h-10 bg-transparent p-0">
-            <TabTrigger value="market">技能广场</TabTrigger>
+          <TabsList className="mt-3 h-9 bg-transparent p-0">
+            <TabTrigger value="market">广场</TabTrigger>
             <TabTrigger value="builtin">内置</TabTrigger>
             <TabTrigger value="custom">
               已安装
@@ -438,7 +441,7 @@ function TopToolbar({
   setSearch: (value: string) => void;
 }) {
   return (
-    <div className="mb-12 flex flex-wrap items-center justify-end gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <Button variant="ghost" size="icon" onClick={onRefresh} disabled={isLoading}>
         <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
       </Button>
@@ -465,37 +468,6 @@ function TopToolbar({
   );
 }
 
-function PageHero({
-  bannerDescription,
-  bannerTitle,
-  description,
-  title,
-}: {
-  bannerDescription: string;
-  bannerTitle: string;
-  description: string;
-  title: string;
-}) {
-  return (
-    <>
-      <h1 className="text-3xl font-semibold tracking-normal">{title}</h1>
-      <p className="mt-3 text-base text-muted-foreground">{description}</p>
-      <div className="mt-6 overflow-hidden rounded-lg bg-accent">
-        <div className="relative min-h-[116px] px-7 py-7">
-          <h2 className="text-lg font-semibold">{bannerTitle}</h2>
-          <p className="mt-3 max-w-[560px] text-sm text-muted-foreground">
-            {bannerDescription}
-          </p>
-          <div className="absolute right-10 top-4 hidden rotate-[-12deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
-            <Zap className="size-7" />
-            <p className="mt-2 text-xs font-medium">Skill Hub</p>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
 function TabTrigger({
   children,
   value,
@@ -506,7 +478,7 @@ function TabTrigger({
   return (
     <TabsTrigger
       value={value}
-      className="mr-7 h-10 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+      className="mr-7 h-9 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
     >
       {children}
     </TabsTrigger>

@@ -17,6 +17,7 @@ import {
   McpToolEditorModal,
   type McpEditorMode,
 } from "@/components/mcp/McpToolEditorModal";
+import { PageHero } from "@/components/PageHero";
 import { McpInstallStatusBadge } from "@/components/mcp/McpInstallStatusBadge";
 import { McpProviderDiscovery } from "@/components/mcp/McpProviderDiscovery";
 import { Button } from "@/components/ui/button";
@@ -101,10 +102,17 @@ export function ToolsPage() {
           }
         />
 
-        <PageHero />
+        <PageHero
+          title="工具"
+          bannerTitle="让助手能用上更多外部能力"
+          bannerDescription="接入外部服务后，助手能查信息、连平台，把事真正办到底。"
+          icon={Wrench}
+          kitLabel="Tool Hub"
+          rotate="left"
+        />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ToolTab)}>
-          <TabsList className="mt-6 h-10 bg-transparent p-0">
+          <TabsList className="mt-3 h-9 bg-transparent p-0">
             <TabTrigger value="discover">发现</TabTrigger>
             <TabTrigger value="builtin">内置</TabTrigger>
             <TabTrigger value="installed">
@@ -234,35 +242,12 @@ function TopToolbar({
   onCreate: () => void;
 }) {
   return (
-    <div className="mb-12 flex flex-wrap items-center justify-end gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <Button onClick={onCreate}>
         <Plus className="size-4" />
         新增 MCP
       </Button>
     </div>
-  );
-}
-
-function PageHero() {
-  return (
-    <>
-      <h1 className="text-3xl font-semibold tracking-normal">工具</h1>
-      <p className="mt-3 text-base text-muted-foreground">
-        发现 MCP 提供商，管理内置工具与已安装的 MCP 服务器。
-      </p>
-      <div className="mt-6 overflow-hidden rounded-lg bg-accent">
-        <div className="relative min-h-[116px] px-7 py-7">
-          <h2 className="text-lg font-semibold">给助手接上外部工具箱</h2>
-          <p className="mt-3 max-w-[640px] text-sm text-muted-foreground">
-            先去发现页看看有哪些 MCP 提供商，也可以直接粘贴 mcpServers 配置手动安装。
-          </p>
-          <div className="absolute right-10 top-4 hidden rotate-[-12deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
-            <Wrench className="size-7" />
-            <p className="mt-2 text-xs font-medium">Tool Hub</p>
-          </div>
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -276,7 +261,7 @@ function TabTrigger({
   return (
     <TabsTrigger
       value={value}
-      className="mr-7 h-10 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+      className="mr-7 h-9 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
     >
       {children}
     </TabsTrigger>

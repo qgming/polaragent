@@ -4,7 +4,9 @@
 import { useEffect, useState } from "react";
 import { Check, Eye, EyeOff, KeyRound, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import type { Settings } from "@/types/config";
+import { defaultSettings } from "@/config/defaults";
 import { PageTitle, SettingDropdown, SettingRow } from "./settings-shared";
 
 export function PreferencesPanel({
@@ -24,7 +26,7 @@ export function PreferencesPanel({
 
   return (
     <section>
-      <PageTitle title="偏好设置" description="个性化你的主题与对话外观。" />
+      <PageTitle title="偏好设置" description="调整外观、对话与语音输入等个人偏好。" />
 
       <div className="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
         <SettingRow
@@ -87,8 +89,63 @@ export function PreferencesPanel({
         />
       </div>
 
+      <VoiceInputCard settings={settings} onUpdate={onUpdate} />
+
       <SkillsApiKeyCard settings={settings} onUpdate={onUpdate} />
     </section>
+  );
+}
+
+// 语音输入优化卡片（自动发送 / 口语优化），原属音频设置，移入偏好设置统一管理
+function VoiceInputCard({
+  settings,
+  onUpdate,
+}: {
+  settings: Settings;
+  onUpdate: (updates: Partial<Settings>) => Promise<void>;
+}) {
+  const audioDefaults = () => settings.audio ?? defaultSettings.audio!;
+  const inputOptimization =
+    settings.audio?.inputOptimization ??
+    defaultSettings.audio?.inputOptimization ?? { autoSend: false, refineText: false };
+
+  // 改动即写入，失败时由调用方 store 兜底（与原音频面板逻辑一致）
+  const update = (patch: Partial<{ autoSend: boolean; refineText: boolean }>) => {
+    const currentAudio = audioDefaults();
+    return onUpdate({
+      audio: {
+        ...currentAudio,
+        inputOptimization: {
+          ...currentAudio.inputOptimization,
+          ...patch,
+        },
+      },
+    });
+  };
+
+  return (
+    <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
+      <SettingRow
+        title="语音识别后自动发送"
+        description="语音识别完成后自动发送消息；与口语优化同时开启时，将在文本整理完成后发送。"
+        control={
+          <Switch
+            checked={inputOptimization.autoSend}
+            onCheckedChange={(checked) => void update({ autoSend: checked })}
+          />
+        }
+      />
+      <SettingRow
+        title="语音识别文本优化"
+        description="识别完成后调用 AI 对文本进行整理，去除口头语与语气词，使表达更清晰、正式。"
+        control={
+          <Switch
+            checked={inputOptimization.refineText}
+            onCheckedChange={(checked) => void update({ refineText: checked })}
+          />
+        }
+      />
+    </div>
   );
 }
 

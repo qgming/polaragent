@@ -127,11 +127,18 @@ function optionalString(value: unknown): string | undefined {
 
 function normalizeTransport(value: unknown): McpTransport {
   if (value == null) return "stdio";
-  if (value === "stdio" || value === "sse") return value;
-  if (value === "streamable-http" || value === "streamable_http") {
+  if (typeof value !== "string") {
+    throw new Error('server type 必须是字符串："stdio"、"streamable_http"、"streamable-http"、"streamablehttp"、"http" 或 "sse"。');
+  }
+  // 归一化：转小写并去掉所有非字母数字字符，兼容 streamablehttp / streamable-http /
+  // streamable_http / streamableHttp / http 等多种常见写法。
+  const canonical = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (canonical === "stdio") return "stdio";
+  if (canonical === "sse") return "sse";
+  if (canonical === "streamablehttp" || canonical === "http" || canonical === "streamhttp") {
     return "streamable-http";
   }
-  throw new Error('server type 必须是 "stdio"、"streamable_http"、"streamable-http" 或 "sse"。');
+  throw new Error('server type 必须是 "stdio"、"streamable_http"、"streamable-http"、"streamablehttp"、"http" 或 "sse"。');
 }
 
 function toExternalTransport(transport: McpTransport): string {

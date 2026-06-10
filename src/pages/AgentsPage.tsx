@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { AgentEditorModal } from "@/components/AgentEditorModal";
+import { PageHero } from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/useToast";
@@ -107,14 +108,15 @@ export function AgentsPage({
 
         <PageHero
           title="助手"
-          description="管理不同任务场景中的工作助手、模型策略和启用技能。"
-          bannerTitle="给不同的活安排不同的人设"
-          bannerDescription="写文案、查资料、做计划都可以交给专门的助手，常用任务不用每次重新解释。"
+          bannerTitle="每件事都有专属的帮手"
+          bannerDescription="给不同的事配上专属助手，省去每次重新解释的功夫。"
+          icon={Bot}
+          kitLabel="Agent Kit"
         />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AgentTab)}>
-          <TabsList className="mt-6 h-10 bg-transparent p-0">
-            <TabTrigger value="market">助手广场</TabTrigger>
+          <TabsList className="mt-3 h-9 bg-transparent p-0">
+            <TabTrigger value="market">广场</TabTrigger>
             <TabTrigger value="builtin">内置</TabTrigger>
             <TabTrigger value="custom">
               已安装
@@ -468,7 +470,7 @@ function TopToolbar({
   onCreateAgent: () => void;
 }) {
   return (
-    <div className="mb-12 flex flex-wrap items-center justify-end gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -486,37 +488,6 @@ function TopToolbar({
   );
 }
 
-function PageHero({
-  bannerDescription,
-  bannerTitle,
-  description,
-  title,
-}: {
-  bannerDescription: string;
-  bannerTitle: string;
-  description: string;
-  title: string;
-}) {
-  return (
-    <>
-      <h1 className="text-3xl font-semibold tracking-normal">{title}</h1>
-      <p className="mt-3 text-base text-muted-foreground">{description}</p>
-      <div className="mt-6 overflow-hidden rounded-lg bg-accent">
-        <div className="relative min-h-[116px] px-7 py-7">
-          <h2 className="text-lg font-semibold">{bannerTitle}</h2>
-          <p className="mt-3 max-w-[580px] text-sm text-muted-foreground">
-            {bannerDescription}
-          </p>
-          <div className="absolute right-10 top-4 hidden rotate-[10deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
-            <Bot className="size-7" />
-            <p className="mt-2 text-xs font-medium">Agent Kit</p>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
 function TabTrigger({
   children,
   value,
@@ -527,7 +498,7 @@ function TabTrigger({
   return (
     <TabsTrigger
       value={value}
-      className="mr-7 h-10 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+      className="mr-7 h-9 gap-2 rounded-none bg-transparent px-0 text-base font-semibold text-muted-foreground shadow-none data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
     >
       {children}
     </TabsTrigger>

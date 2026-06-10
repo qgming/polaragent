@@ -9,6 +9,7 @@ import { FolderOpen, Pencil, Plus, Search, Users } from "lucide-react";
 import { TeamActionsMenu } from "@/components/team/TeamActionsMenu";
 import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import { Button } from "@/components/ui/button";
+import { PageHero } from "@/components/PageHero";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { clearTeamSessions } from "@/lib/session/team";
 import { useConfigStore } from "@/stores/config-store";
@@ -83,7 +84,13 @@ export function TeamPage() {
           onCreateTeam={() => setCreatingTeam(true)}
         />
 
-        <PageHero />
+        <PageHero
+          title="团队"
+          bannerTitle="一群助手一起把事做成"
+          bannerDescription="让多个助手分工协作，复杂的事拆开来一起推进。"
+          icon={Users}
+          kitLabel="Team Kit"
+        />
 
         {visibleTeams.length > 0 ? (
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -240,7 +247,7 @@ function TopToolbar({
   onCreateTeam: () => void;
 }) {
   return (
-    <div className="mb-12 flex flex-wrap items-center justify-end gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -255,29 +262,6 @@ function TopToolbar({
         新建团队
       </Button>
     </div>
-  );
-}
-
-function PageHero() {
-  return (
-    <>
-      <h1 className="text-3xl font-semibold tracking-normal">团队</h1>
-      <p className="mt-3 text-base text-muted-foreground">
-        把多个助手编排成协作小组，分工完成复杂任务。
-      </p>
-      <div className="mt-6 overflow-hidden rounded-lg bg-accent">
-        <div className="relative min-h-[116px] px-7 py-7">
-          <h2 className="text-lg font-semibold">把复杂任务分给一组助手</h2>
-          <p className="mt-3 max-w-[580px] text-sm text-muted-foreground">
-            让不同助手各做擅长的部分，适合需要讨论、分工和反复推进的任务。
-          </p>
-          <div className="absolute right-10 top-4 hidden rotate-[10deg] rounded-md border border-border bg-card px-5 py-4 shadow-sm md:block">
-            <Users className="size-7" />
-            <p className="mt-2 text-xs font-medium">Team Kit</p>
-          </div>
-        </div>
-      </div>
-    </>
   );
 }
 
