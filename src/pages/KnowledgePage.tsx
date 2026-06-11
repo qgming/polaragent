@@ -21,6 +21,7 @@ import { KnowledgeBaseCard } from "@/components/knowledge/KnowledgeBaseCard";
 import { KnowledgeFileCard } from "@/components/knowledge/KnowledgeFileCard";
 import { CreateKnowledgeBaseModal } from "@/components/knowledge/CreateKnowledgeBaseModal";
 import { KnowledgeSettingsModal } from "@/components/knowledge/KnowledgeSettingsModal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = new Set([
   ".md",
@@ -215,6 +216,9 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
   const isLoading = useKnowledgeStore((state) => state.isLoading);
   const error = useKnowledgeStore((state) => state.error);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [rebuildConfirmOpen, setRebuildConfirmOpen] = useState(false);
+  const [pendingDeleteFileId, setPendingDeleteFileId] = useState<string | null>(null);
 
   useEffect(() => {
     void setCurrentKnowledgeBase(knowledgeBase.id);
@@ -280,12 +284,18 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
   };
 
   const handleRemoveFile = async (fileId: string) => {
-    if (confirm("确定要删除此文件吗？")) {
-      try {
-        await removeFile(fileId);
-      } catch (error) {
-        console.error("删除文件失败:", error);
-      }
+    setPendingDeleteFileId(fileId);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteFileId) return;
+    try {
+      await removeFile(pendingDeleteFileId);
+    } catch (error) {
+      console.error("删除文件失败:", error);
+    } finally {
+      setPendingDeleteFileId(null);
     }
   };
 
@@ -298,12 +308,14 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
   };
 
   const handleRebuild = async () => {
-    if (confirm("确定要重建索引吗？这将重新处理所有文件。")) {
-      try {
-        await rebuildCurrentKnowledgeBase();
-      } catch (error) {
-        console.error("重建索引失败:", error);
-      }
+    setRebuildConfirmOpen(true);
+  };
+
+  const handleConfirmRebuild = async () => {
+    try {
+      await rebuildCurrentKnowledgeBase();
+    } catch (error) {
+      console.error("重建索引失败:", error);
     }
   };
 
@@ -418,6 +430,25 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
           </div>
         )}
       </main>
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onOpenChange={setDeleteConfirmOpen}
+        title="确认删除"
+        message="确定要删除此文件吗？"
+        confirmLabel="删除"
+        variant="destructive"
+        onConfirm={handleConfirmDelete}
+      />
+
+      <ConfirmDialog
+        open={rebuildConfirmOpen}
+        onOpenChange={setRebuildConfirmOpen}
+        title="确认重建索引"
+        message="确定要重建索引吗？这将重新处理所有文件。"
+        confirmLabel="重建"
+        onConfirm={handleConfirmRebuild}
+      />
     </div>
   );
 }

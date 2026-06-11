@@ -18,6 +18,7 @@ import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { stripMarkdown } from "@/lib/markdown";
 import { fileUrl } from "@/lib/electron/electron-api";
 import { copyText } from "@/lib/electron/electron-window";
+import { openPreviewWindow } from "@/lib/preview";
 import type { ChatAttachment, ChatMessage, Segment } from "@/lib/chat";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 
@@ -96,6 +97,11 @@ export const ChatMessageView = memo(function ChatMessageView({
       )}
       {message.status === "streaming" ? null : (
         <>
+          {/* 生成的图片 */}
+          {message.segments && message.segments.length > 0 ? (
+            <GeneratedImages segments={message.segments} />
+          ) : null}
+
           {/* 语音合成音频条 */}
           {message.segments && message.segments.length > 0 ? (
             <SynthesizedAudioBars segments={message.segments} />
@@ -417,52 +423,147 @@ function TaskGroupInner({
   );
 }
 
-// 提取并显示语音合成的音频条
-function SynthesizedAudioBars({ segments }: { segments: Segment[] }) {
-  const [existingAudios, setExistingAudios] = useState<Set<string>>(new Set());
-  const [checkedPaths, setCheckedPaths] = useState<Set<string>>(new Set());
+// 提取并显示生成的图片
+function GeneratedImages({ segments }: { segments: Segment[] }) {
+  const [existingImages, setExistingImages] = useState<Set<string>>(new Set());
 
-  const audioSegments = segments.filter(
-    (seg): seg is Extract<Segment, { kind: "tool" }> =>
-      seg.kind === "tool" &&
-      seg.toolName === "speech_synthesis" &&
-      seg.status === "done" &&
-      seg.details !== undefined &&
-      typeof seg.details === "object" &&
-      "audioPath" in seg.details &&
-      typeof seg.details.audioPath === "string",
+  const imageSegments = useMemo(
+    () =>
+      segments.filter(
+        (seg): seg is Extract<Segment, { kind: "tool" }> =>
+          seg.kind === "tool" &&
+          (seg.toolName === "image_generation" || seg.toolName === "image_edit") &&
+          seg.status === "done" &&
+          seg.details !== undefined &&
+          typeof seg.details === "object" &&
+          "saved" in seg.details &&
+          Array.isArray(seg.details.saved),
+      ),
+    [segments],
   );
 
-  // 检查音频文件是否存在
+  const allImagePaths = useMemo(
+    () =>
+      imageSegments.flatMap(
+        (seg) => (seg.details!.saved as Array<{ path: string; name: string }>).map((item) => item.path),
+      ),
+    [imageSegments],
+  );
+
   useEffect(() => {
     const checkFiles = async () => {
-      const newCheckedPaths = new Set(checkedPaths);
-      const newExistingAudios = new Set(existingAudios);
+      const existing = new Set<string>();
 
-      for (const seg of audioSegments) {
-        const audioPath = seg.details!.audioPath as string;
-        if (!newCheckedPaths.has(audioPath)) {
-          newCheckedPaths.add(audioPath);
-          try {
-            const exists = await fileUrl(audioPath).then(
-              () => true,
-              () => false,
-            );
-            if (exists) {
-              newExistingAudios.add(audioPath);
-            }
-          } catch {
-            // 文件不存在，不添加到 existingAudios
-          }
+      for (const path of allImagePaths) {
+        try {
+          const url = await fileUrl(path);
+          if (url) existing.add(path);
+        } catch {
+          // 文件不存在
         }
       }
 
-      setCheckedPaths(newCheckedPaths);
-      setExistingAudios(newExistingAudios);
+      setExistingImages(existing);
     };
 
-    void checkFiles();
-  }, [audioSegments]);
+    if (allImagePaths.length > 0) {
+      void checkFiles();
+    }
+  }, [allImagePaths]);
+
+  const visiblePaths = allImagePaths.filter((path) => existingImages.has(path));
+
+  if (visiblePaths.length === 0) return null;
+
+  return (
+    <div className="mt-3 flex gap-2 overflow-x-auto">
+      {visiblePaths.map((path) => (
+        <GeneratedImageItem key={path} imagePath={path} />
+      ))}
+    </div>
+  );
+}
+
+function GeneratedImageItem({ imagePath }: { imagePath: string }) {
+  const [url, setUrl] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void fileUrl(imagePath)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setUrl("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [imagePath]);
+
+  if (!url || failed) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void openPreviewWindow(imagePath)}
+      className="h-32 shrink-0 overflow-hidden rounded-md transition-opacity hover:opacity-80"
+    >
+      <img
+        src={url}
+        alt=""
+        className="h-full object-cover"
+        onError={() => setFailed(true)}
+      />
+    </button>
+  );
+}
+
+// 提取并显示语音合成的音频条
+function SynthesizedAudioBars({ segments }: { segments: Segment[] }) {
+  const [existingAudios, setExistingAudios] = useState<Set<string>>(new Set());
+
+  const audioSegments = useMemo(
+    () =>
+      segments.filter(
+        (seg): seg is Extract<Segment, { kind: "tool" }> =>
+          seg.kind === "tool" &&
+          seg.toolName === "speech_synthesis" &&
+          seg.status === "done" &&
+          seg.details !== undefined &&
+          typeof seg.details === "object" &&
+          "audioPath" in seg.details &&
+          typeof seg.details.audioPath === "string",
+      ),
+    [segments],
+  );
+
+  const allAudioPaths = useMemo(
+    () => audioSegments.map((seg) => seg.details!.audioPath as string),
+    [audioSegments],
+  );
+
+  useEffect(() => {
+    const checkFiles = async () => {
+      const existing = new Set<string>();
+
+      for (const path of allAudioPaths) {
+        try {
+          const url = await fileUrl(path);
+          if (url) existing.add(path);
+        } catch {
+          // 文件不存在
+        }
+      }
+
+      setExistingAudios(existing);
+    };
+
+    if (allAudioPaths.length > 0) {
+      void checkFiles();
+    }
+  }, [allAudioPaths]);
 
   const visibleSegments = audioSegments.filter((seg) => {
     const audioPath = seg.details!.audioPath as string;
