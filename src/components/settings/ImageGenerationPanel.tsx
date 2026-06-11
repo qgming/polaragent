@@ -1,25 +1,42 @@
-// 图片模式设置面板（OpenAI / OpenAI 兼容图片生成接口）
+// 图片模式设置面板（容器）
+// 用户选择图片接口标准（OpenAI 图片接口 / OpenAI Chat / Google Gemini），
+// 并为所选标准配置 Base URL、API Key、模型及默认生成参数。
+// 接口标准由此处设置决定。
+// 具体字段组件拆分在 ./image 子目录。
 
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, Eye, EyeOff, Image, Loader2, Save } from "lucide-react";
+import { AlertCircle, Check, Image, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { ImageGenerationConfig, Settings } from "@/types/config";
-import { defaultSettings } from "@/config/defaults";
-import { PageTitle } from "./settings-shared";
+import type {
+  ImageApiStandard,
+  ImageGenerationConfig,
+  Settings,
+} from "@/types/config";
+import { PageTitle, SettingDropdown } from "./settings-shared";
+import { STANDARDS, imageGenerationDefaults } from "./image/image-meta";
+import { OpenAiImagesFields, type OpenAiImagesValue } from "./image/OpenAiImagesFields";
+import { OpenAiChatFields, type OpenAiChatValue } from "./image/OpenAiChatFields";
+import { GeminiFields, type GeminiValue } from "./image/GeminiFields";
 
-function imageGenerationDefaults(): ImageGenerationConfig {
-  // 不依赖 defaultSettings.imageGeneration 的非空断言：返回稳定的兜底默认值，
-  // 避免某些 settings 迁移路径下该字段缺失导致运行时崩溃。
-  return (
-    defaultSettings.imageGeneration ?? {
-      provider: "openai",
-      openai: {
-        apiKey: "",
-        baseURL: "https://api.openai.com/v1",
-        model: "gpt-image-1",
-      },
-    }
-  );
+// 从配置还原三组字段的本地状态（带兜底默认值）。
+// 比例与分辨率不再由设置控制，改为 AI 在调用工具时按需填写。
+function deriveState(config: ImageGenerationConfig) {
+  const openaiImages: OpenAiImagesValue = {
+    apiKey: config.openaiImages?.apiKey ?? "",
+    baseURL: config.openaiImages?.baseURL ?? "https://api.openai.com/v1",
+    model: config.openaiImages?.model ?? "gpt-image-2",
+  };
+  const openaiChat: OpenAiChatValue = {
+    apiKey: config.openaiChat?.apiKey ?? "",
+    baseURL: config.openaiChat?.baseURL ?? "https://api.openai.com/v1",
+    model: config.openaiChat?.model ?? "gpt-image-2",
+  };
+  const gemini: GeminiValue = {
+    apiKey: config.gemini?.apiKey ?? "",
+    baseURL: config.gemini?.baseURL ?? "",
+    model: config.gemini?.model ?? "gemini-3-pro-image-preview",
+  };
+  return { provider: config.provider ?? "openai-images", openaiImages, openaiChat, gemini };
 }
 
 export function ImageGenerationPanel({
@@ -29,14 +46,14 @@ export function ImageGenerationPanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
-  const config = settings.imageGeneration ?? imageGenerationDefaults();
-  const openai = config.openai;
-  const [apiKey, setApiKey] = useState(openai.apiKey ?? "");
-  const [baseURL, setBaseURL] = useState(openai.baseURL ?? "https://api.openai.com/v1");
-  const [model, setModel] = useState(openai.model ?? "gpt-image-1");
-  const [showKey, setShowKey] = useState(false);
+  const initial = deriveState(settings.imageGeneration ?? imageGenerationDefaults());
+
+  const [provider, setProvider] = useState<ImageApiStandard>(initial.provider);
+  const [openaiImages, setOpenaiImages] = useState<OpenAiImagesValue>(initial.openaiImages);
+  const [openaiChat, setOpenaiChat] = useState<OpenAiChatValue>(initial.openaiChat);
+  const [gemini, setGemini] = useState<GeminiValue>(initial.gemini);
+
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  // 组件挂载标志 + 定时器引用：避免异步保存后在已卸载组件上 setState 与定时器残留
   const mountedRef = useRef(true);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -49,23 +66,34 @@ export function ImageGenerationPanel({
   }, []);
 
   useEffect(() => {
-    const next = settings.imageGeneration ?? imageGenerationDefaults();
-    setApiKey(next.openai.apiKey ?? "");
-    setBaseURL(next.openai.baseURL ?? "https://api.openai.com/v1");
-    setModel(next.openai.model ?? "gpt-image-1");
+    const next = deriveState(settings.imageGeneration ?? imageGenerationDefaults());
+    setProvider(next.provider);
+    setOpenaiImages(next.openaiImages);
+    setOpenaiChat(next.openaiChat);
+    setGemini(next.gemini);
   }, [settings.imageGeneration]);
 
   const handleSave = async () => {
     setSaveState("saving");
     try {
+      // 各标准配置全部保留，仅切换 provider；这样切换标准不会丢失其它标准已填的内容。
       await onUpdate({
         imageGeneration: {
-          ...config,
-          provider: "openai",
-          openai: {
-            apiKey: apiKey.trim(),
-            baseURL: baseURL.trim().replace(/\/+$/, ""),
-            model: model.trim(),
+          provider,
+          openaiImages: {
+            apiKey: openaiImages.apiKey.trim(),
+            baseURL: openaiImages.baseURL.trim().replace(/\/+$/, ""),
+            model: openaiImages.model.trim(),
+          },
+          openaiChat: {
+            apiKey: openaiChat.apiKey.trim(),
+            baseURL: openaiChat.baseURL.trim().replace(/\/+$/, ""),
+            model: openaiChat.model.trim(),
+          },
+          gemini: {
+            apiKey: gemini.apiKey.trim(),
+            baseURL: gemini.baseURL.trim().replace(/\/+$/, ""),
+            model: gemini.model.trim(),
           },
         },
       });
@@ -77,7 +105,6 @@ export function ImageGenerationPanel({
     } catch (error) {
       console.error("保存图片模式配置失败", error);
       if (!mountedRef.current) return;
-      // 保存失败时回到可重试的错误态，而不是卡在 saving 永久禁用按钮
       setSaveState("error");
       resetTimerRef.current = setTimeout(() => {
         if (mountedRef.current) setSaveState("idle");
@@ -85,76 +112,63 @@ export function ImageGenerationPanel({
     }
   };
 
+  const activeStandard = STANDARDS.find((s) => s.id === provider) ?? STANDARDS[0];
+
   return (
     <section>
       <PageTitle
         title="图片模式"
-        description="配置图片生成工具使用的模型与 OpenAI 兼容接口。"
+        description="选择图片生成使用的接口标准并配置模型。"
       />
 
+      {/* 接口标准选择（下拉，与网络搜索一致） */}
       <div className="mt-8 rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium">接口标准</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              选择图片生成使用的接口标准。
+            </p>
+          </div>
+          <div className="shrink-0">
+            <SettingDropdown
+              value={provider}
+              onChange={(value) => setProvider(value as ImageApiStandard)}
+              options={STANDARDS.map((s) => ({ value: s.id, label: s.label }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 所选标准的配置卡 */}
+      <div className="mt-6 rounded-xl border border-border bg-card">
         <div className="border-b border-border px-5 py-4">
           <div className="flex items-center gap-2">
             <Image className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">OpenAI 图片生成</h3>
+            <h3 className="text-sm font-semibold">{activeStandard.label}</h3>
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            支持 OpenAI 官方接口和常见兼容端口。Base URL 可填写官方 /v1 地址，也可填写兼容服务地址。
-          </p>
+          <p className="mt-2 text-sm text-muted-foreground">{activeStandard.hint}</p>
         </div>
 
         <div className="space-y-4 px-5 py-5">
-          <div>
-            <label className="mb-2 block text-xs font-medium text-muted-foreground">
-              Base URL
-            </label>
-            <input
-              type="text"
-              value={baseURL}
-              onChange={(event) => setBaseURL(event.target.value)}
-              placeholder="https://api.openai.com/v1"
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
+          {provider === "openai-images" && (
+            <OpenAiImagesFields
+              value={openaiImages}
+              onChange={(patch) => setOpenaiImages((prev) => ({ ...prev, ...patch }))}
             />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-medium text-muted-foreground">
-              API Key
-            </label>
-            <div className="relative">
-              <input
-                type={showKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="sk-..."
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm outline-none focus:border-ring"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey((value) => !value)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-medium text-muted-foreground">
-              图片模型
-            </label>
-            <input
-              type="text"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              placeholder="gpt-image-1"
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
+          )}
+          {provider === "openai-chat" && (
+            <OpenAiChatFields
+              value={openaiChat}
+              onChange={(patch) => setOpenaiChat((prev) => ({ ...prev, ...patch }))}
             />
-          </div>
-
-          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-            生成图片时，AI 会调用 image_generation 工具，并在工具参数中选择 /images/generations 或 /chat/completions 格式以及尺寸、质量、风格等选项；编辑图片时会调用 image_edit 工具。
-          </div>
+          )}
+          {provider === "gemini" && (
+            <GeminiFields
+              value={gemini}
+              onChange={(patch) => setGemini((prev) => ({ ...prev, ...patch }))}
+            />
+          )}
 
           <div className="flex items-center justify-end gap-3 pt-2">
             {saveState === "error" ? (

@@ -1,95 +1,127 @@
 // 图片工具 —— image_generation / image_edit
-// 调用 OpenAI / OpenAI 兼容的 /images/generations 与 /images/edits 接口。
+// 接口标准由用户在「设置 > 通用 > 图片模式」中选择（openai-images / openai-chat / gemini）。
+// 前端与 AI 对外显示「比例（aspectRatio）+ 分辨率（resolution）」；
+// 设置保存与实际请求使用各标准自己的真实参数：OpenAI size，Gemini aspectRatio/imageSize。
+// 其余特殊参数（质量、格式、背景等）不主动发送，交给具体模型默认值。
+// 不支持编辑的标准（openai-chat）下，image_edit 工具不会被注册（见 tools/index.ts）。
 
-import { Type, type Static } from "typebox";
+import { Type, type TProperties } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import {
   corsFetch,
   downloadUrlAsBase64,
   openAiImageEdit,
+  readBase64File,
   writeBase64File,
 } from "@/lib/electron/electron-api";
+import type {
+  ImageApiStandard,
+  ImageAspectRatio,
+  ImageGenerationConfig,
+  ImageResolution,
+} from "@/types/config";
+import {
+  openAiSizeFromDisplay,
+  IMAGE_ASPECT_RATIOS,
+  IMAGE_RESOLUTIONS,
+} from "@/lib/image-params";
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
-const IMAGE_REQUEST_TIMEOUT_MS = 600000;
+const IMAGE_REQUEST_TIMEOUT_MS = 1800000; // 30 分钟
+const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
-const imageGenerationParams = Type.Object({
-  prompt: Type.String({ description: "图片生成提示词，描述主体、风格、构图、光线、画幅等要求" }),
-  apiFormat: Type.Optional(
-    Type.Union([Type.Literal("images"), Type.Literal("chat_completions")], {
+// ===== 动态参数 schema =====
+// 对外统一只暴露 aspectRatio + resolution（外加 prompt / n / fileName）。
+// 编辑工具在 openai-images 下额外提供可选 maskPath。
+
+function buildGenerationParams() {
+  const props: TProperties = {
+    prompt: Type.String({
+      description: "图片生成提示词，描述主体、风格、构图、光线等要求",
+    }),
+    aspectRatio: Type.Optional(
+      Type.Union(IMAGE_ASPECT_RATIOS.map((r) => Type.Literal(r)), {
+        description:
+          "可选画幅比例：1:1 / 16:9 / 9:16 / 4:3 / 3:4 / 2:3 / 3:2 / 21:9。" +
+          "无明确比例需求时请省略，由模型自行决定（部分模型不支持指定比例，强行指定会报错）。",
+      }),
+    ),
+    resolution: Type.Optional(
+      Type.Union(IMAGE_RESOLUTIONS.map((r) => Type.Literal(r)), {
+        description: "可选分辨率：1K / 2K / 4K。无明确分辨率需求时请省略，由模型自行决定。",
+      }),
+    ),
+    n: Type.Optional(
+      Type.Number({ description: "生成张数，1-4，默认 1", minimum: 1, maximum: 4 }),
+    ),
+    fileName: Type.Optional(
+      Type.String({ description: "保存文件名，支持 png/webp/jpg/jpeg；留空自动命名" }),
+    ),
+  };
+  return Type.Object(props);
+}
+
+function buildEditParams(provider: ImageApiStandard) {
+  const props: TProperties = {
+    imagePath: Type.String({
+      description: "要编辑的源图片路径，相对工作目录或绝对路径；支持 png/webp/jpg/jpeg",
+    }),
+    prompt: Type.String({
+      description: "图片编辑提示词，说明要保留什么、修改什么、目标风格或构图",
+    }),
+  };
+
+  if (provider === "openai-images") {
+    props.maskPath = Type.Optional(
+      Type.String({
+        description: "可选蒙版图片路径；透明区域表示可编辑区域，需与源图尺寸一致",
+      }),
+    );
+  }
+
+  props.aspectRatio = Type.Optional(
+    Type.Union(IMAGE_ASPECT_RATIOS.map((r) => Type.Literal(r)), {
       description:
-        "接口格式：images 调用 /images/generations；chat_completions 调用 /chat/completions。根据图片服务商能力选择，默认 images。",
+        "可选画幅比例：1:1 / 16:9 / 9:16 / 4:3 / 3:4 等。" +
+        "无明确比例需求时请省略，由模型自行决定（部分模型不支持指定比例，强行指定会报错）。",
     }),
-  ),
-  fileName: Type.Optional(
-    Type.String({ description: "保存文件名，支持 png/webp/jpg/jpeg；留空自动命名" }),
-  ),
-  size: Type.Optional(
-    Type.String({ description: "图片尺寸，例如 1024x1024、1024x1536、1536x1024、1792x1024" }),
-  ),
-  quality: Type.Optional(
-    Type.Union([
-      Type.Literal("auto"),
-      Type.Literal("standard"),
-      Type.Literal("hd"),
-      Type.Literal("low"),
-      Type.Literal("medium"),
-      Type.Literal("high"),
-    ], { description: "质量档位；不同服务商支持项不同。由 AI 按任务选择；不确定可用 auto。" }),
-  ),
-  style: Type.Optional(
-    Type.Union([Type.Literal("natural"), Type.Literal("vivid")], {
-      description: "DALL-E 3 等模型支持的风格：natural 或 vivid",
+  );
+  props.resolution = Type.Optional(
+    Type.Union(IMAGE_RESOLUTIONS.map((r) => Type.Literal(r)), {
+      description: "可选分辨率：1K / 2K / 4K。无明确分辨率需求时请省略，由模型自行决定。",
     }),
-  ),
-  n: Type.Optional(
+  );
+  props.n = Type.Optional(
     Type.Number({ description: "生成张数，1-4，默认 1", minimum: 1, maximum: 4 }),
-  ),
-  responseFormat: Type.Optional(
-    Type.Union([Type.Literal("b64_json"), Type.Literal("url")], {
-      description: "返回格式。images 接口常用 b64_json/url；chat_completions 下用于提示模型优先返回 base64 或 URL。",
-    }),
-  ),
-});
-
-const imageEditParams = Type.Object({
-  imagePath: Type.String({ description: "要编辑的源图片路径，相对工作目录或绝对路径；支持 png/webp/jpg/jpeg" }),
-  prompt: Type.String({ description: "图片编辑提示词，说明要保留什么、修改什么、目标风格或构图" }),
-  maskPath: Type.Optional(
-    Type.String({ description: "可选蒙版图片路径；透明区域表示可编辑区域，需与源图尺寸一致" }),
-  ),
-  fileName: Type.Optional(
+  );
+  props.fileName = Type.Optional(
     Type.String({ description: "保存文件名，支持 png/webp/jpg/jpeg；留空自动命名" }),
-  ),
-  size: Type.Optional(
-    Type.String({ description: "输出尺寸，例如 1024x1024、1024x1536、1536x1024" }),
-  ),
-  quality: Type.Optional(
-    Type.Union([
-      Type.Literal("auto"),
-      Type.Literal("standard"),
-      Type.Literal("hd"),
-      Type.Literal("low"),
-      Type.Literal("medium"),
-      Type.Literal("high"),
-    ], { description: "质量档位；不同服务商支持项不同，默认使用设置里的值" }),
-  ),
-  n: Type.Optional(
-    Type.Number({ description: "生成张数，1-4，默认 1", minimum: 1, maximum: 4 }),
-  ),
-  responseFormat: Type.Optional(
-    Type.Union([Type.Literal("b64_json"), Type.Literal("url")], {
-      description: "返回格式。/images/edits 常用 b64_json/url；由 AI 按服务商能力选择。",
-    }),
-  ),
-});
+  );
+  return Type.Object(props);
+}
 
-type ImageGenerationParams = Static<typeof imageGenerationParams>;
-type ImageEditParams = Static<typeof imageEditParams>;
+// 工具运行时收到的参数（对外统一两参数）
+interface GenParams {
+  prompt: string;
+  aspectRatio?: ImageAspectRatio;
+  resolution?: ImageResolution;
+  n?: number;
+  fileName?: string;
+}
+
+interface EditParams {
+  imagePath: string;
+  prompt: string;
+  maskPath?: string;
+  aspectRatio?: ImageAspectRatio;
+  resolution?: ImageResolution;
+  n?: number;
+  fileName?: string;
+}
 
 interface ImageResponseItem {
   b64_json?: string;
@@ -124,12 +156,6 @@ function safeImageFileName(
     : `${raw.replace(/\.+$/, "")}.${safeExt}`;
   if (total <= 1) return withExt;
   return withExt.replace(/(\.(png|webp|jpe?g|gif))$/i, `-${String(index + 1).padStart(2, "0")}$1`);
-}
-
-function shouldSendResponseFormat(model: string, responseFormat?: string) {
-  if (!responseFormat || responseFormat === "auto") return false;
-  if (/^gpt-image-/i.test(model)) return false;
-  return /dall-e|image|sd|flux|kolors|wan|jimeng|seedream/i.test(model);
 }
 
 function parseJsonResponse(body: string, status: number, label: string) {
@@ -232,29 +258,41 @@ function extractImagesFromChatPayload(payload: any): ImageResponseItem[] {
   return items;
 }
 
-async function callImageGenerations({
+// 从 Gemini :generateContent 响应中提取 inlineData 图片。
+function extractImagesFromGeminiPayload(payload: any): ImageResponseItem[] {
+  const items: ImageResponseItem[] = [];
+  const parts = payload?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return items;
+  for (const part of parts) {
+    const inline = part?.inlineData ?? part?.inline_data;
+    const data = inline?.data;
+    if (typeof data === "string" && data.length > 0) {
+      items.push({ b64_json: normalizeBase64Image(data) });
+    }
+  }
+  return items;
+}
+
+// ===== 各接口标准的生成实现 =====
+
+async function callOpenAiImages({
   apiKey,
   baseURL,
   model,
-  params,
+  prompt,
+  size,
+  n,
 }: {
   apiKey: string;
   baseURL: string;
   model: string;
-  params: ImageGenerationParams;
+  prompt: string;
+  size?: string;
+  n: number;
 }) {
-  const count = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
-  const requestBody: Record<string, unknown> = {
-    model,
-    prompt: params.prompt,
-    n: count,
-  };
-  if (params.size) requestBody.size = params.size;
-  if (params.quality) requestBody.quality = params.quality;
-  if (params.style && /dall-e-3/i.test(model)) requestBody.style = params.style;
-  if (shouldSendResponseFormat(model, params.responseFormat)) {
-    requestBody.response_format = params.responseFormat;
-  }
+  // size 缺省时不发送，交给模型默认尺寸（避免对不支持该参数的模型报错）。
+  const requestBody: Record<string, unknown> = { model, prompt, n };
+  if (size) requestBody.size = size;
 
   const response = await corsFetch({
     url: `${normalizeImageBaseUrl(baseURL)}/images/generations`,
@@ -274,28 +312,22 @@ async function callImageGenerations({
   return Array.isArray(payload.data) ? payload.data : [];
 }
 
-async function callChatCompletionsImage({
+async function callOpenAiChatImage({
   apiKey,
   baseURL,
   model,
-  params,
+  prompt,
+  size,
+  n,
 }: {
   apiKey: string;
   baseURL: string;
   model: string;
-  params: ImageGenerationParams;
+  prompt: string;
+  size?: string;
+  n: number;
 }) {
-  const optionHints = [
-    params.size ? `size=${params.size}` : null,
-    params.quality ? `quality=${params.quality}` : null,
-    params.style ? `style=${params.style}` : null,
-    params.n ? `n=${Math.min(Math.max(Math.trunc(params.n), 1), 4)}` : null,
-    params.responseFormat ? `response_format=${params.responseFormat}` : null,
-  ].filter(Boolean);
-  const responseHint =
-    params.responseFormat === "url"
-      ? "请返回图片 URL，最好使用 JSON：{\"images\":[{\"url\":\"...\"}]}。"
-      : "请返回图片 base64 data URL 或 JSON：{\"images\":[{\"b64_json\":\"...\"}]}。";
+  const optionHints = [size ? `size=${size}` : null, n > 1 ? `n=${n}` : null].filter(Boolean);
 
   const response = await corsFetch({
     url: `${normalizeImageBaseUrl(baseURL)}/chat/completions`,
@@ -311,14 +343,11 @@ async function callChatCompletionsImage({
           role: "system",
           content:
             "你是图片生成接口。根据用户提示生成图片，不要解释过程。" +
-            responseHint,
+            "请返回图片 base64 data URL 或 JSON：{\"images\":[{\"b64_json\":\"...\"}]}。",
         },
         {
           role: "user",
-          content: [
-            params.prompt,
-            optionHints.length > 0 ? `生成选项：${optionHints.join(", ")}` : null,
-          ]
+          content: [prompt, optionHints.length > 0 ? `生成选项：${optionHints.join(", ")}` : null]
             .filter(Boolean)
             .join("\n"),
         },
@@ -332,6 +361,65 @@ async function callChatCompletionsImage({
     throw new Error(`Chat Completions 图片生成失败（${response.status}）：${imageErrorMessage(payload)}`);
   }
   return extractImagesFromChatPayload(payload);
+}
+
+async function callGeminiImage({
+  apiKey,
+  baseURL,
+  model,
+  prompt,
+  aspectRatio,
+  imageSize,
+  candidateCount,
+  inlineImage,
+}: {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  prompt: string;
+  aspectRatio?: string;
+  imageSize?: string;
+  candidateCount?: number;
+  // 图片编辑时传入源图，作为多模态输入随提示一起发送
+  inlineImage?: { data: string; mimeType: string };
+}) {
+  const base = (baseURL?.trim() || GEMINI_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+  if (inlineImage) {
+    parts.push({ inlineData: { mimeType: inlineImage.mimeType, data: inlineImage.data } });
+  }
+
+  // Gemini 3 标准通过 generationConfig.imageConfig 控制画幅与分辨率，
+  // candidateCount 控制返回图片数量（多图生成）。
+  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"] };
+  if (candidateCount !== undefined && candidateCount > 1) {
+    generationConfig.candidateCount = candidateCount;
+  }
+  const imageConfig: Record<string, unknown> = {};
+  if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
+  if (imageSize) imageConfig.imageSize = imageSize;
+  if (Object.keys(imageConfig).length > 0) generationConfig.imageConfig = imageConfig;
+
+  const response = await corsFetch({
+    url: `${base}/models/${encodeURIComponent(model)}:generateContent`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // 使用请求头携带密钥，避免出现在 URL/日志中
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig,
+    }),
+    timeoutMs: IMAGE_REQUEST_TIMEOUT_MS,
+  });
+
+  const payload = parseJsonResponse(response.body, response.status, "Gemini 图片生成");
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Gemini 图片生成失败（${response.status}）：${imageErrorMessage(payload)}`);
+  }
+  return extractImagesFromGeminiPayload(payload);
 }
 
 async function saveImageResponseItems({
@@ -390,35 +478,132 @@ function imageResultLines(
   ].filter(Boolean);
 }
 
-export function generateImageTool(ctx: ToolContext): AgentTool<typeof imageGenerationParams> {
+// 读取当前图片接口标准（供工具工厂在构建时裁剪参数 schema 用）。
+function currentImageProvider(): ImageApiStandard {
+  const config = useConfigStore.getState().settings.imageGeneration as
+    | ImageGenerationConfig
+    | undefined;
+  return config?.provider ?? "openai-images";
+}
+
+// 当前所选标准是否支持图片编辑：openai-chat 不支持。
+export function imageEditAvailable(): boolean {
+  const provider = currentImageProvider();
+  return provider === "openai-images" || provider === "gemini";
+}
+
+// 读取图片配置并校验当前所选标准的必填项，返回标准与对应配置。
+function resolveImageConfig(action: "生成" | "编辑") {
+  const config = useConfigStore.getState().settings.imageGeneration as
+    | ImageGenerationConfig
+    | undefined;
+  const provider: ImageApiStandard = config?.provider ?? "openai-images";
+
+  if (provider === "gemini") {
+    const gemini = config?.gemini;
+    if (!gemini?.apiKey?.trim()) throw new Error(`图片${action} API Key 未配置（Gemini）`);
+    if (!gemini.model?.trim()) throw new Error(`图片${action}模型未配置（Gemini）`);
+    return { provider, gemini } as const;
+  }
+  if (provider === "openai-chat") {
+    const openaiChat = config?.openaiChat;
+    if (!openaiChat?.apiKey?.trim()) throw new Error(`图片${action} API Key 未配置（OpenAI Chat）`);
+    if (!openaiChat.model?.trim()) throw new Error(`图片${action}模型未配置（OpenAI Chat）`);
+    return { provider, openaiChat } as const;
+  }
+  const openaiImages = config?.openaiImages;
+  if (!openaiImages?.apiKey?.trim()) throw new Error(`图片${action} API Key 未配置（OpenAI 图片接口）`);
+  if (!openaiImages.model?.trim()) throw new Error(`图片${action}模型未配置（OpenAI 图片接口）`);
+  return { provider, openaiImages } as const;
+}
+
+// 推断本地图片的 MIME 类型（供 Gemini inlineData 使用）。
+function imageMimeFromPath(path: string) {
+  const ext = path.match(/\.([a-zA-Z0-9]+)$/)?.[1]?.toLowerCase();
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "image/png";
+  }
+}
+
+// 计算 OpenAI 标准的 size（WxH）；返回 undefined 表示不发送 size，交给模型默认尺寸。
+// 只有 AI 同时指定比例和分辨率时才计算 size；任一缺失则返回 undefined。
+// 按模型能力选择固定尺寸白名单或自由 WxH，避免固定尺寸枚举模型收到非法尺寸而 400。
+function openAiSizeFromParams(
+  model: string,
+  params: Pick<GenParams | EditParams, "aspectRatio" | "resolution">,
+): string | undefined {
+  if (!params.aspectRatio || !params.resolution) return undefined;
+  return openAiSizeFromDisplay(model, params.aspectRatio, params.resolution);
+}
+
+// 生成/编辑工具的可用参数说明（比例与分辨率均由 AI 按需填写，省略时交给模型自行决定）。
+const IMAGE_PARAM_HINT =
+  "可用参数：prompt、aspectRatio（比例 1:1/16:9/9:16/4:3/3:4/2:3/3:2/21:9）、" +
+  "resolution（分辨率 1K/2K/4K）、n、fileName。比例与分辨率均为可选，省略时不发送该参数，交给模型自行决定。";
+
+export function generateImageTool(ctx: ToolContext): AgentTool<any> {
+  const parameters = buildGenerationParams();
+
   return {
     name: "image_generation",
     label: "生成图片",
-    description:
-      "根据提示词生成图片。使用设置 > 通用 > 图片模式中的 OpenAI 或 OpenAI 兼容图片生成配置；" +
-      "支持 /images/generations 与 /chat/completions 两种格式；返回 b64_json 时会保存到工作目录并登记为产物。",
-    parameters: imageGenerationParams,
-    execute: async (_id, params: ImageGenerationParams) => {
-      const settings = useConfigStore.getState().settings.imageGeneration;
-      const openai = settings?.openai;
-      if (!openai?.apiKey?.trim()) throw new Error("图片生成 API Key 未配置");
-      if (!openai.model?.trim()) throw new Error("图片生成模型未配置");
+    description: `根据提示词生成图片。${IMAGE_PARAM_HINT}生成图片会保存到工作目录并登记为产物。`,
+    parameters,
+    execute: async (_id, rawParams) => {
+      const params = rawParams as GenParams;
+      const resolved = resolveImageConfig("生成");
+      const n = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
 
-      const apiFormat = params.apiFormat ?? "images";
-      const items: ImageResponseItem[] =
-        apiFormat === "chat_completions"
-          ? await callChatCompletionsImage({
-              apiKey: openai.apiKey.trim(),
-              baseURL: openai.baseURL,
-              model: openai.model.trim(),
-              params,
-            })
-          : await callImageGenerations({
-              apiKey: openai.apiKey.trim(),
-              baseURL: openai.baseURL,
-              model: openai.model.trim(),
-              params,
-            });
+      let items: ImageResponseItem[] = [];
+      let endpoint = "";
+
+      if (resolved.provider === "gemini") {
+        const { gemini } = resolved;
+        endpoint = ":generateContent";
+        items = await callGeminiImage({
+          apiKey: gemini.apiKey.trim(),
+          baseURL: gemini.baseURL ?? "",
+          model: gemini.model.trim(),
+          prompt: params.prompt,
+          // AI 优先：AI 未指定时不传递，交给模型自行决定
+          aspectRatio: params.aspectRatio,
+          imageSize: params.resolution,
+          candidateCount: n,
+        });
+      } else if (resolved.provider === "openai-chat") {
+        const { openaiChat } = resolved;
+        endpoint = "/chat/completions";
+        const model = openaiChat.model.trim();
+        items = await callOpenAiChatImage({
+          apiKey: openaiChat.apiKey.trim(),
+          baseURL: openaiChat.baseURL,
+          model,
+          prompt: params.prompt,
+          size: openAiSizeFromParams(model, params),
+          n,
+        });
+      } else {
+        const { openaiImages } = resolved;
+        endpoint = "/images/generations";
+        const model = openaiImages.model.trim();
+        items = await callOpenAiImages({
+          apiKey: openaiImages.apiKey.trim(),
+          baseURL: openaiImages.baseURL,
+          model,
+          prompt: params.prompt,
+          size: openAiSizeFromParams(model, params),
+          n,
+        });
+      }
+
       if (items.length === 0) throw new Error("图片生成接口未返回图片数据");
 
       const imageResult = await saveImageResponseItems({
@@ -431,10 +616,8 @@ export function generateImageTool(ctx: ToolContext): AgentTool<typeof imageGener
       return {
         content: text(imageResultLines("生成", imageResult).join("\n\n")),
         details: {
-          provider: settings?.provider ?? "openai",
-          model: openai.model,
-          endpoint: apiFormat === "chat_completions" ? "/chat/completions" : "/images/generations",
-          apiFormat,
+          provider: resolved.provider,
+          endpoint,
           ...imageResult,
         },
       };
@@ -442,43 +625,68 @@ export function generateImageTool(ctx: ToolContext): AgentTool<typeof imageGener
   };
 }
 
-export function editImageTool(ctx: ToolContext): AgentTool<typeof imageEditParams> {
+export function editImageTool(ctx: ToolContext): AgentTool<any> {
+  const provider = currentImageProvider();
+  const parameters = buildEditParams(provider);
+
   return {
     name: "image_edit",
     label: "编辑图片",
-    description:
-      "编辑已有图片。使用设置 > 通用 > 图片模式中的 OpenAI 或 OpenAI 兼容图片编辑配置；" +
-      "调用 /images/edits，支持可选 mask 蒙版，返回 b64_json 时保存到工作目录。",
-    parameters: imageEditParams,
-    execute: async (_id, params: ImageEditParams) => {
-      const settings = useConfigStore.getState().settings.imageGeneration;
-      const openai = settings?.openai;
-      if (!openai?.apiKey?.trim()) throw new Error("图片编辑 API Key 未配置");
-      if (!openai.model?.trim()) throw new Error("图片编辑模型未配置");
-
+    description: `编辑已有图片。${IMAGE_PARAM_HINT}openai-images 标准支持可选 mask 蒙版。`,
+    parameters,
+    execute: async (_id, rawParams) => {
+      const params = rawParams as EditParams;
+      const resolved = resolveImageConfig("编辑");
       const imagePath = resolvePath(ctx, params.imagePath);
-      const maskPath = params.maskPath?.trim()
-        ? resolvePath(ctx, params.maskPath)
-        : undefined;
-      const count = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
+      const n = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
 
-      const payload = await openAiImageEdit({
-        apiKey: openai.apiKey.trim(),
-        baseURL: openai.baseURL,
-        imagePath,
-        maskPath,
-        model: openai.model.trim(),
-        prompt: params.prompt,
-        n: count,
-        size: params.size,
-        quality: params.quality,
-        responseFormat: shouldSendResponseFormat(openai.model, params.responseFormat)
-          ? params.responseFormat
-          : undefined,
-      });
+      let items: ImageResponseItem[] = [];
+      let endpoint = "";
 
-      const items: ImageResponseItem[] = Array.isArray(payload.data) ? payload.data : [];
+      if (resolved.provider === "gemini") {
+        const { gemini } = resolved;
+        endpoint = ":generateContent";
+        // 读取源图并作为 inlineData 随提示一起发送
+        const sourceBase64 = await readBase64File(imagePath);
+        items = await callGeminiImage({
+          apiKey: gemini.apiKey.trim(),
+          baseURL: gemini.baseURL ?? "",
+          model: gemini.model.trim(),
+          prompt: params.prompt,
+          // AI 优先：AI 未指定时不传递，交给模型自行决定
+          aspectRatio: params.aspectRatio,
+          imageSize: params.resolution,
+          candidateCount: n,
+          inlineImage: {
+            data: normalizeBase64Image(sourceBase64),
+            mimeType: imageMimeFromPath(imagePath),
+          },
+        });
+      } else if (resolved.provider === "openai-chat") {
+        // 兜底：理论上此标准下工具不会被注册（见 tools/index.ts 的 isAvailable）。
+        throw new Error(
+          "当前接口标准为 OpenAI Chat，不支持图片编辑；请在「设置 > 图片模式」改用 OpenAI 图片接口或 Gemini 标准。",
+        );
+      } else {
+        const { openaiImages } = resolved;
+        endpoint = "/images/edits";
+        const maskPath = params.maskPath?.trim() ? resolvePath(ctx, params.maskPath) : undefined;
+        const model = openaiImages.model.trim();
+        const payload = await openAiImageEdit({
+          apiKey: openaiImages.apiKey.trim(),
+          baseURL: openaiImages.baseURL,
+          imagePath,
+          maskPath,
+          model,
+          prompt: params.prompt,
+          n,
+          size: openAiSizeFromParams(model, params),
+        });
+        items = Array.isArray(payload.data) ? payload.data : [];
+      }
+
       if (items.length === 0) throw new Error("图片编辑接口未返回图片数据");
+
       const imageResult = await saveImageResponseItems({
         ctx,
         fileName: params.fileName,
@@ -489,11 +697,9 @@ export function editImageTool(ctx: ToolContext): AgentTool<typeof imageEditParam
       return {
         content: text(imageResultLines("编辑", imageResult).join("\n\n")),
         details: {
-          provider: settings?.provider ?? "openai",
-          model: openai.model,
-          endpoint: "/images/edits",
+          provider: resolved.provider,
+          endpoint,
           source: imagePath,
-          mask: maskPath,
           ...imageResult,
         },
       };

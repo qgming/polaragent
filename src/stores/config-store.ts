@@ -317,6 +317,42 @@ function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
   };
 }
 
+// 归一化图片生成配置：开发阶段只支持当前结构，缺失字段补默认值。
+function normalizeImageGeneration(
+  current: Settings["imageGeneration"],
+  fallback: NonNullable<Settings["imageGeneration"]>,
+): NonNullable<Settings["imageGeneration"]> {
+  const raw = (current ?? {}) as Record<string, any>;
+  const rawProvider = raw.provider as string | undefined;
+  const provider =
+    rawProvider === "openai-chat" || rawProvider === "gemini"
+      ? rawProvider
+      : "openai-images";
+
+  const rawImages = (raw.openaiImages ?? {}) as Record<string, any>;
+  const rawChat = (raw.openaiChat ?? {}) as Record<string, any>;
+  const rawGemini = (raw.gemini ?? {}) as Record<string, any>;
+
+  return {
+    provider,
+    openaiImages: {
+      apiKey: rawImages.apiKey ?? fallback.openaiImages!.apiKey,
+      baseURL: rawImages.baseURL ?? fallback.openaiImages!.baseURL,
+      model: rawImages.model ?? fallback.openaiImages!.model,
+    },
+    openaiChat: {
+      apiKey: rawChat.apiKey ?? fallback.openaiChat!.apiKey,
+      baseURL: rawChat.baseURL ?? fallback.openaiChat!.baseURL,
+      model: rawChat.model ?? fallback.openaiChat!.model,
+    },
+    gemini: {
+      apiKey: rawGemini.apiKey ?? fallback.gemini!.apiKey,
+      baseURL: rawGemini.baseURL ?? fallback.gemini!.baseURL,
+      model: rawGemini.model ?? fallback.gemini!.model,
+    },
+  };
+}
+
 function normalizeSettings(settings: Settings, dataDir: string): Settings {
   const defaultWebSearch = defaultSettings.webSearch!;
   const defaultImageGeneration = defaultSettings.imageGeneration!;
@@ -371,17 +407,7 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
         apiKey: settings.webSearch?.brave?.apiKey ?? defaultWebSearch.brave!.apiKey,
       },
     },
-    imageGeneration: {
-      ...defaultImageGeneration,
-      ...settings.imageGeneration,
-      openai: {
-        ...defaultImageGeneration.openai,
-        ...settings.imageGeneration?.openai,
-        apiKey: settings.imageGeneration?.openai?.apiKey ?? defaultImageGeneration.openai.apiKey,
-        baseURL: settings.imageGeneration?.openai?.baseURL ?? defaultImageGeneration.openai.baseURL,
-        model: settings.imageGeneration?.openai?.model ?? defaultImageGeneration.openai.model,
-      },
-    },
+    imageGeneration: normalizeImageGeneration(settings.imageGeneration, defaultImageGeneration),
     audio: {
       ...defaultAudio,
       ...settings.audio,

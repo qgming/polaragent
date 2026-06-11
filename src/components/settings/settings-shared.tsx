@@ -71,6 +71,7 @@ export function SettingRow({
 }
 
 // 通用下拉选择器：触发器显示当前值，点击弹出单选列表
+// label 支持 ReactNode，便于在选项前展示图标（如比例小框）。
 export function SettingDropdown({
   value,
   onChange,
@@ -80,7 +81,7 @@ export function SettingDropdown({
 }: {
   value: string;
   onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: React.ReactNode }>;
   placeholder?: string;
   className?: string;
 }) {
@@ -96,7 +97,7 @@ export function SettingDropdown({
             className,
           )}
         >
-          <span className={cn("truncate", !current && "text-muted-foreground")}>
+          <span className={cn("flex min-w-0 items-center gap-2 truncate", !current && "text-muted-foreground")}>
             {current?.label ?? placeholder ?? value}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
@@ -109,7 +110,7 @@ export function SettingDropdown({
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
           {options.map((option) => (
             <DropdownMenuRadioItem key={option.value} value={option.value}>
-              {option.label}
+              <span className="flex items-center gap-2">{option.label}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

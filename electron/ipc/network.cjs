@@ -6,8 +6,8 @@ const { projectResourcePath } = require("../lib/app-paths.cjs");
 const { readText } = require("../lib/fs-utils.cjs");
 const { errorMessage, normalizeBaseUrl, normalizeWebUrl } = require("../lib/http-utils.cjs");
 
-const IMAGE_REQUEST_TIMEOUT_MS = 600000;
-const CORS_MAX_TIMEOUT_MS = 600000;
+const IMAGE_REQUEST_TIMEOUT_MS = 1800000;
+const CORS_MAX_TIMEOUT_MS = 1800000;
 const DEFAULT_TIMEOUT_MS = 120000;
 const MIN_TIMEOUT_MS = 3000;
 // 响应体大小上限（字节）：防止下载超大响应撑爆主进程内存

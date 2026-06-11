@@ -57,11 +57,23 @@ export const defaultSettings: Settings = {
     brave: { apiKey: "" },
   },
   imageGeneration: {
-    provider: "openai",
-    openai: {
+    // 默认接口标准：OpenAI 图片接口
+    // 比例/分辨率不在设置中预设，统一由 AI 调用工具时按需填写（可选参数）。
+    provider: "openai-images",
+    openaiImages: {
       apiKey: "",
       baseURL: "https://api.openai.com/v1",
-      model: "gpt-image-1",
+      model: "gpt-image-2",
+    },
+    openaiChat: {
+      apiKey: "",
+      baseURL: "https://api.openai.com/v1",
+      model: "gpt-image-2",
+    },
+    gemini: {
+      apiKey: "",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3-pro-image-preview",
     },
   },
   audio: {

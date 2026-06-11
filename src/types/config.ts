@@ -60,16 +60,50 @@ export interface WebSearchConfig {
 }
 
 /**
+ * 图片接口标准类型
+ *   openai-images  OpenAI 图片接口（/images/generations、/images/edits），兼容多数厂商
+ *   openai-chat    OpenAI Chat 多模态接口（/chat/completions 返回图片）
+ *   gemini         Google Gemini 接口（:generateContent，responseModalities=["IMAGE"]）
+ */
+export type ImageApiStandard = "openai-images" | "openai-chat" | "gemini";
+
+/**
+ * 图片画幅比例（前端展示与工具调用参数）。
+ */
+export type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4" | "2:3" | "3:2" | "21:9";
+
+/**
+ * 图片分辨率档位（前端展示与工具调用参数）。
+ */
+export type ImageResolution = "1K" | "2K" | "4K";
+
+/**
  * 图片生成配置
+ *
+ * 接口标准由用户在设置中选择（provider），工具不再自行决定接口格式。
+ * 比例（aspectRatio）与分辨率（resolution）不在此处预设，
+ * 全部由 AI 在调用工具时按需填写（可选）；设置只负责接入信息。
  */
 export interface ImageGenerationConfig {
-  // 当前选择的服务商
-  provider: "openai" | "openai-compatible";
-  // OpenAI / OpenAI 兼容图片生成接口配置
-  openai: {
+  // 当前选择的接口标准
+  provider: ImageApiStandard;
+  // OpenAI 图片接口配置（/images/generations、/images/edits）
+  openaiImages?: {
     apiKey: string;
     baseURL: string;
     model: string;
+  };
+  // OpenAI Chat 多模态接口配置（/chat/completions）
+  openaiChat?: {
+    apiKey: string;
+    baseURL: string;
+    model: string;
+  };
+  // Google Gemini 接口配置（:generateContent）
+  gemini?: {
+    apiKey: string;
+    baseURL?: string; // 默认 https://generativelanguage.googleapis.com/v1beta
+    model: string; // 如 gemini-3-pro-image-preview
   };
 }
 

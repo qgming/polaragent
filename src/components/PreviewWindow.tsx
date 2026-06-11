@@ -16,6 +16,7 @@ import {
   Eye,
   FolderOpen,
   Globe,
+  ImageOff,
   Loader2,
   RefreshCw,
   Save,
@@ -426,10 +427,13 @@ function PreviewContent({
 
 function ImagePreview({ filePath }: { filePath: string }) {
   const [src, setSrc] = useState("");
+  // 图片加载失败（文件损坏、格式不支持、内容为空等）时切换为友好提示。
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     // 本地文件需要转换为 file:// URL
     let cancelled = false;
+    setFailed(false);
     void fileUrl(filePath).then((url) => {
       if (!cancelled) setSrc(url);
     });
@@ -440,10 +444,19 @@ function ImagePreview({ filePath }: { filePath: string }) {
 
   return (
     <div className="flex h-full items-center justify-center p-6">
-      {src ? (
+      {failed ? (
+        <div className="flex max-w-sm flex-col items-center gap-2 text-center text-muted-foreground">
+          <ImageOff className="size-10 opacity-60" />
+          <p className="text-sm font-medium text-foreground">无法显示这张图片</p>
+          <p className="text-xs">
+            图片可能已损坏或格式不受支持，可尝试用其他看图软件打开该文件。
+          </p>
+        </div>
+      ) : src ? (
         <img
           src={src}
-          alt={filePath}
+          alt={fileNameOf(filePath)}
+          onError={() => setFailed(true)}
           className="max-h-full max-w-full object-contain"
         />
       ) : null}

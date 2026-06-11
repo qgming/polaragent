@@ -25,7 +25,7 @@ import {
 } from "./file-operations";
 import { searchWebTool } from "./web-search";
 import { readWebPageTool } from "./web-fetch";
-import { editImageTool, generateImageTool } from "./image-generation";
+import { editImageTool, generateImageTool, imageEditAvailable } from "./image-generation";
 import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
@@ -187,6 +187,8 @@ const TOOL_REGISTRY: ToolEntry[] = [
     name: "编辑图片",
     description: "调用图片编辑模型，基于本地源图和可选蒙版编辑图片并保存结果。",
     factory: editImageTool,
+    // 仅当所选图片接口标准支持编辑时才注册（openai-chat 不支持）。
+    isAvailable: () => imageEditAvailable(),
     group: "image",
   },
   {
