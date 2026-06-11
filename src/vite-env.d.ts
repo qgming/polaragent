@@ -4,6 +4,7 @@ interface Window {
   polaragent: {
     app: {
       getDataDir: () => Promise<string>;
+      getHomeDir: () => Promise<string>;
       ensureDataDir: () => Promise<void>;
       openDataDir: () => Promise<void>;
       openPath: (path: string) => Promise<void>;
@@ -159,6 +160,11 @@ interface Window {
         error?: string;
         blocked?: boolean;
       }>;
+    };
+    cli: {
+      detect: (cliName: string) => Promise<{ exists: boolean; command: string }>;
+      detectBatch: (cliNames: string[]) => Promise<Array<{ exists: boolean; command: string }>>;
+      getVersions: (cliNames: string[]) => Promise<Array<{ command: string; version: string | null }>>;
     };
     knowledge: {
       create: (request: {

@@ -29,7 +29,6 @@ function DataDirectoryCard() {
     try {
       await openDataDir();
     } catch (err) {
-      // 把底层真实错误透传出来，便于定位（权限/路径/未重建等）
       const detail =
         err instanceof Error ? err.message : String(err ?? "未知错误");
       setError(`无法打开数据目录：${detail}`);

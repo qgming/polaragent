@@ -33,7 +33,7 @@ import type { SkillConfig } from "@/types/config";
 import type { MarketSkill } from "@/lib/electron/electron-api";
 import { cn } from "@/lib/utils";
 
-type SkillTab = "market" | "builtin" | "custom";
+type SkillTab = "market" | "builtin" | "custom" | "global";
 
 export function SkillsPage() {
   const skills = useSkillsStore((state) => state.skills);
@@ -58,8 +58,13 @@ export function SkillsPage() {
     () => skills.filter((skill) => skill.type === "custom"),
     [skills],
   );
+  const globalSkills = useMemo(
+    () => skills.filter((skill) => (skill.type as any) === "global"),
+    [skills],
+  );
   const visibleBuiltin = filterSkills(builtinSkills, search);
   const visibleCustom = filterSkills(customSkills, search);
+  const visibleGlobal = filterSkills(globalSkills, search);
 
   // 已安装技能名集合（用于技能广场标记「已安装」）
   const installedNames = useMemo(
@@ -121,6 +126,12 @@ export function SkillsPage() {
                 {customSkills.length}
               </span>
             </TabTrigger>
+            <TabTrigger value="global">
+              全局
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                {globalSkills.length}
+              </span>
+            </TabTrigger>
           </TabsList>
         </Tabs>
 
@@ -133,32 +144,32 @@ export function SkillsPage() {
 
         {activeTab === "builtin" ? (
           <>
-            <section className="mt-5 rounded-xl border border-border bg-card">
-              {visibleBuiltin.length > 0 ? (
-                visibleBuiltin.map((skill) => (
+            {visibleBuiltin.length > 0 ? (
+              <section className="mt-5 rounded-xl border border-border bg-card">
+                {visibleBuiltin.map((skill) => (
                   <InstalledSkillRow
                     key={skill.id}
                     skill={skill}
                     onEdit={() => setEditingSkill(skill)}
                     onToggle={() => toggleSkill(skill.id, !skill.enabled)}
                   />
-                ))
-              ) : (
-                <EmptyCloudState
-                  title="没有找到内置技能"
-                  description="启动时会自动同步资源目录中的内置技能。"
-                  compact
-                />
-              )}
-            </section>
+                ))}
+              </section>
+            ) : (
+              <EmptyCloudState
+                title="没有找到内置技能"
+                description="启动时会自动同步资源目录中的内置技能。"
+                compact
+              />
+            )}
           </>
         ) : null}
 
         {activeTab === "custom" ? (
           <>
-            <section className="mt-5 rounded-xl border border-border bg-card">
-              {visibleCustom.length > 0 ? (
-                visibleCustom.map((skill) => (
+            {visibleCustom.length > 0 ? (
+              <section className="mt-5 rounded-xl border border-border bg-card">
+                {visibleCustom.map((skill) => (
                   <InstalledSkillRow
                     key={skill.id}
                     removable
@@ -166,15 +177,38 @@ export function SkillsPage() {
                     onEdit={() => setEditingSkill(skill)}
                     onToggle={() => toggleSkill(skill.id, !skill.enabled)}
                   />
-                ))
-              ) : (
-                <EmptyCloudState
-                  title="还没有用户安装的技能"
-                  description="从技能广场或本地目录安装后会显示在这里。"
-                  compact
-                />
-              )}
-            </section>
+                ))}
+              </section>
+            ) : (
+              <EmptyCloudState
+                title="还没有安装自定义技能"
+                description="点击「从 Git 安装」或「从本地安装」添加自定义技能。"
+                compact
+              />
+            )}
+          </>
+        ) : null}
+
+        {activeTab === "global" ? (
+          <>
+            {visibleGlobal.length > 0 ? (
+              <section className="mt-5 rounded-xl border border-border bg-card">
+                {visibleGlobal.map((skill) => (
+                  <InstalledSkillRow
+                    key={skill.id}
+                    skill={skill}
+                    onEdit={() => setEditingSkill(skill)}
+                    onToggle={() => toggleSkill(skill.id, !skill.enabled)}
+                  />
+                ))}
+              </section>
+            ) : (
+              <EmptyCloudState
+                title="没有找到全局技能"
+                description="使用 npx skills add 安装全局技能。"
+                compact
+              />
+            )}
           </>
         ) : null}
 

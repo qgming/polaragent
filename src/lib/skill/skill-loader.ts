@@ -4,6 +4,7 @@ import type { SkillConfig } from "@/types/config";
 import type { Skill as PiSkill } from "@earendil-works/pi-agent-core";
 import {
   getDataDir,
+  getHomeDir,
   installSkillFromGit,
   installSkillFromLocal,
   readFile,
@@ -35,6 +36,9 @@ export class SkillLoader {
 
     // 2. 加载用户自定义 Skills
     await this.loadCustomSkills();
+
+    // 3. 加载 ~/.agents/skills/ 全局 Skills (npx skills 安装的)
+    await this.loadGlobalSkills();
 
     console.log(`✓ Skills 加载完成，共 ${this.skills.size} 个`);
   }
@@ -94,6 +98,32 @@ export class SkillLoader {
       }
     } catch (error) {
       console.error("加载自定义 Skills 失败:", error);
+    }
+  }
+
+  /**
+   * 加载全局 Skills (npx skills 安装的)
+   */
+  private async loadGlobalSkills() {
+    try {
+      const homeDir = await getHomeDir();
+      const globalSkillsPath = `${homeDir}\\.agents\\skills`;
+      const skillDirs = await this.listSkillDirectories(globalSkillsPath);
+
+      for (const dir of skillDirs) {
+        try {
+          const skillMdPath = `${globalSkillsPath}\\${dir}\\SKILL.md`;
+          const config = await this.parseSkillMd(skillMdPath, dir, "custom");
+          config.type = "global" as any; // 标记为全局技能
+
+          this.skills.set(config.id, config);
+          console.log(`  ✓ 加载全局 Skill: ${config.name} (${config.id})`);
+        } catch (error) {
+          console.error(`  ✗ 加载全局 Skill 失败: ${dir}`, error);
+        }
+      }
+    } catch (error) {
+      console.error("加载全局 Skills 失败:", error);
     }
   }
 

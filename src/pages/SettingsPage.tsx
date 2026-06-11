@@ -2,7 +2,7 @@
 // src/pages/SettingsPage.tsx
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, AudioLines, Bot, Database, Image, Info, Search, Settings2 } from "lucide-react";
+import { ArrowLeft, AudioLines, Bot, Database, Image, Info, Search, Settings2, Terminal } from "lucide-react";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
 import { cn } from "@/lib/utils";
@@ -13,9 +13,10 @@ import { AudioPanel } from "@/components/settings/AudioPanel";
 import { WebSearchPanel } from "@/components/settings/WebSearchPanel";
 import { KnowledgePanel } from "@/components/settings/KnowledgePanel";
 import { AdvancedPanel } from "@/components/settings/AdvancedPanel";
+import { CliToolsPanel } from "@/components/settings/CliToolsPanel";
 import { AboutPanel } from "@/components/settings/AboutPanel";
 
-export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "data" | "about";
+export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "data" | "cliTools" | "about";
 
 // 左侧导航按分组组织（通用 / 高级）
 const navGroups: Array<{
@@ -35,7 +36,10 @@ const navGroups: Array<{
   },
   {
     title: "高级",
-    items: [{ id: "data", label: "数据管理", icon: Database }],
+    items: [
+      { id: "data", label: "数据管理", icon: Database },
+      { id: "cliTools", label: "CLI 工具", icon: Terminal },
+    ],
   },
   {
     title: "关于",
@@ -134,6 +138,7 @@ export function SettingsPage({
             <KnowledgePanel settings={settings} onUpdate={updateSettings} />
           ) : null}
           {activeSection === "data" ? <AdvancedPanel /> : null}
+          {activeSection === "cliTools" ? <CliToolsPanel /> : null}
           {activeSection === "about" ? <AboutPanel /> : null}
         </div>
       </main>

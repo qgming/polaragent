@@ -106,6 +106,7 @@ export const getPathForFile = (file: File): string => api().app.getPathForFile(f
 export const pickImageFile = () => api().app.pickImageFile();
 export const pickAudioFile = () => api().app.pickAudioFile();
 export const getDataDir = () => api().app.getDataDir();
+export const getHomeDir = () => api().app.getHomeDir();
 export const openDataDir = () => api().app.openDataDir();
 export const openPath = (path: string) => api().app.openPath(path);
 export const openExternal = (url: string) => api().app.openExternal(url);
@@ -530,4 +531,22 @@ export interface ShellExecResponse {
 
 export function runShell(request: ShellExecRequest): Promise<ShellExecResponse> {
   return api().shell.exec(request);
+}
+
+// CLI 工具检测
+export interface CliDetectResult {
+  exists: boolean;
+  command: string;
+}
+
+export function detectCli(cliName: string): Promise<CliDetectResult> {
+  return api().cli.detect(cliName);
+}
+
+export function detectCliBatch(cliNames: string[]): Promise<CliDetectResult[]> {
+  return api().cli.detectBatch(cliNames);
+}
+
+export function getCliVersions(cliNames: string[]): Promise<Array<{ command: string; version: string | null }>> {
+  return api().cli.getVersions(cliNames);
 }

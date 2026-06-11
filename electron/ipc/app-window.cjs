@@ -1,5 +1,5 @@
 // IPC：应用、窗口、对话框、文件预览窗口
-const { BrowserWindow, dialog, shell } = require("electron");
+const { BrowserWindow, dialog, shell, app } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -29,6 +29,7 @@ function labelForPath(filePath) {
 
 function register(ipcMain) {
   ipcMain.handle("app:get-data-dir", () => dataDir());
+  ipcMain.handle("app:get-home-dir", () => app.getPath("home"));
   ipcMain.handle("app:ensure-data-dir", ensureDataDir);
   ipcMain.handle("app:open-data-dir", async () => {
     await ensureDir(dataDir());

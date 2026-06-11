@@ -5,6 +5,7 @@ const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 contextBridge.exposeInMainWorld("polaragent", {
   app: {
     getDataDir: () => invoke("app:get-data-dir"),
+    getHomeDir: () => invoke("app:get-home-dir"),
     ensureDataDir: () => invoke("app:ensure-data-dir"),
     openDataDir: () => invoke("app:open-data-dir"),
     openPath: (path) => invoke("app:open-path", { path }),
@@ -96,6 +97,11 @@ contextBridge.exposeInMainWorld("polaragent", {
   },
   shell: {
     exec: (request) => invoke("shell:exec", { request }),
+  },
+  cli: {
+    detect: (cliName) => invoke("cli:detect", { cliName }),
+    detectBatch: (cliNames) => invoke("cli:detect-batch", { cliNames }),
+    getVersions: (cliNames) => invoke("cli:get-versions", { cliNames }),
   },
   knowledge: {
     create: (request) => invoke("knowledge:create", { request }),
