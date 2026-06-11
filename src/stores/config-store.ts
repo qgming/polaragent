@@ -408,25 +408,7 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
       },
     },
     imageGeneration: normalizeImageGeneration(settings.imageGeneration, defaultImageGeneration),
-    audio: {
-      ...defaultAudio,
-      ...settings.audio,
-      asr: {
-        ...defaultAudio.asr,
-        ...settings.audio?.asr,
-        apiKey: settings.audio?.asr?.apiKey ?? defaultAudio.asr.apiKey,
-        baseURL: settings.audio?.asr?.baseURL ?? defaultAudio.asr.baseURL,
-        model: settings.audio?.asr?.model ?? defaultAudio.asr.model,
-      },
-      tts: {
-        ...defaultAudio.tts,
-        ...settings.audio?.tts,
-        apiKey: settings.audio?.tts?.apiKey ?? defaultAudio.tts.apiKey,
-        baseURL: settings.audio?.tts?.baseURL ?? defaultAudio.tts.baseURL,
-        defaultVoice: settings.audio?.tts?.defaultVoice ?? defaultAudio.tts.defaultVoice,
-        voices: settings.audio?.tts?.voices ?? defaultAudio.tts.voices,
-      },
-    },
+    audio: settings.audio ?? defaultAudio,
     knowledge: {
       ...defaultKnowledge,
       ...settings.knowledge,

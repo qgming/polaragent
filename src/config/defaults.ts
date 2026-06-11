@@ -77,31 +77,42 @@ export const defaultSettings: Settings = {
     },
   },
   audio: {
-    // 语音识别（ASR）：默认 OpenAI Whisper 接口
     asr: {
-      apiKey: "",
-      baseURL: "https://api.openai.com/v1",
-      model: "whisper-1",
-      language: "",
+      provider: "audio",
+      audio: {
+        apiKey: "",
+        baseURL: "https://api.openai.com/v1",
+        model: "whisper-1",
+        language: "",
+      },
+      chat: {
+        apiKey: "",
+        baseURL: "https://api.openai.com/v1",
+        model: "gpt-4o-audio-preview",
+        language: "",
+      },
     },
-    // 语音合成（TTS）：默认 MiMo TTS 接口，预置冰糖音色
     tts: {
-      apiKey: "",
-      baseURL: "https://api.xiaomimimo.com/v1",
-      defaultVoice: "bingtang",
-      voices: [
-        {
-          id: "bingtang",
-          name: "冰糖",
-          provider: "mimo",
-          model: "mimo-v2.5-tts",
-          voice: "冰糖",
-          speed: 1.0,
-          format: "mp3",
-        },
-      ],
+      provider: "chat",
+      audio: {
+        apiKey: "",
+        baseURL: "https://api.openai.com/v1",
+        model: "tts-1",
+        defaultVoice: "alloy",
+        voices: [
+          { id: "alloy", voice: "alloy", speed: 1.0, format: "mp3" },
+        ],
+      },
+      chat: {
+        apiKey: "",
+        baseURL: "https://api.xiaomimimo.com/v1",
+        model: "mimo-v2.5-tts",
+        defaultVoice: "bingtang",
+        voices: [
+          { id: "bingtang", voice: "冰糖", speed: 1.0, format: "mp3" },
+        ],
+      },
     },
-    // 语音输入优化选项
     inputOptimization: {
       autoSend: false,
       refineText: false,
@@ -129,7 +140,7 @@ export const defaultProviders: ProvidersConfig = {
   providers: [
     {
       id: "openai-compatible",
-      name: "OpenAI Compatible",
+      name: "默认配置",
       type: "openai-completions",
       enabled: false,
       config: {

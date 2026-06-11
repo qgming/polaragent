@@ -147,7 +147,6 @@ export function ImageGenerationPanel({
             <Image className="size-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">{activeStandard.label}</h3>
           </div>
-          <p className="mt-2 text-sm text-muted-foreground">{activeStandard.hint}</p>
         </div>
 
         <div className="space-y-4 px-5 py-5">
@@ -169,6 +168,10 @@ export function ImageGenerationPanel({
               onChange={(patch) => setGemini((prev) => ({ ...prev, ...patch }))}
             />
           )}
+
+          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+            {activeStandard.hint}
+          </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
             {saveState === "error" ? (

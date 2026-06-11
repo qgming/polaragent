@@ -108,43 +108,63 @@ export interface ImageGenerationConfig {
 }
 
 /**
+ * 音频接口标准类型
+ */
+export type AudioApiStandard = "audio" | "chat";
+
+/**
  * 音频配置（语音识别 ASR + 语音合成 TTS）
- * TTS 采用音色列表管理，支持添加多个音色配置，AI 可灵活选择。
+ * 支持 audio 和 chat 两种接口标准
  */
 export interface AudioConfig {
-  // 语音识别（ASR）：/audio/transcriptions
+  // 语音识别（ASR）
   asr: {
-    apiKey: string;
-    baseURL: string;
-    model: string; // 如 whisper-1
-    language?: string; // 如 zh / en，留空自动检测
+    provider: AudioApiStandard;
+    audio?: {
+      apiKey: string;
+      baseURL: string;
+      model: string;
+      language?: string;
+    };
+    chat?: {
+      apiKey: string;
+      baseURL: string;
+      model: string;
+      language?: string;
+    };
   };
-  // 语音合成（TTS）：/audio/speech 或兼容接口
+  // 语音合成（TTS）
   tts: {
-    apiKey: string;
-    baseURL: string;
-    defaultVoice: string; // 默认音色 ID，对应 voices 列表中的某个 id
-    voices: VoiceConfig[]; // 音色列表
+    provider: AudioApiStandard;
+    audio?: {
+      apiKey: string;
+      baseURL: string;
+      model: string;
+      defaultVoice: string;
+      voices: VoiceConfig[];
+    };
+    chat?: {
+      apiKey: string;
+      baseURL: string;
+      model: string;
+      defaultVoice: string;
+      voices: VoiceConfig[];
+    };
   };
-  // 语音输入优化选项
   inputOptimization?: {
-    autoSend?: boolean; // 转文字后自动发送
-    refineText?: boolean; // 转文字后调用模型整理文本（去除口头语）
+    autoSend?: boolean;
+    refineText?: boolean;
   };
 }
 
 /**
  * TTS 音色配置
- * 每个音色对应一套完整的 TTS 参数（模型、音色标识、语速、格式）。
  */
 export interface VoiceConfig {
-  id: string; // 唯一标识，如 "bingtang"、"alloy"
-  name: string; // 显示名称，如 "冰糖"、"Alloy"
-  provider: "openai" | "mimo"; // TTS 服务商，决定调用哪个接口
-  model: string; // TTS 模型，如 "mimo-v2.5-tts"、"tts-1"
-  voice: string; // 音色标识（手动输入，支持任意值），如 "冰糖"、"alloy"
-  speed: number; // 默认语速 0.25 - 4.0
-  format: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16"; // 音频格式
+  id: string;
+  voice: string;
+  speed: number;
+  format: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16";
 }
 
 /**

@@ -14,9 +14,10 @@ import {
   Settings2,
   TriangleAlert,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { listRemoteModels } from "@/lib/electron/electron-api";
+import { listRemoteModels, chatCompletion } from "@/lib/electron/electron-api";
 import type { ProviderConfig } from "@/types/config";
 import { cn } from "@/lib/utils";
 import { Field, SettingDropdown } from "../settings-shared";
@@ -43,6 +44,8 @@ export function ProviderCard({
   const [saveState, setSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
+  const [testingAll, setTestingAll] = useState(false);
+  const [modelStatus, setModelStatus] = useState<Record<string, "idle" | "testing" | "success" | "error">>({});
   // "saved" 状态自动复位的定时器，组件卸载时清理，避免对已卸载组件 setState
   const savedTimerRef = useRef<number | undefined>(undefined);
 
@@ -158,6 +161,36 @@ export function ProviderCard({
     }
   };
 
+  const testAllModels = async () => {
+    if (!baseURL.trim() || !apiKey.trim() || provider.models.length === 0) return;
+
+    setTestingAll(true);
+    const newStatus: Record<string, "idle" | "testing" | "success" | "error"> = {};
+
+    for (const model of provider.models) {
+      newStatus[model.id] = "testing";
+      setModelStatus({ ...newStatus });
+
+      try {
+        await chatCompletion({
+          baseUrl: baseURL.trim(),
+          apiKey: apiKey.trim(),
+          model: model.id,
+          systemPrompt: "",
+          messages: [{ role: "user", content: "hi" }],
+          temperature: 0.7,
+          maxTokens: 10,
+        });
+        newStatus[model.id] = "success";
+      } catch {
+        newStatus[model.id] = "error";
+      }
+      setModelStatus({ ...newStatus });
+    }
+
+    setTestingAll(false);
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card">
       {/* 头部：点击展开/收起 */}
@@ -173,16 +206,15 @@ export function ProviderCard({
               expanded ? "rotate-180" : "",
             )}
           />
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <Bot className="size-5" />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold">
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="truncate text-sm font-semibold">
               {provider.name}
             </span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {PROVIDER_TYPE_LABELS[provider.type]} · {provider.models.length}{" "}
-              个模型{provider.enabled ? " · 已启用" : ""}
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {PROVIDER_TYPE_LABELS[provider.type]}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+              {provider.models.length} 个模型
             </span>
           </span>
         </button>
@@ -260,21 +292,6 @@ export function ProviderCard({
                 <Bot className="size-4" />
                 模型
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  !baseURL.trim() || !apiKey.trim() || fetchState === "loading"
-                }
-                onClick={() => void fetchModels()}
-              >
-                {fetchState === "loading" ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                云端获取
-              </Button>
             </div>
 
             <div className="flex gap-2">
@@ -292,7 +309,7 @@ export function ProviderCard({
               />
               <Button
                 variant="outline"
-                size="sm"
+                size="default"
                 disabled={!newModel.trim()}
                 onClick={() => {
                   addModel(newModel);
@@ -301,6 +318,21 @@ export function ProviderCard({
               >
                 <Plus className="size-4" />
                 添加
+              </Button>
+              <Button
+                variant="outline"
+                size="default"
+                disabled={
+                  !baseURL.trim() || !apiKey.trim() || fetchState === "loading"
+                }
+                onClick={() => void fetchModels()}
+              >
+                {fetchState === "loading" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                云端获取
               </Button>
             </div>
 
@@ -318,22 +350,56 @@ export function ProviderCard({
             ) : null}
 
             {provider.models.length > 0 ? (
-              <div className="mt-3 rounded-lg border border-border">
-                {provider.models.map((model) => (
-                  <div
-                    key={model.id}
-                    className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0"
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    已添加的模型
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      !baseURL.trim() || !apiKey.trim() || testingAll
+                    }
+                    onClick={() => void testAllModels()}
                   >
-                    <span className="min-w-0 truncate text-sm">{model.id}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeModel(model.id)}
-                      className="text-muted-foreground hover:text-destructive"
+                    {testingAll ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="size-3.5" />
+                    )}
+                    全部测试
+                  </Button>
+                </div>
+
+                <div className="rounded-lg border border-border">
+                  {provider.models.map((model) => (
+                    <div
+                      key={model.id}
+                      className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5 last:border-b-0"
                     >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex min-w-0 items-center gap-2">
+                        {modelStatus[model.id] === "testing" ? (
+                          <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+                        ) : modelStatus[model.id] === "success" ? (
+                          <div className="size-2 shrink-0 rounded-full bg-green-500" />
+                        ) : modelStatus[model.id] === "error" ? (
+                          <div className="size-2 shrink-0 rounded-full bg-red-500" />
+                        ) : (
+                          <div className="size-2 shrink-0 rounded-full bg-muted" />
+                        )}
+                        <span className="min-w-0 truncate text-sm">{model.id}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeModel(model.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : (
               <p className="mt-3 text-xs text-muted-foreground">

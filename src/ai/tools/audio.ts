@@ -86,17 +86,20 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
     parameters: speechRecognitionParams,
     execute: async (_id, params: SpeechRecognitionParams) => {
       const settings = useConfigStore.getState().settings.audio;
-      const asr = settings?.asr;
-      if (!asr?.apiKey?.trim()) throw new Error("语音识别 API Key 未配置");
-      if (!asr.model?.trim()) throw new Error("语音识别模型未配置");
+      const asrConfig = settings?.asr;
+      if (!asrConfig?.provider) throw new Error("ASR 接口未配置");
+
+      const activeConfig = asrConfig.provider === "audio" ? asrConfig.audio : asrConfig.chat;
+      if (!activeConfig?.apiKey?.trim()) throw new Error("语音识别 API Key 未配置");
+      if (!activeConfig.model?.trim()) throw new Error("语音识别模型未配置");
 
       const audioPath = resolvePath(ctx, params.audioPath);
-      const language = params.language?.trim() || asr.language?.trim() || undefined;
+      const language = params.language?.trim() || activeConfig.language?.trim() || undefined;
 
       const result = await openAiTranscription({
-        apiKey: asr.apiKey.trim(),
-        baseURL: asr.baseURL,
-        model: asr.model.trim(),
+        apiKey: activeConfig.apiKey.trim(),
+        baseURL: activeConfig.baseURL,
+        model: activeConfig.model.trim(),
         audioPath,
         language,
         responseFormat: "json",
@@ -107,7 +110,7 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
         details: {
           audioPath,
           language,
-          model: asr.model,
+          model: activeConfig.model,
           text: result.text,
         },
       };
@@ -125,17 +128,21 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
     parameters: speechSynthesisParams,
     execute: async (_id, params: SpeechSynthesisParams) => {
       const settings = useConfigStore.getState().settings.audio;
-      const tts = settings?.tts;
-      if (!tts?.apiKey?.trim()) throw new Error("语音合成 API Key 未配置");
-      if (!tts.voices || tts.voices.length === 0) throw new Error("未配置任何音色");
+      const ttsConfig = settings?.tts;
+      if (!ttsConfig?.provider) throw new Error("TTS 接口未配置");
+
+      const activeConfig = ttsConfig.provider === "audio" ? ttsConfig.audio : ttsConfig.chat;
+      if (!activeConfig?.apiKey?.trim()) throw new Error("语音合成 API Key 未配置");
+      if (!activeConfig.model?.trim()) throw new Error("语音合成模型未配置");
+      if (!activeConfig.voices || activeConfig.voices.length === 0) throw new Error("未配置任何音色");
 
       // 查找指定音色或使用默认音色
-      let voiceConfig = tts.voices.find((v) => v.id === tts.defaultVoice);
+      let voiceConfig = activeConfig.voices.find((v) => v.id === activeConfig.defaultVoice);
       if (params.voice) {
-        const specified = tts.voices.find((v) => v.voice === params.voice || v.id === params.voice);
+        const specified = activeConfig.voices.find((v) => v.voice === params.voice || v.id === params.voice);
         if (specified) voiceConfig = specified;
       }
-      if (!voiceConfig) voiceConfig = tts.voices[0]; // 回退到第一个
+      if (!voiceConfig) voiceConfig = activeConfig.voices[0];
 
       const voice = params.voice ?? voiceConfig.voice;
       const speed = params.speed ?? voiceConfig.speed;
@@ -143,23 +150,22 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
 
       // 根据 provider 调用不同接口
       let result;
-      if (voiceConfig.provider === "mimo") {
+      if (ttsConfig.provider === "chat") {
         result = await mimoSpeech({
-          apiKey: tts.apiKey.trim(),
-          baseURL: tts.baseURL,
-          model: voiceConfig.model,
+          apiKey: activeConfig.apiKey.trim(),
+          baseURL: activeConfig.baseURL,
+          model: activeConfig.model.trim(),
           input: params.text,
           voice,
-          speed, // MiMo 不支持，但保留兼容
+          speed,
           responseFormat,
           stylePrompt: params.stylePrompt,
         });
       } else {
-        // openai
         result = await openAiSpeech({
-          apiKey: tts.apiKey.trim(),
-          baseURL: tts.baseURL,
-          model: voiceConfig.model,
+          apiKey: activeConfig.apiKey.trim(),
+          baseURL: activeConfig.baseURL,
+          model: activeConfig.model.trim(),
           input: params.text,
           voice,
           speed,
@@ -183,11 +189,10 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
           voice,
           speed,
           format: extension,
-          model: voiceConfig.model,
-          provider: voiceConfig.provider,
-          // 供 UI 渲染语音条使用
+          model: activeConfig.model,
+          provider: ttsConfig.provider,
           audioPath: target,
-          duration: Math.ceil(params.text.length / 10), // 粗略估算时长
+          duration: Math.ceil(params.text.length / 10),
         },
       };
     },

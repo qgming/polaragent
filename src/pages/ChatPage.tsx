@@ -453,9 +453,11 @@ function Composer({
 
         // 获取 ASR 配置
         const settings = useConfigStore.getState().settings.audio;
-        const asr = settings?.asr;
+        const asrConfig = settings?.asr;
+        if (!asrConfig?.provider) throw new Error("ASR 接口未配置");
 
-        if (!asr?.apiKey?.trim() || !asr.model?.trim()) {
+        const activeConfig = asrConfig.provider === "audio" ? asrConfig.audio : asrConfig.chat;
+        if (!activeConfig?.apiKey?.trim() || !activeConfig.model?.trim()) {
           throw new Error("语音识别未配置，请在设置中配置 ASR");
         }
 
@@ -473,11 +475,11 @@ function Composer({
 
         // 调用语音识别 API
         const transcription = await openAiTranscription({
-          apiKey: asr.apiKey.trim(),
-          baseURL: asr.baseURL,
-          model: asr.model.trim(),
+          apiKey: activeConfig.apiKey.trim(),
+          baseURL: activeConfig.baseURL,
+          model: activeConfig.model.trim(),
           audioPath: tempPath,
-          language: asr.language?.trim() || undefined,
+          language: activeConfig.language?.trim() || undefined,
           responseFormat: "json",
         });
 

@@ -13,7 +13,7 @@ export const STANDARDS: Array<{
 }> = [
   {
     id: "openai-images",
-    label: "OpenAI 图片接口",
+    label: "OpenAI Image",
     hint: "兼容主流图像生成模型，AI 自动选择比例与分辨率，支持图片编辑。",
   },
   {
