@@ -342,6 +342,14 @@ export class AgentManager {
       }),
     });
 
+    // 启用 Prompt Caching
+    harness.setStreamOptions({
+      cacheRetention: "short",
+      metadata: {
+        sessionId: teamContext?.sessionId || threadId,
+      },
+    });
+
     harness.on("tool_call", async (event) => {
       const decision = await reviewToolPermission({
         agentId,

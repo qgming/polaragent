@@ -28,6 +28,7 @@ export function readFileTool(ctx: ToolContext): AgentTool<typeof readFileParams>
     label: "读取文件",
     description: "读取工作目录下指定文件的文本内容。",
     parameters: readFileParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof readFileParams>) => {
       const target = resolvePath(ctx, params.path);
       const content = await readFile(target);
@@ -247,6 +248,7 @@ export function listDirectoryTool(
     label: "列出目录",
     description: "列出工作目录或指定目录下的文件与子目录。",
     parameters: listDirectoryParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof listDirectoryParams>) => {
       const target = resolvePath(ctx, params.path || ".");
       const entries = await listDirectory(target);

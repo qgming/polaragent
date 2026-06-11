@@ -8,6 +8,10 @@ import { queryKnowledge } from "@/lib/knowledge";
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
 
+// 查询缓存：缓存键 -> { 结果, 时间戳 }
+const queryCache = new Map<string, { results: any[]; timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+
 const searchKnowledgeParams = Type.Object({
   query: Type.String({ description: "检索关键词或问题" }),
   knowledgeBaseIds: Type.Optional(
@@ -33,6 +37,7 @@ export function searchKnowledgeTool(
     description:
       "在已启用的知识库中检索相关文档片段。用于获取项目文档、技术规范、历史资料等上下文信息。",
     parameters: searchKnowledgeParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof searchKnowledgeParams>) => {
       const settings = useConfigStore.getState().settings;
       const knowledgeConfig = settings.knowledge;
@@ -44,7 +49,6 @@ export function searchKnowledgeTool(
         };
       }
 
-      // 获取当前会话选中的知识库 ID 列表（从 context 传入）
       const kbIds = params.knowledgeBaseIds || ctx.knowledgeBaseIds || [];
       if (kbIds.length === 0) {
         return {
@@ -55,6 +59,27 @@ export function searchKnowledgeTool(
 
       const topK = params.topK ?? knowledgeConfig.retrieval.topK;
       const threshold = knowledgeConfig.retrieval.threshold;
+
+      // 生成缓存键
+      const cacheKey = `${params.query}:${kbIds.sort().join(",")}:${topK}:${threshold}`;
+
+      // 检查缓存
+      const cached = queryCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        const markdown = cached.results
+          .map(
+            (r: any, i: number) =>
+              `### ${i + 1}. ${r.file} (相似度: ${r.score.toFixed(3)})\n\n${r.text}\n`,
+          )
+          .join("\n---\n\n");
+
+        return {
+          content: text(
+            `找到 ${cached.results.length} 条相关内容（缓存）：\n\n${markdown}`,
+          ),
+          details: { results: cached.results, cached: true },
+        };
+      }
 
       try {
         // 跨库检索并合并结果
@@ -68,7 +93,7 @@ export function searchKnowledgeTool(
               },
               topK,
               threshold,
-            }),
+            }).catch(() => ({ results: [] })), // 部分失败不影响其他库
           ),
         );
 
@@ -82,6 +107,15 @@ export function searchKnowledgeTool(
             content: text(`未找到与「${params.query}」相关的内容。`),
             details: { results: [] },
           };
+        }
+
+        // 缓存结果
+        queryCache.set(cacheKey, { results: merged, timestamp: Date.now() });
+
+        // 简单的缓存清理
+        if (queryCache.size > 100) {
+          const oldestKey = Array.from(queryCache.keys())[0];
+          queryCache.delete(oldestKey);
         }
 
         const markdown = merged

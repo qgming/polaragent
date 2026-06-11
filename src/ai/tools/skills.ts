@@ -118,6 +118,7 @@ export function listSkillsTool(
     description:
       "列出当前助手或团队上下文可用的技能。遇到任务可能匹配某个技能时，先调用此工具查看技能名称和适用场景，再用 read_skill 读取具体说明。",
     parameters: listSkillsParams,
+    executionMode: "parallel",
     execute: async () => {
       const skills = availableSkills(ctx);
       if (skills.length === 0) {
@@ -153,6 +154,7 @@ export function readSkillTool(
     description:
       "读取当前上下文中某个可用技能的完整 SKILL.md 说明。只能读取 list_skills 列出的技能，用于在执行匹配任务前加载具体流程、约束和参考资料位置。",
     parameters: readSkillParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof readSkillParams>) => {
       const skill = findSkill(ctx, params.name);
       if (!skill) {

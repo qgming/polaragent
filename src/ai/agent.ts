@@ -16,12 +16,9 @@ import { toolDisplayName } from "./tools";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
-import {
-  appendGuidanceMessage,
-} from "@/lib/session/personal";
-import {
-  appendTeamGuidanceMessage,
-} from "@/lib/session/team";
+import { appendGuidanceMessage } from "@/lib/session/personal";
+import { appendTeamGuidanceMessage } from "@/lib/session/team";
+import { autoCompactIfNeeded } from "@/lib/session/compaction";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { ChatAttachment, Segment } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
@@ -135,6 +132,17 @@ async function buildImageInputs(attachments?: ChatAttachment[]): Promise<ImageCo
     }
   }
   return images;
+}
+
+function selectThinkingLevel(input: string): "minimal" | "low" | "medium" | "high" {
+  const wordCount = input.split(/\s+/).length;
+  const hasCode = /```|`\w+`/.test(input);
+  const hasComplexQuery = /如何|怎么|为什么|设计|实现|优化|架构/.test(input);
+
+  if (wordCount < 10 && !hasCode && !hasComplexQuery) return "minimal";
+  if (wordCount < 30 && !hasComplexQuery) return "low";
+  if (wordCount < 100 || hasCode) return "medium";
+  return "high";
 }
 
 /**
@@ -442,9 +450,19 @@ export async function promptAgent(
       options.filePaths,
       options.attachments?.filter((attachment) => attachment.kind === "image"),
     );
+
+    // 动态调整 thinking level
+    const thinkingLevel = selectThinkingLevel(modelInput);
+    await harness.setThinkingLevel(thinkingLevel);
+
+    // 智能压缩：基于 token 数自动触发
+    await autoCompactIfNeeded(harness);
+
     const imageInputs = await buildImageInputs(options.attachments);
     if (imageInputs.length > 0) {
-      await harness.prompt(modelInput || "请查看这些图片。", { images: imageInputs });
+      await harness.prompt(modelInput || "请查看这些图片。", {
+        images: imageInputs,
+      });
     } else {
       await harness.prompt(modelInput);
     }

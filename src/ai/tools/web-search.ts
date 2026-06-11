@@ -27,6 +27,7 @@ export function searchWebTool(
     description:
       "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。用于获取最新资讯、核实事实、查找线上资源。",
     parameters: searchWebParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof searchWebParams>) => {
       const settings = useConfigStore.getState().settings;
       const webSearchConfig = settings.webSearch;

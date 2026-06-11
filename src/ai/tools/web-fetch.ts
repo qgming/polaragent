@@ -210,6 +210,7 @@ export function readWebPageTool(
       "读取网页正文并提取主要文本。默认抽取全文；可用 mode=heading_range 按标题取一段，" +
       "或 mode=anchor_range 以关键词为中心截取附近内容。适合在搜索后深入阅读某个页面。",
     parameters: readWebPageParams,
+    executionMode: "parallel",
     execute: async (_id, params: Static<typeof readWebPageParams>) => {
       const mode: WebFetchMode =
         params.mode === "heading_range" || params.mode === "anchor_range"

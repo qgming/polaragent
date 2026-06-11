@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="public/logo.png" alt="PolarAgent Logo" width="96" height="96" />
+  <img src="public/logo.png" alt="PolarAgent Logo" width="128" height="128" />
 
 # PolarAgent
 
-**一个面向真实工作的桌面 AI Agent 工作台**
+**本地优先的桌面 AI Agent 工作台**
 
-把多模型对话、Agent 编排、团队协作、MCP 工具、技能系统和本地会话管理放进同一个优雅的桌面应用里。
+多模型对话、Agent 编排、团队协作、工具系统与知识库管理
 
   <p>
     <img alt="Electron" src="https://img.shields.io/badge/Electron-39-47848F?style=flat-square&logo=electron&logoColor=white" />
@@ -17,153 +17,223 @@
 
 ---
 
-## 项目简介
+## ✨ 核心特性
 
-PolarAgent 是一个基于 Electron 的跨平台桌面 AI Agent 应用。它不是单纯的聊天窗口，而是一个可以承载复杂任务的工作台：你可以配置多个模型供应商，创建不同角色的助手，让团队 Agent 协作推进任务，并通过内置工具与 MCP 连接文件系统、网页搜索、外部服务和自定义能力。
+### 🤖 多模型与多助手
 
-应用默认采用本地优先的设计。会话、配置、助手、团队、技能和 MCP 配置都保存在本机，适合个人工作流、研发辅助、资料处理、自动化探索和多模型实验。
+- **多供应商支持**：配置多个模型供应商（OpenAI、Anthropic、国内大模型等）
+- **灵活切换**：每个助手可独立配置模型、系统提示词和技能
+- **角色管理**：创建多个专业助手（代码、写作、分析等）
+- **会话隔离**：不同助手的对话独立存储，互不干扰
 
-## 主要能力
+### 👥 团队 Agent 协作
 
-### 多模型与多助手
+- **多 Agent 编排**：创建团队，多个助手协同完成复杂任务
+- **协作机制**：支持投票、流程控制、任务标记
+- **团队会话**：可视化团队对话历史和成员轨迹
+- **灵活管理**：团队成员、技能配置动态调整
 
-- 支持自定义模型供应商，可配置 Base URL、API Key、模型列表和默认模型。
-- 兼容 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 等接口形态。
-- 每个助手都可以拥有独立名称、头像、描述、系统提示词、模型和技能配置。
-- 支持普通单助手对话，也支持后台持续运行的多会话任务。
+### 📚 知识库管理
 
-### 团队 Agent 协作
+- **文档导入**：支持 TXT、Markdown、PDF、Word 等格式
+- **向量检索**：基于语义相似度的智能搜索
+- **灵活管理**：添加、删除、重建知识库
+- **会话绑定**：每个对话可选择启用的知识库
 
-- 支持创建团队，把多个 Agent 组织成一个协作单元。
-- 团队成员可以接力推进任务、控制流程、标记阻塞或结束任务。
-- 内置团队投票能力，适合方案选择、方向确认和多人决策式推理。
-- 提供团队会话、团队监控与任务轨迹，让复杂协作更容易跟踪。
+### 🛠️ 丰富的工具系统
 
-### 工具与 MCP
+**内置工具**：
+- 文件操作（读取、写入、编辑、删除）
+- 目录管理（列表、创建）
+- 网络搜索（多服务商：Tavily、Serper、SearXNG、Brave）
+- 网页读取（正文提取、结构化解析）
+- 询问用户（交互式确认）
+- Bash 执行（命令行操作）
 
-- 内置文件读写、目录操作、网页搜索、网页读取、询问用户、更新待办等工具。
-- 支持 MCP 服务发现、安装、自定义配置和工具清单刷新。
-- 内置 MCP 与已安装 MCP 都支持真实有效的总开关和子工具开关。
-- 已打开的会话会在工具配置变化后自动使用最新工具集，无需重新创建会话。
+**MCP 支持**：
+- 完整集成 Model Context Protocol
+- 支持安装和配置外部 MCP 服务
+- 工具总开关和子工具粒度控制
 
-### 技能系统
+### 🎨 优雅的桌面体验
 
-- 支持本地技能加载与启用。
-- 提供技能广场入口，可安装和管理扩展能力。
-- 助手可以按需绑定技能，让不同 Agent 形成更明确的专业分工。
+- **原生桌面**：Electron 跨平台应用
+- **Markdown 渲染**：代码高亮、表格、Mermaid 图表
+- **主题切换**：亮色、深色、跟随系统
+- **流式输出**：打字机效果的实时回复
+- **本地存储**：会话、配置全部保存在本地
 
-### 桌面体验
+### ⚙️ 灵活的配置
 
-- Electron 原生桌面外壳，支持开发启动、生产启动和安装包构建。
-- Markdown、GFM、代码高亮、Mermaid 图表渲染一应俱全。
-- 支持亮色、深色、跟随系统主题，以及对话字体和字号偏好。
-- 会话以本地 JSONL 方式持久化，重启后仍能恢复上下文和任务轨迹。
+- **偏好设置**：主题、字体、字号自定义
+- **模型配置**：供应商、API Key、默认模型
+- **图片生成**：支持多种图片生成服务
+- **音频设置**：语音识别和语音合成配置
+- **数据管理**：导出、备份、清理
 
-## 快速开始
+---
+
+## 📦 快速开始
 
 ### 环境要求
 
-- Node.js 20 或更高版本
-- npm 10 或更高版本
-- Windows、macOS 或 Linux 桌面环境
+- Node.js 20+
+- npm 10+
+- Windows / macOS / Linux
 
-### 安装依赖
+### 安装与运行
 
 ```bash
+# 1. 安装依赖
 npm install
-```
 
-### 开发模式
-
-```bash
+# 2. 开发模式
 npm run dev
-```
 
-该命令会同时启动 Vite 开发服务器和 Electron 桌面窗口。
-
-### 构建前端产物
-
-```bash
+# 3. 构建应用
 npm run build
-```
 
-### 启动已构建应用
-
-```bash
-npm run start
-```
-
-### 打包桌面应用
-
-```bash
+# 4. 打包桌面应用
 npm run dist
 ```
 
-打包配置位于 `package.json` 的 `build` 字段中，应用名称为 `PolarAgent`，图标资源来自 `build/icon.ico` 与 `build/icon.png`。
+### 首次配置
 
-## 首次使用
+1. 打开应用，进入「设置 → 模型设置」
+2. 添加模型供应商（填写 Base URL 和 API Key）
+3. 添加可用模型并设置默认模型
+4. 返回对话页，开始使用
 
-1. 打开应用后进入「设置」。
-2. 在模型设置里添加一个模型供应商。
-3. 填写 `Base URL`、`API Key`，并添加可用模型。
-4. 设置默认供应商和默认模型。
-5. 回到对话页，新建会话即可开始使用。
+---
 
-如果需要外部工具能力，可以进入「工具」页面安装 MCP，或启用、关闭内置工具与 MCP 子工具。
-
-## 项目结构
+## 🏗️ 项目结构
 
 ```text
 polaragent/
-├── electron/                 # Electron 主进程、preload 与启动器
-├── public/                   # 静态资源，包含应用 logo
-├── resources/                # 内置资源：助手、技能、MCP 等
-├── build/                    # electron-builder 图标与打包资源
 ├── src/
-│   ├── ai/                   # Agent 运行时、模型供应商、团队协作、工具系统
-│   ├── components/           # 通用组件、对话组件、设置组件、工具编辑器
-│   ├── config/               # 默认配置
-│   ├── hooks/                # React hooks
-│   ├── lib/                  # Electron API、会话持久化、Markdown、技能运行时等
-│   ├── pages/                # 页面：对话、团队、助手、技能、工具、设置
-│   ├── stores/               # Zustand 状态管理
-│   └── types/                # 类型定义
-├── package.json              # 脚本、依赖与打包配置
-├── vite.config.ts            # Vite 配置
-└── tsconfig.json             # TypeScript 配置
+│   ├── ai/                      # AI 核心
+│   │   ├── agent.ts             # Agent 运行时
+│   │   ├── agent-manager.ts     # Agent 管理器
+│   │   ├── team.ts              # 团队协作
+│   │   └── tools/               # 工具系统
+│   ├── components/              # UI 组件
+│   │   ├── chat/                # 对话组件
+│   │   ├── settings/            # 设置面板
+│   │   ├── sidebar/             # 侧边栏
+│   │   └── team/                # 团队组件
+│   ├── pages/                   # 页面
+│   │   ├── ChatPage.tsx         # 对话页
+│   │   ├── TeamPage.tsx         # 团队页
+│   │   ├── AgentsPage.tsx       # 助手页
+│   │   ├── SkillsPage.tsx       # 技能页
+│   │   ├── ToolsPage.tsx        # 工具页
+│   │   ├── KnowledgePage.tsx    # 知识库页
+│   │   └── SettingsPage.tsx     # 设置页
+│   ├── stores/                  # 状态管理
+│   ├── lib/                     # 工具库
+│   └── types/                   # 类型定义
+├── electron/                    # Electron 主进程
+├── resources/                   # 内置资源
+└── public/                      # 静态资源
 ```
 
-## 技术栈
+---
 
-| 分类       | 技术                                                          |
-| ---------- | ------------------------------------------------------------- |
-| 桌面端     | Electron、electron-builder                                    |
-| 前端       | React 19、TypeScript、Vite 7                                  |
-| 样式与交互 | Tailwind CSS 4、Radix UI、lucide-react、motion                |
-| 状态管理   | Zustand                                                       |
-| AI Runtime | `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`      |
-| 工具协议   | Model Context Protocol SDK                                    |
-| 内容渲染   | react-markdown、remark-gfm、rehype-raw、highlight.js、Mermaid |
+## 🛠️ 技术栈
 
-## 常用命令
+### 核心框架
+- **Electron 39** - 桌面应用框架
+- **React 19** - UI 框架
+- **TypeScript 5.8** - 类型安全
+- **Vite 7** - 构建工具
 
-| 命令              | 说明                           |
-| ----------------- | ------------------------------ |
-| `npm run dev`     | 启动开发环境和 Electron 窗口   |
-| `npm run build`   | TypeScript 检查并构建前端产物  |
-| `npm run start`   | 启动已构建的 Electron 应用     |
-| `npm run pack`    | 构建并生成未压缩的桌面应用目录 |
-| `npm run dist`    | 构建并生成安装包               |
-| `npm run preview` | 预览 Vite 构建产物             |
+### AI & Agent
+- **@earendil-works/pi-agent-core** 0.79.1 - Agent 运行时
+- **@earendil-works/pi-ai** 0.79.1 - 统一模型接口
+- **@modelcontextprotocol/sdk** - MCP 工具协议
 
-## 数据与隐私
+### UI & 样式
+- **Tailwind CSS 4** - 原子化 CSS
+- **Radix UI** - 无障碍组件库
+- **lucide-react** - 图标库
+- **motion** - 动画库
 
-PolarAgent 采用本地优先的存储方式。应用配置、会话历史、助手配置、团队配置、技能状态和 MCP 配置保存在本机数据目录中。模型请求会发送到你配置的模型供应商；外部工具或 MCP 的数据访问行为取决于你启用的工具和对应服务配置。
+### 内容渲染
+- **react-markdown** - Markdown 渲染
+- **remark-gfm** - GitHub Flavored Markdown
+- **highlight.js** - 代码高亮
+- **mermaid** - 图表渲染
+- **katex** - 数学公式
 
-## 适合场景
+### 状态管理
+- **Zustand** - 轻量级状态管理
+- **Persist 中间件** - 本地持久化
 
-- 日常研发、代码阅读、资料整理和方案推演。
-- 需要多个 Agent 分工协作的复杂任务。
-- 希望统一管理不同模型供应商和助手角色。
-- 需要通过 MCP 接入外部服务或本地能力的 AI 工作流。
-- 想在桌面端保留会话、任务轨迹和技能配置的个人 AI 工作台。
+---
+
+## 📋 常用命令
+
+| 命令 | 说明 |
+|------|------|
+| `npm run dev` | 启动开发环境 |
+| `npm run build` | 构建前端产物 |
+| `npm run start` | 启动已构建应用 |
+| `npm run pack` | 生成未压缩的应用目录 |
+| `npm run dist` | 生成安装包 |
+| `npm run preview` | 预览构建产物 |
+
+---
+
+## 🎯 适用场景
+
+- **日常工作**：代码审查、文档撰写、资料整理
+- **研发辅助**：技术调研、方案设计、问题排查
+- **团队协作**：多角色讨论、方案评审、决策投票
+- **知识管理**：文档问答、项目文档检索
+- **自动化探索**：工具调用、脚本执行、流程编排
+
+---
+
+## 📝 数据与隐私
+
+PolarAgent 采用本地优先的设计：
+
+- ✅ 所有配置和会话数据保存在本地
+- ✅ 模型请求仅发送到你配置的供应商
+- ✅ 不上传任何数据到第三方服务器
+- ✅ 支持数据导出和备份
+
+---
+
+## 🤝 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
+### 开发流程
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+---
+
+## 📄 开源协议
+
+MIT License
+
+---
+
+## 💬 联系方式
+
+- **作者**: qgming
+- **项目**: PolarAgent
+
+---
+
+<div align="center">
+
+**如果觉得这个项目有帮助，欢迎 Star ⭐**
+
+</div>
