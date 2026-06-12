@@ -118,6 +118,25 @@ export const defaultSettings: Settings = {
       refineText: false,
     },
   },
+  automation: {
+    browserUse: {
+      wsPort: 18765,
+      apiPort: 18767,
+      enableHttpApi: false,
+      actionTimeoutMs: 30000,
+      waitAfterActionMs: 300,
+      verboseLogs: false,
+    },
+    computerUse: {
+      persistentWorker: true,
+      defaultMaxDepth: 5,
+      defaultMaxNodes: 250,
+      includeScreenshotByDefault: true,
+      screenshotMode: "path",
+      restoreClipboard: true,
+      actionTimeoutMs: 60000,
+    },
+  },
   knowledge: {
     embedding: {
       apiKey: "",

@@ -366,6 +366,9 @@ interface Window {
       }>>;
     };
     computeruse: {
+      configure: (config: Partial<ComputerUseRuntimeConfig>) => Promise<ComputerUseWorkerStatus>;
+      workerStatus: () => Promise<ComputerUseWorkerStatus>;
+      restartWorker: () => Promise<ComputerUseWorkerStatus>;
       health: () => Promise<ComputerUseHealthResult>;
       snapshot: (opts?: ComputerUseSnapshotOptions) => Promise<ComputerUseSnapshotResult>;
       tree: (opts?: ComputerUseTreeOptions) => Promise<ComputerUseTreeResult>;
@@ -384,15 +387,66 @@ interface Window {
       listWindows: (opts?: ComputerUseListWindowsOptions) => Promise<ComputerUseListWindowsResult>;
       activateWindow: (opts: ComputerUseActivateWindowOptions) => Promise<ComputerUseActionResult>;
       wait: (opts?: ComputerUseWaitOptions) => Promise<ComputerUseActionResult>;
+      batch: (opts: ComputerUseBatchOptions) => Promise<ComputerUseBatchResult>;
     };
     browseruse: {
       call: (params: any) => Promise<{ ok: boolean; result?: any; error?: string }>;
-      status: () => Promise<{ ok: boolean; connected: boolean; ports: { extension: number; api: number } }>;
+      status: () => Promise<BrowserUseStatusResult>;
+      configure: (config: Partial<BrowserUseConfig>) => Promise<BrowserUseStatusResult>;
+      restart: () => Promise<BrowserUseStatusResult>;
+      syncExtensionPort: (port?: number) => Promise<{ ok: boolean; result?: any; error?: string }>;
+      clearDebugSessions: () => Promise<{ ok: boolean; result?: any; error?: string }>;
     };
   };
 }
 
+interface BrowserUseConfig {
+  wsPort: number;
+  apiPort: number;
+  enableHttpApi: boolean;
+  actionTimeoutMs: number;
+  waitAfterActionMs: number;
+  verboseLogs: boolean;
+}
+
+interface BrowserUseStatusResult {
+  ok: boolean;
+  connected: boolean;
+  ports: { extension: number; api: number };
+  config?: BrowserUseConfig;
+  httpApiEnabled?: boolean;
+  pendingRequests?: number;
+  snapshotCacheSize?: number;
+  extension?: {
+    browserId?: string;
+    profileId?: string;
+    profileLabel?: string;
+    connectedAt?: number;
+  } | null;
+  lastCommandAt?: number;
+  lastError?: string | null;
+  tabs?: Array<{ id: number; url?: string; title?: string; active?: boolean; windowId?: number }>;
+}
+
 // Computer Use 类型定义
+interface ComputerUseRuntimeConfig {
+  persistentWorker: boolean;
+  actionTimeoutMs: number;
+  workerIdleTimeoutMs: number;
+}
+
+interface ComputerUseWorkerStatus {
+  ok: boolean;
+  enabled: boolean;
+  running: boolean;
+  busy: boolean;
+  startedAt?: number | null;
+  lastUsedAt?: number | null;
+  idleTimeoutMs: number;
+  elementCacheSize: number;
+  lastError?: string | null;
+}
+
 interface ComputerUseHealthResult {
   ok: boolean;
   error?: string;
@@ -408,6 +462,7 @@ interface ComputerUseSnapshotOptions {
   includeOffscreen?: boolean;
   detailLevel?: "compact" | "full";
   includeScreenshot?: boolean;
+  screenshotMode?: "path" | "base64";
   maxDepth?: number;
   maxNodes?: number;
 }
@@ -455,7 +510,8 @@ interface ComputerUseSnapshotResult {
   ok: boolean;
   tree: ComputerUseElementInfo;
   screenshot?: {
-    base64: string;
+    base64?: string;
+    base64Omitted?: boolean;
     mimeType: string;
     bounds: { x: number; y: number; width: number; height: number };
     path?: string;
@@ -631,6 +687,27 @@ interface ComputerUseActivateWindowOptions {
 
 interface ComputerUseWaitOptions {
   milliseconds?: number;
+}
+
+interface ComputerUseBatchOptions {
+  actions: Array<{
+    action: string;
+    args?: Record<string, unknown>;
+  }>;
+  stopOnError?: boolean;
+  maxActions?: number;
+}
+
+interface ComputerUseBatchResult {
+  ok: boolean;
+  count: number;
+  failedAt?: number;
+  results: Array<{
+    ok: boolean;
+    action: string;
+    result?: unknown;
+    error?: string;
+  }>;
 }
 
 interface ComputerUseActionResult {

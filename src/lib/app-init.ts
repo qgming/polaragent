@@ -22,6 +22,7 @@ export async function initializeApp() {
   try {
     // 1. 初始化配置（最先，后续会话/团队/技能都依赖数据目录）
     await useConfigStore.getState().initialize();
+    await applyAutomationRuntimeSettings();
     console.log("✓ 配置初始化完成");
 
     // 2. 会话与团队优先加载，填充侧边栏（用户最先看到的内容）。
@@ -78,6 +79,28 @@ export async function initializeApp() {
   } catch (error) {
     console.error("❌ 应用初始化失败:", error);
     return false;
+  }
+}
+
+async function applyAutomationRuntimeSettings() {
+  const automation = useConfigStore.getState().settings.automation;
+  if (!automation) return;
+  if (automation.browserUse && window.polaragent?.browseruse?.configure) {
+    try {
+      await window.polaragent.browseruse.configure(automation.browserUse);
+    } catch (error) {
+      console.warn("Browser Use 运行时配置应用失败:", error);
+    }
+  }
+  if (automation.computerUse && window.polaragent?.computeruse?.configure) {
+    try {
+      await window.polaragent.computeruse.configure({
+        persistentWorker: automation.computerUse.persistentWorker,
+        actionTimeoutMs: automation.computerUse.actionTimeoutMs,
+      });
+    } catch (error) {
+      console.warn("Computer Use 运行时配置应用失败:", error);
+    }
   }
 }
 

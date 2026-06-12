@@ -358,6 +358,7 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
   const defaultImageGeneration = defaultSettings.imageGeneration!;
   const defaultAudio = defaultSettings.audio!;
   const defaultKnowledge = defaultSettings.knowledge!;
+  const defaultAutomation = defaultSettings.automation!;
   return {
     ...defaultSettings,
     ...settings,
@@ -419,6 +420,18 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
       retrieval: {
         ...defaultKnowledge.retrieval,
         ...settings.knowledge?.retrieval,
+      },
+    },
+    automation: {
+      ...defaultAutomation,
+      ...settings.automation,
+      browserUse: {
+        ...defaultAutomation.browserUse,
+        ...settings.automation?.browserUse,
+      },
+      computerUse: {
+        ...defaultAutomation.computerUse,
+        ...settings.automation?.computerUse,
       },
     },
   };

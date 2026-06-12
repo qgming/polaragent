@@ -187,6 +187,29 @@ export interface KnowledgeConfig {
 }
 
 /**
+ * 内置自动化工具配置
+ */
+export interface AutomationConfig {
+  browserUse: {
+    wsPort: number;
+    apiPort: number;
+    enableHttpApi: boolean;
+    actionTimeoutMs: number;
+    waitAfterActionMs: number;
+    verboseLogs: boolean;
+  };
+  computerUse: {
+    persistentWorker: boolean;
+    defaultMaxDepth: number;
+    defaultMaxNodes: number;
+    includeScreenshotByDefault: boolean;
+    screenshotMode: "path" | "base64";
+    restoreClipboard: boolean;
+    actionTimeoutMs: number;
+  };
+}
+
+/**
  * 全局应用设置
  */
 export interface Settings {
@@ -222,6 +245,8 @@ export interface Settings {
   audio?: AudioConfig;
   // 知识库配置
   knowledge?: KnowledgeConfig;
+  // 内置自动化工具配置
+  automation?: AutomationConfig;
 }
 
 /**

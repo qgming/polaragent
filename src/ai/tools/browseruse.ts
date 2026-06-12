@@ -116,10 +116,17 @@ export function browserSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
     parameters: snapshotParams,
     execute: async (_toolCallId, params: Static<typeof snapshotParams>) => {
       const result = await callBrowserUse("snapshot", params);
-      const elements = result.elements.map((el: any, i: number) => `@e${i + 1}: ${el.type} - ${el.text || el.selector}`).join("\n");
+      const elements = result.elements
+        .map((el: any, i: number) => {
+          const role = el.role ? ` role=${el.role}` : "";
+          const state = el.disabled ? " disabled" : "";
+          return `@e${i + 1}: ${el.type}${role}${state} - ${el.text || el.selector}`;
+        })
+        .join("\n");
+      const snapshotId = result.snapshotId || result.sessionKey;
       return {
-        content: text(`快照生成成功 (session: ${result.sessionKey}, 共 ${result.count} 个元素):\n${elements}`),
-        details: { sessionKey: result.sessionKey, count: result.count },
+        content: text(`快照生成成功 (snapshotId: ${snapshotId}, 共 ${result.count} 个元素):\n${elements}`),
+        details: { snapshotId, tabId: result.tabId, count: result.count, elements: result.elements },
       };
     },
   };
@@ -129,6 +136,7 @@ export function browserSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
 const clickParams = Type.Object({
   tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
   target: Type.String({ description: "目标元素: CSS 选择器或 @e 引用 (如 @e1)" }),
+  snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
 export function browserClickTool(_ctx: ToolContext): AgentTool<typeof clickParams> {
@@ -154,6 +162,7 @@ const fillParams = Type.Object({
   value: Type.String({ description: "要填充的文本" }),
   clear: Type.Optional(Type.Boolean({ description: "填充前清空", default: false })),
   append: Type.Optional(Type.Boolean({ description: "追加模式", default: false })),
+  snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
 export function browserFillTool(_ctx: ToolContext): AgentTool<typeof fillParams> {
@@ -199,6 +208,7 @@ const screenshotParams = Type.Object({
   tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
   fullPage: Type.Optional(Type.Boolean({ description: "全页截图", default: false })),
   target: Type.Optional(Type.String({ description: "目标元素: CSS 选择器或 @e 引用" })),
+  snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
 export function browserScreenshotTool(ctx: ToolContext): AgentTool<typeof screenshotParams> {
@@ -219,10 +229,22 @@ export function browserScreenshotTool(ctx: ToolContext): AgentTool<typeof screen
 
 // 网络监控
 const networkParams = Type.Object({
-  tabId: Type.Number({ description: "标签页 ID" }),
-  action: Type.Union([Type.Literal("start"), Type.Literal("list"), Type.Literal("stop")], {
-    description: "操作: start(开始监控) list(列出请求) stop(停止监控)",
+  tabId: Type.Optional(Type.Number({ description: "标签页 ID，不填则使用当前活动标签" })),
+  action: Type.Union([Type.Literal("start"), Type.Literal("list"), Type.Literal("detail"), Type.Literal("clear"), Type.Literal("stop")], {
+    description: "操作: start(开始) list(列出) detail(详情) clear(清空) stop(停止)",
   }),
+  requestId: Type.Optional(Type.String({ description: "detail 操作需要的请求 ID" })),
+  filter: Type.Optional(Type.String({ description: "list 时按 URL、状态、类型过滤" })),
+  limit: Type.Optional(Type.Number({ description: "list 返回数量上限", default: 100 })),
+});
+
+const consoleParams = Type.Object({
+  tabId: Type.Optional(Type.Number({ description: "标签页 ID，不填则使用当前活动标签" })),
+  action: Type.Union([Type.Literal("start"), Type.Literal("list"), Type.Literal("clear"), Type.Literal("stop")], {
+    description: "操作: start(开始) list(列出) clear(清空) stop(停止)",
+  }),
+  level: Type.Optional(Type.String({ description: "日志级别过滤，如 log/error/warning" })),
+  limit: Type.Optional(Type.Number({ description: "返回数量上限", default: 100 })),
 });
 
 export function browserNetworkTool(_ctx: ToolContext): AgentTool<typeof networkParams> {
@@ -233,6 +255,22 @@ export function browserNetworkTool(_ctx: ToolContext): AgentTool<typeof networkP
     parameters: networkParams,
     execute: async (_toolCallId, params: Static<typeof networkParams>) => {
       const result = await callBrowserUse("network", params);
+      return {
+        content: text(JSON.stringify(result, null, 2)),
+        details: { action: params.action },
+      };
+    },
+  };
+}
+
+export function browserConsoleTool(_ctx: ToolContext): AgentTool<typeof consoleParams> {
+  return {
+    name: "browser_console",
+    label: "控制台日志",
+    description: "监听并读取浏览器页面 console 与异常日志",
+    parameters: consoleParams,
+    execute: async (_toolCallId, params: Static<typeof consoleParams>) => {
+      const result = await callBrowserUse("console", params);
       return {
         content: text(JSON.stringify(result, null, 2)),
         details: { action: params.action },

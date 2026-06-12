@@ -618,11 +618,10 @@ function Set-ElementValue {
   return $null
 }
 
-try {
-  Load-Assemblies
-  $inputObject = Get-InputObject
+function Invoke-ComputerUseAction {
+  param([string]$ActionName, [object]$inputObject)
 
-  switch ($Action) {
+  switch ($ActionName) {
     "health" {
       $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
       $active = Get-ScopeRoot "active_window"
@@ -666,7 +665,7 @@ try {
         if (-not $includeInvisible -and $info.isOffscreen) { continue }
         $windows.Add($info)
       }
-      Write-JsonResult ([ordered]@{ ok = $true; windows = @($windows.ToArray()) })
+      Write-JsonResult ([ordered]@{ ok = $true; windows = @($windows.ToArray()); count = $windows.Count })
     }
     "find" {
       $query = Get-Prop $inputObject "query" ""
@@ -687,7 +686,7 @@ try {
       $treeResult = Get-TreeResult -Scope $scope -MaxDepth $maxDepth -MaxNodes $maxNodes -InputObject $findInput
       $results = New-Object System.Collections.Generic.List[object]
       Search-Tree -Node $treeResult.tree -Query $query -ControlType $controlType -MaxResults $maxResults -Results $results
-      Write-JsonResult ([ordered]@{ ok = $true; query = $query; results = @($results.ToArray()); scannedNodes = $treeResult.nodeCount; truncated = $treeResult.truncated })
+      Write-JsonResult ([ordered]@{ ok = $true; query = $query; results = @($results.ToArray()); count = $results.Count; scannedNodes = $treeResult.nodeCount; truncated = $treeResult.truncated })
     }
     "element_info" {
       $elementId = Get-Prop $inputObject "elementId" $null
@@ -811,9 +810,41 @@ try {
       Write-JsonResult ([ordered]@{ ok = $true; action = "wait"; milliseconds = $milliseconds })
     }
     default {
-      throw "Unknown action '$Action'."
+      throw "Unknown action '$ActionName'."
     }
   }
+}
+
+try {
+  Load-Assemblies
+
+  if ($Action -eq "__worker") {
+    while ($true) {
+      $line = [Console]::In.ReadLine()
+      if ($null -eq $line) { break }
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+      $requestAction = ""
+      try {
+        $request = $line | ConvertFrom-Json
+        $requestAction = [string](Get-Prop $request "action" "")
+        $requestArgs = Get-Prop $request "args" ([pscustomobject]@{})
+        Invoke-ComputerUseAction -ActionName $requestAction -inputObject $requestArgs
+      } catch {
+        Write-JsonResult ([ordered]@{
+          ok = $false
+          action = $requestAction
+          error = $_.Exception.Message
+          category = $_.CategoryInfo.Category.ToString()
+          scriptStackTrace = $_.ScriptStackTrace
+        })
+      }
+    }
+    exit 0
+  }
+
+  $inputObject = Get-InputObject
+  Invoke-ComputerUseAction -ActionName $Action -inputObject $inputObject
 } catch {
   Write-JsonResult ([ordered]@{
     ok = $false

@@ -118,6 +118,9 @@ contextBridge.exposeInMainWorld("polaragent", {
     reembedIncompatible: (request) => invoke("knowledge:reembedIncompatible", { request }),
   },
   computeruse: {
+    configure: (config) => invoke("cu:configure", config),
+    workerStatus: () => invoke("cu:worker-status"),
+    restartWorker: () => invoke("cu:restart-worker"),
     health: () => invoke("cu:health"),
     snapshot: (opts) => invoke("cu:snapshot", opts),
     tree: (opts) => invoke("cu:tree", opts),
@@ -136,9 +139,14 @@ contextBridge.exposeInMainWorld("polaragent", {
     listWindows: (opts) => invoke("cu:list-windows", opts),
     activateWindow: (opts) => invoke("cu:activate-window", opts),
     wait: (opts) => invoke("cu:wait", opts),
+    batch: (opts) => invoke("cu:batch", opts),
   },
   browseruse: {
     call: (params) => invoke("browser-use:call", params),
     status: () => invoke("browser-use:status"),
+    configure: (config) => invoke("browser-use:configure", config),
+    restart: () => invoke("browser-use:restart"),
+    syncExtensionPort: (port) => invoke("browser-use:sync-extension-port", { port }),
+    clearDebugSessions: () => invoke("browser-use:clear-debug-sessions"),
   },
 });

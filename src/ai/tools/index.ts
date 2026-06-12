@@ -41,6 +41,14 @@ import {
   windowsMoveTool,
   windowsListWindowsTool,
   windowsAccessibilityTreeTool,
+  windowsElementInfoTool,
+  windowsFocusTool,
+  windowsInvokeTool,
+  windowsSetValueTool,
+  windowsActivateWindowTool,
+  windowsWaitTool,
+  windowsDragTool,
+  windowsBatchTool,
 } from "./computeruse";
 import {
   browserTabsTool,
@@ -53,6 +61,7 @@ import {
   browserExecuteTool,
   browserScreenshotTool,
   browserNetworkTool,
+  browserConsoleTool,
 } from "./browseruse";
 
 export type { ToolContext } from "./tool-context";
@@ -115,6 +124,41 @@ const TOOL_REGISTRY: ToolEntry[] = [
     group: "computeruse",
   },
   {
+    id: "windows_element_info",
+    name: "元素信息",
+    description: "获取指定 UI 元素或坐标处元素的详细信息。",
+    factory: windowsElementInfoTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_focus",
+    name: "聚焦元素",
+    description: "使用 UI Automation 将焦点移动到指定元素。",
+    factory: windowsFocusTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_invoke",
+    name: "调用元素",
+    description: "优先使用 UIA Pattern 操作元素，必要时回退点击。",
+    factory: windowsInvokeTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_set_value",
+    name: "设置元素值",
+    description: "优先使用 UIA ValuePattern 设置输入框值。",
+    factory: windowsSetValueTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_activate_window",
+    name: "激活窗口",
+    description: "按标题、进程 ID 或 HWND 激活目标窗口。",
+    factory: windowsActivateWindowTool,
+    group: "computeruse",
+  },
+  {
     id: "windows_click",
     name: "Windows 点击",
     description: "在 Windows 应用中点击指定坐标或 UI 元素。",
@@ -136,6 +180,13 @@ const TOOL_REGISTRY: ToolEntry[] = [
     group: "computeruse",
   },
   {
+    id: "windows_drag",
+    name: "Windows 拖拽",
+    description: "按路径执行鼠标拖拽。",
+    factory: windowsDragTool,
+    group: "computeruse",
+  },
+  {
     id: "windows_scroll",
     name: "Windows 滚动",
     description: "在 Windows 应用中滚动内容。",
@@ -154,6 +205,20 @@ const TOOL_REGISTRY: ToolEntry[] = [
     name: "Windows 按键",
     description: "在 Windows 应用中按下键盘按键或组合键。",
     factory: windowsKeypressTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_wait",
+    name: "Windows 等待",
+    description: "等待窗口动画、加载或焦点变化完成。",
+    factory: windowsWaitTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_batch",
+    name: "Windows 批量操作",
+    description: "按顺序执行多个 Computer Use 动作，减少多轮调用开销。",
+    factory: windowsBatchTool,
     group: "computeruse",
   },
   {
@@ -224,6 +289,13 @@ const TOOL_REGISTRY: ToolEntry[] = [
     name: "网络监控",
     description: "监控网络请求。",
     factory: browserNetworkTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_console",
+    name: "控制台日志",
+    description: "监听并读取页面 console 与异常日志。",
+    factory: browserConsoleTool,
     group: "browseruse",
   },
   {

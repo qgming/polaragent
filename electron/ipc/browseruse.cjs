@@ -1,108 +1,234 @@
-// IPC：Browser Use - 浏览器控制（Chrome扩展桥接）
+// IPC: Browser Use - Chrome extension bridge.
 const WebSocket = require("ws");
 const http = require("http");
 const { app } = require("electron");
 
-// 配置
-const EXTENSION_PORT = 18765; // Chrome 扩展连接端口
-const API_PORT = 18767; // HTTP API 端口
+const DEFAULT_CONFIG = {
+  wsPort: 18765,
+  apiPort: 18767,
+  enableHttpApi: false,
+  actionTimeoutMs: 30000,
+  waitAfterActionMs: 300,
+  verboseLogs: false,
+};
 
-// 状态管理
-let wss = null; // WebSocket 服务器
-let apiServer = null; // HTTP API 服务器
-let extensionWs = null; // 扩展连接
-let requestId = 0; // 请求 ID 计数器
-let pendingRequests = new Map(); // 待处理请求
-let snapshotCache = new Map(); // @e 引用缓存
+let config = { ...DEFAULT_CONFIG };
+let wss = null;
+let apiServer = null;
+let extensionWs = null;
+let requestId = 0;
+let pendingRequests = new Map();
+let snapshotCache = new Map();
+let extensionInfo = null;
+let lastError = null;
+let lastCommandAt = 0;
+let lastTabs = [];
 
-// 启动服务
+function normalizePort(value, fallback) {
+  const port = Number(value ?? fallback);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("端口必须是 1-65535");
+  }
+  return port;
+}
+
+function normalizeConfig(input = {}) {
+  return {
+    wsPort: normalizePort(input.wsPort, config.wsPort),
+    apiPort: normalizePort(input.apiPort, config.apiPort),
+    enableHttpApi: Boolean(input.enableHttpApi ?? config.enableHttpApi),
+    actionTimeoutMs: clampNumber(input.actionTimeoutMs, config.actionTimeoutMs, 1000, 180000),
+    waitAfterActionMs: clampNumber(input.waitAfterActionMs, config.waitAfterActionMs, 0, 10000),
+    verboseLogs: Boolean(input.verboseLogs ?? config.verboseLogs),
+  };
+}
+
+function clampNumber(value, fallback, min, max) {
+  const number = Number(value ?? fallback);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function log(...args) {
+  if (config.verboseLogs) console.log("[BrowserUse]", ...args);
+}
+
+function markError(error) {
+  lastError = error instanceof Error ? error.message : String(error);
+  console.error("[BrowserUse]", lastError);
+}
+
+function rejectAllPending(message) {
+  const error = new Error(message);
+  for (const { reject, timer } of pendingRequests.values()) {
+    clearTimeout(timer);
+    reject(error);
+  }
+  pendingRequests.clear();
+}
+
+function closeListeningServer(server) {
+  return new Promise((resolve) => {
+    if (!server) {
+      resolve();
+      return;
+    }
+    try {
+      server.close(() => resolve());
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
 function startServices() {
   if (wss) return;
 
-  // WebSocket 服务器（扩展连接）
-  wss = new WebSocket.Server({ port: EXTENSION_PORT });
+  try {
+    wss = new WebSocket.Server({ host: "127.0.0.1", port: config.wsPort });
+  } catch (error) {
+    wss = null;
+    markError(error);
+    return;
+  }
+
   wss.on("connection", (ws) => {
-    console.log("[BrowserUse] Extension connected");
+    log("Extension connected");
     extensionWs = ws;
+    lastError = null;
 
     ws.on("message", (data) => {
       try {
-        const msg = JSON.parse(data);
-        console.log("[BrowserUse] Received message:", msg.type || msg.action, msg.error ? `ERROR: ${msg.error}` : "");
+        const raw = data.toString();
+        const msg = JSON.parse(raw);
 
-        // 处理扩展的 ext_ready 消息
+        if (msg.type === "ping") return;
+
         if (msg.type === "ext_ready") {
-          console.log("[BrowserUse] Extension ready with", msg.tabs?.length || 0, "tabs");
+          extensionInfo = {
+            browserId: msg.browser_id,
+            profileId: msg.profile_id,
+            profileLabel: msg.profile_label,
+            connectedAt: Date.now(),
+          };
+          lastTabs = Array.isArray(msg.tabs) ? msg.tabs : [];
           return;
         }
 
-        // 忽略 ping 和 tabs_update 消息
-        if (msg.type === "ping" || msg.type === "tabs_update") {
+        if (msg.type === "tabs_update") {
+          lastTabs = Array.isArray(msg.tabs) ? msg.tabs : [];
+          extensionInfo = {
+            ...(extensionInfo || {}),
+            browserId: msg.browser_id ?? extensionInfo?.browserId,
+            profileId: msg.profile_id ?? extensionInfo?.profileId,
+            profileLabel: msg.profile_label ?? extensionInfo?.profileLabel,
+          };
           return;
         }
 
-        // 处理命令响应: { type: 'result'/'error', id, result, error }
-        if (msg.id && pendingRequests.has(Number(msg.id))) {
-          const { resolve } = pendingRequests.get(Number(msg.id));
-          pendingRequests.delete(Number(msg.id));
-          resolve(msg);
+        const id = Number(msg.id);
+        if (id && pendingRequests.has(id)) {
+          const request = pendingRequests.get(id);
+          pendingRequests.delete(id);
+          clearTimeout(request.timer);
+          if (msg.type === "error") {
+            request.reject(normalizeExtensionError(msg.error));
+          } else {
+            request.resolve(msg.result ?? msg);
+          }
         }
-      } catch (e) {
-        console.error("[BrowserUse] WebSocket 消息解析失败:", e);
+      } catch (error) {
+        markError(new Error(`WebSocket 消息解析失败: ${error.message}`));
       }
     });
 
     ws.on("close", () => {
-      console.log("[BrowserUse] Extension disconnected");
-      extensionWs = null;
+      log("Extension disconnected");
+      if (extensionWs === ws) {
+        extensionWs = null;
+        extensionInfo = null;
+        lastTabs = [];
+        rejectAllPending("Chrome 扩展连接已断开");
+      }
     });
 
-    ws.on("error", (err) => {
-      console.error("[BrowserUse] WebSocket error:", err);
-    });
+    ws.on("error", (error) => markError(error));
   });
 
-  // HTTP API 服务器（工具调用）
-  apiServer = http.createServer(async (req, res) => {
-    if (req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk) => (body += chunk));
-      req.on("end", async () => {
-        try {
-          const params = JSON.parse(body);
-          const result = await handleCommand(params);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, result }));
-        } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: error.message }));
-        }
-      });
-    } else {
-      res.writeHead(404);
-      res.end();
+  wss.on("error", (error) => {
+    markError(error);
+    if (error.code === "EADDRINUSE") {
+      void stopServices();
     }
   });
-  apiServer.listen(API_PORT);
+
+  if (config.enableHttpApi) startApiServer();
 }
 
-// 停止服务
-function stopServices() {
-  if (wss) {
-    wss.close();
-    wss = null;
+function startApiServer() {
+  if (apiServer) return;
+  apiServer = http.createServer(async (req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 2 * 1024 * 1024) req.destroy();
+    });
+    req.on("end", async () => {
+      try {
+        const params = JSON.parse(body || "{}");
+        const result = await handleCommand(params);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, result }));
+      } catch (error) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: error.message }));
+      }
+    });
+  });
+
+  apiServer.on("error", markError);
+  apiServer.listen(config.apiPort, "127.0.0.1");
+}
+
+async function stopServices() {
+  const oldWss = wss;
+  const oldApiServer = apiServer;
+  wss = null;
+  apiServer = null;
+
+  if (extensionWs) {
+    try { extensionWs.close(); } catch (_) {}
+    extensionWs = null;
   }
-  if (apiServer) {
-    apiServer.close();
-    apiServer = null;
-  }
-  extensionWs = null;
-  pendingRequests.clear();
+  extensionInfo = null;
+  lastTabs = [];
+  rejectAllPending("Browser Use 服务已停止");
   snapshotCache.clear();
+  await Promise.all([closeListeningServer(oldWss), closeListeningServer(oldApiServer)]);
 }
 
-// 发送命令到扩展
-async function sendToExtension(action, params = {}, timeout = 30000) {
+async function restartServices(nextConfig) {
+  if (nextConfig) config = normalizeConfig(nextConfig);
+  await stopServices();
+  startServices();
+  return getStatus();
+}
+
+function normalizeExtensionError(error) {
+  if (error instanceof Error) return error;
+  if (error && typeof error === "object") {
+    return new Error(error.message || JSON.stringify(error));
+  }
+  return new Error(String(error || "未知错误"));
+}
+
+async function sendToExtension(action, params = {}, timeout = config.actionTimeoutMs) {
   if (!extensionWs || extensionWs.readyState !== WebSocket.OPEN) {
     throw new Error("Chrome 扩展未连接，请确保已加载扩展并打开网页");
   }
@@ -114,30 +240,29 @@ async function sendToExtension(action, params = {}, timeout = 30000) {
       reject(new Error(`操作超时 (${timeout}ms): ${action}`));
     }, timeout);
 
-    pendingRequests.set(id, {
-      resolve: (msg) => {
-        clearTimeout(timer);
-        if (msg.type === "error") {
-          reject(new Error(msg.error || "未知错误"));
-        } else {
-          resolve(msg.result || msg);
-        }
-      },
-    });
+    pendingRequests.set(id, { resolve, reject, timer, action, startedAt: Date.now() });
+    lastCommandAt = Date.now();
 
-    // 扩展期望的消息格式: { id, code: { cmd, ...params } }
-    extensionWs.send(
-      JSON.stringify({
-        id: String(id),
-        code: { cmd: action, ...params },
-      })
-    );
+    try {
+      extensionWs.send(JSON.stringify({ id: String(id), code: { cmd: action, ...params } }));
+    } catch (error) {
+      pendingRequests.delete(id);
+      clearTimeout(timer);
+      reject(error);
+    }
   });
 }
 
-// 命令处理
+async function getActiveTabId(tabId) {
+  if (Number.isInteger(Number(tabId)) && Number(tabId) > 0) return Number(tabId);
+  const tabs = await getTabs({});
+  const active = tabs.find((tab) => tab.active) ?? tabs[0];
+  if (!active?.id) throw new Error("未找到可操作的浏览器标签页");
+  return active.id;
+}
+
 async function handleCommand(params) {
-  const { command, ...args } = params;
+  const { command, ...args } = params || {};
 
   switch (command) {
     case "tabs":
@@ -160,227 +285,1118 @@ async function handleCommand(params) {
       return await screenshot(args);
     case "network":
       return await networkMonitor(args);
+    case "console":
+      return await consoleMonitor(args);
     default:
       throw new Error(`未知命令: ${command}`);
   }
 }
 
-// 获取标签页列表
 async function getTabs(args) {
   const resp = await sendToExtension("tabs", args);
-  console.log("[BrowserUse] getTabs response:", JSON.stringify(resp, null, 2));
-  // 响应直接就是数组
-  return Array.isArray(resp) ? resp : (resp.data || resp.result?.data || []);
+  const tabs = Array.isArray(resp) ? resp : (resp.data || resp.result?.data || resp.tabs || []);
+  lastTabs = tabs;
+  return tabs;
 }
 
-// 打开新标签页
 async function openTab(args) {
-  const { url, profile } = args;
-  const resp = await sendToExtension("openTab", { url, profile });
-  console.log("[BrowserUse] openTab response:", JSON.stringify(resp, null, 2));
-  // 响应直接就是对象，id 字段就是 tabId
-  return { tabId: resp.id || resp.data?.id || resp.result?.data?.id };
+  const { url, profile, active, window, allowFocus, groupTitle } = args;
+  const resp = await sendToExtension("openTab", { url, profile, active, window, allowFocus, groupTitle });
+  return { tabId: resp.id || resp.data?.id || resp.result?.data?.id, ...resp };
 }
 
-// 关闭标签页
 async function closeTab(args) {
   const { tabId } = args;
   const resp = await sendToExtension("closeTab", { tabId });
-  return resp.data || resp.result?.data || { closed: true };
+  clearSnapshotsForTab(tabId);
+  return resp.data || resp.result?.data || { closed: true, tabId };
 }
 
-// 扫描页面内容
+async function cdp(tabId, method, params = {}, timeout) {
+  return await sendToExtension("cdp", { tabId: await getActiveTabId(tabId), method, params }, timeout);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isNavigationTransientError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("execution context was destroyed") ||
+    message.includes("cannot find context") ||
+    message.includes("inspected target navigated") ||
+    message.includes("target closed") ||
+    message.includes("frame was detached")
+  );
+}
+
 async function scanPage(args) {
-  const { tabId, textOnly } = args;
-  // 使用 CDP 执行脚本获取页面内容
-  const script = textOnly
-    ? "document.body.innerText"
-    : "document.documentElement.outerHTML";
-  const resp = await sendToExtension("cdp", {
-    tabId,
-    method: "Runtime.evaluate",
-    params: { expression: script, returnByValue: true },
+  const tabId = await getActiveTabId(args.tabId);
+  const expression = args.textOnly === false
+    ? "document.documentElement.outerHTML"
+    : `(${buildScanTextScript.toString()})()`;
+  const resp = await cdp(tabId, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
   });
-  console.log("[BrowserUse] scanPage response:", JSON.stringify(resp, null, 2).slice(0, 500));
-  return resp.result?.value || resp.value || "";
+  return resp.result?.value ?? resp.value ?? "";
 }
 
-// 获取页面快照（生成 @e 引用）
+function buildScanTextScript() {
+  const seen = new WeakSet();
+  const parts = [];
+
+  function pushText(root) {
+    if (!root) return;
+    const text = root.body?.innerText || root.textContent || "";
+    if (text.trim()) parts.push(text.trim());
+  }
+
+  function walk(root) {
+    if (!root || seen.has(root)) return;
+    seen.add(root);
+    pushText(root);
+    let all = [];
+    try { all = Array.from(root.querySelectorAll("*")); } catch (_) {}
+    for (const el of all) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
+        try { walk(el.contentDocument); } catch (_) {}
+      }
+    }
+  }
+
+  walk(document);
+  return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 async function snapshot(args) {
-  const { tabId, limit = 200, offset = 0 } = args;
-  // 执行脚本获取可交互元素
-  const script = `
-    (() => {
-      const elements = [];
-      const selectors = 'a, button, input, textarea, select, [onclick], [role="button"]';
-      const nodes = document.querySelectorAll(selectors);
-      for (let i = ${offset}; i < Math.min(nodes.length, ${offset + limit}); i++) {
-        const el = nodes[i];
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          elements.push({
-            type: el.tagName.toLowerCase(),
-            text: (el.textContent || el.value || el.placeholder || '').trim().slice(0, 50),
-            selector: el.id ? '#' + el.id : el.className ? '.' + el.className.split(' ')[0] : el.tagName
-          });
+  const tabId = await getActiveTabId(args.tabId);
+  const limit = clampNumber(args.limit, 200, 1, 1000);
+  const offset = clampNumber(args.offset, 0, 0, 100000);
+  const expression = `(${buildSnapshotScript.toString()})(${JSON.stringify({ limit, offset })})`;
+  const resp = await cdp(tabId, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  const elements = resp.result?.value || resp.value || [];
+  const snapshotId = `${tabId}:${Date.now()}`;
+  snapshotCache.set(snapshotId, { tabId, elements, createdAt: Date.now() });
+  pruneSnapshotCache();
+  return { snapshotId, sessionKey: snapshotId, tabId, elements, count: elements.length };
+}
+
+function buildSnapshotScript({ limit, offset }) {
+  const selector = [
+    "a[href]",
+    "button",
+    "input",
+    "textarea",
+    "select",
+    "summary",
+    "[contenteditable='true']",
+    "[role='button']",
+    "[role='link']",
+    "[role='textbox']",
+    "[role='checkbox']",
+    "[role='radio']",
+    "[role='combobox']",
+    "[role='menuitem']",
+    "[onclick]",
+    "[tabindex]:not([tabindex='-1'])",
+  ].join(",");
+
+  const results = [];
+  const seenElements = new WeakSet();
+  const wanted = offset + limit;
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function queryAll(root, css) {
+    try { return Array.from(root.querySelectorAll(css)); } catch (_) { return []; }
+  }
+
+  function selectorInRoot(el, root) {
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE && node !== root && parts.length < 6) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) {
+        part += `#${cssEscape(node.id)}`;
+        parts.unshift(part);
+        break;
+      }
+      const parent = node.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === node.tagName);
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+      }
+      parts.unshift(part);
+      node = parent;
+    }
+    return parts.join(" > ");
+  }
+
+  function piercePathFor(el) {
+    const chain = [];
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE) {
+      const root = node.getRootNode();
+      const selector = selectorInRoot(node, root);
+      if (selector) chain.unshift(selector);
+      if (root && root.host) {
+        node = root.host;
+      } else {
+        break;
+      }
+    }
+    return chain;
+  }
+
+  function absoluteRect(el) {
+    const rect = el.getBoundingClientRect();
+    let x = rect.x;
+    let y = rect.y;
+    let win = el.ownerDocument.defaultView;
+    while (win && win !== window) {
+      const frame = win.frameElement;
+      if (!frame) break;
+      const frameRect = frame.getBoundingClientRect();
+      x += frameRect.x;
+      y += frameRect.y;
+      win = win.parent;
+    }
+    return {
+      x,
+      y,
+      width: rect.width,
+      height: rect.height,
+      centerX: x + rect.width / 2,
+      centerY: y + rect.height / 2,
+    };
+  }
+
+  function isVisible(el) {
+    const rect = absoluteRect(el);
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = el.ownerDocument.defaultView.getComputedStyle(el);
+    if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) return false;
+    return true;
+  }
+
+  function textFor(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("alt") ||
+      el.innerText ||
+      el.textContent ||
+      el.value ||
+      ""
+    ).trim().replace(/\s+/g, " ").slice(0, 120);
+  }
+
+  function frameIndex(frame) {
+    try {
+      return Array.from(frame.ownerDocument.querySelectorAll("iframe,frame")).indexOf(frame);
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  function addElement(el, context) {
+    if (!el || seenElements.has(el) || !isVisible(el)) return;
+    seenElements.add(el);
+    const ordinal = results.length;
+    if (ordinal < offset) {
+      results.push(null);
+      return;
+    }
+    if (results.length >= wanted) return;
+    const rect = absoluteRect(el);
+    const text = textFor(el);
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute("role") || "";
+    const selectors = [];
+    if (el.id) selectors.push(`#${cssEscape(el.id)}`);
+    if (el.getAttribute("data-testid")) selectors.push(`[data-testid="${cssEscape(el.getAttribute("data-testid"))}"]`);
+    if (el.getAttribute("aria-label")) selectors.push(`${tag}[aria-label="${cssEscape(el.getAttribute("aria-label"))}"]`);
+    if (el.name) selectors.push(`${tag}[name="${cssEscape(el.name)}"]`);
+    selectors.push(selectorInRoot(el, el.getRootNode()));
+    results.push({
+      ref: `@e${ordinal - offset + 1}`,
+      type: tag,
+      role,
+      text,
+      selector: selectors.find(Boolean),
+      selectors: selectors.filter(Boolean),
+      framePath: context.framePath,
+      piercePath: piercePathFor(el),
+      disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
+      href: el.href || "",
+      inputType: el.type || "",
+      bbox: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        centerX: Math.round(rect.x + rect.width / 2),
+        centerY: Math.round(rect.y + rect.height / 2),
+      },
+    });
+  }
+
+  function collect(root, context) {
+    if (!root || results.length >= wanted) return;
+    for (const el of queryAll(root, selector)) {
+      if (results.length >= wanted) break;
+      addElement(el, context);
+    }
+
+    for (const frame of queryAll(root, "iframe,frame")) {
+      if (results.length >= wanted) break;
+      let childDoc = null;
+      try { childDoc = frame.contentDocument; } catch (_) {}
+      if (!childDoc) continue;
+      collect(childDoc, {
+        framePath: [
+          ...(context.framePath || []),
+          { index: frameIndex(frame), piercePath: piercePathFor(frame) },
+        ],
+      });
+    }
+
+    for (const host of queryAll(root, "*")) {
+      if (results.length >= wanted) break;
+      if (host.shadowRoot) collect(host.shadowRoot, context);
+    }
+  }
+
+  collect(document, { framePath: [] });
+  return results.slice(offset, wanted).filter(Boolean);
+}
+
+function pruneSnapshotCache() {
+  const now = Date.now();
+  for (const [key, entry] of snapshotCache.entries()) {
+    if (now - entry.createdAt > 5 * 60 * 1000) snapshotCache.delete(key);
+  }
+  while (snapshotCache.size > 20) {
+    const oldest = [...snapshotCache.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
+    if (!oldest) break;
+    snapshotCache.delete(oldest[0]);
+  }
+}
+
+function clearSnapshotsForTab(tabId) {
+  for (const [key, entry] of snapshotCache.entries()) {
+    if (Number(entry.tabId) === Number(tabId)) snapshotCache.delete(key);
+  }
+}
+
+function resolveCachedTarget(tabId, target, snapshotId) {
+  if (!target || !String(target).startsWith("@e")) return { target };
+  const index = Number(String(target).slice(2)) - 1;
+  if (!Number.isInteger(index) || index < 0) return { target };
+
+  const candidates = snapshotId
+    ? [snapshotCache.get(snapshotId)].filter(Boolean)
+    : [...snapshotCache.values()].filter((entry) => Number(entry.tabId) === Number(tabId)).sort((a, b) => b.createdAt - a.createdAt);
+
+  for (const entry of candidates) {
+    const element = entry.elements[index];
+    if (element) return { target: element.selector, element };
+  }
+  return { target };
+}
+
+async function click(args) {
+  const tabId = await getActiveTabId(args.tabId);
+  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+  const expression = `(${buildClickScript.toString()})(${JSON.stringify({
+    target: resolved.target,
+    element: resolved.element,
+    waitMs: config.waitAfterActionMs,
+  })})`;
+  let result;
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    result = resp.result?.value || resp.value || {};
+  } catch (error) {
+    if (!isNavigationTransientError(error)) throw error;
+    await sleep(Math.max(100, config.waitAfterActionMs));
+    return { clicked: true, target: args.target, selector: resolved.target, element: resolved.element, navigationLikely: true };
+  }
+  if (result.ok === false) throw new Error(result.error || `点击失败: ${args.target}`);
+  return { clicked: true, target: args.target, selector: result.selector || resolved.target, element: resolved.element };
+}
+
+function buildClickScript(payload) {
+  function interactiveSelector() {
+    return [
+      "a[href]", "button", "input", "textarea", "select", "summary",
+      "[contenteditable='true']", "[role='button']", "[role='link']",
+      "[role='textbox']", "[role='checkbox']", "[role='radio']",
+      "[role='combobox']", "[role='menuitem']", "[onclick]",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+  }
+
+  function queryAll(root, selector) {
+    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
+  }
+
+  function queryOne(root, selector) {
+    try { return root.querySelector(selector); } catch (_) { return null; }
+  }
+
+  function queryPiercePath(root, path) {
+    if (!Array.isArray(path) || path.length === 0) return null;
+    let currentRoot = root;
+    let current = null;
+    for (let i = 0; i < path.length; i++) {
+      current = queryOne(currentRoot, path[i]);
+      if (!current) return null;
+      if (i < path.length - 1) {
+        currentRoot = current.shadowRoot;
+        if (!currentRoot) return null;
+      }
+    }
+    return current;
+  }
+
+  function walkRoots(root, visitor) {
+    if (!root) return;
+    visitor(root);
+    for (const host of queryAll(root, "*")) {
+      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
+    }
+  }
+
+  function deepQuerySelector(root, selector) {
+    let found = null;
+    walkRoots(root, (nextRoot) => {
+      if (found) return;
+      found = queryOne(nextRoot, selector);
+    });
+    if (found) return found;
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
+        if (child) return child;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function deepQuerySelectorAll(root, selector) {
+    const results = [];
+    walkRoots(root, (nextRoot) => results.push(...queryAll(nextRoot, selector)));
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        if (frame.contentDocument) results.push(...deepQuerySelectorAll(frame.contentDocument, selector));
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  function resolveFrameDocument(framePath) {
+    let doc = document;
+    for (const step of Array.isArray(framePath) ? framePath : []) {
+      let frame = queryPiercePath(doc, step?.piercePath);
+      if (!frame && Number.isInteger(Number(step?.index))) {
+        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
+      }
+      if (!frame) return null;
+      try { doc = frame.contentDocument; } catch (_) { return null; }
+      if (!doc) return null;
+    }
+    return doc;
+  }
+
+  function textFor(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("alt") ||
+      el.innerText ||
+      el.textContent ||
+      el.value ||
+      ""
+    ).trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  function deepElementFromPoint(x, y, rootDoc = document) {
+    let doc = rootDoc;
+    let px = x;
+    let py = y;
+    let el = null;
+    for (let guard = 0; guard < 8; guard++) {
+      try { el = doc.elementFromPoint(px, py); } catch (_) { return null; }
+      if (!el) return null;
+      if (el.shadowRoot) {
+        const inner = el.shadowRoot.elementFromPoint(px, py);
+        if (inner && inner !== el) {
+          el = inner;
+          continue;
         }
       }
-      return elements;
-    })()
-  `;
-  const resp = await sendToExtension("cdp", {
-    tabId,
-    method: "Runtime.evaluate",
-    params: { expression: script, returnByValue: true },
-  });
-  const elements = resp.result?.value || [];
-
-  // 缓存元素引用
-  const sessionKey = `${tabId}_${Date.now()}`;
-  snapshotCache.set(sessionKey, elements);
-
-  return { sessionKey, elements, count: elements.length };
-}
-
-// 点击元素
-async function click(args) {
-  const { tabId, target } = args;
-
-  // 解析 @e 引用
-  let selector = target;
-  if (target.startsWith("@e")) {
-    const index = parseInt(target.slice(2)) - 1;
-    const elements = Array.from(snapshotCache.values()).flat();
-    if (elements[index]) {
-      selector = elements[index].selector;
+      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
+        const rect = el.getBoundingClientRect();
+        px -= rect.x;
+        py -= rect.y;
+        doc = el.contentDocument;
+        continue;
+      }
+      return el;
     }
+    return el;
   }
 
-  const script = `document.querySelector('${selector}').click()`;
-  await sendToExtension("cdp", {
-    tabId,
-    method: "Runtime.evaluate",
-    params: { expression: script },
+  function findActionElement(target, element) {
+    const doc = resolveFrameDocument(element?.framePath) || document;
+    if (Array.isArray(element?.piercePath)) {
+      const exact = queryPiercePath(doc, element.piercePath);
+      if (exact) return { el: exact, selector: "piercePath" };
+    }
+
+    const selectors = [];
+    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
+    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
+    for (const selector of selectors.filter(Boolean)) {
+      const el = deepQuerySelector(doc, selector);
+      if (el) return { el, selector };
+    }
+
+    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (needle) {
+      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
+        const text = textFor(el);
+        return text === needle || (needle.length > 4 && text.includes(needle));
+      });
+      if (byText) return { el: byText, selector: "text" };
+    }
+
+    if (element?.bbox) {
+      const x = Number(element.bbox.centerX);
+      const y = Number(element.bbox.centerY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        let el = deepElementFromPoint(x, y);
+        if (el && !el.matches(interactiveSelector())) el = el.closest(interactiveSelector());
+        if (el) return { el, selector: "bbox" };
+      }
+    }
+    return null;
+  }
+
+  function nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+
+  function waitForDomSettled(waitMs, rootDoc) {
+    const quietMs = Math.max(80, Number(waitMs || 0));
+    const maxMs = Math.max(quietMs + 50, Math.min(3000, quietMs + 1200));
+    return new Promise((resolve) => {
+      let done = false;
+      let quietTimer = null;
+      let observer = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try { observer && observer.disconnect(); } catch (_) {}
+        clearTimeout(quietTimer);
+        resolve();
+      };
+      const bump = () => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, quietMs);
+      };
+      observer = new MutationObserver(bump);
+      try {
+        observer.observe((rootDoc || document).documentElement, { childList: true, subtree: true, attributes: true });
+      } catch (_) {
+        return setTimeout(resolve, quietMs);
+      }
+      bump();
+      setTimeout(finish, maxMs);
+    });
+  }
+
+  return new Promise(async (resolve) => {
+    const { target, element, waitMs } = payload || {};
+    const found = findActionElement(target, element);
+    const el = found && found.el;
+    if (!el) return resolve({ ok: false, error: `未找到元素: ${target || element?.ref || ""}` });
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return resolve({ ok: false, error: `元素不可见: ${target}` });
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return resolve({ ok: false, error: `元素已禁用: ${target}` });
+    el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    await nextFrame();
+    if (typeof el.focus === "function") el.focus({ preventScroll: true });
+    el.click();
+    await waitForDomSettled(waitMs, el.ownerDocument);
+    resolve({ ok: true, selector: found.selector });
   });
-  return { clicked: true };
 }
 
-// 填充表单
 async function fill(args) {
-  const { tabId, target, value, clear, append } = args;
+  const tabId = await getActiveTabId(args.tabId);
+  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+  const payload = {
+    target: resolved.target,
+    element: resolved.element,
+    value: String(args.value ?? ""),
+    clear: Boolean(args.clear),
+    append: Boolean(args.append),
+    waitMs: config.waitAfterActionMs,
+  };
+  const expression = `(${buildFillScript.toString()})(${JSON.stringify(payload)})`;
+  let result;
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    result = resp.result?.value || resp.value || {};
+  } catch (error) {
+    if (!isNavigationTransientError(error)) throw error;
+    await sleep(Math.max(100, config.waitAfterActionMs));
+    return { filled: true, target: args.target, selector: resolved.target, element: resolved.element, navigationLikely: true };
+  }
+  if (result.ok === false) throw new Error(result.error || `填充失败: ${args.target}`);
+  return { filled: true, target: args.target, selector: resolved.target, element: resolved.element };
+}
 
-  let selector = target;
-  if (target.startsWith("@e")) {
-    const index = parseInt(target.slice(2)) - 1;
-    const elements = Array.from(snapshotCache.values()).flat();
-    if (elements[index]) {
-      selector = elements[index].selector;
+function buildFillScript({ target, element, value, clear, append, waitMs }) {
+  function interactiveSelector() {
+    return [
+      "a[href]", "button", "input", "textarea", "select", "summary",
+      "[contenteditable='true']", "[role='button']", "[role='link']",
+      "[role='textbox']", "[role='checkbox']", "[role='radio']",
+      "[role='combobox']", "[role='menuitem']", "[onclick]",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+  }
+
+  function queryAll(root, selector) {
+    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
+  }
+
+  function queryOne(root, selector) {
+    try { return root.querySelector(selector); } catch (_) { return null; }
+  }
+
+  function queryPiercePath(root, path) {
+    if (!Array.isArray(path) || path.length === 0) return null;
+    let currentRoot = root;
+    let current = null;
+    for (let i = 0; i < path.length; i++) {
+      current = queryOne(currentRoot, path[i]);
+      if (!current) return null;
+      if (i < path.length - 1) {
+        currentRoot = current.shadowRoot;
+        if (!currentRoot) return null;
+      }
+    }
+    return current;
+  }
+
+  function walkRoots(root, visitor) {
+    if (!root) return;
+    visitor(root);
+    for (const host of queryAll(root, "*")) {
+      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
     }
   }
 
-  const clearScript = clear ? `el.value = '';` : "";
-  const appendScript = append ? `el.value += '${value.replace(/'/g, "\\'")}';` : `el.value = '${value.replace(/'/g, "\\'")}';`;
-  const script = `
-    (() => {
-      const el = document.querySelector('${selector}');
-      ${clearScript}
-      ${appendScript}
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    })()
-  `;
-  await sendToExtension("cdp", {
-    tabId,
-    method: "Runtime.evaluate",
-    params: { expression: script },
+  function deepQuerySelector(root, selector) {
+    let found = null;
+    walkRoots(root, (nextRoot) => {
+      if (found) return;
+      found = queryOne(nextRoot, selector);
+    });
+    if (found) return found;
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
+        if (child) return child;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function deepQuerySelectorAll(root, selector) {
+    const results = [];
+    walkRoots(root, (nextRoot) => results.push(...queryAll(nextRoot, selector)));
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        if (frame.contentDocument) results.push(...deepQuerySelectorAll(frame.contentDocument, selector));
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  function resolveFrameDocument(framePath) {
+    let doc = document;
+    for (const step of Array.isArray(framePath) ? framePath : []) {
+      let frame = queryPiercePath(doc, step?.piercePath);
+      if (!frame && Number.isInteger(Number(step?.index))) {
+        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
+      }
+      if (!frame) return null;
+      try { doc = frame.contentDocument; } catch (_) { return null; }
+      if (!doc) return null;
+    }
+    return doc;
+  }
+
+  function textFor(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("alt") ||
+      el.innerText ||
+      el.textContent ||
+      el.value ||
+      ""
+    ).trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  function deepElementFromPoint(x, y, rootDoc = document) {
+    let doc = rootDoc;
+    let px = x;
+    let py = y;
+    let el = null;
+    for (let guard = 0; guard < 8; guard++) {
+      try { el = doc.elementFromPoint(px, py); } catch (_) { return null; }
+      if (!el) return null;
+      if (el.shadowRoot) {
+        const inner = el.shadowRoot.elementFromPoint(px, py);
+        if (inner && inner !== el) {
+          el = inner;
+          continue;
+        }
+      }
+      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
+        const rect = el.getBoundingClientRect();
+        px -= rect.x;
+        py -= rect.y;
+        doc = el.contentDocument;
+        continue;
+      }
+      return el;
+    }
+    return el;
+  }
+
+  function findActionElement(target, element) {
+    const doc = resolveFrameDocument(element?.framePath) || document;
+    if (Array.isArray(element?.piercePath)) {
+      const exact = queryPiercePath(doc, element.piercePath);
+      if (exact) return { el: exact, selector: "piercePath" };
+    }
+
+    const selectors = [];
+    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
+    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
+    for (const selector of selectors.filter(Boolean)) {
+      const el = deepQuerySelector(doc, selector);
+      if (el) return { el, selector };
+    }
+
+    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (needle) {
+      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
+        const text = textFor(el);
+        return text === needle || (needle.length > 4 && text.includes(needle));
+      });
+      if (byText) return { el: byText, selector: "text" };
+    }
+
+    if (element?.bbox) {
+      const x = Number(element.bbox.centerX);
+      const y = Number(element.bbox.centerY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        let el = deepElementFromPoint(x, y);
+        if (el && !el.matches(interactiveSelector())) el = el.closest(interactiveSelector());
+        if (el) return { el, selector: "bbox" };
+      }
+    }
+    return null;
+  }
+
+  function setNativeValue(el, nextValue) {
+    const proto =
+      el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
+      el instanceof HTMLInputElement ? HTMLInputElement.prototype :
+      null;
+    const setter = proto && Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, nextValue);
+    else el.value = nextValue;
+  }
+
+  function nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+
+  function waitForDomSettled(waitMs, rootDoc) {
+    const quietMs = Math.max(80, Number(waitMs || 0));
+    const maxMs = Math.max(quietMs + 50, Math.min(3000, quietMs + 1200));
+    return new Promise((resolve) => {
+      let done = false;
+      let quietTimer = null;
+      let observer = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try { observer && observer.disconnect(); } catch (_) {}
+        clearTimeout(quietTimer);
+        resolve();
+      };
+      const bump = () => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, quietMs);
+      };
+      observer = new MutationObserver(bump);
+      try {
+        observer.observe((rootDoc || document).documentElement, { childList: true, subtree: true, attributes: true });
+      } catch (_) {
+        return setTimeout(resolve, quietMs);
+      }
+      bump();
+      setTimeout(finish, maxMs);
+    });
+  }
+
+  return new Promise(async (resolve) => {
+    const found = findActionElement(target, element);
+    const el = found && found.el;
+    if (!el) return resolve({ ok: false, error: `未找到元素: ${target}` });
+    el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    await nextFrame();
+    if (typeof el.focus === "function") el.focus({ preventScroll: true });
+    if (el instanceof HTMLSelectElement) {
+      el.value = value;
+    } else if ("value" in el) {
+      if (clear) setNativeValue(el, "");
+      setNativeValue(el, append ? `${el.value || ""}${value}` : value);
+    } else if (el.isContentEditable) {
+      if (!append) el.textContent = "";
+      el.textContent = `${el.textContent || ""}${value}`;
+    } else {
+      return resolve({ ok: false, error: `元素不可输入: ${target}` });
+    }
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitForDomSettled(waitMs, el.ownerDocument);
+    resolve({ ok: true, selector: found.selector });
   });
-  return { filled: true };
 }
 
-// 执行 JavaScript
 async function executeScript(args) {
-  const { tabId, script } = args;
-  const resp = await sendToExtension("cdp", {
-    tabId,
-    method: "Runtime.evaluate",
-    params: { expression: script, returnByValue: true },
+  const tabId = await getActiveTabId(args.tabId);
+  const resp = await cdp(tabId, "Runtime.evaluate", {
+    expression: String(args.script || ""),
+    returnByValue: true,
+    awaitPromise: true,
   });
-  return resp.result?.value || resp.result;
+  if (resp.exceptionDetails) {
+    throw new Error(resp.exceptionDetails.exception?.description || resp.exceptionDetails.text || "脚本执行失败");
+  }
+  return resp.result?.value ?? resp.result;
 }
 
-// 截图
 async function screenshot(args) {
-  const { tabId, fullPage, target } = args;
-  const resp = await sendToExtension("cdp", {
-    tabId,
-    method: "Page.captureScreenshot",
-    params: { format: "png", fromSurface: true },
-  });
-  console.log("[BrowserUse] screenshot response keys:", Object.keys(resp));
-  const base64Data = resp.data || resp.result || resp;
+  const tabId = await getActiveTabId(args.tabId);
+  let params = { format: "png", fromSurface: true };
 
-  // 保存截图到文件
+  if (args.target) {
+    const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+    const expression = `(${buildElementRectScript.toString()})(${JSON.stringify({ target: resolved.target, element: resolved.element })})`;
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    const rect = resp.result?.value || resp.value;
+    if (!rect) throw new Error(`未找到截图元素: ${args.target}`);
+    params.clip = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale: 1 };
+    params.captureBeyondViewport = true;
+  } else if (args.fullPage) {
+    const metrics = await cdp(tabId, "Page.getLayoutMetrics", {});
+    const size = metrics.contentSize || metrics.result?.contentSize;
+    if (size) {
+      params.clip = { x: 0, y: 0, width: Math.ceil(size.width), height: Math.ceil(size.height), scale: 1 };
+      params.captureBeyondViewport = true;
+    }
+  }
+
+  const resp = await cdp(tabId, "Page.captureScreenshot", params, 60000);
+  const base64Data = resp.data || resp.result?.data || resp.result || resp;
+  if (typeof base64Data !== "string") throw new Error("截图响应格式异常");
+
   const fs = require("fs");
   const path = require("path");
-  const timestamp = Date.now();
-  const filename = `browser-screenshot-${timestamp}.png`;
-
-  // 获取工作目录（从会话传入，或使用临时目录）
+  const filename = `browser-screenshot-${Date.now()}.png`;
   const workDir = args.workDir || require("os").tmpdir();
   const filepath = path.join(workDir, filename);
+  fs.writeFileSync(filepath, Buffer.from(base64Data, "base64"));
 
-  // 将 base64 数据写入文件
-  const buffer = Buffer.from(base64Data, "base64");
-  fs.writeFileSync(filepath, buffer);
+  const result = { path: filepath, filename };
+  if (args.returnDataUrl === true) result.dataUrl = `data:image/png;base64,${base64Data}`;
+  return result;
+}
 
-  console.log("[BrowserUse] Screenshot saved to:", filepath);
+function buildElementRectScript(payload) {
+  const target = payload && payload.target;
+  const element = payload && payload.element;
 
+  function queryAll(root, selector) {
+    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
+  }
+
+  function queryOne(root, selector) {
+    try { return root.querySelector(selector); } catch (_) { return null; }
+  }
+
+  function queryPiercePath(root, path) {
+    if (!Array.isArray(path) || path.length === 0) return null;
+    let currentRoot = root;
+    let current = null;
+    for (let i = 0; i < path.length; i++) {
+      current = queryOne(currentRoot, path[i]);
+      if (!current) return null;
+      if (i < path.length - 1) {
+        currentRoot = current.shadowRoot;
+        if (!currentRoot) return null;
+      }
+    }
+    return current;
+  }
+
+  function walkRoots(root, visitor) {
+    if (!root) return;
+    visitor(root);
+    for (const host of queryAll(root, "*")) {
+      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
+    }
+  }
+
+  function deepQuerySelector(root, selector) {
+    let found = null;
+    walkRoots(root, (nextRoot) => {
+      if (found) return;
+      found = queryOne(nextRoot, selector);
+    });
+    if (found) return found;
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
+        if (child) return child;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function resolveFrameDocument(framePath) {
+    let doc = document;
+    for (const step of Array.isArray(framePath) ? framePath : []) {
+      let frame = queryPiercePath(doc, step?.piercePath);
+      if (!frame && Number.isInteger(Number(step?.index))) {
+        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
+      }
+      if (!frame) return null;
+      try { doc = frame.contentDocument; } catch (_) { return null; }
+      if (!doc) return null;
+    }
+    return doc;
+  }
+
+  function textFor(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("alt") ||
+      el.innerText ||
+      el.textContent ||
+      el.value ||
+      ""
+    ).trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  function absoluteRect(el) {
+    const rect = el.getBoundingClientRect();
+    let x = rect.x;
+    let y = rect.y;
+    let win = el.ownerDocument.defaultView;
+    while (win && win !== window) {
+      const frame = win.frameElement;
+      if (!frame) break;
+      const frameRect = frame.getBoundingClientRect();
+      x += frameRect.x;
+      y += frameRect.y;
+      win = win.parent;
+    }
+    return { x, y, width: rect.width, height: rect.height };
+  }
+
+  function findElement() {
+    const doc = resolveFrameDocument(element?.framePath) || document;
+    if (Array.isArray(element?.piercePath)) {
+      const exact = queryPiercePath(doc, element.piercePath);
+      if (exact) return exact;
+    }
+
+    const selectors = [];
+    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
+    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
+    for (const selector of selectors.filter(Boolean)) {
+      const el = deepQuerySelector(doc, selector);
+      if (el) return el;
+    }
+
+    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (needle) {
+      const candidates = [
+        "a[href]", "button", "input", "textarea", "select", "summary",
+        "[contenteditable='true']", "[role='button']", "[role='link']",
+        "[role='textbox']", "[role='checkbox']", "[role='radio']",
+        "[role='combobox']", "[role='menuitem']", "[onclick]",
+        "[tabindex]:not([tabindex='-1'])",
+      ].join(",");
+      const found = [];
+      walkRoots(doc, (root) => found.push(...queryAll(root, candidates)));
+      return found.find((el) => {
+        const text = textFor(el);
+        return text === needle || (needle.length > 4 && text.includes(needle));
+      }) || null;
+    }
+
+    return null;
+  }
+
+  const el = findElement();
+  if (!el) return null;
+  el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  const rect = absoluteRect(el);
+  const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
+  const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
   return {
-    dataUrl: "data:image/png;base64," + base64Data,
-    path: filepath,
-    filename: filename
+    x: Math.max(0, rect.x + scrollX),
+    y: Math.max(0, rect.y + scrollY),
+    width: Math.max(1, rect.width),
+    height: Math.max(1, rect.height),
   };
 }
 
-// 网络监控
 async function networkMonitor(args) {
-  const { tabId, action } = args;
-  if (action === "start") {
-    await sendToExtension("networkStart", { tabId });
-  } else if (action === "list") {
-    const resp = await sendToExtension("networkList", { tabId });
-    return resp.data || [];
-  } else if (action === "stop") {
-    await sendToExtension("networkStop", { tabId });
-  }
-  return { action };
+  const tabId = await getActiveTabId(args.tabId);
+  const action = args.action || "list";
+  const map = {
+    start: "networkStart",
+    list: "networkList",
+    detail: "networkDetail",
+    clear: "networkClear",
+    stop: "networkStop",
+  };
+  const cmd = map[action];
+  if (!cmd) throw new Error(`未知网络监控操作: ${action}`);
+  return await sendToExtension(cmd, { tabId, ...args });
 }
 
-// IPC 处理器
+async function consoleMonitor(args) {
+  const tabId = await getActiveTabId(args.tabId);
+  const action = args.action || "list";
+  const map = {
+    start: "consoleStart",
+    list: "consoleList",
+    clear: "consoleClear",
+    stop: "consoleStop",
+  };
+  const cmd = map[action];
+  if (!cmd) throw new Error(`未知控制台监控操作: ${action}`);
+  return await sendToExtension(cmd, { tabId, ...args });
+}
+
+async function syncExtensionPort(port = config.wsPort) {
+  const normalized = normalizePort(port, config.wsPort);
+  return await sendToExtension("setPort", { port: normalized }, 10000);
+}
+
+async function clearDebugSessions() {
+  return await sendToExtension("debugClearAll", {}, 10000);
+}
+
+function getStatus() {
+  const wsConnected = extensionWs && extensionWs.readyState === WebSocket.OPEN;
+  return {
+    ok: true,
+    connected: Boolean(wsConnected && extensionInfo),
+    ports: { extension: config.wsPort, api: config.apiPort },
+    config: { ...config },
+    httpApiEnabled: config.enableHttpApi,
+    pendingRequests: pendingRequests.size,
+    snapshotCacheSize: snapshotCache.size,
+    extension: extensionInfo,
+    lastCommandAt,
+    lastError,
+    tabs: lastTabs,
+  };
+}
+
 function register(ipcMain) {
   startServices();
 
-  ipcMain.handle("browser-use:call", async (event, params) => {
+  ipcMain.handle("browser-use:call", async (_event, params) => {
     try {
       const result = await handleCommand(params);
+      return { ok: true, result };
+    } catch (error) {
+      lastError = error.message;
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("browser-use:status", async () => getStatus());
+
+  ipcMain.handle("browser-use:configure", async (_event, nextConfig) => {
+    const current = { ...config };
+    const normalized = normalizeConfig(nextConfig || {});
+    const mustRestart =
+      normalized.wsPort !== current.wsPort ||
+      normalized.apiPort !== current.apiPort ||
+      normalized.enableHttpApi !== current.enableHttpApi;
+    config = normalized;
+    if (mustRestart) return await restartServices();
+    return getStatus();
+  });
+
+  ipcMain.handle("browser-use:restart", async () => restartServices());
+
+  ipcMain.handle("browser-use:sync-extension-port", async (_event, payload) => {
+    try {
+      const result = await syncExtensionPort(payload?.port);
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: error.message };
     }
   });
 
-  ipcMain.handle("browser-use:status", async () => {
-    return {
-      ok: true,
-      connected: extensionWs?.readyState === WebSocket.OPEN,
-      ports: { extension: EXTENSION_PORT, api: API_PORT },
-    };
+  ipcMain.handle("browser-use:clear-debug-sessions", async () => {
+    try {
+      const result = await clearDebugSessions();
+      return { ok: true, result };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
   });
 }
 
-// 清理
 app.on("will-quit", () => {
-  stopServices();
+  void stopServices();
 });
 
 module.exports = { register };

@@ -1,7 +1,7 @@
 // Tools 管理页面
 // src/pages/ToolsPage.tsx
 
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type ReactNode } from "react";
 import {
   ChevronDown,
   Edit3,
@@ -38,6 +38,8 @@ export function ToolsPage() {
     tool: McpToolConfig;
   } | null>(null);
   const [expandedMcpIds, setExpandedMcpIds] = useState<string[]>([]);
+  const [browserStatus, setBrowserStatus] = useState<{ connected: boolean } | null>(null);
+  const [computerStatus, setComputerStatus] = useState<{ ok: boolean } | null>(null);
   const toast = useToast();
 
   const builtinMcpTools = useToolsStore((state) => state.builtinMcpTools);
@@ -51,6 +53,29 @@ export function ToolsPage() {
   const expandedGroups = useToolsStore((state) => state.expandedGroups);
   const toggleGroupExpand = useToolsStore((state) => state.toggleGroupExpand);
   const toggleGroup = useToolsStore((state) => state.toggleGroup);
+
+  // 定期检查 Browser Use 和 Computer Use 状态
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const browserResult = await window.polaragent.browseruse.status();
+        setBrowserStatus({ connected: Boolean(browserResult?.connected) });
+      } catch {
+        setBrowserStatus({ connected: false });
+      }
+
+      try {
+        const computerResult = await window.polaragent.computeruse.health();
+        setComputerStatus({ ok: Boolean(computerResult?.ok) });
+      } catch {
+        setComputerStatus({ ok: false });
+      }
+    };
+
+    void checkStatus();
+    const timer = window.setInterval(() => void checkStatus(), 10000); // 每10秒检查一次
+    return () => window.clearInterval(timer);
+  }, []);
 
   // 按 group 分组内置工具
   const groupedTools = useMemo(() => {
@@ -169,6 +194,13 @@ export function ToolsPage() {
                           enabled,
                           tools.map((t) => t.id),
                         )
+                      }
+                      status={
+                        groupKey === "browseruse"
+                          ? browserStatus
+                          : groupKey === "computeruse"
+                            ? computerStatus
+                            : null
                       }
                     />
                   ))}
@@ -553,9 +585,11 @@ function EmptyCloudState({
 function ToolGroupRow({
   description,
   expanded,
+  groupKey,
   groupName,
   onToggleExpand,
   onToggleGroup,
+  status,
   tools,
 }: {
   description: string;
@@ -564,6 +598,7 @@ function ToolGroupRow({
   groupName: string;
   onToggleExpand: () => void;
   onToggleGroup: (enabled: boolean) => void;
+  status?: { connected?: boolean; ok?: boolean } | null;
   tools: ToolMeta[];
 }) {
   const isBuiltinToolEnabled = useToolsStore((state) => state.isBuiltinToolEnabled);
@@ -573,6 +608,38 @@ function ToolGroupRow({
   const someEnabled = tools.some((tool) => isBuiltinToolEnabled(tool.id));
   const enabledCount = tools.filter((tool) => isBuiltinToolEnabled(tool.id)).length;
 
+  // 根据分组类型显示不同的状态
+  let statusBadge: ReactNode = null;
+  if (status) {
+    if (groupKey === "browseruse") {
+      const connected = status.connected ?? false;
+      statusBadge = (
+        <span
+          className={`inline-flex h-5 items-center rounded-full px-2 text-xs font-medium ${
+            connected
+              ? "bg-emerald-500/10 text-emerald-700"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {connected ? "已连接" : "未连接"}
+        </span>
+      );
+    } else if (groupKey === "computeruse") {
+      const available = status.ok ?? false;
+      statusBadge = (
+        <span
+          className={`inline-flex h-5 items-center rounded-full px-2 text-xs font-medium ${
+            available
+              ? "bg-emerald-500/10 text-emerald-700"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {available ? "可用" : "待检查"}
+        </span>
+      );
+    }
+  }
+
   return (
     <div className="border-b border-border last:border-b-0">
       <ToolRowShell onClick={onToggleExpand}>
@@ -580,6 +647,7 @@ function ToolGroupRow({
           name={groupName}
           description={description}
           badges={[`${enabledCount}/${tools.length}`]}
+          status={statusBadge}
         />
         <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
           <Button

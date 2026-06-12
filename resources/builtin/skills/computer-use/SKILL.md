@@ -9,6 +9,7 @@
 3. **鼠标操作** - 点击、双击、移动、滚动
 4. **键盘输入** - 输入文本、按键组合
 5. **窗口管理** - 切换窗口、激活应用
+6. **批量动作** - 合并连续 UIA 操作，减少多轮调用开销
 
 ## 工作流程
 
@@ -35,16 +36,26 @@
 - `windows_accessibility_tree` - 仅获取 UI 树（更快）
 - `windows_list_windows` - 列出所有窗口
 - `windows_find` - 查找 UI 元素
+- `windows_element_info` - 获取元素或坐标处控件详情
 
 ### 鼠标操作
 - `windows_click` - 单击
 - `windows_double_click` - 双击
 - `windows_move` - 移动鼠标
+- `windows_drag` - 按路径拖拽
 - `windows_scroll` - 滚动
 
 ### 键盘输入
 - `windows_type` - 输入文本
 - `windows_keypress` - 按键组合
+
+### UI Automation 操作
+- `windows_focus` - 聚焦元素
+- `windows_invoke` - 优先使用 Invoke/Toggle/SelectionItem/ExpandCollapse 等 UIA Pattern 操作元素
+- `windows_set_value` - 优先使用 ValuePattern 设置输入值
+- `windows_activate_window` - 激活目标窗口
+- `windows_wait` - 等待动画、加载或焦点变化
+- `windows_batch` - 按顺序执行多个动作，适合聚焦、设置值、调用、等待、再观察等连续流程
 
 ## 使用示例
 
@@ -112,9 +123,13 @@ for (const input of inputs) {
 
 ### 💡 最佳实践
 - 优先使用元素 ID 而不是坐标
+- 对按钮、复选框、菜单项等优先使用 `windows_invoke`
+- 对输入框优先使用 `windows_set_value`
 - 操作后等待 UI 更新再观察
 - 大范围查找时增加 maxNodes 参数
 - 频繁读取时使用 accessibility_tree 而不是 snapshot
+- 连续 2 个以上动作可用 `windows_batch` 合并，速度更好
+- 默认快照会保存截图路径，不回传大块 Base64；只有确实需要图片数据时再使用 base64 模式
 
 ### 🔍 调试技巧
 - 使用 snapshot 查看完整 UI 树

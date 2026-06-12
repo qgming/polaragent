@@ -256,6 +256,10 @@ async function ensureDebugAttached(session) {
 
 async function detachDebugSession(session, reason = 'manual') {
   if (!session) return;
+  if (session.idleDetachTimer) {
+    clearTimeout(session.idleDetachTimer);
+    session.idleDetachTimer = null;
+  }
   if (session.attached) {
     try { await chrome.debugger.detach({ tabId: session.tabId }); } catch (e) {
       console.log('[TMWD-DEBUG] detach failed:', session.tabId, reason, e.message);
@@ -271,9 +275,20 @@ async function detachDebugIfIdle(session) {
   await detachDebugSession(session, 'idle');
 }
 
+function scheduleTransientDebugDetach(session) {
+  if (!session || session.network || session.console) return;
+  if (session.idleDetachTimer) clearTimeout(session.idleDetachTimer);
+  session.idleDetachTimer = setTimeout(async () => {
+    if (session.network || session.console) return;
+    await detachDebugSession(session, 'transient-idle');
+    if (!session.network && !session.console) debugSessions.delete(session.tabId);
+  }, 45000);
+}
+
 async function detachAllDebugSessions(reason = 'cleanup') {
   const sessions = [...debugSessions.values()];
   for (const session of sessions) {
+    if (session.idleDetachTimer) clearTimeout(session.idleDetachTimer);
     session.requests.clear();
     session.requestOrder = [];
     session.logs = [];
@@ -619,7 +634,7 @@ function normalizeOpenUrl(url) {
 
 async function handleBatch(msg, sender) {
   const R = [];
-  let attached = null;
+  let attachedSession = null;
   const resolve$N = (params) => JSON.parse(JSON.stringify(params || {}).replace(/"\$(\d+)\.([^"]+)"/g,
     (_, i, path) => { let v = R[+i]; for (const k of path.split('.')) v = v[k]; return JSON.stringify(v); }));
   try {
@@ -636,20 +651,23 @@ async function handleBatch(msg, sender) {
           R.push({ skipped: true, reason: 'Page.bringToFront requires allowFocus=true' });
           continue;
         }
-        if (attached !== tabId) {
-          if (attached) { await chrome.debugger.detach({ tabId: attached }); attached = null; }
-          await attachDebuggerWithRecovery(tabId);
-          attached = tabId;
+        if (!attachedSession || attachedSession.tabId !== Number(tabId)) {
+          if (attachedSession) scheduleTransientDebugDetach(attachedSession);
+          attachedSession = getDebugSession(Number(tabId));
+          await ensureDebugAttached(attachedSession);
         }
         R.push(await chrome.debugger.sendCommand({ tabId }, c.method, resolve$N(c.params)));
       } else {
         R.push({ ok: false, error: 'unknown cmd: ' + c.cmd });
       }
     }
-    if (attached) await chrome.debugger.detach({ tabId: attached });
+    if (attachedSession) scheduleTransientDebugDetach(attachedSession);
     return { ok: true, results: R };
   } catch (e) {
-    if (attached) try { await chrome.debugger.detach({ tabId: attached }); } catch (_) {}
+    if (attachedSession && !attachedSession.network && !attachedSession.console) {
+      try { await chrome.debugger.detach({ tabId: attachedSession.tabId }); } catch (_) {}
+      attachedSession.attached = false;
+    }
     return { ok: false, error: e.message, results: R };
   }
 }
@@ -660,13 +678,17 @@ async function handleCDP(msg, sender) {
   if (msg.method === 'Page.bringToFront' && msg.allowFocus !== true) {
     return { ok: true, data: { skipped: true, reason: 'Page.bringToFront requires allowFocus=true' } };
   }
+  const session = getDebugSession(Number(tabId));
   try {
-    await attachDebuggerWithRecovery(tabId);
+    await ensureDebugAttached(session);
     const result = await chrome.debugger.sendCommand({ tabId }, msg.method, msg.params || {});
-    await chrome.debugger.detach({ tabId });
+    scheduleTransientDebugDetach(session);
     return { ok: true, data: result };
   } catch (e) {
-    try { await chrome.debugger.detach({ tabId }); } catch (_) {}
+    if (!session.network && !session.console) {
+      try { await chrome.debugger.detach({ tabId }); } catch (_) {}
+      session.attached = false;
+    }
     return { ok: false, error: e.message };
   }
 }
@@ -1006,7 +1028,7 @@ async function connectWS() {
     const tabs = (await chrome.tabs.query({})).filter(t => isScriptable(t.url));
     ws.send(JSON.stringify(withClientIdentity({
       type: 'ext_ready',
-      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+      tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId }))
     })));
     console.log('[TMWD-WS] Sent ext_ready with', tabs.length, 'tabs');
   };
@@ -1081,7 +1103,7 @@ async function sendTabsUpdate() {
   await loadClientIdentity();
   ws.send(JSON.stringify(withClientIdentity({
     type: 'tabs_update',
-    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title }))
+    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId }))
   })));
 }
 chrome.tabs.onUpdated.addListener((_, changeInfo) => {
