@@ -148,5 +148,6 @@ contextBridge.exposeInMainWorld("polaragent", {
     restart: () => invoke("browser-use:restart"),
     syncExtensionPort: (port) => invoke("browser-use:sync-extension-port", { port }),
     clearDebugSessions: () => invoke("browser-use:clear-debug-sessions"),
+    exportExtension: () => invoke("browser-use:export-extension"),
   },
 });

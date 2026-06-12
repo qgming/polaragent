@@ -396,6 +396,7 @@ interface Window {
       restart: () => Promise<BrowserUseStatusResult>;
       syncExtensionPort: (port?: number) => Promise<{ ok: boolean; result?: any; error?: string }>;
       clearDebugSessions: () => Promise<{ ok: boolean; result?: any; error?: string }>;
+      exportExtension: () => Promise<{ ok: boolean; path?: string; error?: string }>;
     };
   };
 }

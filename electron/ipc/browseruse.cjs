@@ -1,7 +1,9 @@
 // IPC: Browser Use - Chrome extension bridge.
 const WebSocket = require("ws");
 const http = require("http");
-const { app } = require("electron");
+const { app, dialog } = require("electron");
+const fs = require("fs");
+const path = require("path");
 
 const DEFAULT_CONFIG = {
   wsPort: 18765,
@@ -1393,6 +1395,78 @@ function register(ipcMain) {
       return { ok: false, error: error.message };
     }
   });
+
+  ipcMain.handle("browser-use:export-extension", async () => {
+    try {
+      const result = await dialog.showOpenDialog({
+        title: "选择扩展导出位置",
+        properties: ["openDirectory", "createDirectory"],
+        buttonLabel: "导出到此处",
+      });
+
+      if (result.canceled || !result.filePaths[0]) {
+        return { ok: false, error: "用户取消" };
+      }
+
+      const targetDir = result.filePaths[0];
+      const extensionName = "PolarAgent-BrowserUse";
+      const exportPath = path.join(targetDir, extensionName);
+
+      // 检查目标目录是否已存在
+      if (fs.existsSync(exportPath)) {
+        const confirmResult = await dialog.showMessageBox({
+          type: "warning",
+          title: "目录已存在",
+          message: `目录 "${extensionName}" 已存在，是否覆盖？`,
+          buttons: ["取消", "覆盖"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+
+        if (confirmResult.response === 0) {
+          return { ok: false, error: "用户取消" };
+        }
+
+        // 删除已存在的目录
+        fs.rmSync(exportPath, { recursive: true, force: true });
+      }
+
+      // 获取源目录路径
+      const sourcePath = app.isPackaged
+        ? path.join(process.resourcesPath, "resources", "builtin", "browser-extension")
+        : path.join(app.getAppPath(), "resources", "builtin", "browser-extension");
+
+      if (!fs.existsSync(sourcePath)) {
+        return { ok: false, error: `扩展源目录不存在: ${sourcePath}` };
+      }
+
+      // 复制目录
+      copyDirRecursive(sourcePath, exportPath);
+
+      return { ok: true, path: exportPath };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+}
+
+function copyDirRecursive(src, dest) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
 }
 
 app.on("will-quit", () => {
