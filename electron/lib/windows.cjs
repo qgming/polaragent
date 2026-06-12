@@ -19,10 +19,10 @@ function getMainWindow() {
 // 创建并加载主窗口
 function createMainWindow() {
   mainWindow = createWindow({
-    width: 1240,
-    height: 820,
-    minWidth: 860,
-    minHeight: 560,
+    width: 1000,    // 默认宽度：1240 → 1000 (适配主流软件标准)
+    height: 700,    // 默认高度：820 → 700 (保持16:9舒适比例)
+    minWidth: 600,  // 最小宽度：860 → 600 (双屏/三分屏友好)
+    minHeight: 450, // 最小高度：560 → 450 (保持纵横比)
     title: APP_NAME,
   });
   loadApp(mainWindow);

@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useKnowledgeStore } from "@/stores/knowledge-store";
+import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
 import { cn } from "@/lib/utils";
 
 interface KnowledgeBaseSelectorProps {
@@ -26,6 +27,7 @@ export function KnowledgeBaseSelector({
     () => allSources.filter((kb) => kb.enabled),
     [allSources],
   );
+  const breakpoint = useResponsiveWidth();
 
   const handleToggle = (id: string) => {
     if (selectedIds.includes(id)) {
@@ -50,6 +52,9 @@ export function KnowledgeBaseSelector({
     [allSources, selectedIds],
   );
 
+  // narrow: 只显示图标; medium/wide: 显示图标+文字
+  const showText = breakpoint !== "narrow";
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -59,14 +64,16 @@ export function KnowledgeBaseSelector({
           type="button"
           title={selectedKnowledgeBase?.name ?? "知识库"}
           className={cn(
-            "h-7 min-w-0 max-w-[180px] gap-1.5 px-2 hover:bg-muted hover:text-foreground",
+            "h-7 hover:bg-muted hover:text-foreground transition-colors",
             hasSelection
               ? "bg-muted text-foreground"
               : "bg-muted/50 text-foreground/70",
+            // narrow 模式：纯图标按钮（与 ComposerToolbar 一致）
+            showText ? "gap-1.5 px-2" : "size-7 min-w-0 justify-center rounded-md px-0",
           )}
         >
-          <BookOpen className="size-3.5 shrink-0" />
-          {hasSelection && selectedKnowledgeBase ? (
+          <BookOpen className={showText ? "size-3.5 shrink-0" : "size-4"} />
+          {showText && hasSelection && selectedKnowledgeBase ? (
             <span className="truncate text-sm">{selectedKnowledgeBase.name}</span>
           ) : null}
         </Button>

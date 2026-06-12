@@ -46,6 +46,7 @@ import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import type { AgentConfig } from "@/types/config";
 import { useAlert } from "@/hooks/useAlert";
+import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -128,6 +129,8 @@ export function HomePage({
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   // 自定义对话框
   const { alert: showAlert, AlertDialog } = useAlert();
+  // 响应式宽度断点
+  const breakpoint = useResponsiveWidth();
 
   const handlePickDir = async () => {
     const dir = await pickWorkingDirectory();
@@ -313,22 +316,33 @@ export function HomePage({
 
               {/* 类型选择器：通用 / 团队 */}
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    type="button"
-                    className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
-                  >
-                    {chatType === "general" ? (
-                      <MessageCircle className="size-3.5" />
-                    ) : (
-                      <Users className="size-3.5" />
-                    )}
-                    <span className="text-sm">{chatType === "general" ? "通用" : "团队"}</span>
-                    <ChevronDown className="size-3" />
-                  </Button>
-                </DropdownMenuTrigger>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        className={
+                          breakpoint === "narrow"
+                            ? "size-7 justify-center p-0 rounded-md bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                            : "h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                        }
+                      >
+                        {chatType === "general" ? (
+                          <MessageCircle className="size-4" />
+                        ) : (
+                          <Users className="size-4" />
+                        )}
+                        {breakpoint !== "narrow" ? (
+                          <span className="text-sm">{chatType === "general" ? "通用" : "团队"}</span>
+                        ) : null}
+                        {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>{chatType === "general" ? "通用对话" : "团队协作"}</TooltipContent>
+                </Tooltip>
                 <DropdownMenuContent align="start" className="w-32">
                   <DropdownMenuItem onSelect={() => setChatType("general")}>
                     <MessageCircle className="size-4" />
@@ -349,20 +363,31 @@ export function HomePage({
               {/* 根据类型显示不同的选择器 */}
               {chatType === "general" ? (
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      type="button"
-                      className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
-                    >
-                      <span className="text-sm leading-none">
-                        {activeAgent?.avatar || "⚡"}
-                      </span>
-                      <span className="text-sm">{activeAgent?.name || "默认助手"}</span>
-                      <ChevronDown className="size-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className={
+                            breakpoint === "narrow"
+                              ? "size-7 justify-center p-0 rounded-md bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                              : "h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                          }
+                        >
+                          <span className={breakpoint === "narrow" ? "text-base leading-none" : "text-sm leading-none"}>
+                            {activeAgent?.avatar || "⚡"}
+                          </span>
+                          {breakpoint !== "narrow" ? (
+                            <span className="text-sm">{activeAgent?.name || "默认助手"}</span>
+                          ) : null}
+                          {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
+                        </Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>{activeAgent?.name || "默认助手"}</TooltipContent>
+                  </Tooltip>
                   <DropdownMenuContent align="start" className="w-56">
                     {agents.length > 0 ? (
                       agents.map((agent) => (
@@ -391,20 +416,31 @@ export function HomePage({
                 </DropdownMenu>
               ) : (
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      type="button"
-                      className="h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground"
-                    >
-                      <span className="text-sm leading-none">
-                        {teams.find((t) => t.id === selectedTeamId)?.avatar || "👥"}
-                      </span>
-                      <span className="text-sm">{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</span>
-                      <ChevronDown className="size-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          className={
+                            breakpoint === "narrow"
+                              ? "size-7 justify-center p-0 rounded-md bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                              : "h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                          }
+                        >
+                          <span className={breakpoint === "narrow" ? "text-base leading-none" : "text-sm leading-none"}>
+                            {teams.find((t) => t.id === selectedTeamId)?.avatar || "👥"}
+                          </span>
+                          {breakpoint !== "narrow" ? (
+                            <span className="text-sm">{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</span>
+                          ) : null}
+                          {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
+                        </Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</TooltipContent>
+                  </Tooltip>
                   <DropdownMenuContent align="start" className="w-56">
                     {teams.length > 0 ? (
                       teams.map((team) => (

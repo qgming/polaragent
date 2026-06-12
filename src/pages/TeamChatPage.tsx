@@ -64,6 +64,7 @@ import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { useAlert } from "@/hooks/useAlert";
+import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 const createUiMessageId = () =>
@@ -588,6 +589,8 @@ function Composer({
 }) {
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
+  // 响应式宽度断点
+  const breakpoint = useResponsiveWidth();
 
   const handleVoiceTranscription = (text: string, shouldAutoSend: boolean) => {
     // 插入文本到输入框
@@ -614,6 +617,9 @@ function Composer({
     : workingDir
       ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
       : "选择工作目录";
+
+  // 响应式：narrow 模式下工作目录按钮最大宽度更小
+  const dirButtonMaxWidth = breakpoint === "narrow" ? "max-w-[120px]" : "max-w-[260px]";
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background to-transparent px-4 pb-5 pt-12">
@@ -687,13 +693,17 @@ function Composer({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  className="h-7 min-w-0 max-w-[260px] gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground"
+                  className={
+                    breakpoint === "narrow"
+                      ? "size-7 justify-center rounded-md p-0 bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                      : `h-7 min-w-0 ${dirButtonMaxWidth} gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground transition-colors`
+                  }
                   onClick={onPickDir}
                   type="button"
                   variant="ghost"
                 >
-                  <FolderOpen className="size-3.5 shrink-0" />
-                  <span className="truncate">{dirLabel}</span>
+                  <FolderOpen className={breakpoint === "narrow" ? "size-4" : "size-3.5 shrink-0"} />
+                  {breakpoint !== "narrow" ? <span className="truncate">{dirLabel}</span> : null}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{workingDir || "选择工作目录"}</TooltipContent>

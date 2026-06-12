@@ -18,6 +18,7 @@ import {
   useTeamChatStore,
   useTeamThreadMessages,
 } from "@/stores/team/team-chat-store";
+import { useResponsivePanelWidth } from "@/hooks/useResponsiveWidth";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import {
   useTeamMonitorStore,
@@ -53,6 +54,7 @@ export function TeamMonitorPanel({
   const completedTodos = todos.filter(
     (todo) => todo.status === "completed",
   ).length;
+  const panelWidth = useResponsivePanelWidth();
 
   // 成员信息映射
   const memberInfo = useMemo(() => {
@@ -102,12 +104,12 @@ export function TeamMonitorPanel({
   return (
     <motion.aside
       initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 320, opacity: 1 }}
+      animate={{ width: panelWidth, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 36 }}
       className="flex shrink-0 flex-col overflow-hidden border-l border-border bg-background"
     >
-      <div className="flex h-full w-[320px] flex-col pt-2">
+      <div className="flex h-full flex-col pt-2" style={{ width: panelWidth }}>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
           {/* 待办 */}
           <Section

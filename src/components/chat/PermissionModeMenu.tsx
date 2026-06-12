@@ -12,6 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 const MODE_META: Record<
@@ -46,6 +47,10 @@ export function PermissionModeMenu({
 }) {
   const meta = MODE_META[mode];
   const Icon = meta.icon;
+  const breakpoint = useResponsiveWidth();
+
+  // narrow: 只显示图标; medium/wide: 显示图标+文字
+  const showText = breakpoint !== "narrow";
 
   return (
     <DropdownMenu>
@@ -55,10 +60,14 @@ export function PermissionModeMenu({
             <Button
               type="button"
               variant="ghost"
-              className="h-7 gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground"
+              className={
+                showText
+                  ? "h-7 gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                  : "size-7 justify-center rounded-md p-0 bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+              }
             >
-              <Icon className="size-3.5" />
-              <span>{meta.label}</span>
+              <Icon className="size-4" />
+              {showText ? <span>{meta.label}</span> : null}
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>

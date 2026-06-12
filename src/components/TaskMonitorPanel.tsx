@@ -15,6 +15,7 @@ import { fileIconFor } from "@/lib/file-icons";
 import { isPreviewable, openPreviewWindow } from "@/lib/preview";
 import { AudioPlayerDialog } from "@/components/audio/AudioPlayerDialog";
 import { WorkspaceTree } from "@/components/WorkspaceTree";
+import { useResponsivePanelWidth } from "@/hooks/useResponsiveWidth";
 import {
   useTaskMonitorStore,
   type ArtifactItem,
@@ -38,17 +39,18 @@ export function TaskMonitorPanel({
   const workingFiles = artifacts.filter((item) => item.kind === "working");
 
   const completed = todos.filter((todo) => todo.status === "completed").length;
+  const panelWidth = useResponsivePanelWidth();
 
   return (
-    // 宽度开合动画（320 ⇄ 0），与左侧侧边栏一致；内层固定宽度避免挤压
+    // 宽度开合动画与左侧侧边栏一致；内层同步宽度避免内容被挤压。
     <motion.aside
       initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 320, opacity: 1 }}
+      animate={{ width: panelWidth, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 36 }}
       className="flex shrink-0 flex-col overflow-hidden border-l border-border bg-background"
     >
-      <div className="flex h-full w-[320px] flex-col pt-2">
+      <div className="flex h-full flex-col pt-2" style={{ width: panelWidth }}>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
         {/* 待办 */}
         <Section

@@ -108,10 +108,10 @@ function register(ipcMain) {
       return;
     }
     const win = createWindow({
-      width: 900,
-      height: 720,
-      minWidth: 480,
-      minHeight: 360,
+      width: 800,     // 默认宽度：900 → 800 (预览窗口更紧凑)
+      height: 660,    // 默认高度：720 → 660 (保持比例)
+      minWidth: 480,  // 最小宽度：保持 480 (已经很合理)
+      minHeight: 360, // 最小高度：保持 360 (已经很合理)
       title: path.basename(filePath),
       parent: getMainWindow(),
     });
