@@ -137,4 +137,8 @@ contextBridge.exposeInMainWorld("polaragent", {
     activateWindow: (opts) => invoke("cu:activate-window", opts),
     wait: (opts) => invoke("cu:wait", opts),
   },
+  browseruse: {
+    call: (params) => invoke("browser-use:call", params),
+    status: () => invoke("browser-use:status"),
+  },
 });

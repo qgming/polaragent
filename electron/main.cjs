@@ -19,6 +19,7 @@ const ipcModules = [
   require("./ipc/knowledge.cjs"),
   require("./ipc/cli-detect.cjs"),
   require("./ipc/computeruse.cjs"),
+  require("./ipc/browseruse.cjs"),
 ];
 
 // 注册全部 IPC 处理器

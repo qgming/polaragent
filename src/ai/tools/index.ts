@@ -42,6 +42,18 @@ import {
   windowsListWindowsTool,
   windowsAccessibilityTreeTool,
 } from "./computeruse";
+import {
+  browserTabsTool,
+  browserOpenTool,
+  browserCloseTool,
+  browserScanTool,
+  browserSnapshotTool,
+  browserClickTool,
+  browserFillTool,
+  browserExecuteTool,
+  browserScreenshotTool,
+  browserNetworkTool,
+} from "./browseruse";
 
 export type { ToolContext } from "./tool-context";
 
@@ -59,16 +71,17 @@ interface ToolEntry {
 // 工具分组配置（用于工具页面的分组展示）
 export const TOOL_GROUPS: Record<string, { name: string; description: string; order: number }> = {
   computeruse: { name: "Computer Use", description: "控制 Windows 桌面应用程序", order: 1 },
-  task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 2 },
-  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 3 },
-  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 4 },
-  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 5 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 6 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 7 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 8 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 9 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 10 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 11 },
+  browseruse: { name: "Browser Use", description: "控制 Chrome 浏览器,操作网页", order: 2 },
+  task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 3 },
+  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 4 },
+  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 5 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 6 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 7 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 8 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 9 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 10 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 11 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 12 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -142,6 +155,76 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "在 Windows 应用中按下键盘按键或组合键。",
     factory: windowsKeypressTool,
     group: "computeruse",
+  },
+  {
+    id: "browser_tabs",
+    name: "列出标签页",
+    description: "列出当前所有浏览器标签页。",
+    factory: browserTabsTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_open",
+    name: "打开标签页",
+    description: "打开新的浏览器标签页。",
+    factory: browserOpenTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_close",
+    name: "关闭标签页",
+    description: "关闭指定的浏览器标签页。",
+    factory: browserCloseTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_scan",
+    name: "扫描页面",
+    description: "扫描页面内容,获取文本或结构化信息。",
+    factory: browserScanTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_snapshot",
+    name: "页面快照",
+    description: "获取页面可操作元素快照,生成 @e 引用用于后续点击或填充。",
+    factory: browserSnapshotTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_click",
+    name: "点击元素",
+    description: "点击页面元素,支持 CSS 选择器或 @e 引用。",
+    factory: browserClickTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_fill",
+    name: "填充表单",
+    description: "填充表单输入框。",
+    factory: browserFillTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_execute",
+    name: "执行脚本",
+    description: "在页面中执行 JavaScript 代码。",
+    factory: browserExecuteTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_screenshot",
+    name: "浏览器截图",
+    description: "截取页面截图。",
+    factory: browserScreenshotTool,
+    group: "browseruse",
+  },
+  {
+    id: "browser_network",
+    name: "网络监控",
+    description: "监控网络请求。",
+    factory: browserNetworkTool,
+    group: "browseruse",
   },
   {
     id: "update_todos",

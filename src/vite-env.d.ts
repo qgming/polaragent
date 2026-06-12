@@ -385,6 +385,10 @@ interface Window {
       activateWindow: (opts: ComputerUseActivateWindowOptions) => Promise<ComputerUseActionResult>;
       wait: (opts?: ComputerUseWaitOptions) => Promise<ComputerUseActionResult>;
     };
+    browseruse: {
+      call: (params: any) => Promise<{ ok: boolean; result?: any; error?: string }>;
+      status: () => Promise<{ ok: boolean; connected: boolean; ports: { extension: number; api: number } }>;
+    };
   };
 }
 
