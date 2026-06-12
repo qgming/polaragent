@@ -365,5 +365,276 @@ interface Window {
         chunkCount: number;
       }>>;
     };
+    computeruse: {
+      health: () => Promise<ComputerUseHealthResult>;
+      snapshot: (opts?: ComputerUseSnapshotOptions) => Promise<ComputerUseSnapshotResult>;
+      tree: (opts?: ComputerUseTreeOptions) => Promise<ComputerUseTreeResult>;
+      click: (opts: ComputerUseClickOptions) => Promise<ComputerUseActionResult>;
+      doubleClick: (opts: ComputerUseClickOptions) => Promise<ComputerUseActionResult>;
+      move: (opts: ComputerUseMoveOptions) => Promise<ComputerUseActionResult>;
+      drag: (opts: ComputerUseDragOptions) => Promise<ComputerUseActionResult>;
+      scroll: (opts: ComputerUseScrollOptions) => Promise<ComputerUseActionResult>;
+      type: (opts: ComputerUseTypeOptions) => Promise<ComputerUseActionResult>;
+      keypress: (opts: ComputerUseKeypressOptions) => Promise<ComputerUseActionResult>;
+      find: (opts: ComputerUseFindOptions) => Promise<ComputerUseFindResult>;
+      elementInfo: (opts: ComputerUseElementInfoOptions) => Promise<ComputerUseElementInfoResult>;
+      focus: (opts: ComputerUseFocusOptions) => Promise<ComputerUseActionResult>;
+      invoke: (opts: ComputerUseInvokeOptions) => Promise<ComputerUseActionResult>;
+      setValue: (opts: ComputerUseSetValueOptions) => Promise<ComputerUseActionResult>;
+      listWindows: (opts?: ComputerUseListWindowsOptions) => Promise<ComputerUseListWindowsResult>;
+      activateWindow: (opts: ComputerUseActivateWindowOptions) => Promise<ComputerUseActionResult>;
+      wait: (opts?: ComputerUseWaitOptions) => Promise<ComputerUseActionResult>;
+    };
   };
+}
+
+// Computer Use 类型定义
+interface ComputerUseHealthResult {
+  ok: boolean;
+  error?: string;
+}
+
+interface ComputerUseSnapshotOptions {
+  scope?: "active_window" | "desktop";
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+  detailLevel?: "compact" | "full";
+  includeScreenshot?: boolean;
+  maxDepth?: number;
+  maxNodes?: number;
+}
+
+interface ComputerUseTreeOptions {
+  scope?: "active_window" | "desktop";
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+  detailLevel?: "compact" | "full";
+  maxDepth?: number;
+  maxNodes?: number;
+}
+
+interface ComputerUseElementInfo {
+  id: string;
+  depth: number;
+  name: string;
+  automationId: string;
+  className: string;
+  controlType: string;
+  boundingBox?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    centerX: number;
+    centerY: number;
+  };
+  isEnabled?: boolean;
+  isOffscreen?: boolean;
+  hasKeyboardFocus?: boolean;
+  processId?: number;
+  nativeWindowHandle?: number;
+  runtimeId?: string;
+  value?: string;
+  patterns?: string[];
+  children?: ComputerUseElementInfo[];
+}
+
+interface ComputerUseSnapshotResult {
+  ok: boolean;
+  tree: ComputerUseElementInfo;
+  screenshot?: {
+    base64: string;
+    mimeType: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    path?: string;
+  };
+  scope: string;
+  error?: string;
+}
+
+interface ComputerUseTreeResult {
+  ok: boolean;
+  tree: ComputerUseElementInfo;
+  scope: string;
+  error?: string;
+}
+
+interface ComputerUseClickOptions {
+  elementId?: string;
+  x?: number;
+  y?: number;
+  button?: "left" | "right" | "middle";
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseMoveOptions {
+  elementId?: string;
+  x?: number;
+  y?: number;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseDragOptions {
+  path: Array<{ x: number; y: number }>;
+  button?: "left" | "right" | "middle";
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+}
+
+interface ComputerUseScrollOptions {
+  elementId?: string;
+  x?: number;
+  y?: number;
+  deltaY?: number;
+  deltaX?: number;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseTypeOptions {
+  text: string;
+  restoreClipboard?: boolean;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+}
+
+interface ComputerUseKeypressOptions {
+  keys: string[];
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+}
+
+interface ComputerUseFindOptions {
+  query: string;
+  scope?: "active_window" | "desktop";
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+  controlType?: string;
+  maxDepth?: number;
+  maxNodes?: number;
+  maxResults?: number;
+}
+
+interface ComputerUseFindResult {
+  ok: boolean;
+  results: ComputerUseElementInfo[];
+  count: number;
+  error?: string;
+}
+
+interface ComputerUseElementInfoOptions {
+  elementId?: string;
+  x?: number;
+  y?: number;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseElementInfoResult {
+  ok: boolean;
+  element: ComputerUseElementInfo;
+  error?: string;
+}
+
+interface ComputerUseFocusOptions {
+  elementId: string;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseInvokeOptions {
+  elementId: string;
+  fallbackClick?: boolean;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseSetValueOptions {
+  elementId: string;
+  value: string;
+  fallbackType?: boolean;
+  restoreClipboard?: boolean;
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+  viewMode?: "control" | "content" | "raw";
+  includeOffscreen?: boolean;
+}
+
+interface ComputerUseListWindowsOptions {
+  includeInvisible?: boolean;
+  maxWindows?: number;
+}
+
+interface ComputerUseListWindowsResult {
+  ok: boolean;
+  windows: ComputerUseElementInfo[];
+  count: number;
+  error?: string;
+}
+
+interface ComputerUseActivateWindowOptions {
+  windowTitle?: string;
+  processId?: number;
+  nativeWindowHandle?: number;
+  activate?: boolean;
+}
+
+interface ComputerUseWaitOptions {
+  milliseconds?: number;
+}
+
+interface ComputerUseActionResult {
+  ok: boolean;
+  action?: string;
+  x?: number;
+  y?: number;
+  elementId?: string;
+  method?: string;
+  error?: string;
 }

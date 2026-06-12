@@ -30,6 +30,18 @@ import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 import { searchKnowledgeTool } from "./knowledge";
+import {
+  windowsSnapshotTool,
+  windowsClickTool,
+  windowsTypeTool,
+  windowsKeypressTool,
+  windowsFindTool,
+  windowsScrollTool,
+  windowsDoubleClickTool,
+  windowsMoveTool,
+  windowsListWindowsTool,
+  windowsAccessibilityTreeTool,
+} from "./computeruse";
 
 export type { ToolContext } from "./tool-context";
 
@@ -46,20 +58,91 @@ interface ToolEntry {
 
 // 工具分组配置（用于工具页面的分组展示）
 export const TOOL_GROUPS: Record<string, { name: string; description: string; order: number }> = {
-  task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 1 },
-  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 2 },
-  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 3 },
-  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 4 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 5 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 6 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 7 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 8 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 9 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 10 },
+  computeruse: { name: "Computer Use", description: "控制 Windows 桌面应用程序", order: 1 },
+  task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 2 },
+  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 3 },
+  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 4 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 5 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 6 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 7 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 8 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 9 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 10 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 11 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
 const TOOL_REGISTRY: ToolEntry[] = [
+  {
+    id: "windows_snapshot",
+    name: "Windows 截图",
+    description: "获取 Windows 活动窗口或桌面的截图和 UI 树结构，包含可点击元素的位置和信息。",
+    factory: windowsSnapshotTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_accessibility_tree",
+    name: "获取 UI 树",
+    description: "获取 UI Automation 树结构（无截图），比 snapshot 更快，适合频繁读取 UI 状态。",
+    factory: windowsAccessibilityTreeTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_list_windows",
+    name: "列出窗口",
+    description: "列出所有顶级桌面窗口，返回窗口标题、进程ID、窗口句柄等信息。",
+    factory: windowsListWindowsTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_find",
+    name: "Windows 查找",
+    description: "在 Windows 应用中查找 UI 元素。",
+    factory: windowsFindTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_click",
+    name: "Windows 点击",
+    description: "在 Windows 应用中点击指定坐标或 UI 元素。",
+    factory: windowsClickTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_double_click",
+    name: "Windows 双击",
+    description: "在 Windows 应用中双击指定坐标或 UI 元素，用于打开文件、展开树节点等。",
+    factory: windowsDoubleClickTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_move",
+    name: "移动鼠标",
+    description: "移动鼠标指针到指定坐标或 UI 元素中心。",
+    factory: windowsMoveTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_scroll",
+    name: "Windows 滚动",
+    description: "在 Windows 应用中滚动内容。",
+    factory: windowsScrollTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_type",
+    name: "Windows 输入",
+    description: "在 Windows 应用的当前焦点控件中输入文本。",
+    factory: windowsTypeTool,
+    group: "computeruse",
+  },
+  {
+    id: "windows_keypress",
+    name: "Windows 按键",
+    description: "在 Windows 应用中按下键盘按键或组合键。",
+    factory: windowsKeypressTool,
+    group: "computeruse",
+  },
   {
     id: "update_todos",
     name: "更新待办",
