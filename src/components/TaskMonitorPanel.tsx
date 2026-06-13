@@ -15,6 +15,7 @@ import { fileIconFor } from "@/lib/file-icons";
 import { isPreviewable, openPreviewWindow } from "@/lib/preview";
 import { AudioPlayerDialog } from "@/components/audio/AudioPlayerDialog";
 import { WorkspaceTree } from "@/components/WorkspaceTree";
+import { GoalSection } from "@/components/goal/GoalSection";
 import { useResponsivePanelWidth } from "@/hooks/useResponsiveWidth";
 import {
   useTaskMonitorStore,
@@ -25,9 +26,11 @@ import {
 export function TaskMonitorPanel({
   threadId,
   sessionFilesDir,
+  agentId,
 }: {
   threadId: string;
   sessionFilesDir?: string;
+  agentId: string;
 }) {
   const monitor = useTaskMonitorStore((state) =>
     state.byThread[threadId],
@@ -52,6 +55,11 @@ export function TaskMonitorPanel({
     >
       <div className="flex h-full flex-col pt-2" style={{ width: panelWidth }}>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
+        {/* 目标 */}
+        <Section title="目标">
+          <GoalSection threadId={threadId} agentId={agentId} />
+        </Section>
+
         {/* 待办 */}
         <Section
           title="待办"

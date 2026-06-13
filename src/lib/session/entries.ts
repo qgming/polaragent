@@ -17,3 +17,7 @@ export const GUIDANCE_ENTRY = "guidance";
 export const TEAM_SPEAKER_ENTRY = "team_speaker";
 // 团队投票
 export const TEAM_VOTE_ENTRY = "team_vote";
+// 目标模式配置（goalText / successCriteria / constraints / budgets）
+export const GOAL_CONFIG_ENTRY = "goal_config";
+// 目标模式事件（状态变更、检测结果、续跑 prompt、错误）
+export const GOAL_EVENT_ENTRY = "goal_event";

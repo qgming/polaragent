@@ -40,6 +40,19 @@ const systemInfoParams = Type.Object({
 
 type SystemInfoParams = Static<typeof systemInfoParams>;
 
+function browserNavigator(): Navigator | undefined {
+  return typeof navigator === "undefined" ? undefined : navigator;
+}
+
+function performanceMemory():
+  | { jsHeapSizeLimit: number; usedJSHeapSize: number }
+  | undefined {
+  if (typeof performance === "undefined") return undefined;
+  return (performance as unknown as {
+    memory?: { jsHeapSizeLimit: number; usedJSHeapSize: number };
+  }).memory;
+}
+
 // 时间信息
 interface TimeInfo {
   timestamp: number;
@@ -156,24 +169,27 @@ function getTimeInfo(): TimeInfo {
 function getLocationInfo(): LocationInfo {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offset = -new Date().getTimezoneOffset() / 60;
+  const nav = browserNavigator();
 
   return {
     timezone: timeZone,
     timezoneOffset: offset,
-    language: navigator.language,
+    language: nav?.language || "unknown",
     locale: Intl.DateTimeFormat().resolvedOptions().locale,
   };
 }
 
 // 获取系统信息
 function getSystemInfo(): SystemInfo {
-  const memory = (performance as any).memory;
+  const nav = browserNavigator();
+  const memory = performanceMemory();
+  const userAgent = nav?.userAgent || "";
 
   return {
-    platform: navigator.platform,
-    arch: navigator.userAgent.includes("x64") || navigator.userAgent.includes("WOW64") ? "x64" : "x86",
-    userAgent: navigator.userAgent,
-    cores: navigator.hardwareConcurrency || 1,
+    platform: nav?.platform || "unknown",
+    arch: userAgent.includes("x64") || userAgent.includes("WOW64") ? "x64" : "x86",
+    userAgent,
+    cores: nav?.hardwareConcurrency || 1,
     memory: memory
       ? {
           total: memory.jsHeapSizeLimit,
@@ -190,31 +206,59 @@ function getSystemInfo(): SystemInfo {
 
 // 获取硬件信息
 function getHardwareInfo(): HardwareInfo {
-  const memory = (performance as any).memory;
+  const nav = browserNavigator();
+  const memory = performanceMemory();
   const totalMemory = memory?.jsHeapSizeLimit || 0;
+  const currentScreen =
+    typeof screen === "undefined"
+      ? undefined
+      : screen;
+  const pixelRatio =
+    typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
 
   return {
-    cores: navigator.hardwareConcurrency || 1,
+    cores: nav?.hardwareConcurrency || 1,
     memory: {
       total: totalMemory,
       totalGB: (totalMemory / (1024 ** 3)).toFixed(2) + " GB",
     },
     screen: {
-      width: screen.width,
-      height: screen.height,
-      colorDepth: screen.colorDepth,
-      pixelRatio: window.devicePixelRatio || 1,
+      width: currentScreen?.width || 1,
+      height: currentScreen?.height || 1,
+      colorDepth: currentScreen?.colorDepth || 0,
+      pixelRatio,
     },
   };
 }
 
 // 获取网络信息
 function getNetworkInfo(): NetworkInfo {
-  const nav = navigator as any;
-  const connection = nav.connection || nav.mozConnection || nav.webkitConnection;
+  const nav = browserNavigator() as
+    | (Navigator & {
+        connection?: {
+          type?: string;
+          effectiveType?: string;
+          downlink?: number;
+          rtt?: number;
+        };
+        mozConnection?: {
+          type?: string;
+          effectiveType?: string;
+          downlink?: number;
+          rtt?: number;
+        };
+        webkitConnection?: {
+          type?: string;
+          effectiveType?: string;
+          downlink?: number;
+          rtt?: number;
+        };
+      })
+    | undefined;
+  const connection = nav?.connection || nav?.mozConnection || nav?.webkitConnection;
 
   return {
-    online: navigator.onLine,
+    online: typeof nav?.onLine === "boolean" ? nav.onLine : true,
     connectionType: connection?.type,
     effectiveType: connection?.effectiveType,
     downlink: connection?.downlink,
@@ -224,18 +268,21 @@ function getNetworkInfo(): NetworkInfo {
 
 // 获取环境信息
 function getEnvironmentInfo(ctx: ToolContext): EnvironmentInfo {
+  const nav = browserNavigator();
+  const language = nav?.language || "unknown";
   return {
     workingDirectory: ctx.workingDir,
-    userLanguage: navigator.language,
-    userLanguages: navigator.languages ? Array.from(navigator.languages) : [navigator.language],
+    userLanguage: language,
+    userLanguages: nav?.languages ? Array.from(nav.languages) : [language],
   };
 }
 
 // 获取 GPS 定位信息
 function getGpsInfo(timeoutMs: number = 10000): Promise<GpsInfo | GpsError> {
   return new Promise((resolve) => {
+    const nav = browserNavigator();
     // 检查浏览器是否支持 Geolocation API
-    if (!navigator.geolocation) {
+    if (!nav?.geolocation) {
       resolve({
         code: -1,
         message: "浏览器不支持 Geolocation API",
@@ -247,7 +294,7 @@ function getGpsInfo(timeoutMs: number = 10000): Promise<GpsInfo | GpsError> {
     }
 
     // 获取当前位置
-    navigator.geolocation.getCurrentPosition(
+    nav.geolocation.getCurrentPosition(
       (position) => {
         const coords = position.coords;
         resolve({

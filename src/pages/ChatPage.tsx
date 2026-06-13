@@ -15,6 +15,13 @@ import {
 } from "react";
 
 import { abortAgentThread, promptAgent, steerAgentThread } from "@/ai/agent";
+import {
+  isGoalManualRunnableStatus,
+  isGoalRunningStatus,
+  runGoalExchange,
+} from "@/ai/goal-supervisor";
+import { appendGoalEvent } from "@/lib/session/goal";
+import { useGoalStore } from "@/stores/goal-store";
 import { AnimatePresence } from "motion/react";
 import { ChatMessageView } from "@/components/chat/MessageRenderer";
 import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
@@ -269,11 +276,33 @@ export function ChatPage({
     const sendFilePaths = sendAttachments
       .filter((attachment) => attachment.kind === "text")
       .map((attachment) => attachment.path);
-    const { assistantId } = startExchange(input, sendAttachments);
     composerRef.current?.clear();
     setComposer("");
     setSkillIds([]);
     setAttachments([]);
+
+    // 目标模式：使用 supervisor 驱动自动续跑
+    const goal = useGoalStore.getState().getGoal(threadId);
+    if (
+      goal &&
+      goal.status !== "budget_exhausted" &&
+      isGoalManualRunnableStatus(goal.status)
+    ) {
+      void runGoalExchange({
+        threadId: exchangeThreadId,
+        agentId,
+        userInput: input,
+        workingDir,
+        attachments: sendAttachments,
+        permissionMode,
+        knowledgeBaseIds,
+        skillIds: sendSkillIds,
+        filePaths: sendFilePaths,
+      });
+      return;
+    }
+
+    const { assistantId } = startExchange(input, sendAttachments);
 
     // 使用 pi AgentHarness 驱动多轮工具调用（历史由 pi Session 原生管理）。
     // 此处不 await 阻塞 UI——promptAgent 会在后台持续运行，
@@ -306,6 +335,21 @@ export function ChatPage({
     );
   };
 
+  const handleAbort = () => {
+    // 目标模式下手动停止：先暂停目标，再中止 Agent
+    const goal = useGoalStore.getState().getGoal(threadId);
+    if (goal && isGoalRunningStatus(goal.status)) {
+      useGoalStore.getState().setStatus(threadId, "paused");
+      void appendGoalEvent(threadId, {
+        type: "goal_paused",
+        status: "paused",
+        timestamp: Date.now(),
+        error: "用户手动停止",
+      });
+    }
+    abortAgentThread(threadId);
+  };
+
   return (
     <>
       <div className="flex h-full min-w-0">
@@ -330,7 +374,7 @@ export function ChatPage({
           <Composer
             composerRef={composerRef}
             isResponding={isResponding}
-            onAbort={() => abortAgentThread(threadId)}
+            onAbort={handleAbort}
             onEnter={() => void handleSend()}
             onPickDir={() => void handlePickDir()}
             onPickSkill={(skill) => composerRef.current?.insertSkill(skill)}
@@ -358,6 +402,7 @@ export function ChatPage({
               key="task-monitor-panel"
               threadId={threadId}
               sessionFilesDir={sessionFilesDir}
+              agentId={agentId}
             />
           ) : null}
         </AnimatePresence>

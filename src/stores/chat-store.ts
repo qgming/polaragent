@@ -7,6 +7,8 @@ import {
   getSessionToolPermissionMode,
   setSessionToolPermissionMode,
 } from "@/lib/session/personal";
+import { readGoalState } from "@/lib/session/goal";
+import { useGoalStore } from "@/stores/goal-store";
 import {
   getSessionKnowledgeBaseIds,
   setSessionKnowledgeBaseIds,
@@ -40,6 +42,16 @@ async function restoreThreadPermissionMode(threadId: string): Promise<void> {
   useChatStore.getState().setThreadPermissionMode(threadId, mode, {
     persist: false,
   });
+}
+
+// 切到某对话时从会话 jsonl 恢复目标状态（仅在内存中尚无时回填）
+async function restoreGoalState(threadId: string): Promise<void> {
+  const goal = useGoalStore.getState().getGoal(threadId);
+  if (goal) return; // 内存中已有，不覆盖
+  const state = await readGoalState(threadId);
+  if (state) {
+    useGoalStore.getState().hydrateGoal(threadId, state);
+  }
 }
 
 async function restoreThreadKnowledgeBaseIds(threadId: string): Promise<void> {
@@ -420,6 +432,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void restoreThreadMonitor(threadId);
     void restoreThreadPermissionMode(threadId);
     void restoreThreadKnowledgeBaseIds(threadId);
+    void restoreGoalState(threadId);
   },
 
   showHome: () => {
