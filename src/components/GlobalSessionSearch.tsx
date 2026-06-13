@@ -16,6 +16,7 @@ import {
 import type { TeamMessage, TeamThread } from "@/lib/team";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { cn } from "@/lib/utils";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 type ChatSearchResult = {
   id: string;
@@ -129,17 +130,34 @@ export function GlobalSessionSearch({
         }
 
         setLoading(true);
-        await Promise.all([
-          ...unloadedThreads.map((thread) =>
-            chatStore.loadThreadMessages(thread.id),
-          ),
-          ...unloadedTeamThreads.map((thread) =>
-            teamStore.loadTeamThreadMessages(thread.id),
-          ),
-        ]);
-
-        if (!cancelled) {
-          setLoading(false);
+        const loadTasks = [
+          ...unloadedThreads.map((thread) => ({
+            kind: "chat" as const,
+            threadId: thread.id,
+          })),
+          ...unloadedTeamThreads.map((thread) => ({
+            kind: "team" as const,
+            threadId: thread.id,
+          })),
+        ];
+        try {
+          await pMap(
+            loadTasks,
+            async (task) => {
+              try {
+                await (task.kind === "chat"
+                  ? chatStore.loadThreadMessages(task.threadId)
+                  : teamStore.loadTeamThreadMessages(task.threadId));
+              } catch (error) {
+                console.error(`加载搜索会话消息失败 ${task.threadId}:`, error);
+              }
+            },
+            { concurrency: LOCAL_IO_CONCURRENCY },
+          );
+        } finally {
+          if (!cancelled) {
+            setLoading(false);
+          }
         }
       })();
     }, 120);

@@ -2,6 +2,10 @@
 // 走 OpenAI 兼容接口。
 const { net } = require("electron");
 const { normalizeBaseUrl, errorMessage } = require("../lib/http-utils.cjs");
+const { REMOTE_CONCURRENCY, withConcurrency } = require("../lib/concurrency.cjs");
+
+// LLM 请求全局并发控制：同时最多 2 个请求在打向上游，降低 429 风险
+const llmRunner = withConcurrency(REMOTE_CONCURRENCY);
 
 function electronFetch(url, options) {
   return net.fetch(url, options);
@@ -45,77 +49,81 @@ function usageFrom(raw) {
 
 // 同步 chat completion
 async function chatCompletion(request) {
-  if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
-  if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
-  const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${request.apiKey.trim()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(llmBody(request, false)),
-    signal: AbortSignal.timeout(120000),
+  return llmRunner(async () => {
+    if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
+    if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
+    const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${request.apiKey.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(llmBody(request, false)),
+      signal: AbortSignal.timeout(120000),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(`模型请求失败（${response.status}）：${errorMessage(payload)}`);
+    return {
+      content: payload.choices?.[0]?.message?.content || "",
+      model: payload.model || request.model,
+      usage: usageFrom(payload.usage),
+    };
   });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(`模型请求失败（${response.status}）：${errorMessage(payload)}`);
-  return {
-    content: payload.choices?.[0]?.message?.content || "",
-    model: payload.model || request.model,
-    usage: usageFrom(payload.usage),
-  };
 }
 
 // 流式 chat completion：解析 SSE，逐段通过 llm:chat-stream 推送
 async function chatCompletionStream(event, request) {
-  if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
-  if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
-  const requestId = request.requestId || `llm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${request.apiKey.trim()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(llmBody({ ...request, requestId }, true)),
-    signal: AbortSignal.timeout(300000),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(`模型请求失败（${response.status}）：${errorMessage(payload)}`);
-  }
+  return llmRunner(async () => {
+    if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
+    if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
+    const requestId = request.requestId || `llm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${request.apiKey.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(llmBody({ ...request, requestId }, true)),
+      signal: AbortSignal.timeout(300000),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(`模型请求失败（${response.status}）：${errorMessage(payload)}`);
+    }
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let model = request.model;
-  let usage = { input: 0, output: 0, totalTokens: 0 };
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let model = request.model;
+    let usage = { input: 0, output: 0, totalTokens: 0 };
 
-  const emit = (payload) => event.sender.send("llm:chat-stream", payload);
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
-    let index;
-    while ((index = buffer.indexOf("\n\n")) >= 0) {
-      const block = buffer.slice(0, index);
-      buffer = buffer.slice(index + 2);
-      for (const line of block.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        // 个别坏行（心跳、注释、被切断的 JSON）不应中断整个流：解析失败则跳过该行
-        let payload;
-        try {
-          payload = JSON.parse(data);
-        } catch {
-          continue;
+    const emit = (payload) => event.sender.send("llm:chat-stream", payload);
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+      let index;
+      while ((index = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        for (const line of block.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          // 个别坏行（心跳、注释、被切断的 JSON）不应中断整个流：解析失败则跳过该行
+          let payload;
+          try {
+            payload = JSON.parse(data);
+          } catch {
+            continue;
+          }
+          if (payload.model) model = payload.model;
+          if (payload.usage) usage = usageFrom(payload.usage);
+          const delta = payload.choices?.[0]?.delta?.content;
+          if (delta) emit({ requestId, delta, done: false });
         }
-        if (payload.model) model = payload.model;
-        if (payload.usage) usage = usageFrom(payload.usage);
-        const delta = payload.choices?.[0]?.delta?.content;
-        if (delta) emit({ requestId, delta, done: false });
       }
     }
-  }
-  emit({ requestId, done: true, model, usage });
+    emit({ requestId, done: true, model, usage });
+  });
 }
 
 // 读取模型列表

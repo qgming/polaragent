@@ -23,6 +23,7 @@ import {
   writeInstalledMcpConfig,
 } from "@/lib/mcp";
 import type { McpToolConfig } from "@/lib/mcp";
+import { pMap, REMOTE_CONCURRENCY, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 interface ToolsState {
   // 工具运行时签名。工具目录真实变化时改变，用于让已打开会话下次发送前重建 AgentHarness。
@@ -276,8 +277,10 @@ export const useToolsStore = create<ToolsState>()(
         set({ isInstalledLoading: true });
         try {
           const ids = await listInstalledMcpConfigIds();
-          const loaded = await Promise.all(
-            ids.map((id) => readInstalledMcpConfig<McpToolConfig>(id)),
+          const loaded = await pMap(
+            ids,
+            (id) => readInstalledMcpConfig<McpToolConfig>(id),
+            { concurrency: LOCAL_IO_CONCURRENCY },
           );
           set((state) => withRuntimeSignature(state, {
             customTools: loaded,
@@ -420,8 +423,9 @@ export const useToolsStore = create<ToolsState>()(
         const tools = get().customTools;
         if (tools.length === 0) return;
 
-        const refreshed = await Promise.all(
-          tools.map(async (tool) => {
+        const refreshed = await pMap(
+          tools,
+          async (tool) => {
             try {
               const discovered = await detectMcpTool(tool);
               if (discovered.installCheck?.status !== "installed") return discovered;
@@ -438,7 +442,8 @@ export const useToolsStore = create<ToolsState>()(
               console.error(`刷新 MCP 工具失败: ${tool.name}`, error);
               return tool;
             }
-          }),
+          },
+          { concurrency: REMOTE_CONCURRENCY },
         );
 
         set((state) => withRuntimeSignature(state, { customTools: refreshed }));
@@ -448,8 +453,9 @@ export const useToolsStore = create<ToolsState>()(
         const tools = get().builtinMcpTools;
         if (tools.length === 0) return;
 
-        const refreshed = await Promise.all(
-          tools.map(async (tool) => {
+        const refreshed = await pMap(
+          tools,
+          async (tool) => {
             try {
               const discovered = await detectMcpTool(tool);
               const disabledToolNames = get().builtinMcpDisabledToolNames[tool.id]
@@ -466,7 +472,8 @@ export const useToolsStore = create<ToolsState>()(
               console.error(`刷新内置 MCP 工具失败: ${tool.name}`, error);
               return tool;
             }
-          }),
+          },
+          { concurrency: REMOTE_CONCURRENCY },
         );
 
         set((state) => withRuntimeSignature(state, { builtinMcpTools: refreshed }));

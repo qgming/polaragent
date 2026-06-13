@@ -4,6 +4,7 @@
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
+import { pMap, REMOTE_CONCURRENCY } from "@/lib/concurrency";
 import { queryKnowledge } from "@/lib/knowledge";
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
@@ -82,9 +83,10 @@ export function searchKnowledgeTool(
       }
 
       try {
-        // 跨库检索并合并结果
-        const allResults = await Promise.all(
-          kbIds.map((kbId) =>
+        // 跨库检索并合并结果（受控并发，避免多个 embedding 请求同时打满）
+        const allResults = await pMap(
+          kbIds,
+          (kbId) =>
             queryKnowledge({
               kbId,
               query: params.query,
@@ -94,7 +96,7 @@ export function searchKnowledgeTool(
               topK,
               threshold,
             }).catch(() => ({ results: [] })), // 部分失败不影响其他库
-          ),
+          { concurrency: REMOTE_CONCURRENCY },
         );
 
         const merged = allResults

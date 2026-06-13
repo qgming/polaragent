@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { ensureDir, copyDirContents } = require("./fs-utils.cjs");
+const { pMap, LOCAL_IO_CONCURRENCY } = require("./concurrency.cjs");
 
 // userData 根目录
 function dataDir() {
@@ -60,7 +61,11 @@ async function ensureDataDir() {
     "logs",
   ];
   await ensureDir(dataDir());
-  await Promise.all(subdirs.map((subdir) => ensureDir(path.join(dataDir(), subdir))));
+  await pMap(
+    subdirs,
+    (subdir) => ensureDir(path.join(dataDir(), subdir)),
+    LOCAL_IO_CONCURRENCY,
+  );
   await syncBuiltinResources();
 }
 

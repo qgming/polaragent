@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const { dataDir } = require("../lib/app-paths.cjs");
 const { readText, writeJsonFile, listJsonIds } = require("../lib/fs-utils.cjs");
+const { pMap, LOCAL_IO_CONCURRENCY } = require("../lib/concurrency.cjs");
 
 // config 子目录下的普通配置文件路径
 function configPath(fileName) {
@@ -51,7 +52,11 @@ async function deleteTypedConfig(kind, id) {
     kind === "agents"
       ? [path.join(base, "custom", `${id}.json`), path.join(base, "builtin", `${id}.json`)]
       : [path.join(base, `${id}.json`)];
-  await Promise.all(candidates.map((file) => fsp.rm(file, { force: true }).catch(() => {})));
+  await pMap(
+    candidates,
+    (file) => fsp.rm(file, { force: true }).catch(() => {}),
+    LOCAL_IO_CONCURRENCY,
+  );
 }
 
 function register(ipcMain) {
@@ -72,7 +77,11 @@ function register(ipcMain) {
   ipcMain.handle("config:fetch-builtin-mcp", async () => {
     const dir = path.join(dataDir(), "mcp", "builtin");
     const ids = await listJsonIds(dir);
-    const configs = await Promise.all(ids.map((id) => readText(path.join(dir, `${id}.json`)).then(JSON.parse)));
+    const configs = await pMap(
+      ids,
+      (id) => readText(path.join(dir, `${id}.json`)).then(JSON.parse),
+      LOCAL_IO_CONCURRENCY,
+    );
     return JSON.stringify(configs);
   });
 }

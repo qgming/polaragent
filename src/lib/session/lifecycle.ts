@@ -14,6 +14,7 @@ import {
 import { TEAM_REF_ENTRY } from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
 import { deleteTeamSessionFilesDir } from "./files";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 /** 打开已存在的会话；若不存在则按给定 id 新建。 */
 export async function openOrCreateSession(
@@ -71,8 +72,9 @@ export async function listSessions(): Promise<
 
   const index = await readTitleIndex();
   let indexMissing = false;
-  const result = await Promise.all(
-    Array.from(groups.values()).map(async (group) => {
+  const result = await pMap(
+    Array.from(groups.values()),
+    async (group) => {
       const best = await pickBestMeta(group);
       const cached = index[best.id];
       let title: string | undefined;
@@ -85,7 +87,8 @@ export async function listSessions(): Promise<
         title = await readTitleFromSessions(repo, group);
       }
       return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt };
-    }),
+    },
+    { concurrency: LOCAL_IO_CONCURRENCY },
   );
 
   if (indexMissing) {
@@ -116,8 +119,9 @@ export async function listTeamSessions(): Promise<
 
   const index = await readTitleIndex("team");
   let indexMissing = false;
-  const result = await Promise.all(
-    Array.from(groups.values()).map(async (group) => {
+  const result = await pMap(
+    Array.from(groups.values()),
+    async (group) => {
       const best = await pickBestMeta(group);
       const cached = index[best.id];
       let title: string | undefined;
@@ -133,7 +137,8 @@ export async function listTeamSessions(): Promise<
         teamId = await readTeamRefFromSession(best.id);
       }
       return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt, teamId };
-    }),
+    },
+    { concurrency: LOCAL_IO_CONCURRENCY },
   );
 
   if (indexMissing) {
@@ -215,9 +220,21 @@ export async function deleteTeamSession(sessionId: string): Promise<void> {
 export async function clearTeamSessions(teamId: string): Promise<string[]> {
   const sessions = await listTeamSessions().catch(() => []);
   const owned = sessions.filter((s) => s.teamId === teamId);
-  await Promise.all(owned.map((s) => deleteTeamSession(s.id)));
-  await Promise.all(owned.map((s) => deleteTeamSessionFilesDir(s.id)));
-  await Promise.all(owned.map((s) => removeTitleIndex(s.id, "team")));
+  await pMap(
+    owned,
+    (s) => deleteTeamSession(s.id),
+    { concurrency: LOCAL_IO_CONCURRENCY },
+  );
+  await pMap(
+    owned,
+    (s) => deleteTeamSessionFilesDir(s.id),
+    { concurrency: LOCAL_IO_CONCURRENCY },
+  );
+  await pMap(
+    owned,
+    (s) => removeTitleIndex(s.id, "team"),
+    { concurrency: LOCAL_IO_CONCURRENCY },
+  );
   return owned.map((s) => s.id);
 }
 

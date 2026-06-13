@@ -27,6 +27,7 @@ import {
   ALL_SKILLS_ID,
   normalizeSkillSelection,
 } from "@/lib/skill";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 interface ConfigState {
   // 状态
@@ -237,8 +238,10 @@ export const useConfigStore = create<ConfigState>()(
       loadAgents: async () => {
         try {
           const agentIds = await listAgents();
-          const loadedAgents = await Promise.all(
-            agentIds.map((agentId) => readAgentConfig<AgentConfig>(agentId)),
+          const loadedAgents = await pMap(
+            agentIds,
+            (agentId) => readAgentConfig<AgentConfig>(agentId),
+            { concurrency: LOCAL_IO_CONCURRENCY },
           );
           // 仅做结构归一化（补缺失的可选字段），不写回磁盘、不注入代码内容
           set({ agents: loadedAgents.map(normalizeAgent) });

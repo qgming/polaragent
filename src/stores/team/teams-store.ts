@@ -12,6 +12,7 @@ import {
   writeTeamConfig,
 } from "@/lib/electron/electron-api";
 import type { TeamConfig } from "@/types/config";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 interface TeamsState {
   teams: TeamConfig[];
@@ -35,8 +36,10 @@ export const useTeamsStore = create<TeamsState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const ids = await listTeams();
-      const loaded = await Promise.all(
-        ids.map((id) => readTeamConfig<TeamConfig>(id)),
+      const loaded = await pMap(
+        ids,
+        (id) => readTeamConfig<TeamConfig>(id),
+        { concurrency: LOCAL_IO_CONCURRENCY },
       );
       set({ teams: loaded.map(normalizeTeam) });
     } catch (error) {

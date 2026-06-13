@@ -27,6 +27,7 @@ import { useChatStore } from "@/stores/chat-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { resolveSkillSelection, skillLoader } from "@/lib/skill";
 import { reviewToolPermission } from "./tool-permissions";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -400,8 +401,9 @@ export class AgentManager {
       harnessBelongsToThread(key, threadId),
     );
     let accepted = 0;
-    await Promise.all(
-      targets.map(async ([, cached]) => {
+    await pMap(
+      targets,
+      async ([, cached]) => {
         try {
           const harness = await cached.promise;
           await harness.steer(text);
@@ -409,7 +411,8 @@ export class AgentManager {
         } catch {
           // steer() requires a running harness; idle or already-settled harnesses are ignored.
         }
-      }),
+      },
+      { concurrency: LOCAL_IO_CONCURRENCY },
     );
     return accepted;
   }

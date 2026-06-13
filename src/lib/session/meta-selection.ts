@@ -1,6 +1,7 @@
 // 会话元数据辅助：在同 id 多条 jsonl 中挑选「最优」一条，及自定义条目读取。
 // 历史并发竞态可能遗留同 id 的多个文件（一条带标题、一条带消息），这里统一处理。
 import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 import { getExecutionEnv } from "./session-repo";
 
 // session 列表项的最小元数据形状（repo.list 的返回元素）
@@ -34,12 +35,14 @@ async function metaMessageCount(meta: SessionMeta): Promise<number> {
 // 单条时直接返回，避免无谓读盘。
 export async function pickBestMeta(metas: SessionMeta[]): Promise<SessionMeta> {
   if (metas.length === 1) return metas[0];
-  const scored = await Promise.all(
-    metas.map(async (meta) => ({
+  const scored = await pMap(
+    metas,
+    async (meta) => ({
       meta,
       count: await metaMessageCount(meta),
       createdAt: Date.parse(meta.createdAt) || 0,
-    })),
+    }),
+    { concurrency: LOCAL_IO_CONCURRENCY },
   );
   scored.sort((a, b) =>
     b.count !== a.count ? b.count - a.count : b.createdAt - a.createdAt,
