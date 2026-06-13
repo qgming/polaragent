@@ -28,7 +28,8 @@
       "dist/**/*",
       "electron/**/*",
       "package.json",
-      "!node_modules/**/*"
+      "!node_modules/**/*",
+      "node_modules/ws/**/*"
     ],
     "extraResources": [
       {
@@ -91,6 +92,7 @@
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
     "uuid": "^14.0.0",
+    "ws": "^8.21.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

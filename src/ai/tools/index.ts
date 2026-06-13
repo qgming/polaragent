@@ -30,6 +30,7 @@ import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 import { searchKnowledgeTool } from "./knowledge";
+import { systemInfoTool } from "./system-info";
 import {
   windowsSnapshotTool,
   windowsClickTool,
@@ -79,6 +80,7 @@ interface ToolEntry {
 
 // 工具分组配置（用于工具页面的分组展示）
 export const TOOL_GROUPS: Record<string, { name: string; description: string; order: number }> = {
+  system: { name: "系统信息", description: "获取时间、位置、硬件、网络等系统信息", order: 0 },
   computeruse: { name: "Computer Use", description: "控制 Windows 桌面应用程序", order: 1 },
   browseruse: { name: "Browser Use", description: "控制 Chrome 浏览器,操作网页", order: 2 },
   task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 3 },
@@ -95,6 +97,13 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
 const TOOL_REGISTRY: ToolEntry[] = [
+  {
+    id: "system_info",
+    name: "系统信息",
+    description: "获取电脑的系统信息，包括当前时间、时区、位置、硬件配置、网络状态等。",
+    factory: systemInfoTool,
+    group: "system",
+  },
   {
     id: "windows_snapshot",
     name: "Windows 截图",
