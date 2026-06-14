@@ -3,9 +3,9 @@
 // "/" 按钮：纯图标按钮，点击弹出技能选择下拉（样式与助手选择下拉一致）。
 //   列出全部技能（内置 + 已安装，即技能页两类），菜单项只显示名称，
 //   hover 用 tooltip 显示该技能介绍。选中后通过 onPickSkill 通知上层插入 chip。
-// "@" 按钮：选择文本文件或图片，选中后通过 onPickFile 通知上层插入附件 chip。
+// "@" 按钮：选择文本文件、图片、音频或文档，选中后通过 onPickFile 通知上层插入附件 chip。
 
-import { AtSign, FileText, Image, Music, Slash } from "lucide-react";
+import { AtSign, FileText, Image, Music, FileCheck, Slash } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -18,7 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { pickImageFile, pickTextFile, pickAudioFile } from "@/lib/electron/electron-api";
+import { pickImageFile, pickTextFile, pickAudioFile, pickDocumentFile } from "@/lib/electron/electron-api";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 
 // 从绝对路径取文件名（兼容正反斜杠）
@@ -37,7 +37,7 @@ export function ComposerToolbar({
   // 选中某个技能时回调（上层据此在富文本输入区插入 chip）
   onPickSkill: (skill: { id: string; name: string }) => void;
   // 选中某个附件时回调（上层据此在富文本输入区插入附件 chip）
-  onPickFile: (file: { path: string; name: string; kind: "text" | "image" | "audio" }) => void;
+  onPickFile: (file: { path: string; name: string; kind: "text" | "image" | "audio" | "document" }) => void;
 }) {
   // 全部技能（内置 + 已安装），与技能页两类一致；store 为空时回退空列表
   const skills = useSkillsStore((state) => state.skills);
@@ -60,6 +60,13 @@ export function ComposerToolbar({
     const path = await pickAudioFile();
     if (path) {
       onPickFile({ path, name: basename(path), kind: "audio" });
+    }
+  };
+
+  const handlePickDocumentFile = async () => {
+    const path = await pickDocumentFile();
+    if (path) {
+      onPickFile({ path, name: basename(path), kind: "document" });
     }
   };
 
@@ -130,6 +137,10 @@ export function ComposerToolbar({
           <DropdownMenuItem onSelect={() => void handlePickAudioFile()}>
             <Music className="size-4" />
             <span>音频</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void handlePickDocumentFile()}>
+            <FileCheck className="size-4" />
+            <span>文档 (PDF/Word)</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

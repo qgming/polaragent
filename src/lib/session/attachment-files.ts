@@ -3,8 +3,10 @@ import {
   fileExists,
   readBase64File,
   writeBase64File,
+  writeFile,
 } from "@/lib/electron/electron-api";
 import type { ChatAttachment } from "@/lib/chat";
+import { readDocument } from "@/lib/document-reader";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;
@@ -81,11 +83,42 @@ export async function materializeAttachments(
       const targetPath = await uniqueTargetPath(dir, attachment.name || basename(sourcePath), sourcePath);
       const content = await readBase64File(sourcePath);
       await writeBase64File(targetPath, content);
-      result.push({
-        ...attachment,
-        path: targetPath,
-        name: basename(targetPath),
-      });
+
+      // 如果是文档类型，提取文本内容并生成 .txt 副本
+      if (attachment.kind === "document") {
+        try {
+          console.log(`正在提取文档内容: ${sourcePath}`);
+          const textContent = await readDocument(sourcePath);
+
+          // 生成文本副本文件名（原文件名 + .txt）
+          const { stem } = splitName(basename(targetPath));
+          const textPath = await uniqueTargetPath(dir, `${stem}.txt`, `${targetPath}.txt`);
+
+          await writeFile(textPath, textContent);
+          console.log(`文档内容已提取到: ${textPath}`);
+
+          // 返回文本文件路径，kind 改为 text，以便 Agent 处理
+          result.push({
+            path: textPath,
+            name: basename(textPath),
+            kind: "text",
+          });
+        } catch (docError) {
+          console.error(`文档内容提取失败，将保留原文件: ${sourcePath}`, docError);
+          // 提取失败时保留原文档文件
+          result.push({
+            ...attachment,
+            path: targetPath,
+            name: basename(targetPath),
+          });
+        }
+      } else {
+        result.push({
+          ...attachment,
+          path: targetPath,
+          name: basename(targetPath),
+        });
+      }
     } catch (error) {
       console.error(`附件物化失败，已跳过: ${sourcePath}`, error);
     }

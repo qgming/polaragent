@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 export interface ComposerAttachment {
   path: string;
   name: string;
-  kind: "text" | "image" | "audio";
+  kind: "text" | "image" | "audio" | "document";
   duration?: number; // 音频附件时长（秒）
 }
 
@@ -64,6 +64,8 @@ const FILE_ICON_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex-shrink:0"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>';
 const IMAGE_ICON_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex-shrink:0"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>';
+const DOCUMENT_ICON_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
 
 // 从编辑区 DOM 提取纯文本（chip 不计入），保留换行
 function extractText(root: HTMLElement): string {
@@ -115,10 +117,11 @@ function extractFiles(root: HTMLElement): ComposerAttachment[] {
     const path = el.getAttribute(FILE_ATTR);
     if (!path || seen.has(path)) return;
     seen.add(path);
+    const kind = el.getAttribute(FILE_KIND_ATTR);
     values.push({
       path,
       name: (el as HTMLElement).dataset.fileName || path.split(/[\\/]/).pop() || path,
-      kind: el.getAttribute(FILE_KIND_ATTR) === "image" ? "image" : "text",
+      kind: kind === "image" ? "image" : kind === "audio" ? "audio" : kind === "document" ? "document" : "text",
     });
   });
   return values;
@@ -144,12 +147,25 @@ function createFileChip(file: ComposerAttachment): HTMLElement {
   chip.setAttribute("contenteditable", "false");
   chip.dataset.fileName = file.name;
   chip.title = file.path;
-  chip.className =
-    file.kind === "image"
-      ? "mx-0.5 inline-flex select-none items-center gap-1 rounded-md bg-sky-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-700 dark:text-sky-400"
-      : "mx-0.5 inline-flex select-none items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-emerald-700 dark:text-emerald-400";
+
+  // 根据文件类型设置不同的样式和图标
+  let iconSvg: string;
+  let chipClass: string;
+
+  if (file.kind === "image") {
+    iconSvg = IMAGE_ICON_SVG;
+    chipClass = "mx-0.5 inline-flex select-none items-center gap-1 rounded-md bg-sky-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-sky-700 dark:text-sky-400";
+  } else if (file.kind === "document") {
+    iconSvg = DOCUMENT_ICON_SVG;
+    chipClass = "mx-0.5 inline-flex select-none items-center gap-1 rounded-md bg-orange-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-orange-700 dark:text-orange-400";
+  } else {
+    iconSvg = FILE_ICON_SVG;
+    chipClass = "mx-0.5 inline-flex select-none items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 align-middle text-xs font-medium text-emerald-700 dark:text-emerald-400";
+  }
+
+  chip.className = chipClass;
   // 图标 + 文件名（图标用内联 SVG，文件名用文本节点避免 XSS）
-  chip.innerHTML = file.kind === "image" ? IMAGE_ICON_SVG : FILE_ICON_SVG;
+  chip.innerHTML = iconSvg;
   chip.appendChild(document.createTextNode(file.name));
   return chip;
 }

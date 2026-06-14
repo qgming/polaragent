@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     getPathForFile: (file) => webUtils.getPathForFile(file),
     pickImageFile: () => invoke("dialog:pick-image-file"),
     pickAudioFile: () => invoke("dialog:pick-audio-file"),
+    pickDocumentFile: () => invoke("dialog:pick-document-file"),
   },
   window: {
     minimize: () => invoke("window:minimize"),

@@ -80,6 +80,13 @@ function register(ipcMain) {
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
+  ipcMain.handle("dialog:pick-document-file", async () => {
+    const result = await dialog.showOpenDialog(getMainWindow(), {
+      properties: ["openFile"],
+      filters: [{ name: "文档文件", extensions: ["pdf", "docx"] }],
+    });
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
 
   ipcMain.handle("window:minimize", (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle("window:toggle-maximize", (event) => {

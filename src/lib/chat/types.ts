@@ -7,7 +7,7 @@ export type ChatMessageStatus = "complete" | "streaming" | "error";
 export interface ChatAttachment {
   path: string;
   name: string;
-  kind: "text" | "image" | "audio";
+  kind: "text" | "image" | "audio" | "document";
   duration?: number;
 }
 

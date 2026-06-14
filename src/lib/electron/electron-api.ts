@@ -143,6 +143,7 @@ export const pickMultipleFiles = (): Promise<string[]> => api().app.pickMultiple
 export const getPathForFile = (file: File): string => api().app.getPathForFile(file);
 export const pickImageFile = () => api().app.pickImageFile();
 export const pickAudioFile = () => api().app.pickAudioFile();
+export const pickDocumentFile = (): Promise<string | null> => api().app.pickDocumentFile();
 export const getDataDir = () => api().app.getDataDir();
 export const getHomeDir = () => api().app.getHomeDir();
 export const openDataDir = () => api().app.openDataDir();

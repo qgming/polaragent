@@ -16,6 +16,7 @@ interface Window {
       getPathForFile: (file: File) => string;
       pickImageFile: () => Promise<string | null>;
       pickAudioFile: () => Promise<string | null>;
+      pickDocumentFile: () => Promise<string | null>;
     };
     window: {
       minimize: () => Promise<void>;
