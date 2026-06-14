@@ -84,12 +84,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: polaragent-${{ matrix.name }}
+          # Keep only distributable files. Unpacked app folders contain hundreds of internal files.
           path: |
-            release/**
-            !release/**/*.blockmap
-            !release/latest*.yml
-            !release/builder-debug.yml
-            !release/builder-effective-config.yaml
+            release/*.exe
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
+            release/*.nupkg
+            release/RELEASES
           if-no-files-found: error
 
   release:
@@ -123,4 +127,12 @@ jobs:
           body_path: ${{ runner.temp }}/release-notes.md
           draft: false
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.tar.gz
+            artifacts/**/*.nupkg
+            artifacts/**/RELEASES
