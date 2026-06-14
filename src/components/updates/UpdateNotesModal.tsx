@@ -1,4 +1,4 @@
-import { Download, RefreshCw } from "lucide-react";
+import { Download, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
@@ -14,6 +14,7 @@ import {
 import { useToast } from "@/hooks/useToast";
 import {
   checkForUpdates,
+  downloadUpdate,
   getUpdateStatus,
   installUpdate,
   isElectronRuntime,
@@ -33,9 +34,11 @@ export function UpdateNotesModal({
   onOpenChange,
   checkOnOpenKey = 0,
 }: UpdateNotesModalProps) {
+  const toastSuccess = useToast((state) => state.success);
   const toastError = useToast((state) => state.error);
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [installing, setInstalling] = useState(false);
   const handledCheckKeyRef = useRef(0);
   const electronRuntime = isElectronRuntime();
@@ -43,12 +46,9 @@ export function UpdateNotesModal({
   const displayVersion = status?.latestTag ?? status?.releaseName;
   const releaseNotes = status?.releaseNotes?.trim();
   const isChecking = checking || status?.phase === "checking";
-  const canDownload = Boolean(status?.downloaded || status?.updateAvailable);
-  const downloadLabel = status?.downloaded
-    ? installing ? "正在重启" : "重启安装"
-    : isChecking
-      ? "检查中"
-      : "下载更新";
+  const isDownloading = downloading || status?.phase === "downloading";
+  const canDownload = status?.updateAvailable && !status?.downloaded && status?.enabled;
+  const canInstall = status?.downloaded;
 
   useEffect(() => {
     if (!electronRuntime) return undefined;
@@ -64,13 +64,25 @@ export function UpdateNotesModal({
 
     const unsubscribe = onUpdateStatus((nextStatus) => {
       setStatus(nextStatus);
+
+      // 下载完成后 toast 提示
+      if (nextStatus.phase === "downloaded") {
+        toastSuccess("新版本已下载完成，点击重启安装");
+        setDownloading(false);
+      }
+
+      // 下载失败 toast 提示
+      if (nextStatus.phase === "download-error" || nextStatus.phase === "download-unavailable") {
+        toastError(nextStatus.message || "下载失败");
+        setDownloading(false);
+      }
     });
 
     return () => {
       disposed = true;
       unsubscribe();
     };
-  }, [electronRuntime, toastError]);
+  }, [electronRuntime, toastError, toastSuccess]);
 
   const handleCheckUpdates = useCallback(async () => {
     if (!electronRuntime) return;
@@ -93,25 +105,66 @@ export function UpdateNotesModal({
   }, [checkOnOpenKey, handleCheckUpdates, open]);
 
   async function handleDownloadUpdate() {
+    if (!electronRuntime) return;
+
     try {
-      if (status?.downloaded) {
+      if (canInstall) {
+        // 已下载完成，重启安装
         setInstalling(true);
         await installUpdate();
         return;
       }
 
-      if (!status?.enabled && status?.releaseUrl) {
-        if (electronRuntime) await openExternal(status.releaseUrl);
-        else window.open(status.releaseUrl, "_blank", "noopener,noreferrer");
+      if (canDownload) {
+        // 触发下载
+        setDownloading(true);
+        await downloadUpdate();
         return;
       }
 
-      await handleCheckUpdates();
+      // 平台不支持或开发环境，打开发布页
+      if (status?.releaseUrl) {
+        await openExternal(status.releaseUrl);
+        return;
+      }
     } catch (error) {
       toastError(error instanceof Error ? error.message : String(error));
+      setDownloading(false);
       setInstalling(false);
     }
   }
+
+  async function handleOpenReleases() {
+    if (!status?.releaseUrl) return;
+
+    try {
+      if (electronRuntime) {
+        await openExternal(status.releaseUrl);
+      } else {
+        window.open(status.releaseUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const getActionButtonLabel = () => {
+    if (installing) return "正在重启";
+    if (canInstall) return "重启安装";
+    if (isDownloading) return "下载中";
+    if (canDownload) return "立即更新";
+    return "去发布页";
+  };
+
+  const getActionButtonIcon = () => {
+    if (isChecking || isDownloading || installing) {
+      return <RefreshCw className="size-4 animate-spin" />;
+    }
+    if (canDownload || canInstall) {
+      return <Download className="size-4" />;
+    }
+    return <ExternalLink className="size-4" />;
+  };
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
@@ -144,17 +197,19 @@ export function UpdateNotesModal({
           </div>
         </ModalBody>
 
-        <ModalFooter>
+        <ModalFooter className="gap-2">
+          {status?.releaseUrl ? (
+            <Button variant="outline" onClick={() => void handleOpenReleases()}>
+              <ExternalLink className="size-4" />
+              去发布页
+            </Button>
+          ) : null}
           <Button
             onClick={() => void handleDownloadUpdate()}
-            disabled={!electronRuntime || isChecking || installing || !canDownload}
+            disabled={!electronRuntime || isChecking || isDownloading || installing || (!canDownload && !canInstall && !status?.releaseUrl)}
           >
-            {isChecking ? (
-              <RefreshCw className="size-4 animate-spin" />
-            ) : (
-              <Download className="size-4" />
-            )}
-            {downloadLabel}
+            {getActionButtonIcon()}
+            {getActionButtonLabel()}
           </Button>
         </ModalFooter>
       </ModalContent>

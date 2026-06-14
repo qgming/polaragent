@@ -31,6 +31,11 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/useToast";
+import {
+  checkForUpdates,
+  isElectronRuntime,
+} from "@/lib/electron/electron-api";
 import {
   getElectronWindowApi,
   refreshMaximizedState,
@@ -100,8 +105,10 @@ export function TitleBar({
 function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
   const settings = useConfigStore((state) => state.settings);
   const updateSettings = useConfigStore((state) => state.updateSettings);
+  const toastSuccess = useToast((state) => state.success);
+  const toastError = useToast((state) => state.error);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateCheckKey, setUpdateCheckKey] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   const setTheme = (theme: typeof settings.appearance.theme) => {
     void updateSettings({
@@ -112,10 +119,31 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
     });
   };
 
-  const openUpdateModal = () => {
-    setUpdateModalOpen(true);
-    setUpdateCheckKey((key) => key + 1);
-  };
+  async function handleCheckUpdates() {
+    if (!isElectronRuntime()) return;
+
+    setChecking(true);
+    try {
+      const status = await checkForUpdates();
+      if (status.phase === "up-to-date") {
+        toastSuccess("当前已是最新版本");
+        return;
+      }
+      if (status.updateAvailable) {
+        setUpdateModalOpen(true);
+        return;
+      }
+      if (status.phase === "check-error") {
+        toastError(status.error || "检查更新失败");
+        return;
+      }
+      toastError(status.message || "未找到可用更新");
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChecking(false);
+    }
+  }
 
   return (
     <>
@@ -169,10 +197,11 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
           </DropdownMenuSub>
           <DropdownMenuItem
             className="rounded-md px-2 py-1.5"
-            onSelect={openUpdateModal}
+            onSelect={() => void handleCheckUpdates()}
+            disabled={checking}
           >
-            <RefreshCw className="size-4" />
-            检查更新
+            <RefreshCw className={checking ? "size-4 animate-spin" : "size-4"} />
+            {checking ? "检查中" : "检查更新"}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="rounded-md px-2 py-1.5"
@@ -186,7 +215,7 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
       <UpdateNotesModal
         open={updateModalOpen}
         onOpenChange={setUpdateModalOpen}
-        checkOnOpenKey={updateCheckKey}
+        checkOnOpenKey={0}
       />
     </>
   );

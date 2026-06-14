@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("polaragent", {
   updates: {
     getStatus: () => invoke("updates:get-status"),
     check: () => invoke("updates:check"),
+    download: () => invoke("updates:download"),
     install: () => invoke("updates:install"),
     openReleases: () => invoke("updates:open-releases"),
     onStatus: (handler) => {

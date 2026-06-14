@@ -47,18 +47,15 @@
         ]
       }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "qgming",
+      "repo": "polaragent"
+    },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64",
-            "ia32",
-            "arm64"
-          ]
-        },
-        {
-          "target": "squirrel",
           "arch": [
             "x64"
           ]
@@ -71,10 +68,6 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "squirrelWindows": {
-      "artifactName": "${productName}-${version}-win-${arch}-squirrel.${ext}",
-      "iconUrl": "https://raw.githubusercontent.com/qgming/polaragent/main/build/icon.ico"
     },
     "mac": {
       "target": [
@@ -137,6 +130,7 @@
     "@tailwindcss/vite": "^4.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
     "lucide-react": "^1.17.0",

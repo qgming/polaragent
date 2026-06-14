@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
 import { useToast } from "@/hooks/useToast";
 import {
+  checkForUpdates,
   getUpdateStatus,
   isElectronRuntime,
   onUpdateStatus,
@@ -17,13 +18,14 @@ import { PageTitle } from "./settings-shared";
 import logo from "@/assets/logo.png";
 
 export function AboutPanel() {
+  const toastSuccess = useToast((state) => state.success);
   const toastError = useToast((state) => state.error);
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateCheckKey, setUpdateCheckKey] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   const version = updateStatus?.currentVersion ?? "0.1.0";
-  const isChecking = updateStatus?.phase === "checking";
+  const isChecking = checking || updateStatus?.phase === "checking";
 
   useEffect(() => {
     if (!isElectronRuntime()) return undefined;
@@ -38,6 +40,7 @@ export function AboutPanel() {
       });
 
     const unsubscribe = onUpdateStatus((status) => {
+      if (disposed) return;
       setUpdateStatus(status);
     });
 
@@ -47,9 +50,31 @@ export function AboutPanel() {
     };
   }, [toastError]);
 
-  function handleCheckUpdates() {
-    setUpdateModalOpen(true);
-    setUpdateCheckKey((key) => key + 1);
+  async function handleCheckUpdates() {
+    if (!isElectronRuntime()) return;
+
+    setChecking(true);
+    try {
+      const status = await checkForUpdates();
+      setUpdateStatus(status);
+      if (status.phase === "up-to-date") {
+        toastSuccess("当前已是最新版本");
+        return;
+      }
+      if (status.updateAvailable) {
+        setUpdateModalOpen(true);
+        return;
+      }
+      if (status.phase === "check-error") {
+        toastError(status.error || "检查更新失败");
+        return;
+      }
+      toastError(status.message || "未找到可用更新");
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChecking(false);
+    }
   }
 
   return (
@@ -95,7 +120,7 @@ export function AboutPanel() {
       <UpdateNotesModal
         open={updateModalOpen}
         onOpenChange={setUpdateModalOpen}
-        checkOnOpenKey={updateCheckKey}
+        checkOnOpenKey={0}
       />
 
       {/* 底部版权 */}

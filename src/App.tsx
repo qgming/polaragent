@@ -12,6 +12,7 @@ import { GlobalSessionSearch } from "@/components/GlobalSessionSearch";
 import { TitleBar } from "@/components/TitleBar";
 import { ToastContainer } from "@/components/ToastContainer";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AutoUpdateHandler } from "@/components/updates/AutoUpdateHandler";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
@@ -349,6 +350,7 @@ function App() {
           open={searchOpen}
         />
         <AskUserModal />
+        <AutoUpdateHandler />
         <ToastContainer toasts={toasts} onClose={removeToast} />
       </div>
     </TooltipProvider>

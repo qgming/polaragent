@@ -40,10 +40,13 @@ export type AppUpdatePhase =
   | "disabled"
   | "unsupported"
   | "checking"
-  | "available"
-  | "not-available"
-  | "downloaded"
-  | "error";
+  | "check-error"
+  | "up-to-date"
+  | "update-available"
+  | "downloading"
+  | "download-error"
+  | "download-unavailable"
+  | "downloaded";
 
 export interface AppUpdateStatus {
   phase: AppUpdatePhase;
@@ -67,6 +70,7 @@ export interface AppUpdateStatus {
   releaseNotes: string | null;
   releaseNotesError: string | null;
   updateUrl: string | null;
+  triggeredBy: "auto" | "manual" | null;
 }
 
 function api() {
@@ -148,6 +152,7 @@ export const fileUrl = (path: string) => api().app.fileUrl(path);
 export const ensureDataDir = () => api().app.ensureDataDir();
 export const getUpdateStatus = (): Promise<AppUpdateStatus> => api().updates.getStatus();
 export const checkForUpdates = (): Promise<AppUpdateStatus> => api().updates.check();
+export const downloadUpdate = (): Promise<AppUpdateStatus> => api().updates.download();
 export const installUpdate = (): Promise<AppUpdateStatus> => api().updates.install();
 export const openUpdateReleases = (): Promise<void> => api().updates.openReleases();
 export const onUpdateStatus = (handler: (status: AppUpdateStatus) => void) =>

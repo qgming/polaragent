@@ -1,4 +1,5 @@
-const { app, autoUpdater, dialog, shell } = require("electron");
+const { app, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 
 const { APP_NAME } = require("../lib/constants.cjs");
 const { getMainWindow } = require("../lib/windows.cjs");
@@ -6,13 +7,12 @@ const { getMainWindow } = require("../lib/windows.cjs");
 const UPDATE_OWNER = process.env.POLARAGENT_UPDATE_OWNER || "qgming";
 const UPDATE_REPO = process.env.POLARAGENT_UPDATE_REPO || "polaragent";
 const UPDATE_REPOSITORY = `${UPDATE_OWNER}/${UPDATE_REPO}`;
-const UPDATE_FEED_BASE_URL = (process.env.POLARAGENT_UPDATE_FEED_URL || "https://update.electronjs.org").replace(/\/+$/, "");
 const RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY}/releases`;
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
-const SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
+const SUPPORTED_PLATFORMS = new Set(["darwin", "win32", "linux"]);
 const ENABLE_DEV_UPDATES = process.env.POLARAGENT_ENABLE_DEV_UPDATES === "1";
 const AUTO_CHECK_DELAY_MS = Number.parseInt(process.env.POLARAGENT_UPDATE_CHECK_DELAY_MS || "3000", 10);
-const AUTO_CHECK_INTERVAL_MS = Number.parseInt(process.env.POLARAGENT_UPDATE_CHECK_INTERVAL_MS || "600000", 10);
+const AUTO_CHECK_INTERVAL_MS = Number.parseInt(process.env.POLARAGENT_UPDATE_CHECK_INTERVAL_MS || "21600000", 10);
 const RELEASE_CACHE_TTL_MS = Number.parseInt(process.env.POLARAGENT_RELEASE_CACHE_TTL_MS || "300000", 10);
 
 let configured = false;
@@ -32,10 +32,6 @@ function isUpdateEnabled() {
   return isSupportedPlatform() && (app.isPackaged || ENABLE_DEV_UPDATES);
 }
 
-function getFeedUrl() {
-  return `${UPDATE_FEED_BASE_URL}/${UPDATE_REPOSITORY}/${process.platform}-${process.arch}/${app.getVersion()}`;
-}
-
 function getInitialPhase() {
   if (!isSupportedPlatform()) return "unsupported";
   if (!app.isPackaged && !ENABLE_DEV_UPDATES) return "disabled";
@@ -43,7 +39,7 @@ function getInitialPhase() {
 }
 
 function getInitialMessage() {
-  if (!isSupportedPlatform()) return "当前平台不支持 Electron 官方自动更新";
+  if (!isSupportedPlatform()) return "当前平台不支持自动更新";
   if (!app.isPackaged && !ENABLE_DEV_UPDATES) return "开发环境不会连接更新服务";
   return "准备检查更新";
 }
@@ -59,7 +55,7 @@ function createBaseStatus() {
     updateAvailable: false,
     downloaded: false,
     repository: UPDATE_REPOSITORY,
-    feedUrl: isSupportedPlatform() ? getFeedUrl() : null,
+    feedUrl: null, // electron-updater 使用 GitHub Releases，不需要 feedUrl
     releasesUrl: RELEASES_URL,
     message: getInitialMessage(),
     error: null,
@@ -71,6 +67,7 @@ function createBaseStatus() {
     releaseNotes: null,
     releaseNotesError: null,
     updateUrl: null,
+    triggeredBy: null, // "auto" | "manual" | null
   };
 }
 
@@ -95,7 +92,7 @@ function setStatus(next) {
     supported: isSupportedPlatform(),
     enabled: isUpdateEnabled(),
     repository: UPDATE_REPOSITORY,
-    feedUrl: isSupportedPlatform() ? getFeedUrl() : null,
+    feedUrl: null,
     releasesUrl: RELEASES_URL,
   };
   broadcastStatus();
@@ -125,6 +122,12 @@ function normalizeReleaseNotes(releaseNotes) {
   return null;
 }
 
+function normalizeTag(version) {
+  if (!version) return null;
+  const value = String(version).trim();
+  return value ? (value.startsWith("v") ? value : `v${value}`) : null;
+}
+
 function normalizeVersion(version) {
   return String(version || "")
     .trim()
@@ -145,6 +148,33 @@ function compareVersions(left, right) {
     if (leftPart < rightPart) return -1;
   }
   return 0;
+}
+
+function getUpdateUrl(updateInfo) {
+  if (!updateInfo || typeof updateInfo !== "object") return null;
+  if (typeof updateInfo.path === "string" && updateInfo.path.trim()) return updateInfo.path;
+  if (Array.isArray(updateInfo.files)) {
+    const file = updateInfo.files.find((item) => item && typeof item.url === "string" && item.url.trim());
+    if (file) return file.url;
+  }
+  return null;
+}
+
+function updateStatusFromUpdaterInfo(updateInfo) {
+  if (!updateInfo || typeof updateInfo !== "object") return {};
+
+  const latestVersion = updateInfo.version ? normalizeVersion(updateInfo.version) : null;
+  const latestTag = normalizeTag(updateInfo.version);
+  const releaseNotes = normalizeReleaseNotes(updateInfo.releaseNotes);
+
+  return {
+    latestVersion: latestVersion || updateStatus.latestVersion,
+    latestTag: latestTag || updateStatus.latestTag,
+    releaseName: updateInfo.releaseName || latestTag || updateStatus.releaseName,
+    releaseDate: updateInfo.releaseDate || updateStatus.releaseDate,
+    releaseNotes: releaseNotes || updateStatus.releaseNotes,
+    updateUrl: getUpdateUrl(updateInfo) || updateStatus.updateUrl,
+  };
 }
 
 function createReleaseStatus(release) {
@@ -221,7 +251,7 @@ async function refreshLatestRelease(options) {
       releaseUrl: releaseStatus.releaseUrl,
       releaseNotes: releaseStatus.releaseNotes,
       releaseNotesError: null,
-      updateAvailable: releaseStatus.hasUpdate || updateStatus.updateAvailable,
+      updateAvailable: releaseStatus.hasUpdate,
     });
     return releaseStatus;
   } catch (error) {
@@ -246,78 +276,54 @@ function bindAutoUpdaterEvents() {
     });
   });
 
-  autoUpdater.on("update-available", () => {
+  autoUpdater.on("update-available", (info) => {
     setStatus({
-      phase: "available",
+      ...updateStatusFromUpdaterInfo(info),
+      phase: "update-available",
       updateAvailable: true,
       downloaded: false,
-      message: updateStatus.latestTag
-        ? `发现 ${updateStatus.latestTag}，正在后台下载`
-        : "发现新版本，正在后台下载",
+      message: `发现 ${normalizeTag(info?.version) || updateStatus.latestTag || "新版本"}`,
       error: null,
     });
   });
 
   autoUpdater.on("update-not-available", () => {
-    const latestHasUpdate =
-      updateStatus.latestVersion &&
-      compareVersions(updateStatus.latestVersion, app.getVersion()) > 0;
     setStatus({
-      phase: "not-available",
-      updateAvailable: Boolean(latestHasUpdate),
+      phase: "up-to-date",
+      updateAvailable: false,
       downloaded: false,
-      message: latestHasUpdate
-        ? "发现新版本，但当前平台暂无可用自动更新包"
-        : "当前已是最新版本",
+      message: "当前已是最新版本",
       error: null,
     });
   });
 
-  autoUpdater.on("update-downloaded", (_event, releaseNotes, releaseName, releaseDate, updateUrl) => {
+  autoUpdater.on("download-progress", (progress) => {
+    const percent = Math.round(progress.percent);
     setStatus({
+      phase: "downloading",
+      message: `正在下载更新 (${percent}%)`,
+    });
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    setStatus({
+      ...updateStatusFromUpdaterInfo(info),
       phase: "downloaded",
       updateAvailable: true,
       downloaded: true,
-      releaseName: releaseName || null,
-      releaseDate: releaseDate || null,
-      releaseNotes: normalizeReleaseNotes(releaseNotes) || updateStatus.releaseNotes,
-      updateUrl: updateUrl || null,
-      message: "新版本已下载，重启后完成安装",
+      message: "新版本已下载完成",
       error: null,
     });
-    void promptToInstall(releaseName, releaseNotes);
   });
 
   autoUpdater.on("error", (error) => {
+    const wasChecking = updateStatus.phase === "checking";
     setStatus({
-      phase: "error",
-      updateAvailable: false,
-      downloaded: false,
-      message: "更新检查失败",
+      phase: wasChecking ? "check-error" : "download-error",
+      message: wasChecking ? "检查更新失败" : "下载更新失败",
       error: errorMessage(error),
     });
   });
-}
-
-async function promptToInstall(releaseName, releaseNotes) {
-  const win = getMainWindow();
-  if (!win || win.isDestroyed()) return;
-
-  const result = await dialog.showMessageBox(win, {
-    type: "info",
-    title: "发现新版本",
-    message: `${APP_NAME} ${releaseName || "新版本"} 已准备好`,
-    detail: typeof releaseNotes === "string" && releaseNotes.trim()
-      ? releaseNotes
-      : "重启应用后完成更新安装。",
-    buttons: ["稍后", "重启安装"],
-    defaultId: 1,
-    cancelId: 0,
-  });
-
-  if (result.response === 1) {
-    autoUpdater.quitAndInstall();
-  }
 }
 
 function ensureConfigured() {
@@ -325,7 +331,7 @@ function ensureConfigured() {
   if (!isSupportedPlatform()) {
     setStatus({
       phase: "unsupported",
-      message: "当前平台不支持 Electron 官方自动更新",
+      message: "当前平台不支持自动更新",
       error: null,
     });
     return false;
@@ -339,18 +345,22 @@ function ensureConfigured() {
     return false;
   }
 
-  const feedOptions = { url: getFeedUrl() };
-  if (process.platform === "darwin") {
-    feedOptions.serverType = "json";
-  }
-  autoUpdater.setFeedURL(feedOptions);
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.setFeedURL({
+    provider: "github",
+    owner: UPDATE_OWNER,
+    repo: UPDATE_REPO,
+  });
+
   bindAutoUpdaterEvents();
   configured = true;
   setStatus({ phase: "idle", message: "准备检查更新", error: null });
   return true;
 }
 
-async function checkForUpdates() {
+async function checkForUpdates({ triggeredBy = "manual" } = {}) {
   setStatus({
     phase: "checking",
     updateAvailable: false,
@@ -358,6 +368,7 @@ async function checkForUpdates() {
     message: "正在检查更新",
     error: null,
     releaseNotesError: null,
+    triggeredBy,
   });
 
   const releaseStatus = await refreshLatestRelease({ force: true });
@@ -365,10 +376,12 @@ async function checkForUpdates() {
   if (!isSupportedPlatform()) {
     setStatus({
       phase: "unsupported",
+      updateAvailable: Boolean(releaseStatus?.hasUpdate),
       message: releaseStatus?.hasUpdate
-        ? `发现 ${releaseStatus.latestTag}，请前往发布页下载`
-        : "当前平台不支持 Electron 官方自动更新",
-      error: null,
+        ? `发现 ${releaseStatus.latestTag}，当前平台不支持自动更新`
+        : "当前平台不支持自动更新",
+      error: releaseStatus ? null : updateStatus.releaseNotesError,
+      triggeredBy,
     });
     return cloneStatus();
   }
@@ -376,47 +389,119 @@ async function checkForUpdates() {
   if (!app.isPackaged && !ENABLE_DEV_UPDATES) {
     setStatus({
       phase: "disabled",
+      updateAvailable: Boolean(releaseStatus?.hasUpdate),
       message: releaseStatus?.hasUpdate
-        ? `发现 ${releaseStatus.latestTag}，打包应用可更新`
+        ? `发现 ${releaseStatus.latestTag}，开发环境请前往发布页下载`
         : "开发环境不会连接更新服务",
-      error: null,
+      error: releaseStatus ? null : updateStatus.releaseNotesError,
+      triggeredBy,
     });
     return cloneStatus();
   }
 
   if (!ensureConfigured()) return cloneStatus();
-  setStatus({
-    phase: "checking",
-    message: releaseStatus?.hasUpdate ? "发现新版本，正在检查安装包" : "正在检查更新",
-    error: null,
-  });
+
+  setStatus({ phase: "checking", message: "正在检查更新", triggeredBy });
 
   try {
-    autoUpdater.checkForUpdates();
+    const result = await autoUpdater.checkForUpdates();
+
+    if (!result) {
+      setStatus({
+        phase: "disabled",
+        updateAvailable: false,
+        downloaded: false,
+        message: "自动更新不可用",
+        error: null,
+        triggeredBy,
+      });
+      return cloneStatus();
+    }
+
+    if (!result.isUpdateAvailable) {
+      setStatus({
+        phase: "up-to-date",
+        updateAvailable: false,
+        downloaded: false,
+        message: "当前已是最新版本",
+        error: null,
+        triggeredBy,
+      });
+      return cloneStatus();
+    }
+
+    setStatus({
+      ...updateStatusFromUpdaterInfo(result.updateInfo),
+      phase: "update-available",
+      updateAvailable: true,
+      downloaded: false,
+      message: `发现 ${normalizeTag(result.updateInfo?.version) || updateStatus.latestTag || "新版本"}`,
+      error: null,
+      triggeredBy,
+    });
+    return cloneStatus();
   } catch (error) {
     setStatus({
-      phase: "error",
-      updateAvailable: false,
+      phase: "check-error",
+      updateAvailable: Boolean(releaseStatus?.hasUpdate),
       downloaded: false,
-      message: "更新检查失败",
+      message: "检查更新失败",
+      error: errorMessage(error),
+      triggeredBy,
+    });
+    return cloneStatus();
+  }
+}
+
+async function downloadUpdate() {
+  if (!updateStatus.updateAvailable) {
+    throw new Error("没有可用的更新");
+  }
+
+  if (!isSupportedPlatform()) {
+    throw new Error("当前平台不支持自动更新");
+  }
+
+  if (!app.isPackaged && !ENABLE_DEV_UPDATES) {
+    throw new Error("开发环境不支持自动更新");
+  }
+
+  if (!ensureConfigured()) {
+    throw new Error("自动更新未配置");
+  }
+
+  try {
+    setStatus({
+      phase: "downloading",
+      message: updateStatus.latestTag
+        ? `正在下载 ${updateStatus.latestTag}`
+        : "正在下载更新",
+      error: null,
+    });
+    await autoUpdater.downloadUpdate();
+  } catch (error) {
+    setStatus({
+      phase: "download-error",
+      message: "启动下载失败",
       error: errorMessage(error),
     });
+    throw error;
   }
+
   return cloneStatus();
 }
 
 function initializeAutoUpdates() {
-  if (!ensureConfigured()) return cloneStatus();
   if (autoCheckTimer) return cloneStatus();
 
   const delayMs = Number.isFinite(AUTO_CHECK_DELAY_MS) ? Math.max(AUTO_CHECK_DELAY_MS, 0) : 3000;
   const intervalMs = Number.isFinite(AUTO_CHECK_INTERVAL_MS)
     ? Math.max(AUTO_CHECK_INTERVAL_MS, 60000)
-    : 600000;
+    : 21600000;
 
   setTimeout(() => {
-    void checkForUpdates();
-    autoCheckTimer = setInterval(() => void checkForUpdates(), intervalMs);
+    void checkForUpdates({ triggeredBy: "auto" });
+    autoCheckTimer = setInterval(() => void checkForUpdates({ triggeredBy: "auto" }), intervalMs);
     if (typeof autoCheckTimer.unref === "function") autoCheckTimer.unref();
   }, delayMs).unref?.();
 
@@ -433,7 +518,8 @@ function installUpdate() {
 
 function register(ipcMain) {
   ipcMain.handle("updates:get-status", () => cloneStatus());
-  ipcMain.handle("updates:check", () => checkForUpdates());
+  ipcMain.handle("updates:check", () => checkForUpdates({ triggeredBy: "manual" }));
+  ipcMain.handle("updates:download", () => downloadUpdate());
   ipcMain.handle("updates:install", () => installUpdate());
   ipcMain.handle("updates:open-releases", async () => shell.openExternal(RELEASES_URL));
 }

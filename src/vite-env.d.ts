@@ -31,6 +31,7 @@ interface Window {
     updates: {
       getStatus: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
       check: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
+      download: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
       install: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
       openReleases: () => Promise<void>;
       onStatus: (

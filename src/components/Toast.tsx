@@ -2,8 +2,7 @@
 // src/components/Toast.tsx
 
 import { useEffect } from "react";
-import { X, CheckCircle, AlertCircle, Info } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CheckCircle, AlertCircle, Info } from "lucide-react";
 
 export type ToastType = "success" | "error" | "info";
 
@@ -41,18 +40,13 @@ export function Toast({
 
   return (
     <div
-      className={`flex w-[320px] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-lg border ${bgColors[type]} px-4 py-3 shadow-lg backdrop-blur-sm animate-in slide-in-from-bottom-5`}
+      className={`flex w-[320px] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-lg border ${bgColors[type]} px-4 py-3 shadow-lg backdrop-blur-sm animate-in slide-in-from-bottom-5 cursor-pointer`}
+      onClick={onClose}
+      role="alert"
+      aria-live="polite"
     >
       {icons[type]}
-      <span className="text-sm font-medium">{message}</span>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onClose}
-        className="ml-2 h-6 w-6 p-0"
-      >
-        <X className="size-4" />
-      </Button>
+      <span className="flex-1 text-sm font-medium">{message}</span>
     </div>
   );
 }
