@@ -192,9 +192,9 @@ npm run dist
 PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Releases 分发版本。
 
 - Windows：支持 NSIS 安装包，并提供 Squirrel 产物用于 Electron 官方自动更新服务。
-- macOS：支持 DMG 和 ZIP。
+- macOS：提供 Apple Silicon arm64 ZIP，用于下载安装和 Electron 官方自动更新服务。
 - Linux：支持 AppImage、deb、rpm 和 tar.gz。
-- 应用内「关于软件」页面可查看当前版本、检查更新并打开发布页。
+- 应用内「关于软件」页面可检查更新，并通过更新弹窗查看新版本日志和下载入口。
 - 每个版本的更新日志存放在 `changelogs/vX.Y.Z.md`，发布 workflow 会自动写入 GitHub Release 正文。
 
 ---
