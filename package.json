@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "productName": "PolarAgent",
   "description": "PolarAgent desktop AI workspace",
-  "author": "qgming",
+  "author": {
+    "name": "qgming",
+    "email": "qgming@qq.com"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/qgming/polaragent.git"
@@ -93,6 +96,7 @@
       "icon": "build/icon.png"
     },
     "linux": {
+      "maintainer": "qgming <qgming@users.noreply.github.com>",
       "target": [
         {
           "target": "AppImage",
