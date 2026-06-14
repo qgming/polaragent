@@ -96,7 +96,7 @@
       "icon": "build/icon.png"
     },
     "linux": {
-      "maintainer": "qgming <qgming@users.noreply.github.com>",
+      "maintainer": "qgming <qgming@qq.com>",
       "target": [
         {
           "target": "AppImage",
