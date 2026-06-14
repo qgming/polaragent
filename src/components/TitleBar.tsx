@@ -11,6 +11,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Palette,
+  RefreshCw,
   Search,
   Square as SquareIcon,
   X,
@@ -18,6 +19,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { IconButton } from "@/components/IconButton";
+import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -98,6 +100,8 @@ export function TitleBar({
 function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
   const settings = useConfigStore((state) => state.settings);
   const updateSettings = useConfigStore((state) => state.updateSettings);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateCheckKey, setUpdateCheckKey] = useState(0);
 
   const setTheme = (theme: typeof settings.appearance.theme) => {
     void updateSettings({
@@ -108,64 +112,83 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
     });
   };
 
+  const openUpdateModal = () => {
+    setUpdateModalOpen(true);
+    setUpdateCheckKey((key) => key + 1);
+  };
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          className="flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/35"
-          title="主菜单"
-          type="button"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            className="flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/35"
+            title="主菜单"
+            type="button"
+          >
+            <Menu className="size-4" />
+            <span className="sr-only">主菜单</span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className="w-48 space-y-1 rounded-lg p-1"
+          sideOffset={8}
         >
-          <Menu className="size-4" />
-          <span className="sr-only">主菜单</span>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="w-48 space-y-1 rounded-lg p-1"
-        sideOffset={8}
-      >
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger
-            hideChevron
-            className="rounded-md px-2 py-1.5"
-          >
-            <Palette className="size-4" />
-            主题设置
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent
-            alignOffset={-2}
-            className="w-40 rounded-lg p-1"
-            sideOffset={10}
-          >
-            <DropdownMenuRadioGroup
-              className="space-y-1"
-              value={settings.appearance.theme}
-              onValueChange={(theme) =>
-                setTheme(theme as typeof settings.appearance.theme)
-              }
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger
+              hideChevron
+              className="rounded-md px-2 py-1.5"
             >
-              <DropdownMenuRadioItem value="light" className="rounded-md px-2 py-1.5">
-                亮色
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="dark" className="rounded-md px-2 py-1.5">
-                深色
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="system" className="rounded-md px-2 py-1.5">
-                跟随系统
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        <DropdownMenuItem
-          className="rounded-md px-2 py-1.5"
-          onSelect={onOpenAbout}
-        >
-          <Info className="size-4" />
-          关于软件
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+              <Palette className="size-4" />
+              主题设置
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent
+              alignOffset={-2}
+              className="w-40 rounded-lg p-1"
+              sideOffset={10}
+            >
+              <DropdownMenuRadioGroup
+                className="space-y-1"
+                value={settings.appearance.theme}
+                onValueChange={(theme) =>
+                  setTheme(theme as typeof settings.appearance.theme)
+                }
+              >
+                <DropdownMenuRadioItem value="light" className="rounded-md px-2 py-1.5">
+                  亮色
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="dark" className="rounded-md px-2 py-1.5">
+                  深色
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="system" className="rounded-md px-2 py-1.5">
+                  跟随系统
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuItem
+            className="rounded-md px-2 py-1.5"
+            onSelect={openUpdateModal}
+          >
+            <RefreshCw className="size-4" />
+            检查更新
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="rounded-md px-2 py-1.5"
+            onSelect={onOpenAbout}
+          >
+            <Info className="size-4" />
+            关于软件
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <UpdateNotesModal
+        open={updateModalOpen}
+        onOpenChange={setUpdateModalOpen}
+        checkOnOpenKey={updateCheckKey}
+      />
+    </>
   );
 }
 

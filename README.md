@@ -195,6 +195,7 @@ PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Rele
 - macOS：支持 DMG 和 ZIP。
 - Linux：支持 AppImage、deb、rpm 和 tar.gz。
 - 应用内「关于软件」页面可查看当前版本、检查更新并打开发布页。
+- 每个版本的更新日志存放在 `changelogs/vX.Y.Z.md`，发布 workflow 会自动写入 GitHub Release 正文。
 
 ---
 
@@ -230,6 +231,7 @@ PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Rele
 
 ```text
 polaragent/
+├── changelogs/        # 每个版本的 GitHub Release 更新日志
 ├── electron/          # Electron 主进程、IPC、自动化桥接
 ├── resources/         # 内置技能、内置助手、市场资源、浏览器扩展
 ├── src/

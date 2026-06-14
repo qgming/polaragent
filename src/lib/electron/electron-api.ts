@@ -59,8 +59,13 @@ export interface AppUpdateStatus {
   releasesUrl: string;
   message: string;
   error: string | null;
+  latestVersion: string | null;
+  latestTag: string | null;
   releaseName: string | null;
   releaseDate: string | null;
+  releaseUrl: string | null;
+  releaseNotes: string | null;
+  releaseNotesError: string | null;
   updateUrl: string | null;
 }
 
