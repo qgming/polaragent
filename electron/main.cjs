@@ -5,6 +5,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const { APP_ID, APP_NAME } = require("./lib/constants.cjs");
 const { ensureDataDir } = require("./lib/app-paths.cjs");
 const { createMainWindow } = require("./lib/windows.cjs");
+const updates = require("./ipc/updates.cjs");
 
 // 各 IPC 域模块（均导出 register(ipcMain)）
 const ipcModules = [
@@ -20,6 +21,7 @@ const ipcModules = [
   require("./ipc/cli-detect.cjs"),
   require("./ipc/computeruse.cjs"),
   require("./ipc/browseruse.cjs"),
+  updates,
 ];
 
 // 注册全部 IPC 处理器
@@ -33,6 +35,7 @@ registerHandlers();
 app.whenReady().then(async () => {
   await ensureDataDir();
   createMainWindow();
+  updates.initializeAutoUpdates();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });

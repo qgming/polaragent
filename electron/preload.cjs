@@ -33,6 +33,17 @@ contextBridge.exposeInMainWorld("polaragent", {
   preview: {
     open: (path) => invoke("preview:open", { path }),
   },
+  updates: {
+    getStatus: () => invoke("updates:get-status"),
+    check: () => invoke("updates:check"),
+    install: () => invoke("updates:install"),
+    openReleases: () => invoke("updates:open-releases"),
+    onStatus: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on("updates:status", listener);
+      return () => ipcRenderer.removeListener("updates:status", listener);
+    },
+  },
   fs: {
     readFile: (path) => invoke("fs:read-file", { path }),
     readBase64File: (path) => invoke("fs:read-base64-file", { path }),

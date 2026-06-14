@@ -28,6 +28,15 @@ interface Window {
     preview: {
       open: (path: string) => Promise<void>;
     };
+    updates: {
+      getStatus: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
+      check: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
+      install: () => Promise<import("@/lib/electron/electron-api").AppUpdateStatus>;
+      openReleases: () => Promise<void>;
+      onStatus: (
+        handler: (status: import("@/lib/electron/electron-api").AppUpdateStatus) => void,
+      ) => () => void;
+    };
     fs: {
       readFile: (path: string) => Promise<string>;
       readBase64File: (path: string) => Promise<string>;

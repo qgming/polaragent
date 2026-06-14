@@ -35,6 +35,35 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export type AppUpdatePhase =
+  | "idle"
+  | "disabled"
+  | "unsupported"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloaded"
+  | "error";
+
+export interface AppUpdateStatus {
+  phase: AppUpdatePhase;
+  currentVersion: string;
+  platform: string;
+  arch: string;
+  supported: boolean;
+  enabled: boolean;
+  updateAvailable: boolean;
+  downloaded: boolean;
+  repository: string;
+  feedUrl: string | null;
+  releasesUrl: string;
+  message: string;
+  error: string | null;
+  releaseName: string | null;
+  releaseDate: string | null;
+  updateUrl: string | null;
+}
+
 function api() {
   if (!window.polaragent) throw new Error("Electron preload API 未初始化");
   return window.polaragent;
@@ -112,6 +141,12 @@ export const openPath = (path: string) => api().app.openPath(path);
 export const openExternal = (url: string) => api().app.openExternal(url);
 export const fileUrl = (path: string) => api().app.fileUrl(path);
 export const ensureDataDir = () => api().app.ensureDataDir();
+export const getUpdateStatus = (): Promise<AppUpdateStatus> => api().updates.getStatus();
+export const checkForUpdates = (): Promise<AppUpdateStatus> => api().updates.check();
+export const installUpdate = (): Promise<AppUpdateStatus> => api().updates.install();
+export const openUpdateReleases = (): Promise<void> => api().updates.openReleases();
+export const onUpdateStatus = (handler: (status: AppUpdateStatus) => void) =>
+  api().updates.onStatus(handler);
 export const listDirectory = (path: string) => api().fs.listDirectory(path);
 export const listDirectoryEntries = (path: string) => api().fs.listDirectoryEntries(path);
 export const readFile = (path: string) => api().fs.readFile(path);

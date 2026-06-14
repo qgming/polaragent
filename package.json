@@ -5,6 +5,10 @@
   "productName": "PolarAgent",
   "description": "PolarAgent desktop AI workspace",
   "author": "qgming",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qgming/polaragent.git"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -19,7 +23,7 @@
   "build": {
     "appId": "com.qgming.polaragent",
     "productName": "PolarAgent",
-    "electronDist": "node_modules/electron/dist",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -41,19 +45,84 @@
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32",
+            "arm64"
+          ]
+        },
+        {
+          "target": "squirrel",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
     },
+    "squirrelWindows": {
+      "artifactName": "${productName}-${version}-win-${arch}-squirrel.${ext}",
+      "iconUrl": "https://raw.githubusercontent.com/qgming/polaragent/main/build/icon.ico"
+    },
     "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
       "icon": "build/icon.png"
     }
   },
