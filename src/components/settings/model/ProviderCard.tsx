@@ -1,6 +1,7 @@
 // 单个模型服务卡片：可展开编辑 baseURL/apiKey/格式，并增删模型
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   Bot,
   Check,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  Save,
   Settings2,
   TriangleAlert,
   Trash2,
@@ -406,6 +408,37 @@ export function ProviderCard({
                 还没有模型，手动输入或点击「云端获取」。
               </p>
             )}
+          </div>
+
+          {/* 底部保存栏（自动保存持续生效，显式按钮用于增强安心感） */}
+          <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="size-1.5 rounded-full bg-green-500/60" />
+              修改已自动保存
+            </div>
+            <div className="flex items-center gap-3">
+              {saveState === "error" ? (
+                <span className="flex items-center gap-1.5 text-xs text-destructive">
+                  <AlertCircle className="size-3.5" />
+                  保存失败，请重试
+                </span>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={saveState === "saving" || saveState === "saved"}
+                onClick={() => void saveConnection()}
+              >
+                {saveState === "saving" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : saveState === "saved" ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                保存
+              </Button>
+            </div>
           </div>
         </div>
       ) : null}
