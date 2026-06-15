@@ -83,10 +83,18 @@ const createOfficeDocumentParams = Type.Object({
         Type.Literal("swiss-blue"),
         Type.Literal("lemon-grid"),
         Type.Literal("safety-orange"),
+        Type.Literal("executive"),
+        Type.Literal("academic"),
+        Type.Literal("minimal"),
+        Type.Literal("modern"),
+        Type.Literal("classic"),
+        Type.Literal("tech"),
+        Type.Literal("vintage"),
+        Type.Literal("bold"),
       ],
       {
         description:
-          "PPT HTML 模板风格。board=管理层汇报，studio=产品/设计叙事，data=数据汇报，pitch=路演/提案；magazine/ink/kraft/porcelain/forest/swiss-blue/lemon-grid/safety-orange 为 Guizang 启发的静态导出风格。默认 board。",
+          "PPT HTML 模板风格。4 核心商务: board/studio/data/pitch；8 Guizang: magazine/ink/kraft/porcelain/forest/swiss-blue/lemon-grid/safety-orange；8 经典: executive/academic/minimal/modern/classic/tech/vintage/bold。默认 board。",
       },
     ),
   ),
@@ -97,10 +105,20 @@ const createOfficeDocumentParams = Type.Object({
         Type.Literal("data"),
         Type.Literal("proposal"),
         Type.Literal("whitepaper"),
+        Type.Literal("academic"),
+        Type.Literal("minimal"),
+        Type.Literal("classic"),
+        Type.Literal("modern"),
+        Type.Literal("magazine"),
+        Type.Literal("report"),
+        Type.Literal("bento"),
+        Type.Literal("letter"),
+        Type.Literal("tech"),
+        Type.Literal("notebook"),
       ],
       {
         description:
-          "PDF 模板风格。executive=管理简报，data=数据报告，proposal=商业方案，whitepaper=长文白皮书。默认 executive。",
+          "PDF 模板风格。executive=管理简报，data=数据报告，proposal=商业方案，whitepaper=长文白皮书；academic=学术论文，minimal=极简纯粹，classic=古典优雅，modern=现代商务，magazine=杂志编辑，report=企业报告，bento=卡片信息图，letter=信函风格，tech=科技风，notebook=手帐风格。默认 executive；未指定时按内容自动选择。",
       },
     ),
   ),
@@ -130,6 +148,7 @@ export function createOfficeDocumentTool(
       "生成 PPT 时不要走 Markdown→PPT；请先生成 ppt-generator 静态 HTML：优先传 html 或 htmlSlides，" +
       "htmlSlides 写多个 <section class=\"slide ...\">，不要包含导航、动效、data-anim、播放脚本或 WebGL 运行时。" +
       "生成 PDF 时也必须先形成专业 HTML：优先传 html 或 sourceHtmlPath；没有 HTML 时工具会按 pdfStyle 生成模板化 HTML 工作稿后再导出 PDF，避免 Markdown 直出。" +
+      "pdfStyle 支持 14 种：executive/data/proposal/whitepaper/academic/minimal/classic/modern/magazine/report/bento/letter/tech/notebook；不指定时按内容自动匹配。" +
       "无需外部 Office 或 OfficeCLI，生成后用户可在独立预览窗口查看。",
     parameters: createOfficeDocumentParams,
     execute: async (_id, params: Static<typeof createOfficeDocumentParams>) => {
@@ -420,69 +439,136 @@ function pdfStyleLabel(
   if (style === "data") return "Data Report";
   if (style === "proposal") return "Proposal";
   if (style === "whitepaper") return "Whitepaper";
+  if (style === "academic") return "Academic Paper";
+  if (style === "minimal") return "Minimal";
+  if (style === "classic") return "Classic";
+  if (style === "modern") return "Modern";
+  if (style === "magazine") return "Magazine";
+  if (style === "report") return "Report";
+  if (style === "bento") return "Bento";
+  if (style === "letter") return "Letter";
+  if (style === "tech") return "Tech";
+  if (style === "notebook") return "Notebook";
   return "Executive Brief";
 }
 
 function pdfTemplateCss(
   style: NonNullable<Static<typeof createOfficeDocumentParams>["pdfStyle"]>,
 ): string {
-  const palette = {
+  const palettes: Record<string, {
+    paper: string; surface: string; ink: string; muted: string; line: string; accent: string;
+    heading: string; body: string; pageMargin: string; pageHeader: string;
+  }> = {
     executive: {
-      paper: "#f8f7f3",
-      surface: "#ffffff",
-      ink: "#20242c",
-      muted: "#667085",
-      line: "#d7d9dd",
-      accent: "#0f766e",
+      paper: "#f8f7f3", surface: "#ffffff", ink: "#20242c", muted: "#667085", line: "#d7d9dd", accent: "#0f766e",
       heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+      pageMargin: "18mm 16mm 20mm", pageHeader: "Executive Brief",
     },
     data: {
-      paper: "#fbfcfd",
-      surface: "#ffffff",
-      ink: "#1f2937",
-      muted: "#667085",
-      line: "#d8dee8",
-      accent: "#256d85",
+      paper: "#fbfcfd", surface: "#ffffff", ink: "#1f2937", muted: "#667085", line: "#d8dee8", accent: "#256d85",
       heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
+      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+      pageMargin: "14mm 13mm 17mm", pageHeader: "Data Report",
     },
     proposal: {
-      paper: "#f7f8fa",
-      surface: "#ffffff",
-      ink: "#22252b",
-      muted: "#697386",
-      line: "#d9dde5",
-      accent: "#8a1538",
+      paper: "#f7f8fa", surface: "#ffffff", ink: "#22252b", muted: "#697386", line: "#d9dde5", accent: "#8a1538",
       heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
+      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+      pageMargin: "16mm 15mm 18mm", pageHeader: "Proposal",
     },
     whitepaper: {
-      paper: "#fcfcfb",
-      surface: "#ffffff",
-      ink: "#1f2328",
-      muted: "#687076",
-      line: "#dadde1",
-      accent: "#315c48",
+      paper: "#fcfcfb", surface: "#ffffff", ink: "#1f2328", muted: "#687076", line: "#dadde1", accent: "#315c48",
       heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      pageMargin: "20mm 18mm 22mm", pageHeader: "Whitepaper",
     },
-  }[style];
+    academic: {
+      paper: "#fefcf5", surface: "#ffffff", ink: "#1a1a1a", muted: "#555555", line: "#d0d0d0", accent: "#8b0000",
+      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      pageMargin: "24mm 22mm 22mm", pageHeader: "Academic Paper",
+    },
+    minimal: {
+      paper: "#ffffff", surface: "#ffffff", ink: "#111111", muted: "#999999", line: "#e8e8e8", accent: "#222222",
+      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      pageMargin: "26mm 28mm 26mm", pageHeader: "",
+    },
+    classic: {
+      paper: "#f5f0e8", surface: "#faf6ee", ink: "#2c2416", muted: "#7a6e5e", line: "#d4c9b8", accent: "#8a6e45",
+      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      pageMargin: "22mm 20mm 22mm", pageHeader: "Classic",
+    },
+    modern: {
+      paper: "#fbfcfd", surface: "#ffffff", ink: "#1e293b", muted: "#64748b", line: "#cbd5e1", accent: "#2563eb",
+      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      pageMargin: "18mm 18mm 20mm", pageHeader: "Modern",
+    },
+    magazine: {
+      paper: "#f4efe7", surface: "#fffaf2", ink: "#191816", muted: "#75695b", line: "#d8cab8", accent: "#b23b2e",
+      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      pageMargin: "18mm 16mm 20mm", pageHeader: "Magazine",
+    },
+    report: {
+      paper: "#f8f9fb", surface: "#ffffff", ink: "#1f2937", muted: "#6b7280", line: "#d1d5db", accent: "#1e40af",
+      heading: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+      body: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+      pageMargin: "16mm 16mm 20mm", pageHeader: "Report",
+    },
+    bento: {
+      paper: "#f5f3f0", surface: "#ffffff", ink: "#1c1917", muted: "#78716c", line: "#d6d3d1", accent: "#d97706",
+      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      pageMargin: "16mm 14mm 18mm", pageHeader: "Bento",
+    },
+    letter: {
+      paper: "#faf7f2", surface: "#fffdf7", ink: "#26221c", muted: "#7a7265", line: "#d8d1c5", accent: "#5d4e37",
+      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+      pageMargin: "28mm 26mm 24mm", pageHeader: "",
+    },
+    tech: {
+      paper: "#0f172a", surface: "#1e293b", ink: "#f1f5f9", muted: "#94a3b8", line: "#334155", accent: "#06b6d4",
+      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      pageMargin: "18mm 16mm 20mm", pageHeader: "Tech Report",
+    },
+    notebook: {
+      paper: "#f9f6ee", surface: "#fffcf5", ink: "#252015", muted: "#8a7e6e", line: "#d9d0c0", accent: "#b8860b",
+      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+      pageMargin: "20mm 20mm 20mm", pageHeader: "Notebook",
+    },
+  };
+  const p = palettes[style] || palettes.executive;
+
+  const headerContent = p.pageHeader
+    ? `content: "${p.pageHeader}";`
+    : "content: none;";
 
   return `
-@page { size: A4; margin: 18mm 16mm 20mm; }
+@page { size: A4; margin: ${p.pageMargin}; @top-center { ${headerContent} font-family: ${p.heading}; font-size: 8pt; color: ${p.muted}; border-bottom: 0.5pt solid ${p.line}; padding-bottom: 3mm; } @bottom-center { content: "第 " counter(page) " 页"; font-family: ${p.heading}; font-size: 8pt; color: ${p.muted}; border-top: 0.5pt solid ${p.accent}; padding-top: 2mm; } }
+@page :first { @top-center { content: none; } @bottom-center { content: none; } }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  color: ${palette.ink};
-  background: ${palette.paper};
-  font: 10.5pt/1.62 "Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif;
+  color: ${p.ink};
+  background: ${p.paper};
+  font: 10.5pt/1.62 ${p.body};
   letter-spacing: 0;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
 main { max-width: 184mm; margin: 0 auto; }
 h1, h2, h3, p { margin: 0; }
-h1, h2 { font-family: ${palette.heading}; line-height: 1.12; }
+h1, h2 { font-family: ${p.heading}; line-height: 1.12; }
 h1 { font-size: 32pt; max-width: 150mm; }
-h2 { font-size: 17pt; margin-bottom: 5mm; padding-bottom: 3mm; border-bottom: 1px solid ${palette.line}; }
-p { margin-bottom: 3.8mm; color: #344054; }
+h2 { font-size: 17pt; margin-bottom: 5mm; padding-bottom: 3mm; border-bottom: 1px solid ${p.line}; }
+p { margin-bottom: 3.8mm; color: ${style === "tech" ? "#cbd5e1" : "#344054"}; }
 .cover {
   min-height: 232mm;
   display: flex;
@@ -491,22 +577,22 @@ p { margin-bottom: 3.8mm; color: #344054; }
   padding-top: 8mm;
   break-after: page;
 }
-.lead { margin-top: 7mm; max-width: 132mm; font-size: 13pt; line-height: 1.5; color: #475467; }
+.lead { margin-top: 7mm; max-width: 132mm; font-size: 13pt; line-height: 1.5; color: ${p.muted}; }
 .kicker, .eyebrow {
   display: block;
-  color: ${palette.accent};
+  color: ${p.accent};
   font-size: 8pt;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
   margin-bottom: 2mm;
 }
 .cover-meta {
   display: flex;
   justify-content: space-between;
-  border-top: 1px solid ${palette.line};
+  border-top: 1px solid ${p.line};
   padding-top: 4mm;
-  color: ${palette.muted};
+  color: ${p.muted};
   font-size: 8.5pt;
   text-transform: uppercase;
 }
@@ -517,8 +603,8 @@ p { margin-bottom: 3.8mm; color: #344054; }
   margin: 0 0 12mm;
 }
 .summary-card, .metric-strip article, .doc-section {
-  background: ${palette.surface};
-  border: 1px solid ${palette.line};
+  background: ${p.surface};
+  border: 1px solid ${p.line};
   border-radius: 8px;
   padding: 6mm;
   break-inside: avoid;
@@ -528,46 +614,154 @@ p { margin-bottom: 3.8mm; color: #344054; }
   font-size: 21pt;
   line-height: 1.1;
   margin: 1mm 0;
-  color: ${palette.ink};
+  color: ${p.ink};
 }
 .metric-strip article span, .metric-strip article em {
   display: block;
-  color: ${palette.muted};
+  color: ${p.muted};
   font-size: 8pt;
   font-style: normal;
   text-transform: uppercase;
 }
 .doc-section { margin-bottom: 9mm; }
+blockquote {
+  margin: 5mm 0;
+  padding: 3mm 4mm 3mm 8mm;
+  background: color-mix(in srgb, ${p.accent} 8%, transparent);
+  border-left: 3pt solid ${p.accent};
+  color: ${p.ink};
+  font-style: italic;
+  break-inside: avoid;
+}
+code, pre {
+  font-family: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+pre {
+  background: color-mix(in srgb, ${p.ink} 6%, ${p.surface});
+  border: 1px solid ${p.line};
+  border-radius: 6px;
+  padding: 4mm;
+  font-size: 8.8pt;
+  line-height: 1.45;
+  overflow-x: auto;
+  break-inside: avoid;
+  white-space: pre-wrap;
+}
+code { font-size: 9pt; padding: 0.5mm 1.5mm; background: color-mix(in srgb, ${p.accent} 12%, transparent); border-radius: 3px; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4mm 0;
+  font-size: 9.5pt;
+}
+thead th {
+  background: ${p.accent};
+  color: ${p.surface};
+  padding: 3mm;
+  text-align: left;
+  font-weight: 700;
+  font-size: 8pt;
+  text-transform: uppercase;
+}
+tbody td {
+  padding: 2.5mm 3mm;
+  border-bottom: 0.5pt solid ${p.line};
+  vertical-align: top;
+}
+tbody tr:nth-child(even) { background: color-mix(in srgb, ${p.line} 15%, transparent); }
 .point {
   display: grid;
   grid-template-columns: 4mm 1fr;
   gap: 3mm;
   padding: 2.5mm 0;
-  border-bottom: 1px solid ${palette.line};
+  border-bottom: 1px solid ${p.line};
   break-inside: avoid;
 }
 .point:last-child { border-bottom: 0; }
-.point span {
-  width: 3mm;
-  height: 3mm;
-  border-radius: 999px;
-  background: ${palette.accent};
-  margin-top: 2mm;
-}
+.point span { width: 3mm; height: 3mm; border-radius: 999px; background: ${p.accent}; margin-top: 2mm; }
 .point p { margin: 0; }
+img { max-width: 100%; height: auto; border-radius: 4px; margin: 3mm 0; }
+hr { border: none; border-top: 0.5pt solid ${p.line}; margin: 5mm 0; }
+
+/* ── style-specific overrides ── */
 body[data-pdf-style="whitepaper"] .doc-section {
-  border: 0;
-  border-top: 2px solid ${palette.ink};
-  border-radius: 0;
-  background: transparent;
-  padding: 6mm 0 0;
+  border: 0; border-top: 2px solid ${p.ink}; border-radius: 0; background: transparent; padding: 6mm 0 0;
 }
-body[data-pdf-style="proposal"] .summary-card { border-top: 4px solid ${palette.accent}; }
-body[data-pdf-style="data"] .doc-section { border-left: 5px solid ${palette.accent}; }
+body[data-pdf-style="proposal"] .summary-card { border-top: 4px solid ${p.accent}; }
+body[data-pdf-style="data"] .doc-section { border-left: 5px solid ${p.accent}; }
+
+body[data-pdf-style="academic"] { font-size: 11pt; line-height: 1.75; }
+body[data-pdf-style="academic"] h1 { font-size: 26pt; }
+body[data-pdf-style="academic"] h2 { font-size: 14pt; border-bottom: none; }
+body[data-pdf-style="academic"] .abstract-box {
+  background: color-mix(in srgb, ${p.line} 20%, transparent);
+  padding: 6mm; border-radius: 4px; margin-bottom: 8mm; font-style: italic;
+}
+
+body[data-pdf-style="minimal"] .cover { min-height: 200mm; }
+body[data-pdf-style="minimal"] h1 { font-size: 26pt; font-weight: 300; letter-spacing: -0.02em; }
+body[data-pdf-style="minimal"] h2 { font-weight: 400; letter-spacing: -0.01em; border-bottom: none; font-size: 14pt; }
+body[data-pdf-style="minimal"] .kicker { font-weight: 600; letter-spacing: 0.08em; }
+body[data-pdf-style="minimal"] .summary-card, body[data-pdf-style="minimal"] .doc-section {
+  border-radius: 2px; box-shadow: none;
+}
+
+body[data-pdf-style="classic"] { font-size: 11pt; line-height: 1.7; }
+body[data-pdf-style="classic"] h1 { font-size: 28pt; font-weight: 600; }
+body[data-pdf-style="classic"] h2 { font-size: 15pt; border-bottom: none; font-weight: 600; }
+body[data-pdf-style="classic"] p { color: ${p.ink}; }
+body[data-pdf-style="classic"] .summary-card { border: 1px solid ${p.line}; border-top: 3px solid ${p.accent}; }
+
+body[data-pdf-style="modern"] h1 { font-size: 30pt; letter-spacing: -0.01em; }
+body[data-pdf-style="modern"] h2 { font-size: 15pt; border-bottom-color: ${p.accent}; }
+body[data-pdf-style="modern"] .kicker { color: ${p.accent}; font-weight: 700; }
+body[data-pdf-style="modern"] .summary-card { border-left: 4px solid ${p.accent}; border-radius: 4px; }
+
+body[data-pdf-style="magazine"] h1 { font-size: 36pt; line-height: 1.05; }
+body[data-pdf-style="magazine"] h2 { font-size: 18pt; border-bottom: 2px solid ${p.accent}; }
+body[data-pdf-style="magazine"] .lead { font-size: 14pt; font-style: italic; }
+body[data-pdf-style="magazine"] .pull-quote {
+  font-size: 16pt; line-height: 1.4; color: ${p.accent};
+  padding: 4mm 0 4mm 6mm; margin: 6mm 0; border-left: 4px solid ${p.accent};
+}
+
+body[data-pdf-style="report"] h1 { font-size: 28pt; }
+body[data-pdf-style="report"] h2 { font-size: 15pt; border-bottom: 2px solid ${p.ink}; }
+body[data-pdf-style="report"] .summary-card { background: color-mix(in srgb, ${p.accent} 6%, ${p.surface}); border-left: 4px solid ${p.accent}; border-radius: 4px; }
+body[data-pdf-style="report"] .cover-meta { border-top: 2px solid ${p.ink}; }
+
+body[data-pdf-style="bento"] .summary-grid { grid-template-columns: repeat(2, 1fr); }
+body[data-pdf-style="bento"] .summary-card { border-radius: 12px; overflow: hidden; }
+body[data-pdf-style="bento"] .summary-card h3 { color: ${p.accent}; font-weight: 700; }
+body[data-pdf-style="bento"] .doc-section { border: 1px solid ${p.line}; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-radius: 12px; }
+
+body[data-pdf-style="letter"] { font-size: 11pt; line-height: 1.65; }
+body[data-pdf-style="letter"] .cover { min-height: auto; padding-top: 20mm; justify-content: start; gap: 4mm; }
+body[data-pdf-style="letter"] h1 { font-size: 24pt; }
+body[data-pdf-style="letter"] h2 { font-size: 13pt; border-bottom: none; color: ${p.accent}; }
+body[data-pdf-style="letter"] .letter-header { margin-bottom: 10mm; border-bottom: 1px solid ${p.line}; padding-bottom: 4mm; }
+body[data-pdf-style="letter"] .signature { margin-top: 12mm; padding-top: 4mm; }
+
+body[data-pdf-style="tech"] { font-size: 10pt; line-height: 1.6; }
+body[data-pdf-style="tech"] h1 { font-size: 30pt; letter-spacing: -0.02em; }
+body[data-pdf-style="tech"] h2 { border-bottom-color: ${p.accent}; font-size: 15pt; }
+body[data-pdf-style="tech"] .kicker { color: ${p.accent}; }
+body[data-pdf-style="tech"] .summary-card, body[data-pdf-style="tech"] .doc-section {
+  background: ${p.surface}; border: 1px solid ${p.line};
+}
+body[data-pdf-style="tech"] code { background: rgba(6,182,212,0.15); color: #67e8f9; }
+body[data-pdf-style="tech"] pre { background: #0c1929; border-color: ${p.line}; color: #e2e8f0; }
+
+body[data-pdf-style="notebook"] .doc-section {
+  border: none; border-left: 3px solid ${p.accent}; border-radius: 0; background: transparent;
+}
+body[data-pdf-style="notebook"] .summary-card { border: 1px solid ${p.line}; border-radius: 4px; }
+body[data-pdf-style="notebook"] h2 { border-bottom: none; font-style: italic; }
+
 @media print {
   a { color: inherit; text-decoration: none; }
   h1, h2, h3 { break-after: avoid; }
-  .summary-card, .doc-section, .point { break-inside: avoid; }
+  .summary-card, .doc-section, .point, blockquote, pre, table { break-inside: avoid; }
 }`;
 }
 
@@ -773,6 +967,14 @@ function pptStyleLabel(
   if (style === "studio") return "Studio";
   if (style === "data") return "Data Report";
   if (style === "pitch") return "Pitch";
+  if (style === "executive") return "Executive";
+  if (style === "academic") return "Academic";
+  if (style === "minimal") return "Minimal";
+  if (style === "modern") return "Modern";
+  if (style === "classic") return "Classic";
+  if (style === "tech") return "Tech";
+  if (style === "vintage") return "Vintage";
+  if (style === "bold") return "Bold";
   return "Board Brief";
 }
 

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corporate Report</title>
+  <style>
+    :root {
+      --paper: #f8f9fb;
+      --surface: #ffffff;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #d1d5db;
+      --accent: #1e40af;
+      --accent-soft: #e8edf7;
+      --positive: #059669;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --font-body: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+      --font-heading: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page { size: A4; margin: 16mm 16mm 20mm; @top-center { content: "Report | Section"; font-family: var(--font-heading); font-size: 7.5pt; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; } @bottom-center { content: "Page " counter(page); font-family: var(--font-heading); font-size: 7.5pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 10pt/1.5 var(--font-body);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 180mm; margin: 0 auto; }
+    section { margin-bottom: 12mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-family: var(--font-heading); line-height: 1.1; }
+    h1 { font-size: 28pt; max-width: 140mm; }
+    h2 { font-size: 15pt; margin-bottom: 4mm; padding-bottom: 3mm; border-bottom: 2px solid var(--ink); }
+    h3 { font-size: 10.5pt; font-weight: 600; margin-bottom: 2mm; }
+    p { margin-bottom: 3mm; color: #374151; }
+
+    .cover {
+      min-height: 235mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      break-after: page;
+    }
+    .brand-bar {
+      background: var(--ink);
+      color: #fff;
+      padding: 4mm 6mm;
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      display: flex;
+      justify-content: space-between;
+      margin: -16mm -16mm 0;
+      border-radius: 0 0 8px 8px;
+    }
+    .kicker {
+      display: block;
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2mm;
+    }
+    .subtitle { font-size: 13pt; color: var(--muted); margin-top: 4mm; max-width: 120mm; }
+    .cover-meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      border-top: 2px solid var(--ink);
+      padding-top: 4mm;
+      color: var(--muted);
+      font-size: 8pt;
+    }
+    .cover-meta strong { display: block; color: var(--ink); font-size: 10pt; margin-top: 1mm; }
+
+    .toc { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 6mm; margin: 6mm 0; }
+    .toc-item { border-bottom: 0.5pt solid var(--line); padding-bottom: 2mm; display: flex; justify-content: space-between; font-size: 9.5pt; }
+
+    .summary-callout {
+      background: var(--accent-soft);
+      border-left: 5px solid var(--accent);
+      padding: 5mm;
+      margin: 5mm 0;
+      break-inside: avoid;
+    }
+
+    .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; margin: 5mm 0; }
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      padding: 4mm;
+      break-inside: avoid;
+    }
+    .metric strong { display: block; font-size: 20pt; line-height: 1; margin: 2mm 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-size: 9pt;
+    }
+    thead th {
+      background: var(--ink);
+      color: #fff;
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7pt;
+      text-transform: uppercase;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt solid var(--line); vertical-align: top; }
+    tbody tr:nth-child(even) { background: #f1f5f9; }
+
+    .page-break { break-before: page; }
+    .avoid-break, .metric, .summary-callout, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <div class="brand-bar"><span>Organization Name</span><span>Confidential</span></div>
+        <div style="margin-top: 12mm;">
+          <span class="kicker">Corporate report</span>
+          <h1>Report Title</h1>
+          <p class="subtitle">A descriptive subtitle that clarifies the report's scope and purpose.</p>
+        </div>
+      </div>
+      <div class="cover-meta">
+        <div>Prepared for<strong>Board of Directors</strong></div>
+        <div>Date<strong>15 June 2026</strong></div>
+        <div>Status<strong>Final</strong></div>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Contents</span>
+      <h2>Table of Contents</h2>
+      <div class="toc">
+        <div class="toc-item"><span>1. Executive Summary</span><span>02</span></div>
+        <div class="toc-item"><span>2. Operating Context</span><span>03</span></div>
+        <div class="toc-item"><span>3. Key Metrics</span><span>04</span></div>
+        <div class="toc-item"><span>4. Detailed Analysis</span><span>05</span></div>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Executive summary</span>
+      <h2>1. Executive Summary</h2>
+      <div class="summary-callout">
+        <strong>Key message.</strong> This is the single most important thing the reader should take away from this report. Keep it concise and actionable.
+      </div>
+      <p>The Report template is designed for structured, formal business documents that require clear hierarchy, comprehensive tables, and executive-friendly summaries. Use this style for board reports, quarterly business reviews, annual reports, and formal investigations.</p>
+    </section>
+
+    <section>
+      <span class="kicker">Performance</span>
+      <h2>2. Key Metrics</h2>
+      <div class="metric-row">
+        <article class="metric"><span class="kicker">Revenue</span><strong>$12.4M</strong><span>+18% YoY</span></article>
+        <article class="metric"><span class="kicker">Customers</span><strong>2,847</strong><span>+12% QoQ</span></article>
+        <article class="metric"><span class="kicker">Retention</span><strong>93%</strong><span>-1pt</span></article>
+        <article class="metric"><span class="kicker">NPS</span><strong>62</strong><span>+4pts</span></article>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Analysis</span>
+      <h2>3. Detailed Analysis</h2>
+      <table>
+        <thead><tr><th>Division</th><th>Revenue</th><th>Growth</th><th>Margin</th></tr></thead>
+        <tbody>
+          <tr><td>North America</td><td>$5.2M</td><td>+22%</td><td>68%</td></tr>
+          <tr><td>Europe</td><td>$4.1M</td><td>+15%</td><td>72%</td></tr>
+          <tr><td>Asia Pacific</td><td>$3.1M</td><td>+19%</td><td>65%</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

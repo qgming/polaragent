@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notebook</title>
+  <style>
+    :root {
+      --paper: #f9f6ee;
+      --surface: #fffcf5;
+      --ink: #252015;
+      --muted: #8a7e6e;
+      --line: #d9d0c0;
+      --accent: #b8860b;
+      --accent-soft: #f5e8c8;
+      --sticky-a: #fef3c7;
+      --sticky-b: #d1fae5;
+      --sticky-c: #e0e7ff;
+      --font-body: "Inter", "Helvetica Neue", "Arial", sans-serif;
+      --font-heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+
+    @page { size: A4; margin: 20mm 20mm 20mm; @bottom-center { content: counter(page); font-family: var(--font-heading); font-size: 8pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        repeating-linear-gradient(to bottom, transparent 0, transparent 7.5mm, rgba(0,0,0,0.03) 7.55mm),
+        var(--paper);
+      font: 10pt/1.6 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 170mm; margin: 0 auto; position: relative; }
+    section { margin-bottom: 10mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-family: var(--font-heading); line-height: 1.15; }
+    h1 { font-size: 28pt; margin-bottom: 3mm; font-style: italic; }
+    h2 { font-size: 14pt; font-style: italic; margin-bottom: 4mm; border-bottom: 1px dashed var(--line); padding-bottom: 2mm; }
+    h3 { font-size: 10.5pt; font-weight: 700; margin-bottom: 2mm; font-family: var(--font-heading); }
+    p { margin-bottom: 3.5mm; }
+
+    .cover {
+      min-height: 220mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      break-after: page;
+      text-align: center;
+    }
+    .cover h1 { font-style: italic; letter-spacing: 0.5pt; }
+    .cover .subtitle { font-size: 11pt; color: var(--muted); margin-top: 4mm; }
+    .cover .meta { font-size: 8.5pt; color: var(--muted); margin-top: 8mm; font-style: italic; }
+
+    .kicker {
+      display: block;
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2mm;
+    }
+
+    .sticky-note {
+      padding: 4mm 5mm;
+      border-radius: 2px;
+      margin: 4mm 0 4mm 8mm;
+      break-inside: avoid;
+      font-size: 9.5pt;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.06);
+      transform: rotate(-0.5deg);
+    }
+    .sticky-note.yellow { background: var(--sticky-a); border-left: 3px solid var(--accent); }
+    .sticky-note.green { background: var(--sticky-b); border-left: 3px solid #059669; }
+    .sticky-note.blue { background: var(--sticky-c); border-left: 3px solid #6366f1; }
+
+    .sidebar-note {
+      float: right;
+      width: 50mm;
+      margin: 2mm 0 2mm 6mm;
+      padding: 3mm 4mm;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-right: 3px solid var(--accent);
+      font-size: 8.5pt;
+      font-style: italic;
+      color: var(--muted);
+      break-inside: avoid;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-size: 9pt;
+    }
+    thead th {
+      background: var(--ink);
+      color: var(--surface);
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7.5pt;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt dashed var(--line); vertical-align: top; }
+
+    .checklist { list-style: none; padding: 0; margin: 3mm 0; }
+    .checklist li { padding: 1.5mm 0 1.5mm 6mm; position: relative; border-bottom: 0.5pt dashed var(--line); }
+    .checklist li::before { content: "☐"; position: absolute; left: 0; color: var(--accent); }
+
+    .page-break { break-before: page; }
+    .avoid-break, .sticky-note, .sidebar-note, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <h1>Notebook Title</h1>
+        <p class="subtitle">A subtitle or contextual note in italic</p>
+        <p class="meta">Author · Date</p>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Note</span>
+      <h2>Opening Thoughts</h2>
+      <p>The Notebook template simulates the experience of writing in a physical notebook. It features a ruled-line background, italic headings, sticky-note callouts, and sidebar annotations. Use this style for brainstorming documents, meeting notes, personal journals, creative briefs, and working drafts.</p>
+      <div class="sidebar-note">The ruled line background is created with a repeating CSS gradient. It renders reliably in print and adds tactile warmth to every page.</div>
+      <p>The design encourages informality and iteration. Headings are italicized rather than bold. Borders are dashed rather than solid. The overall effect is provisional but deliberate—a document that feels alive and in progress.</p>
+    </section>
+
+    <section>
+      <h2>Key Ideas</h2>
+      <p>Key points can be highlighted using sticky-note callouts in three colors:</p>
+      <div class="sticky-note yellow"><strong>Yellow —</strong> Main ideas and important takeaways that should not be forgotten.</div>
+      <div class="sticky-note green"><strong>Green —</strong> Action items, next steps, or confirmations that require follow-up.</div>
+      <div class="sticky-note blue"><strong>Blue —</strong> Questions, uncertainties, or areas that need further exploration.</div>
+    </section>
+
+    <section>
+      <h2>Working Checklist</h2>
+      <ul class="checklist">
+        <li>First action item or task to complete</li>
+        <li>Second action item with additional context</li>
+        <li>Third action item — mark when done</li>
+        <li>Fourth action item for tracking</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Quick Reference</h2>
+      <table>
+        <thead><tr><th>Item</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Task A</td><td>In progress</td><td>Owner assigned, deadline next week</td></tr>
+          <tr><td>Task B</td><td>Blocked</td><td>Waiting on external input</td></tr>
+          <tr><td>Task C</td><td>Complete</td><td>Ready for review</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modern Document</title>
+  <style>
+    :root {
+      --paper: #fbfcfd;
+      --surface: #ffffff;
+      --ink: #1e293b;
+      --muted: #64748b;
+      --line: #cbd5e1;
+      --accent: #2563eb;
+      --accent-soft: #e8f0fe;
+      --positive: #059669;
+      --warning: #d97706;
+      --font-body: "Inter", "Helvetica Neue", "Arial", sans-serif;
+      --font-heading: "Inter", "Helvetica Neue", "Arial", sans-serif;
+    }
+
+    @page { size: A4; margin: 18mm 18mm 20mm; @top-center { content: "Modern"; font-family: var(--font-heading); font-size: 8pt; color: var(--muted); } @bottom-center { content: counter(page); font-family: var(--font-heading); font-size: 8pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 10.5pt/1.6 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 176mm; margin: 0 auto; }
+    section { margin-bottom: 14mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-family: var(--font-heading); line-height: 1.1; }
+    h1 { font-size: 30pt; letter-spacing: -0.01em; max-width: 140mm; margin-bottom: 4mm; }
+    h2 { font-size: 15pt; margin-bottom: 5mm; padding-bottom: 3mm; border-bottom: 2px solid var(--accent); }
+    h3 { font-size: 10.5pt; font-weight: 600; margin-bottom: 2mm; }
+    p { margin-bottom: 3.5mm; color: #334155; }
+
+    .cover {
+      min-height: 220mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      break-after: page;
+      padding-top: 10mm;
+    }
+    .kicker {
+      display: block;
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-bottom: 2mm;
+    }
+    .subtitle { font-size: 13pt; color: var(--muted); margin-top: 4mm; max-width: 120mm; }
+    .cover-meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 4mm; color: var(--muted); font-size: 8pt; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; margin: 5mm 0; }
+    .icon-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+      padding: 5mm;
+      break-inside: avoid;
+    }
+
+    .highlight-box {
+      background: var(--accent-soft);
+      border-radius: 6px;
+      padding: 5mm;
+      margin: 5mm 0;
+      break-inside: avoid;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-size: 9.5pt;
+    }
+    thead th {
+      background: var(--accent);
+      color: #fff;
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt solid var(--line); vertical-align: top; }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+
+    .page-break { break-before: page; }
+    .avoid-break, .icon-card, .highlight-box, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <span class="kicker">Modern document</span>
+        <h1>Document Title</h1>
+        <p class="subtitle">A concise description of the document's purpose and audience.</p>
+      </div>
+      <div class="cover-meta">
+        <span>Author or Organization</span>
+        <span>Date</span>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Overview</span>
+      <h2>Executive Summary</h2>
+      <p>The Modern template is built for clarity and speed. It uses a clean sans-serif typeface, a prominent blue accent, and generous information hierarchy. This style is ideal for internal reports, strategy documents, dashboards, and any material where quick comprehension is the primary goal.</p>
+      <div class="summary-grid">
+        <article class="icon-card"><h3>Clear hierarchy</h3><p>Section headings carry a blue underline accent that provides visual navigation.</p></article>
+        <article class="icon-card"><h3>Clean typography</h3><p>Sans-serif body text at 10.5pt with comfortable leading for extended reading.</p></article>
+        <article class="icon-card"><h3>Consistent spacing</h3><p>Predictable vertical rhythm makes scanning effortless.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Key Insights</h2>
+      <div class="highlight-box">
+        <strong>Highlighted insight.</strong> Use the highlight-box component to draw attention to critical findings, recommendations, or quotes. The soft blue background differentiates this content without overwhelming the page.
+      </div>
+      <table>
+        <thead><tr><th>Metric</th><th>Current</th><th>Target</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>Activation rate</td><td>72%</td><td>80%</td><td>On track</td></tr>
+          <tr><td>Time to value</td><td>9.6 days</td><td>7 days</td><td>Improving</td></tr>
+          <tr><td>Retention</td><td>91%</td><td>95%</td><td>Watch</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

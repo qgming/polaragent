@@ -130,6 +130,90 @@
       --accent-ink: #ffffff;
       --soft: rgba(255,90,31,.14);
     }
+    body[data-ppt-style="executive"] {
+      --bg: #f0f4f8;
+      --surface: #ffffff;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #cbd5e1;
+      --accent: #1e3a5f;
+      --accent-ink: #ffffff;
+      --soft: #e8edf4;
+    }
+    body[data-ppt-style="academic"] {
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --ink: #1a1a1a;
+      --muted: #666666;
+      --line: #d0d0d0;
+      --accent: #8b0000;
+      --accent-ink: #ffffff;
+      --soft: #f5e8e8;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="minimal"] {
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --ink: #111111;
+      --muted: #aaaaaa;
+      --line: #eeeeee;
+      --accent: #222222;
+      --accent-ink: #ffffff;
+      --soft: #f5f5f5;
+      --heading: "Inter", "Helvetica Neue", "Arial", sans-serif;
+    }
+    body[data-ppt-style="modern"] {
+      --bg: #f5f5f0;
+      --surface: #ffffff;
+      --ink: #222222;
+      --muted: #888888;
+      --line: #e0ddd5;
+      --accent: #4a4a4a;
+      --accent-ink: #ffffff;
+      --soft: #eae8e0;
+    }
+    body[data-ppt-style="classic"] {
+      --bg: #f5f0e8;
+      --surface: #faf6ee;
+      --ink: #2c2416;
+      --muted: #7a6e5e;
+      --line: #d4c9b8;
+      --accent: #8a6e45;
+      --accent-ink: #faf6ee;
+      --soft: #ede4d5;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="tech"] {
+      --bg: #0a0e17;
+      --surface: #1a1f2e;
+      --ink: #e2e8f0;
+      --muted: #8899b0;
+      --line: #2a3142;
+      --accent: #6366f1;
+      --accent-ink: #ffffff;
+      --soft: rgba(99,102,241,.12);
+    }
+    body[data-ppt-style="vintage"] {
+      --bg: #e8ddd0;
+      --surface: #f5ede1;
+      --ink: #2c2018;
+      --muted: #8a7a6a;
+      --line: #cbbaa8;
+      --accent: #a0522d;
+      --accent-ink: #ffffff;
+      --soft: rgba(160,82,45,.12);
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="bold"] {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --ink: #f8f9fa;
+      --muted: #a0a0b8;
+      --line: rgba(255,255,255,.12);
+      --accent: #ff006e;
+      --accent-ink: #ffffff;
+      --soft: rgba(255,0,110,.12);
+    }
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; }
     body {
@@ -320,6 +404,97 @@
     body[data-ppt-style="safety-orange"] .timeline article {
       box-shadow: 10px 10px 0 var(--accent);
     }
+
+    /* ── 8 new classic PPT styles ── */
+    body[data-ppt-style="executive"] .section-head {
+      border-bottom: 2px solid var(--accent);
+    }
+    body[data-ppt-style="executive"] .card {
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+    }
+
+    body[data-ppt-style="academic"] .slide {
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--soft) 55%, transparent), transparent 40%),
+        var(--bg);
+    }
+    body[data-ppt-style="academic"] .kicker {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-ink);
+      padding: 4px 10px;
+      border-radius: 2px;
+    }
+
+    body[data-ppt-style="minimal"] h1 { font-weight: 300; letter-spacing: -0.02em; }
+    body[data-ppt-style="minimal"] h2 { font-weight: 400; letter-spacing: -0.01em; }
+    body[data-ppt-style="minimal"] .kicker { font-weight: 600; letter-spacing: 0.08em; }
+    body[data-ppt-style="minimal"] .card { border-radius: 2px; box-shadow: none; border-color: var(--line); }
+    body[data-ppt-style="minimal"] .section-head { border-bottom: 0.5pt solid var(--line); }
+
+    body[data-ppt-style="modern"] .section-head { border-bottom: 1px solid var(--line); }
+    body[data-ppt-style="modern"] .card { border-radius: 4px; border-left: 3px solid var(--accent); }
+    body[data-ppt-style="modern"] .kicker { letter-spacing: 0.04em; }
+
+    body[data-ppt-style="classic"] .slide {
+      background:
+        radial-gradient(circle at 82% 18%, rgba(138,110,69,.06), transparent 32%),
+        linear-gradient(135deg, color-mix(in srgb, var(--soft) 60%, transparent), transparent 42%),
+        var(--bg);
+    }
+    body[data-ppt-style="classic"] .section-head {
+      border-top: 2px solid var(--accent);
+      border-bottom: 1px solid var(--line);
+      padding-top: 20px;
+    }
+    body[data-ppt-style="classic"] .card { border-radius: 2px; border-top: 3px solid var(--accent); }
+
+    body[data-ppt-style="tech"] .slide {
+      background:
+        repeating-linear-gradient(0deg, rgba(99,102,241,.04) 0, rgba(99,102,241,.04) 1px, transparent 1px, transparent 6px),
+        var(--bg);
+    }
+    body[data-ppt-style="tech"] .kicker {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-ink);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    body[data-ppt-style="tech"] .card { border-color: var(--line); }
+
+    body[data-ppt-style="vintage"] .slide {
+      background:
+        radial-gradient(circle at 14% 86%, rgba(160,82,45,.08), transparent 24%),
+        repeating-linear-gradient(45deg, rgba(160,82,45,.025) 0, rgba(160,82,45,.025) 2px, transparent 2px, transparent 12px),
+        var(--bg);
+    }
+    body[data-ppt-style="vintage"] .card {
+      border: 1px solid var(--line);
+      box-shadow: 4px 4px 0 rgba(44,32,24,.08);
+    }
+
+    body[data-ppt-style="bold"] .slide {
+      background:
+        radial-gradient(circle at 8% 12%, rgba(255,0,110,.08), transparent 22%),
+        radial-gradient(circle at 92% 88%, rgba(255,0,110,.06), transparent 26%),
+        var(--bg);
+    }
+    body[data-ppt-style="bold"] .kicker {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-ink);
+      padding: 6px 14px;
+      border-radius: 24px;
+      font-size: 14px;
+    }
+    body[data-ppt-style="bold"] .card {
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.04);
+      backdrop-filter: blur(4px);
+    }
+    body[data-ppt-style="bold"] .section-head { border-bottom: 1px solid rgba(255,255,255,.08); }
   </style>
 </head>
 <body data-ppt-style="board">

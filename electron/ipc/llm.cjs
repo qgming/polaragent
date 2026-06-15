@@ -7,6 +7,33 @@ const { REMOTE_CONCURRENCY, withConcurrency } = require("../lib/concurrency.cjs"
 // LLM 请求全局并发控制：同时最多 2 个请求在打向上游，降低 429 风险
 const llmRunner = withConcurrency(REMOTE_CONCURRENCY);
 
+// 429 限流重试间隔（毫秒），默认重试 5 次
+const RETRY_DELAYS = [1000, 3000, 5000, 10000, 30000];
+
+// 判断是否因 429 限流导致的错误
+function isRateLimitError(error) {
+  if (!error || !error.message) return false;
+  return /429|Too Many Requests|rate_limit/i.test(error.message);
+}
+
+// 带 429 自动静默重试包装：捕获 429 错误后按递增间隔重试
+async function with429Retry(fn) {
+  let lastError;
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (!isRateLimitError(error)) throw error;
+      if (attempt >= RETRY_DELAYS.length) throw error;
+      const delay = RETRY_DELAYS[attempt];
+      console.log(`[LLM] 429 限流，${attempt + 1}/${RETRY_DELAYS.length} 次重试，等待 ${delay}ms ...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError;
+}
+
 function electronFetch(url, options) {
   return net.fetch(url, options);
 }
@@ -49,7 +76,7 @@ function usageFrom(raw) {
 
 // 同步 chat completion
 async function chatCompletion(request) {
-  return llmRunner(async () => {
+  return with429Retry(() => llmRunner(async () => {
     if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
     if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
     const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/chat/completions`, {
@@ -68,12 +95,12 @@ async function chatCompletion(request) {
       model: payload.model || request.model,
       usage: usageFrom(payload.usage),
     };
-  });
+  }));
 }
 
 // 流式 chat completion：解析 SSE，逐段通过 llm:chat-stream 推送
 async function chatCompletionStream(event, request) {
-  return llmRunner(async () => {
+  return with429Retry(() => llmRunner(async () => {
     if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
     if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
     const requestId = request.requestId || `llm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -123,7 +150,7 @@ async function chatCompletionStream(event, request) {
       }
     }
     emit({ requestId, done: true, model, usage });
-  });
+  }));
 }
 
 // 读取模型列表

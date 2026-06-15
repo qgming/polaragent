@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Magazine Feature</title>
+  <style>
+    :root {
+      --paper: #f4efe7;
+      --surface: #fffaf2;
+      --ink: #191816;
+      --muted: #75695b;
+      --line: #d8cab8;
+      --accent: #b23b2e;
+      --accent-soft: #f7e8e6;
+      --font-body: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+      --font-ui: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page { size: A4; margin: 18mm 16mm 20mm; @top-center { content: "Magazine"; font-family: var(--font-ui); font-size: 8pt; color: var(--muted); text-transform: uppercase; } @bottom-center { content: counter(page); font-family: var(--font-ui); font-size: 8pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 10.5pt/1.6 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 174mm; margin: 0 auto; }
+    section { margin-bottom: 14mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 36pt; line-height: 1.05; max-width: 140mm; margin-bottom: 5mm; font-family: var(--font-body); }
+    h2 { font-size: 18pt; margin-bottom: 4mm; padding-bottom: 3mm; border-bottom: 2px solid var(--accent); font-family: var(--font-body); }
+    h3 { font-size: 11pt; margin-bottom: 2mm; font-family: var(--font-ui); font-weight: 700; }
+    p { margin-bottom: 3.5mm; }
+    a { color: var(--accent); }
+
+    .cover {
+      min-height: 220mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      break-after: page;
+      text-align: center;
+    }
+    .cover h1 { font-size: 40pt; line-height: 1.05; }
+    .cover .dek { font-size: 14pt; font-style: italic; color: var(--muted); margin-top: 5mm; max-width: 120mm; margin-left: auto; margin-right: auto; }
+    .cover .byline { font-family: var(--font-ui); font-size: 9pt; color: var(--muted); margin-top: 8mm; text-transform: uppercase; letter-spacing: 0.05em; }
+    .cover .divider { width: 30%; margin: 8mm auto; border: none; border-top: 2px solid var(--accent); }
+
+    .kicker {
+      display: block;
+      font-family: var(--font-ui);
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2mm;
+    }
+    .lead { font-size: 14pt; font-style: italic; line-height: 1.5; color: var(--muted); margin-bottom: 5mm; }
+
+    .pull-quote {
+      font-size: 18pt; line-height: 1.35; color: var(--accent);
+      padding: 4mm 0 4mm 6mm; margin: 6mm 0;
+      border-left: 4px solid var(--accent);
+      font-style: italic;
+      break-inside: avoid;
+    }
+
+    .feature-box {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      padding: 5mm;
+      margin: 5mm 0;
+      break-inside: avoid;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-family: var(--font-ui);
+      font-size: 9pt;
+    }
+    thead th {
+      background: var(--ink);
+      color: var(--surface);
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 700;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt solid var(--line); }
+    tbody tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+
+    .page-break { break-before: page; }
+    .avoid-break, .feature-box, .pull-quote, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <h1>Feature Story Title</h1>
+        <p class="dek">A compelling subtitle or dek that invites the reader into the story</p>
+        <hr class="divider">
+        <p class="byline">By Author Name · Date</p>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Opening</span>
+      <p class="lead">The magazine template is designed for narrative-driven content. It combines a large serif headline, italic deck, and editorial typography to create a reading experience that feels substantial and engaging.</p>
+      <p>Use this style for long-form features, thought leadership pieces, profile articles, industry analysis, or any document where storytelling matters as much as information. The generous type scale and rhythmic spacing reward sustained reading.</p>
+    </section>
+
+    <section>
+      <h2>The Narrative Arc</h2>
+      <p>Magazine-style documents are organized around a central narrative arc rather than a hierarchical outline. Each section advances the story, building toward a conclusion or insight that feels earned rather than stated.</p>
+      <div class="pull-quote">"A great feature makes the reader feel smarter for having read it, not just better informed."</div>
+      <p>In practice, this means leading with anecdote or observation, building context gradually, and reserving judgment for the climax. The structure should feel inevitable but not predictable.</p>
+    </section>
+
+    <section>
+      <h2>Data in Context</h2>
+      <div class="feature-box">
+        <h3>Key finding</h3>
+        <p>Data within a magazine feature is contextual—it supports the narrative rather than driving it. Use simple tables or callout boxes to present figures without breaking the reading flow.</p>
+      </div>
+      <table>
+        <thead><tr><th>Dimension</th><th>Observation</th><th>Significance</th></tr></thead>
+        <tbody>
+          <tr><td>Trend A</td><td>Steady growth over 18 months</td><td>Indicates structural demand shift</td></tr>
+          <tr><td>Trend B</td><td>Acceleration in Q2 2026</td><td>Correlated with policy change</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Closing Reflection</h2>
+      <p>The magazine template is best deployed when the goal is not just to inform, but to leave a lasting impression. The design recedes; the story leads.</p>
+    </section>
+  </main>
+</body>
+</html>

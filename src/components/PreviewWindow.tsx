@@ -30,7 +30,7 @@ import { MarkdownPreview } from "@/components/markdown/MarkdownPreview";
 import { OfficeFilePreview } from "@/components/preview/OfficeFilePreview";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp } from "@/lib/app-init";
-import { fileUrl, readFile, writeFile, openPath, openExternal } from "@/lib/electron/electron-api";
+import { fileUrl, readFile, writeFile, openPath } from "@/lib/electron/electron-api";
 import {
   extOf,
   previewKindLabel,
@@ -158,8 +158,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
   };
 
   const openInSystemBrowser = useCallback(async () => {
-    const url = await fileUrl(filePath);
-    await openExternal(url);
+    await openPath(filePath);
   }, [filePath]);
 
   return (

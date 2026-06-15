@@ -90,7 +90,8 @@ function parseSimpleYaml(yaml: string): SkillMdFrontmatter {
   const lines = yaml.split("\n");
   let currentObject: Record<string, string> | null = null;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
@@ -104,12 +105,31 @@ function parseSimpleYaml(yaml: string): SkillMdFrontmatter {
     if (colonIndex <= 0) continue;
 
     const key = trimmed.slice(0, colonIndex).trim();
-    let value = trimmed.slice(colonIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+    let rawValue = trimmed.slice(colonIndex + 1);
+    let value = rawValue.trim();
+
+    if (value === "|") {
+      const blockLines: string[] = [];
+      const baseIndent = line.length - trimmed.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (nextLine.trim() === "") {
+          blockLines.push("");
+          continue;
+        }
+        const nextIndent = nextLine.length - nextLine.trim().length;
+        if (nextIndent <= baseIndent && nextLine.trim().length > 0) break;
+        blockLines.push(nextLine.trimEnd());
+        i = j;
+      }
+      value = blockLines.join("\n").trimEnd();
+    } else {
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
     }
 
     if (currentObject && line.startsWith("  ")) {

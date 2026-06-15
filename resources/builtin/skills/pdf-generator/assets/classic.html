@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Classic Document</title>
+  <style>
+    :root {
+      --paper: #f5f0e8;
+      --surface: #faf6ee;
+      --ink: #2c2416;
+      --muted: #7a6e5e;
+      --line: #d4c9b8;
+      --accent: #8a6e45;
+      --accent-soft: #ede4d5;
+      --font-body: "Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif;
+      --font-ui: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page { size: A4; margin: 22mm 20mm 22mm; @top-center { content: "Classic"; font-family: var(--font-body); font-size: 8pt; color: var(--muted); border-bottom: 0.5pt solid var(--line); padding-bottom: 3mm; } @bottom-center { content: "— " counter(page) " —"; font-family: var(--font-body); font-size: 8pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 11pt/1.7 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 156mm; margin: 0 auto; }
+    section { margin-bottom: 12mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-family: var(--font-body); line-height: 1.12; }
+    h1 { font-size: 28pt; font-weight: 600; margin-bottom: 4mm; }
+    h2 { font-size: 15pt; font-weight: 600; margin-bottom: 4mm; }
+    h3 { font-size: 11pt; font-weight: 600; margin-bottom: 2mm; font-family: var(--font-body); }
+    p { margin-bottom: 4mm; text-align: justify; color: var(--ink); }
+
+    .cover {
+      min-height: 230mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      break-after: page;
+    }
+    .cover .ornament {
+      font-size: 24pt;
+      color: var(--accent);
+      margin-bottom: 6mm;
+      letter-spacing: 8pt;
+    }
+    .cover h1 { font-size: 30pt; letter-spacing: 1pt; }
+    .cover .subtitle { font-size: 13pt; color: var(--muted); margin-top: 5mm; font-style: italic; }
+    .cover .meta { font-family: var(--font-ui); font-size: 9pt; color: var(--muted); margin-top: 10mm; }
+    .cover .rule {
+      width: 50%; margin: 8mm auto; border: none;
+      border-top: 1.5pt solid var(--accent);
+    }
+
+    .kicker, .label {
+      display: block;
+      font-family: var(--font-ui);
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2mm;
+    }
+
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--accent);
+      padding: 5mm;
+      margin-bottom: 4mm;
+      break-inside: avoid;
+    }
+
+    blockquote {
+      margin: 5mm 0;
+      padding: 3mm 4mm 3mm 8mm;
+      border-left: 3px solid var(--accent);
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-family: var(--font-ui);
+      font-size: 9.5pt;
+    }
+    thead th {
+      background: var(--ink);
+      color: #faf6ee;
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt solid var(--line); vertical-align: top; }
+    tbody tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+
+    .page-break { break-before: page; }
+    .avoid-break, .summary-card, blockquote, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <h1>Document Title</h1>
+        <p class="subtitle">A subtitle or contextual note in italic</p>
+        <hr class="rule">
+        <p class="meta">Author · Date</p>
+      </div>
+    </section>
+
+    <section>
+      <span class="label">Opening</span>
+      <h2>Prologue</h2>
+      <p>The Classic template evokes traditional book printing with warm paper tones, serif typography, and restrained gold accents. It is designed for documents that benefit from a sense of permanence and authority: long-form essays, institutional reports, archival records, and literary analysis.</p>
+      <p>The color palette draws on aged paper and gilt edges. Headings use a heavier serif weight, and the cover centers on a decorative rule and generous whitespace.</p>
+    </section>
+
+    <section>
+      <h2>Chapter or Section Title</h2>
+      <div class="summary-card">
+        <h3>A key point or highlight</h3>
+        <p>Use the summary-card component to call out important information. The gold top border draws the eye without demanding attention.</p>
+      </div>
+      <p>Body text is set at 11pt with generous leading. Paragraphs are justified for a clean book-like appearance. Use blockquotes for extended quotations or passages that deserve visual separation from the main text.</p>
+      <blockquote>This is a blockquote for extended quotations or passages that deserve visual separation from the main narrative flow.</blockquote>
+    </section>
+
+    <section>
+      <h2>Data in Classic Style</h2>
+      <table>
+        <thead><tr><th>Category</th><th>Value</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Category A</td><td>124</td><td>Primary measure with full coverage</td></tr>
+          <tr><td>Category B</td><td>89</td><td>Secondary measure, partial coverage</td></tr>
+          <tr><td>Category C</td><td>231</td><td>Tertiary measure, expanded scope</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Academic Paper</title>
+  <style>
+    :root {
+      --paper: #fefcf5;
+      --surface: #ffffff;
+      --ink: #1a1a1a;
+      --muted: #555555;
+      --line: #d0d0d0;
+      --accent: #8b0000;
+      --accent-soft: #f5e8e8;
+      --font-body: "Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif;
+      --font-ui: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page { size: A4; margin: 24mm 22mm 22mm; @top-center { content: "Academic Paper"; font-family: var(--font-body); font-size: 8pt; color: var(--muted); } @bottom-center { content: "— " counter(page) " —"; font-family: var(--font-body); font-size: 8pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 11pt/1.75 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 160mm; margin: 0 auto; }
+    section { margin-bottom: 14mm; }
+    h1, h2, h3, p, blockquote { margin: 0; }
+    h1, h2, h3 { font-family: var(--font-body); line-height: 1.15; font-weight: 600; }
+    h1 { font-size: 26pt; max-width: 130mm; margin-bottom: 6mm; }
+    h2 { font-size: 14pt; margin-bottom: 4mm; }
+    h3 { font-size: 11pt; margin-bottom: 3mm; }
+    p { margin-bottom: 4mm; text-align: justify; }
+    a { color: var(--accent); }
+
+    .cover {
+      min-height: 220mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      break-after: page;
+    }
+    .cover h1 { font-size: 28pt; margin-bottom: 8mm; letter-spacing: 0.5pt; }
+    .cover .subtitle { font-size: 13pt; color: var(--muted); margin-bottom: 12mm; }
+    .cover .meta { font-family: var(--font-ui); font-size: 9pt; color: var(--muted); }
+    .cover .divider { width: 40%; margin: 8mm auto; border: none; border-top: 1px solid var(--accent); }
+
+    .abstract-box {
+      background: #f8f6f0;
+      padding: 6mm 8mm;
+      margin-bottom: 10mm;
+      font-style: italic;
+      font-size: 10.5pt;
+      border-radius: 2px;
+    }
+    .abstract-box strong { font-style: normal; }
+
+    .kicker, .label {
+      display: block;
+      font-family: var(--font-ui);
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2mm;
+    }
+
+    blockquote {
+      margin: 5mm 0;
+      padding: 3mm 4mm 3mm 8mm;
+      border-left: 3px solid var(--accent);
+      color: #444;
+      font-style: italic;
+      background: #f9f7f3;
+    }
+
+    .citation {
+      color: var(--muted);
+      font-size: 9pt;
+      line-height: 1.5;
+      padding-left: 8mm;
+      text-indent: -8mm;
+      margin-bottom: 2mm;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 5mm 0;
+      font-family: var(--font-ui);
+      font-size: 9pt;
+    }
+    thead th {
+      background: var(--ink);
+      color: #fff;
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+    }
+    thead { display: table-header-group; }
+    tbody td {
+      padding: 2.5mm 3mm;
+      border-bottom: 0.5pt solid var(--line);
+      vertical-align: top;
+    }
+    tbody tr:nth-child(even) { background: #f8f7f4; }
+
+    .references { font-size: 9pt; line-height: 1.6; color: #333; }
+    .references li { margin-bottom: 2mm; }
+
+    .page-break { break-before: page; }
+    .avoid-break, blockquote, table, .abstract-box { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <h1>Paper Title Here</h1>
+        <p class="subtitle">A subtitle or contextual description of the research</p>
+        <hr class="divider">
+        <p class="meta">Author Name · Institution · 15 June 2026</p>
+      </div>
+    </section>
+
+    <section>
+      <span class="label">Abstract</span>
+      <div class="abstract-box">
+        <strong>Abstract.</strong> Replace this placeholder with a concise summary of the paper's objectives, methodology, key findings, and significance. The abstract should be self-contained and readable as a standalone overview.
+      </div>
+    </section>
+
+    <section>
+      <h2>1. Introduction</h2>
+      <p>Begin with the broader context of the research problem. Establish why this question matters, what is already known, and what gap this paper addresses. State the research question or hypothesis clearly by the end of the introduction.</p>
+      <p>The introduction should also outline the paper's structure so readers know what to expect in each section.</p>
+    </section>
+
+    <section>
+      <h2>2. Literature Review</h2>
+      <p>Situate your work within existing scholarship. Discuss key theories, findings, and debates that inform your approach. Identify the gap in the literature that your study fills.</p>
+      <blockquote>"A literature review is not a list of summaries. It is a structured argument about what is known and what remains to be understood."</blockquote>
+    </section>
+
+    <section>
+      <h2>3. Methodology</h2>
+      <p>Describe the research design, data sources, analytical methods, and any relevant constraints. Provide enough detail for replication.</p>
+      <table>
+        <thead><tr><th>Component</th><th>Description</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td>Design</td><td>Mixed methods, sequential explanatory</td><td>Allows quantitative patterns to inform qualitative depth</td></tr>
+          <tr><td>Sample</td><td>1,247 respondents across 6 regions</td><td>Balanced geographic and demographic coverage</td></tr>
+          <tr><td>Analysis</td><td>Thematic coding + regression modeling</td><td>Triangulation between statistical and interpretive findings</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="page-break">
+      <h2>4. Findings</h2>
+      <p>Present the results of the study in a logical order, using tables and figures to support the narrative. Avoid interpreting findings in this section; focus on reporting what the data show.</p>
+    </section>
+
+    <section>
+      <h2>5. Discussion</h2>
+      <p>Interpret the findings in light of the research question and existing literature. Discuss implications, limitations, and directions for future research.</p>
+    </section>
+
+    <section>
+      <h2>References</h2>
+      <ol class="references">
+        <li class="citation">Author, A. (2025). Title of the referenced work. <em>Journal Name</em>, 12(3), 45–67.</li>
+        <li class="citation">Author, B. (2024). <em>Book Title</em>. Publisher.</li>
+        <li class="citation">Author, C. (2026). Conference paper title. <em>Proceedings of the Conference</em>, 112–125.</li>
+      </ol>
+    </section>
+
+    <section style="margin-top: 10mm;">
+      <span class="label">Methodology note</span>
+      <p style="font-size: 9pt; color: var(--muted);">This document was generated using the Academic template for PolarAgent PDF output.</p>
+    </section>
+  </main>
+</body>
+</html>

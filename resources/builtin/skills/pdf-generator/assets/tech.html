@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tech Report</title>
+  <style>
+    :root {
+      --paper: #0f172a;
+      --surface: #1e293b;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --line: #334155;
+      --accent: #06b6d4;
+      --accent-soft: rgba(6,182,212,0.1);
+      --positive: #22c55e;
+      --warning: #eab308;
+      --font-body: "Inter", "Helvetica Neue", "Arial", sans-serif;
+      --font-mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    @page { size: A4; margin: 18mm 16mm 20mm; @top-center { content: "Tech Report"; font-family: var(--font-body); font-size: 7.5pt; color: var(--muted); } @bottom-center { content: "// page " counter(page); font-family: var(--font-mono); font-size: 7.5pt; color: var(--muted); } }
+    @page :first { @top-center { content: none; } @bottom-center { content: none; } }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 10pt/1.6 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 180mm; margin: 0 auto; }
+    section { margin-bottom: 12mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2 { font-family: var(--font-body); line-height: 1.08; }
+    h1 { font-size: 30pt; letter-spacing: -0.02em; max-width: 140mm; }
+    h2 { font-size: 15pt; margin-bottom: 4mm; padding-bottom: 3mm; border-bottom: 1px solid var(--accent); }
+    h3 { font-size: 10.5pt; font-weight: 600; margin-bottom: 2mm; }
+    p { margin-bottom: 3.5mm; color: #cbd5e1; line-height: 1.6; }
+
+    .cover {
+      min-height: 220mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      break-after: page;
+    }
+    .cover .tag { color: var(--accent); font-family: var(--font-mono); font-size: 9pt; margin-bottom: 4mm; }
+    .cover .tag::before { content: "> "; }
+    .cover h1 { margin-bottom: 4mm; }
+    .cover .subtitle { font-size: 12pt; color: var(--muted); max-width: 120mm; font-family: var(--font-mono); }
+    .cover-meta { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 4mm; color: var(--muted); font-size: 8pt; font-family: var(--font-mono); }
+
+    .kicker {
+      display: block;
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2mm;
+    }
+
+    code, pre { font-family: var(--font-mono); }
+    p code {
+      background: rgba(6,182,212,0.15);
+      color: #67e8f9;
+      padding: 0.5mm 1.5mm;
+      border-radius: 3px;
+      font-size: 9pt;
+    }
+    pre {
+      background: #0c1929;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4mm;
+      font-size: 8.5pt;
+      line-height: 1.45;
+      overflow-x: auto;
+      break-inside: avoid;
+      white-space: pre-wrap;
+      color: #e2e8f0;
+      margin: 4mm 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5mm;
+      break-inside: avoid;
+    }
+    .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; margin: 5mm 0; }
+
+    .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; margin: 5mm 0; }
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 4mm;
+      break-inside: avoid;
+    }
+    .metric strong { display: block; font-family: var(--font-mono); font-size: 22pt; line-height: 1; color: var(--accent); margin: 2mm 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 4mm 0;
+      font-size: 9pt;
+    }
+    thead th {
+      background: var(--surface);
+      color: var(--accent);
+      padding: 2.5mm 3mm;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 1px solid var(--accent);
+      font-family: var(--font-mono);
+      font-size: 7.5pt;
+    }
+    thead { display: table-header-group; }
+    tbody td { padding: 2.5mm 3mm; border-bottom: 0.5pt solid var(--line); vertical-align: top; color: #cbd5e1; }
+    tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+    .page-break { break-before: page; }
+    .avoid-break, .card, .metric, pre, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <span class="tag">report/tech-overview</span>
+        <h1>Technical Report Title</h1>
+        <p class="subtitle">// A brief description of the system, analysis, or findings</p>
+      </div>
+      <div class="cover-meta">
+        <span>Author/Team</span>
+        <span>15 June 2026</span>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Overview</span>
+      <h2>System Overview</h2>
+      <p>The Tech template uses a dark color scheme with cyan accents, monospace typography for code, and a terminal-inspired aesthetic. It is designed for technical documentation, engineering reports, security assessments, and developer-facing content.</p>
+      <div class="metric-grid">
+        <div class="metric"><span class="kicker">Uptime</span><strong>99.97%</strong><span>Last 30 days</span></div>
+        <div class="metric"><span class="kicker">Latency</span><strong>42ms</strong><span>P95 response</span></div>
+        <div class="metric"><span class="kicker">Throughput</span><strong>12.4k</strong><span>Requests/sec</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Architecture</h2>
+      <pre>┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Gateway  │────▶│ Service  │────▶│ Database │
+│  (API)   │     │  Layer   │     │  (PG)    │
+└──────────┘     └──────────┘     └──────────┘
+       │               │
+       ▼               ▼
+┌──────────┐     ┌──────────┐
+│   CDN    │     │   Cache  │
+└──────────┘     └──────────┘</pre>
+      <p>The system follows a layered architecture with clear separation between API gateway, business logic, and data persistence. Each layer scales independently.</p>
+    </section>
+
+    <section>
+      <h2>Performance Metrics</h2>
+      <div class="card-grid">
+        <div class="card"><h3>API Response</h3><p>P50: 12ms · P95: 42ms · P99: 128ms</p></div>
+        <div class="card"><h3>Error Rate</h3><p>0.12% of all requests in the last 30 days</p></div>
+        <div class="card"><h3>Resource Usage</h3><p>CPU: 42% · Memory: 68% · Disk: 54%</p></div>
+      </div>
+    </section>
+
+    <section>
+      <span class="kicker">Data</span>
+      <h2>Query Performance</h2>
+      <table>
+        <thead><tr><th>Query</th><th>P50</th><th>P95</th><th>Calls</th></tr></thead>
+        <tbody>
+          <tr><td>GetUserProfile</td><td>4ms</td><td>18ms</td><td>1.2M</td></tr>
+          <tr><td>SearchProducts</td><td>28ms</td><td>92ms</td><td>842K</td></tr>
+          <tr><td>CreateOrder</td><td>62ms</td><td>145ms</td><td>124K</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Code Example</h2>
+      <pre><span style="color:#67e8f9;">function</span> <span style="color:#22d3ee;">calculateMetrics</span>(data<span style="color:#94a3b8;">:</span> MetricInput)<span style="color:#94a3b8;">:</span> MetricOutput {
+  <span style="color:#94a3b8;">const</span> total = data.values.reduce(<span style="color:#22d3ee;">sum</span>, <span style="color:#c084fc;">0</span>);
+  <span style="color:#67e8f9;">return</span> {
+    mean: total / data.values.length,
+    p95: percentile(data.values, <span style="color:#c084fc;">0.95</span>),
+    count: data.values.length,
+  };
+}</pre>
+    </section>
+  </main>
+</body>
+</html>
