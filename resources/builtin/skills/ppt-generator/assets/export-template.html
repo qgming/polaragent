@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PPT Generator Export Deck</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --ink: #20242c;
+      --muted: #667085;
+      --line: #d8dde6;
+      --accent: #0f766e;
+      --accent-ink: #ffffff;
+      --soft: #e4f4f0;
+      --font: "Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif;
+      --heading: "Aptos Display", "Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif;
+    }
+    body[data-ppt-style="studio"] {
+      --bg: #fbf7f0;
+      --surface: #fffdf8;
+      --ink: #1f2328;
+      --muted: #725f51;
+      --line: #e4d9cc;
+      --accent: #8a1538;
+      --soft: #f7e8ee;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="data"] {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --ink: #172033;
+      --muted: #607089;
+      --line: #d7deea;
+      --accent: #256d85;
+      --soft: #e5f3f7;
+    }
+    body[data-ppt-style="pitch"] {
+      --bg: #111827;
+      --surface: #1f2937;
+      --ink: #f8fafc;
+      --muted: #cbd5e1;
+      --line: rgba(255,255,255,.16);
+      --accent: #f2c94c;
+      --accent-ink: #111827;
+      --soft: rgba(242,201,76,.12);
+    }
+    body[data-ppt-style="magazine"] {
+      --bg: #f4efe7;
+      --surface: #fffaf2;
+      --ink: #191816;
+      --muted: #75695b;
+      --line: #d8cab8;
+      --accent: #b23b2e;
+      --accent-ink: #fffaf2;
+      --soft: #eadfce;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="ink"] {
+      --bg: #f6f1e8;
+      --surface: #fffaf0;
+      --ink: #1b1b18;
+      --muted: #6f6a60;
+      --line: #d2c6b6;
+      --accent: #111111;
+      --accent-ink: #f6f1e8;
+      --soft: #e9dfcf;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="kraft"] {
+      --bg: #c9a574;
+      --surface: #f1dfbd;
+      --ink: #2a2118;
+      --muted: #5f4b36;
+      --line: rgba(42,33,24,.22);
+      --accent: #24594f;
+      --accent-ink: #f7efd9;
+      --soft: rgba(255,255,255,.18);
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="porcelain"] {
+      --bg: #f7f8f2;
+      --surface: #ffffff;
+      --ink: #17223b;
+      --muted: #556274;
+      --line: #d9dfeb;
+      --accent: #1d4f91;
+      --accent-ink: #ffffff;
+      --soft: #e3edf8;
+    }
+    body[data-ppt-style="forest"] {
+      --bg: #e9eee4;
+      --surface: #f8faf4;
+      --ink: #18271f;
+      --muted: #526458;
+      --line: #cdd8cc;
+      --accent: #2f6b4f;
+      --accent-ink: #ffffff;
+      --soft: #d9e6d8;
+      --heading: "Georgia", "Times New Roman", "Microsoft YaHei", serif;
+    }
+    body[data-ppt-style="swiss-blue"] {
+      --bg: #f5f6f1;
+      --surface: #ffffff;
+      --ink: #0b0d12;
+      --muted: #5f6673;
+      --line: #d7dce2;
+      --accent: #003cff;
+      --accent-ink: #ffffff;
+      --soft: rgba(0,60,255,.08);
+    }
+    body[data-ppt-style="lemon-grid"] {
+      --bg: #f7f7ed;
+      --surface: #fffff7;
+      --ink: #161b16;
+      --muted: #606a5e;
+      --line: #dce2c8;
+      --accent: #c7f000;
+      --accent-ink: #121512;
+      --soft: rgba(199,240,0,.18);
+    }
+    body[data-ppt-style="safety-orange"] {
+      --bg: #151515;
+      --surface: #242424;
+      --ink: #fff8ef;
+      --muted: #d9c8b7;
+      --line: rgba(255,255,255,.18);
+      --accent: #ff5a1f;
+      --accent-ink: #ffffff;
+      --soft: rgba(255,90,31,.14);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--font);
+      letter-spacing: 0;
+    }
+    #deck {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .slide {
+      position: absolute;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      padding: 70px 82px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 42px;
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--soft) 65%, transparent), transparent 42%),
+        var(--bg);
+      opacity: 1;
+    }
+    .slide[data-export-active="false"] { opacity: 0; visibility: hidden; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3 { font-family: var(--heading); line-height: 1.04; }
+    h1 { font-size: 88px; max-width: 1120px; }
+    h2 { font-size: 58px; max-width: 1120px; }
+    h3 { font-size: 28px; }
+    p { font-size: 24px; line-height: 1.45; color: var(--muted); }
+    .chrome {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .kicker {
+      color: var(--accent);
+      font-size: 17px;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .lead {
+      margin-top: 28px;
+      max-width: 900px;
+      font-size: 30px;
+    }
+    .cover { grid-template-rows: auto 1fr auto; }
+    .hero-copy { align-self: center; }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 48px;
+      align-items: end;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+    }
+    .section-head p:last-child { max-width: 460px; text-align: right; }
+    .grid { display: grid; gap: 28px; align-self: stretch; }
+    .grid.three { grid-template-columns: repeat(3, 1fr); }
+    .card, .panel, .metrics article, .timeline article {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 34px;
+      min-width: 0;
+    }
+    .card span {
+      display: block;
+      color: var(--accent);
+      font-weight: 900;
+      margin-bottom: 32px;
+    }
+    .card p, .panel p, .timeline p { margin-top: 16px; }
+    .statement {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .statement h2 { font-size: 78px; max-width: 1220px; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      align-self: start;
+    }
+    .metrics span, .metrics em {
+      display: block;
+      color: var(--muted);
+      font-size: 18px;
+      font-style: normal;
+      text-transform: uppercase;
+    }
+    .metrics strong {
+      display: block;
+      font-size: 72px;
+      line-height: 1;
+      margin: 22px 0 12px;
+    }
+    .split {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr;
+      gap: 34px;
+    }
+    .panel { display: flex; flex-direction: column; justify-content: space-between; }
+    .panel.accent {
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-color: var(--accent);
+    }
+    .panel.accent p, .panel.accent .kicker { color: color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 26px;
+      align-self: center;
+    }
+    .timeline time {
+      display: block;
+      color: var(--accent);
+      font-size: 20px;
+      font-weight: 900;
+      margin-bottom: 28px;
+    }
+    body[data-ppt-style="magazine"] .slide,
+    body[data-ppt-style="ink"] .slide,
+    body[data-ppt-style="forest"] .slide {
+      background:
+        linear-gradient(90deg, transparent 0, transparent 76px, var(--line) 77px, transparent 78px),
+        linear-gradient(135deg, color-mix(in srgb, var(--soft) 72%, transparent), transparent 48%),
+        var(--bg);
+    }
+    body[data-ppt-style="magazine"] .section-head,
+    body[data-ppt-style="ink"] .section-head {
+      border-top: 3px solid var(--ink);
+      border-bottom: 1px solid var(--line);
+      padding-top: 22px;
+    }
+    body[data-ppt-style="kraft"] .slide {
+      background:
+        radial-gradient(circle at 18% 12%, rgba(255,255,255,.18), transparent 28%),
+        repeating-linear-gradient(0deg, rgba(42,33,24,.035) 0, rgba(42,33,24,.035) 1px, transparent 1px, transparent 7px),
+        var(--bg);
+    }
+    body[data-ppt-style="porcelain"] .slide {
+      background:
+        radial-gradient(circle at 12% 18%, rgba(29,79,145,.11), transparent 26%),
+        radial-gradient(circle at 86% 72%, rgba(29,79,145,.08), transparent 30%),
+        var(--bg);
+    }
+    body[data-ppt-style="swiss-blue"] .slide,
+    body[data-ppt-style="lemon-grid"] .slide {
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px),
+        var(--bg);
+      background-size: 48px 48px;
+    }
+    body[data-ppt-style="swiss-blue"] .kicker,
+    body[data-ppt-style="lemon-grid"] .kicker,
+    body[data-ppt-style="safety-orange"] .kicker {
+      display: inline-block;
+      width: fit-content;
+      background: var(--accent);
+      color: var(--accent-ink);
+      padding: 8px 12px;
+      border-radius: 2px;
+    }
+    body[data-ppt-style="safety-orange"] .slide {
+      background:
+        repeating-linear-gradient(135deg, rgba(255,90,31,.18) 0, rgba(255,90,31,.18) 2px, transparent 2px, transparent 14px),
+        var(--bg);
+    }
+    body[data-ppt-style="safety-orange"] .card,
+    body[data-ppt-style="safety-orange"] .panel,
+    body[data-ppt-style="safety-orange"] .metrics article,
+    body[data-ppt-style="safety-orange"] .timeline article {
+      box-shadow: 10px 10px 0 var(--accent);
+    }
+  </style>
+</head>
+<body data-ppt-style="board">
+  <main id="deck">
+    <!-- SLIDES_HERE -->
+  </main>
+</body>
+</html>

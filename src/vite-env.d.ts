@@ -172,6 +172,10 @@ interface Window {
         blocked?: boolean;
       }>;
     };
+    office: {
+      htmlToPdf: (request: import("@/lib/electron/electron-api").HtmlToPdfRequest) => Promise<import("@/lib/electron/electron-api").HtmlToPdfResponse>;
+      htmlToPptx: (request: import("@/lib/electron/electron-api").HtmlToPptxRequest) => Promise<import("@/lib/electron/electron-api").HtmlToPptxResponse>;
+    };
     cli: {
       detect: (cliName: string) => Promise<{ exists: boolean; command: string }>;
       detectBatch: (cliNames: string[]) => Promise<Array<{ exists: boolean; command: string }>>;

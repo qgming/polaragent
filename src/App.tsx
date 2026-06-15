@@ -328,8 +328,8 @@ function App() {
                   }}
                 />
               ) : null}
-              {activePage === "team" ? <TeamPage /> : null}
-                </>
+	              {activePage === "team" ? <TeamPage /> : null}
+	                </>
               )}
             </main>
           </div>

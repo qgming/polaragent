@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data Report</title>
+  <style>
+    :root {
+      --paper: #fbfcfd;
+      --surface: #ffffff;
+      --ink: #1f2937;
+      --muted: #667085;
+      --line: #d8dee8;
+      --accent: #256d85;
+      --accent-soft: #e6f3f6;
+      --positive: #067647;
+      --warning: #b54708;
+      --danger: #b42318;
+      --font-body: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+      --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    @page {
+      size: A4;
+      margin: 14mm 13mm 17mm;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 9.6pt/1.45 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 188mm; margin: 0 auto; }
+    section { margin-bottom: 12mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 28pt; line-height: 1.08; max-width: 130mm; }
+    h2 { font-size: 15pt; line-height: 1.2; margin-bottom: 5mm; }
+    h3 { font-size: 10.5pt; margin-bottom: 2mm; }
+    p { margin-bottom: 3mm; color: #344054; }
+    .cover {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 10mm;
+      align-items: stretch;
+      min-height: 92mm;
+      margin-bottom: 12mm;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 9mm;
+    }
+    .kicker, .label {
+      display: block;
+      color: var(--accent);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 2mm;
+    }
+    .report-meta {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5mm;
+      display: grid;
+      gap: 3mm;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 6mm;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 2mm;
+      color: var(--muted);
+    }
+    .meta-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .meta-row strong { color: var(--ink); }
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4mm;
+      margin-bottom: 10mm;
+    }
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 4.5mm;
+      break-inside: avoid;
+    }
+    .metric strong {
+      display: block;
+      font: 700 21pt/1 var(--font-mono);
+      color: var(--ink);
+      margin: 2mm 0;
+    }
+    .delta { font-weight: 700; font-size: 8.5pt; }
+    .delta.good { color: var(--positive); }
+    .delta.warn { color: var(--warning); }
+    .delta.bad { color: var(--danger); }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6mm;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5mm;
+      break-inside: avoid;
+    }
+    .chart {
+      height: 70mm;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(to top, rgba(37, 109, 133, 0.08), rgba(37, 109, 133, 0)),
+        repeating-linear-gradient(to bottom, transparent 0, transparent 13mm, #eef2f6 13.2mm);
+      padding: 5mm;
+      margin-top: 3mm;
+    }
+    .bars {
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      align-items: end;
+      gap: 4mm;
+    }
+    .bar {
+      background: var(--accent);
+      border-radius: 6px 6px 0 0;
+      min-height: 12mm;
+      position: relative;
+    }
+    .bar span {
+      position: absolute;
+      bottom: -6mm;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 7pt;
+    }
+    .insight-list {
+      display: grid;
+      gap: 3mm;
+      margin-top: 3mm;
+    }
+    .insight {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 0 8px 8px 0;
+      padding: 3.5mm 4mm;
+      break-inside: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      font-size: 8.8pt;
+    }
+    th, td {
+      text-align: left;
+      padding: 2.8mm 2mm;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: #f1f5f9;
+    }
+    thead { display: table-header-group; }
+    .tag {
+      display: inline-block;
+      border-radius: 8px;
+      padding: 1mm 2mm;
+      font-size: 7.5pt;
+      font-weight: 700;
+      background: #eef2f6;
+    }
+    .tag.good { color: var(--positive); background: #dcfae6; }
+    .tag.warn { color: var(--warning); background: #fef0c7; }
+    .tag.bad { color: var(--danger); background: #fee4e2; }
+    .source-note {
+      color: var(--muted);
+      font-size: 8pt;
+      margin-top: 3mm;
+    }
+    .page-break { break-before: page; }
+    .avoid-break, .panel, .metric, .insight, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div>
+        <span class="kicker">Quarterly performance report</span>
+        <h1>Activation, Retention, and Revenue Quality</h1>
+        <p style="margin-top:5mm; max-width:118mm;">A concise operating report for the growth, product, and customer success leadership teams.</p>
+      </div>
+      <aside class="report-meta">
+        <div class="meta-row"><span>Period</span><strong>Q2 2026</strong></div>
+        <div class="meta-row"><span>Prepared by</span><strong>Revenue Analytics</strong></div>
+        <div class="meta-row"><span>Refresh</span><strong>15 June 2026</strong></div>
+        <div class="meta-row"><span>Confidence</span><strong>High</strong></div>
+      </aside>
+    </section>
+
+    <section class="metric-strip">
+      <article class="metric">
+        <span class="label">Activated accounts</span>
+        <strong>1,284</strong>
+        <span class="delta good">+14.2% QoQ</span>
+      </article>
+      <article class="metric">
+        <span class="label">Time to value</span>
+        <strong>9.6d</strong>
+        <span class="delta good">-2.1 days</span>
+      </article>
+      <article class="metric">
+        <span class="label">Gross retention</span>
+        <strong>91%</strong>
+        <span class="delta warn">-1.4 pts</span>
+      </article>
+      <article class="metric">
+        <span class="label">Expansion ARR</span>
+        <strong>$2.1M</strong>
+        <span class="delta good">+22.8% QoQ</span>
+      </article>
+    </section>
+
+    <section class="grid-2">
+      <article class="panel">
+        <span class="label">Trend</span>
+        <h2>Weekly activation volume</h2>
+        <div class="chart" role="img" aria-label="Bar chart showing weekly activation volume">
+          <div class="bars">
+            <div class="bar" style="height:42%;"><span>W1</span></div>
+            <div class="bar" style="height:58%;"><span>W2</span></div>
+            <div class="bar" style="height:64%;"><span>W3</span></div>
+            <div class="bar" style="height:71%;"><span>W4</span></div>
+            <div class="bar" style="height:78%;"><span>W5</span></div>
+            <div class="bar" style="height:86%;"><span>W6</span></div>
+          </div>
+        </div>
+        <p class="source-note">Source: warehouse activation model, accounts with first completed workflow.</p>
+      </article>
+      <article class="panel">
+        <span class="label">Interpretation</span>
+        <h2>What changed</h2>
+        <div class="insight-list">
+          <div class="insight"><strong>Activation improved</strong><br>Self-serve setup reduced implementation dependency for smaller accounts.</div>
+          <div class="insight"><strong>Retention softened</strong><br>Legacy accounts with incomplete integrations drove most of the decline.</div>
+          <div class="insight"><strong>Expansion quality rose</strong><br>Expansion ARR came from accounts with higher workflow depth and lower support load.</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="page-break">
+      <span class="label">Segment view</span>
+      <h2>Performance by Customer Segment</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Segment</th>
+            <th>Accounts</th>
+            <th>Activation</th>
+            <th>Retention</th>
+            <th>Expansion ARR</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>SMB</td><td>842</td><td>54%</td><td>88%</td><td>$420K</td><td><span class="tag good">Improving</span></td></tr>
+          <tr><td>Mid-market</td><td>351</td><td>62%</td><td>94%</td><td>$1.1M</td><td><span class="tag good">Strong</span></td></tr>
+          <tr><td>Enterprise</td><td>91</td><td>39%</td><td>90%</td><td>$580K</td><td><span class="tag warn">Watch</span></td></tr>
+          <tr><td>Strategic</td><td>18</td><td>44%</td><td>97%</td><td>$260K</td><td><span class="tag warn">Concentrated</span></td></tr>
+        </tbody>
+      </table>
+      <p class="source-note">All percentages use accounts active at the start of the period as denominator unless otherwise noted.</p>
+    </section>
+
+    <section>
+      <span class="label">Actions</span>
+      <h2>Recommended Operating Focus</h2>
+      <div class="grid-2">
+        <article class="panel">
+          <h3>Increase onboarding throughput</h3>
+          <p>Prioritize template-driven implementation paths for SMB and mid-market accounts while reserving specialist capacity for enterprise blockers.</p>
+        </article>
+        <article class="panel">
+          <h3>Repair legacy retention risk</h3>
+          <p>Create a 30-day integration repair program for cohorts with incomplete workflow adoption and rising support contact rates.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -50,6 +50,7 @@ const WRITE_TOOLS = new Set([
   "image_generation",
   "image_edit",
   "speech_synthesis",
+  "create_office_document",
 ]);
 
 const EXECUTE_TOOLS = new Set(["run_bash"]);

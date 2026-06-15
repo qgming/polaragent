@@ -578,3 +578,44 @@ export interface ShellExecResponse {
 export function runShell(request: ShellExecRequest): Promise<ShellExecResponse> {
   return api().shell.exec(request);
 }
+
+export interface HtmlToPdfRequest {
+  html?: string;
+  sourcePath?: string;
+  targetPath: string;
+  baseDir?: string;
+  pageSize?: "A4" | "Letter" | "Legal";
+  landscape?: boolean;
+  margins?: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+}
+
+export interface HtmlToPdfResponse {
+  path: string;
+  size: number;
+}
+
+export function htmlToPdf(request: HtmlToPdfRequest): Promise<HtmlToPdfResponse> {
+  return api().office.htmlToPdf(request);
+}
+
+export interface HtmlToPptxRequest {
+  html?: string;
+  sourcePath?: string;
+  targetPath: string;
+  baseDir?: string;
+}
+
+export interface HtmlToPptxResponse {
+  path: string;
+  slides: number;
+  size: number;
+}
+
+export function htmlToPptx(request: HtmlToPptxRequest): Promise<HtmlToPptxResponse> {
+  return api().office.htmlToPptx(request);
+}

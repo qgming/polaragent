@@ -603,6 +603,9 @@ function summarizeToolResult(toolName: string, result: unknown): string {
       if (toolName === "write_file" && typeof details.path === "string") {
         return `已写入 ${String(details.path).split(/[\\/]/).pop()}`;
       }
+      if (toolName === "create_office_document" && typeof details.path === "string") {
+        return `已创建 ${String(details.path).split(/[\\/]/).pop()}`;
+      }
       if (toolName === "edit_file" && typeof details.path === "string") {
         const name = String(details.path).split(/[\\/]/).pop();
         const replaced =

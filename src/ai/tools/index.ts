@@ -27,6 +27,7 @@ import { searchWebTool } from "./web-search";
 import { readWebPageTool } from "./web-fetch";
 import { editImageTool, generateImageTool, imageEditAvailable } from "./image-generation";
 import { speechRecognitionTool, speechSynthesisTool } from "./audio";
+import { createOfficeDocumentTool } from "./office";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 import { searchKnowledgeTool } from "./knowledge";
@@ -86,13 +87,14 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 3 },
   network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 4 },
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 5 },
-  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 6 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 7 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 8 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 9 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 10 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 11 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 12 },
+  office: { name: "办公创作", description: "生成 Word、PPT、PDF 办公文件", order: 6 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 7 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 8 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 9 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 10 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 11 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 12 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 13 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -407,6 +409,13 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "列出工作目录或指定目录下的文件与子目录。",
     factory: listDirectoryTool,
     group: "file",
+  },
+  {
+    id: "create_office_document",
+    name: "创建办公文档",
+    description: "生成 Word、PPT 或 PDF 文件，保存后出现在产物面板并可用独立预览窗口打开。",
+    factory: createOfficeDocumentTool,
+    group: "office",
   },
   {
     id: "web_search",

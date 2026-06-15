@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project Proposal</title>
+  <style>
+    :root {
+      --paper: #f7f8fa;
+      --surface: #ffffff;
+      --ink: #22252b;
+      --muted: #697386;
+      --line: #d9dde5;
+      --accent: #8a1538;
+      --accent-2: #0b7a75;
+      --accent-soft: #f8e8ee;
+      --soft-2: #e4f4f2;
+      --font-body: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+      --font-heading: "Aptos Display", "Aptos", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page {
+      size: A4;
+      margin: 16mm 15mm 18mm;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 10pt/1.5 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 186mm; margin: 0 auto; }
+    section { margin-bottom: 14mm; }
+    h1, h2, h3, p { margin: 0; }
+    h1, h2, h3 { font-family: var(--font-heading); line-height: 1.12; }
+    h1 { font-size: 32pt; max-width: 138mm; }
+    h2 { font-size: 16pt; margin-bottom: 5mm; }
+    h3 { font-size: 11pt; margin-bottom: 2mm; }
+    p { color: #384252; margin-bottom: 3mm; }
+    ul { margin: 0; padding-left: 5mm; }
+    li { margin-bottom: 2mm; }
+    .cover {
+      min-height: 245mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      break-after: page;
+      padding-top: 5mm;
+    }
+    .topline, .footerline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 8pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .logo {
+      display: inline-grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      color: #fff;
+      background: var(--ink);
+      font-weight: 800;
+      margin-right: 8px;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr 58mm;
+      gap: 12mm;
+      align-items: end;
+    }
+    .subtitle {
+      max-width: 124mm;
+      margin-top: 6mm;
+      font-size: 13pt;
+      color: #475467;
+    }
+    .terms {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      break-inside: avoid;
+    }
+    .terms div {
+      padding: 4mm 5mm;
+      border-bottom: 1px solid var(--line);
+    }
+    .terms div:last-child { border-bottom: 0; }
+    .terms span {
+      display: block;
+      color: var(--muted);
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 1mm;
+    }
+    .terms strong { font-size: 11pt; }
+    .eyebrow {
+      display: block;
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 7.8pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 2mm;
+    }
+    .value-band {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      margin-top: 7mm;
+    }
+    .value-card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 5mm;
+      break-inside: avoid;
+    }
+    .value-card:nth-child(2) { border-top-color: var(--accent-2); }
+    .value-card:nth-child(3) { border-top-color: var(--ink); }
+    .scope-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6mm;
+      margin-top: 5mm;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5mm;
+      break-inside: avoid;
+    }
+    .highlight {
+      background: var(--accent-soft);
+      border-color: #efc8d5;
+    }
+    .highlight.alt {
+      background: var(--soft-2);
+      border-color: #b9dfdb;
+    }
+    .timeline {
+      display: grid;
+      gap: 3mm;
+      margin-top: 4mm;
+    }
+    .milestone {
+      display: grid;
+      grid-template-columns: 30mm 1fr;
+      gap: 4mm;
+      padding: 4mm;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      break-inside: avoid;
+    }
+    .milestone time {
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 8pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 5mm;
+      background: var(--surface);
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      padding: 3.2mm 2.5mm;
+    }
+    th {
+      color: var(--muted);
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: #eef1f5;
+    }
+    td:last-child, th:last-child { text-align: right; }
+    thead { display: table-header-group; }
+    .total-row td {
+      font-weight: 800;
+      color: var(--ink);
+      background: #f8e8ee;
+    }
+    .page-break { break-before: page; }
+    .avoid-break, .panel, .value-card, .milestone, table { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div class="topline">
+        <div><span class="logo">A</span>Arc Studio</div>
+        <div>Proposal</div>
+      </div>
+      <div class="hero">
+        <div>
+          <span class="eyebrow">Prepared for Meridian Health</span>
+          <h1>Patient Intake Modernization Program</h1>
+          <p class="subtitle">A focused implementation plan to reduce manual intake work, improve data quality, and create a repeatable operating model for clinic rollout.</p>
+        </div>
+        <aside class="terms">
+          <div><span>Prepared</span><strong>15 June 2026</strong></div>
+          <div><span>Valid until</span><strong>15 July 2026</strong></div>
+          <div><span>Duration</span><strong>10 weeks</strong></div>
+          <div><span>Investment</span><strong>$148,000</strong></div>
+        </aside>
+      </div>
+      <div class="footerline">
+        <span>Arc Studio Limited</span>
+        <span>Confidential and proprietary</span>
+      </div>
+    </section>
+
+    <section>
+      <span class="eyebrow">Why this work now</span>
+      <h2>Proposal Summary</h2>
+      <p>Meridian's intake process is ready for a practical redesign: the current workflow is understood, the highest-friction steps are measurable, and frontline teams have a clear appetite for fewer handoffs.</p>
+      <div class="value-band">
+        <article class="value-card">
+          <h3>Reduce avoidable rework</h3>
+          <p>Standardize capture logic and validation before information reaches operations teams.</p>
+        </article>
+        <article class="value-card">
+          <h3>Improve patient experience</h3>
+          <p>Remove duplicate questions and make completion status visible across channels.</p>
+        </article>
+        <article class="value-card">
+          <h3>Create rollout discipline</h3>
+          <p>Deliver a playbook that can be reused clinic by clinic without redesigning the program.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="scope-grid">
+      <article class="panel highlight">
+        <span class="eyebrow">Included</span>
+        <h2>Scope of Work</h2>
+        <ul>
+          <li>Current-state workflow mapping and intake data audit.</li>
+          <li>Future-state service blueprint and approval-ready process design.</li>
+          <li>Prototype intake experience with validation rules and staff review states.</li>
+          <li>Implementation roadmap, pilot metrics, and rollout governance model.</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <span class="eyebrow">Boundaries</span>
+        <h2>Out of Scope</h2>
+        <ul>
+          <li>Production software build beyond prototype screens and technical specification.</li>
+          <li>Medical record system customization or direct system integration work.</li>
+          <li>Legal review of consent language, privacy terms, or clinical policy.</li>
+          <li>Training delivery outside the pilot leadership and operations teams.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="page-break">
+      <span class="eyebrow">Delivery plan</span>
+      <h2>Milestones</h2>
+      <div class="timeline">
+        <article class="milestone">
+          <time>Weeks 1-2</time>
+          <div><h3>Discovery and baseline</h3><p>Map current workflows, quantify delay sources, and align success metrics.</p></div>
+        </article>
+        <article class="milestone">
+          <time>Weeks 3-5</time>
+          <div><h3>Service design and prototype</h3><p>Create the future-state intake journey, staff review model, and validation flow.</p></div>
+        </article>
+        <article class="milestone">
+          <time>Weeks 6-8</time>
+          <div><h3>Pilot operating model</h3><p>Define roles, exception handling, reporting cadence, and launch readiness criteria.</p></div>
+        </article>
+        <article class="milestone">
+          <time>Weeks 9-10</time>
+          <div><h3>Roadmap and handoff</h3><p>Finalize rollout plan, implementation backlog, and executive decision package.</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <span class="eyebrow">Commercials</span>
+      <h2>Investment</h2>
+      <table>
+        <thead>
+          <tr><th>Workstream</th><th>Description</th><th>Fee</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Discovery</td><td>Workflow mapping, stakeholder interviews, data quality review</td><td>$32,000</td></tr>
+          <tr><td>Design</td><td>Future-state blueprint, prototype, validation model</td><td>$54,000</td></tr>
+          <tr><td>Operating model</td><td>Pilot governance, metrics, rollout playbook</td><td>$42,000</td></tr>
+          <tr><td>Program leadership</td><td>Weekly steering, delivery management, executive materials</td><td>$20,000</td></tr>
+          <tr class="total-row"><td colspan="2">Total fixed fee</td><td>$148,000</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="scope-grid">
+      <article class="panel highlight alt">
+        <h3>Next step</h3>
+        <p>Confirm scope approval and nominate the pilot operations lead by 24 June 2026.</p>
+      </article>
+      <article class="panel">
+        <h3>Assumptions</h3>
+        <p>Client stakeholders are available for two workshops per week and sample workflow data is provided before discovery begins.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

@@ -55,36 +55,36 @@ export function TaskMonitorPanel({
     >
       <div className="flex h-full flex-col pt-2" style={{ width: panelWidth }}>
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
-        {/* 目标 */}
-        <Section title="目标">
-          <GoalSection threadId={threadId} agentId={agentId} />
-        </Section>
+          {/* 目标 */}
+          <Section title="目标">
+            <GoalSection threadId={threadId} agentId={agentId} />
+          </Section>
 
-        {/* 待办 */}
-        <Section
-          title="待办"
-          count={todos.length > 0 ? `${completed}/${todos.length}` : undefined}
-        >
-          {todos.length > 0 ? (
-            <ul className="space-y-0.5">
-              {todos.map((todo) => (
-                <TodoRow key={todo.id} todo={todo} />
-              ))}
-            </ul>
-          ) : (
-            <EmptyHint text="任务执行时，待办清单会显示在这里" />
-          )}
-        </Section>
+          {/* 待办 */}
+          <Section
+            title="待办"
+            count={todos.length > 0 ? `${completed}/${todos.length}` : undefined}
+          >
+            {todos.length > 0 ? (
+              <ul className="space-y-0.5">
+                {todos.map((todo) => (
+                  <TodoRow key={todo.id} todo={todo} />
+                ))}
+              </ul>
+            ) : (
+              <EmptyHint text="任务执行时，待办清单会显示在这里" />
+            )}
+          </Section>
 
-        {/* 产物：左「最终文件」/ 中「工作区」/ 右「会话文件」三 tab */}
-        <Section title="产物">
-          <ArtifactsTabs
-            finalFiles={finalFiles}
-            workingFiles={workingFiles}
-            workingDir={monitor?.workingDir}
-            sessionFilesDir={sessionFilesDir}
-          />
-        </Section>
+          {/* 产物：左「最终文件」/ 中「工作区」/ 右「会话文件」三 tab */}
+          <Section title="产物">
+            <ArtifactsTabs
+              finalFiles={finalFiles}
+              workingFiles={workingFiles}
+              workingDir={monitor?.workingDir}
+              sessionFilesDir={sessionFilesDir}
+            />
+          </Section>
         </div>
       </div>
     </motion.aside>

@@ -27,6 +27,7 @@ import {
 import { fileIconFor } from "@/lib/file-icons";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { MarkdownPreview } from "@/components/markdown/MarkdownPreview";
+import { OfficeFilePreview } from "@/components/preview/OfficeFilePreview";
 import { useTheme } from "@/hooks/useTheme";
 import { initializeApp } from "@/lib/app-init";
 import { fileUrl, readFile, writeFile, openPath, openExternal } from "@/lib/electron/electron-api";
@@ -69,9 +70,11 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
   const FileIco = useMemo(() => fileIconFor(filePath), [filePath]);
 
   // markdown/html 有「渲染效果」，可在 code/preview 间切换；其余类型无开关
+  const isBinaryPreview =
+    kind === "image" || kind === "pdf" || kind === "docx" || kind === "pptx";
   const hasRendered = kind === "markdown" || kind === "html";
   // 文本类（含纯文本/代码/markdown/html 源码）可编辑
-  const canEdit = kind !== "image";
+  const canEdit = !isBinaryPreview;
 
   const [content, setContent] = useState<string>("");
   const [draft, setDraft] = useState<string>(""); // 编辑中的草稿
@@ -95,7 +98,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
 
   // 读取文件内容
   const load = useCallback(async () => {
-    if (kind === "image") {
+    if (isBinaryPreview) {
       setLoading(false);
       return;
     }
@@ -110,7 +113,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
     } finally {
       setLoading(false);
     }
-  }, [filePath, kind]);
+  }, [filePath, isBinaryPreview]);
 
   useEffect(() => {
     void load();
@@ -197,7 +200,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
             </ToolbarButton>
           ) : null}
 
-          {kind !== "image" ? (
+          {!isBinaryPreview ? (
             <ToolbarButton
               label="页内搜索 (Ctrl+F)"
               onClick={() => setSearchOpen((v) => !v)}
@@ -404,6 +407,10 @@ function PreviewContent({
     return <ImagePreview filePath={filePath} />;
   }
 
+  if (kind === "pdf" || kind === "docx" || kind === "pptx") {
+    return <OfficeFilePreview filePath={filePath} kind={kind} />;
+  }
+
   if (kind === "html") {
     // 本地 HTML 文件用 src，以支持加载相对路径的 CSS/JS 资源
     return <HtmlPreview filePath={filePath} />;
@@ -482,7 +489,7 @@ function HtmlPreview({ filePath }: { filePath: string }) {
     <iframe
       title="HTML 预览"
       src={src}
-      sandbox="allow-scripts allow-forms allow-modals allow-popups"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
       referrerPolicy="no-referrer"
       className="size-full border-0 bg-white dark:bg-background"
     />

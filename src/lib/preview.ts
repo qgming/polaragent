@@ -5,12 +5,21 @@
 // openPreviewWindow 含 Electron 窗口副作用，仅主窗口调用。
 
 // 预览窗口的内容渲染类别
-export type PreviewKind = "markdown" | "html" | "image" | "code" | "unsupported";
+export type PreviewKind =
+  | "markdown"
+  | "html"
+  | "image"
+  | "pdf"
+  | "docx"
+  | "pptx"
+  | "code"
+  | "unsupported";
 
 // 各类别对应的扩展名集合
 const MARKDOWN_EXTS = new Set(["md", "markdown", "mdx"]);
 const HTML_EXTS = new Set(["html", "htm"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp"]);
+const OFFICE_EXTS = new Set(["pdf", "docx", "pptx"]);
 // 纯文本/代码：用代码高亮展示
 const CODE_EXTS = new Set([
   "txt",
@@ -57,6 +66,7 @@ export function previewKindOf(name: string): PreviewKind {
   if (MARKDOWN_EXTS.has(ext)) return "markdown";
   if (HTML_EXTS.has(ext)) return "html";
   if (IMAGE_EXTS.has(ext)) return "image";
+  if (OFFICE_EXTS.has(ext)) return ext as "pdf" | "docx" | "pptx";
   if (CODE_EXTS.has(ext)) return "code";
   return "unsupported";
 }
@@ -75,6 +85,12 @@ export function previewKindLabel(kind: PreviewKind, ext: string): string {
       return "HTML";
     case "image":
       return "Image";
+    case "pdf":
+      return "PDF";
+    case "docx":
+      return "Word";
+    case "pptx":
+      return "PowerPoint";
     case "code":
       return ext ? ext.toUpperCase() : "Text";
     default:

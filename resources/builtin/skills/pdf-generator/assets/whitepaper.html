@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whitepaper</title>
+  <style>
+    :root {
+      --paper: #fcfcfb;
+      --surface: #ffffff;
+      --ink: #1f2328;
+      --muted: #687076;
+      --line: #dadde1;
+      --accent: #315c48;
+      --accent-soft: #e5efe9;
+      --contrast: #7a2442;
+      --contrast-soft: #f5e8ee;
+      --font-body: "Georgia", "Times New Roman", serif;
+      --font-ui: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    @page {
+      size: A4;
+      margin: 20mm 18mm 22mm;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 11pt/1.62 var(--font-body);
+      letter-spacing: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    main { max-width: 174mm; margin: 0 auto; }
+    article { counter-reset: section; }
+    section { margin-bottom: 15mm; }
+    h1, h2, h3, p, blockquote { margin: 0; }
+    h1, h2, h3, .kicker, .meta, .caption, .toc, .note { font-family: var(--font-ui); }
+    h1 { font-size: 34pt; line-height: 1.08; max-width: 142mm; }
+    h2 {
+      font-size: 17pt;
+      line-height: 1.2;
+      margin: 0 0 5mm;
+      padding-top: 2mm;
+      border-top: 2px solid var(--ink);
+    }
+    h3 { font-size: 11pt; margin: 5mm 0 2mm; }
+    p { margin-bottom: 4mm; }
+    a { color: inherit; }
+    .cover {
+      min-height: 236mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      break-after: page;
+      padding-top: 6mm;
+    }
+    .kicker {
+      color: var(--accent);
+      font-size: 8pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 3mm;
+      display: block;
+    }
+    .subtitle {
+      font-size: 14pt;
+      line-height: 1.45;
+      max-width: 130mm;
+      color: #3f474d;
+      margin-top: 7mm;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6mm;
+      border-top: 1px solid var(--line);
+      padding-top: 5mm;
+      color: var(--muted);
+      font-size: 8.5pt;
+    }
+    .meta strong {
+      display: block;
+      color: var(--ink);
+      font-size: 10pt;
+      margin-top: 1mm;
+    }
+    .toc {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4mm 8mm;
+      margin-top: 7mm;
+      font-size: 9.5pt;
+    }
+    .toc div {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 2mm;
+      display: flex;
+      justify-content: space-between;
+      gap: 6mm;
+    }
+    .abstract {
+      background: var(--accent-soft);
+      border-radius: 8px;
+      padding: 7mm;
+      font-size: 12pt;
+      line-height: 1.55;
+      break-inside: avoid;
+    }
+    .columns {
+      column-count: 2;
+      column-gap: 10mm;
+    }
+    .columns p { break-inside: avoid; }
+    .pull-quote {
+      font: 18pt/1.35 var(--font-body);
+      color: var(--contrast);
+      border-left: 5px solid var(--contrast);
+      padding: 3mm 0 3mm 6mm;
+      margin: 7mm 0;
+      break-inside: avoid;
+    }
+    .figure {
+      margin: 7mm 0;
+      padding: 5mm;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      break-inside: avoid;
+    }
+    .diagram {
+      height: 58mm;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      align-items: center;
+      padding: 4mm;
+      background: linear-gradient(90deg, #f7faf8, #ffffff);
+      border-radius: 8px;
+    }
+    .node {
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 5mm;
+      min-height: 34mm;
+      font-family: var(--font-ui);
+      font-size: 9pt;
+    }
+    .node:nth-child(2) { border-top-color: var(--contrast); }
+    .node strong {
+      display: block;
+      margin-bottom: 2mm;
+      font-size: 10pt;
+    }
+    .caption {
+      color: var(--muted);
+      font-size: 8.5pt;
+      margin-top: 3mm;
+    }
+    .note-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      margin: 6mm 0;
+    }
+    .note {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 5mm;
+      break-inside: avoid;
+    }
+    .note strong {
+      display: block;
+      color: var(--accent);
+      margin-bottom: 2mm;
+    }
+    .references {
+      font-family: var(--font-ui);
+      font-size: 8.8pt;
+      color: #3f474d;
+      padding-left: 5mm;
+    }
+    .references li { margin-bottom: 2mm; }
+    .page-break { break-before: page; }
+    .avoid-break, .abstract, .figure, .note, blockquote { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <article>
+      <section class="cover">
+        <div>
+          <span class="kicker">Whitepaper</span>
+          <h1>Designing Trustworthy Automation for Operational Teams</h1>
+          <p class="subtitle">A practical framework for introducing AI-assisted workflows without weakening accountability, auditability, or frontline confidence.</p>
+        </div>
+        <div>
+          <div class="toc">
+            <div><span>1. Executive abstract</span><span>02</span></div>
+            <div><span>2. Operating context</span><span>03</span></div>
+            <div><span>3. Trust architecture</span><span>04</span></div>
+            <div><span>4. Implementation model</span><span>05</span></div>
+          </div>
+        </div>
+        <div class="meta">
+          <div>Author<strong>Strategy Research Group</strong></div>
+          <div>Date<strong>15 June 2026</strong></div>
+          <div>Status<strong>Public draft</strong></div>
+        </div>
+      </section>
+
+      <section>
+        <span class="kicker">Executive abstract</span>
+        <div class="abstract">
+          Automation programs rarely fail because teams dislike efficiency. They fail when the system makes decisions that people cannot inspect, correct, or explain. The practical goal is not maximum autonomy; it is reliable collaboration between software, operators, and managers.
+        </div>
+      </section>
+
+      <section>
+        <h2>1. Operating Context</h2>
+        <div class="columns">
+          <p>Operational teams work inside constraints that are easy to understate from a distance: incomplete inputs, exception-heavy processes, changing policies, and customer situations that rarely match the ideal workflow. Any automation layer must therefore be designed as a participant in a living operating system, not as a detached optimization engine.</p>
+          <p>The first measure of quality is whether the automation reduces ambiguity for the person responsible for the outcome. If it merely moves uncertainty into a hidden model response, the organization gains speed but loses control.</p>
+          <p>Trustworthy automation makes its reasoning legible at the point of action. It shows the source data used, the confidence of the recommendation, the available alternatives, and the route for correction.</p>
+          <p>The same standard applies to management. Leaders need aggregate signals that reveal whether the automation is improving throughput, changing risk exposure, or creating new forms of rework.</p>
+        </div>
+      </section>
+
+      <blockquote class="pull-quote">
+        "The central design question is not what the system can do alone, but what the team can confidently do with it."
+      </blockquote>
+
+      <section>
+        <h2>2. Trust Architecture</h2>
+        <p>A robust automation program should be built around three layers: input quality, decision transparency, and accountable intervention. Each layer protects the organization from a different failure mode.</p>
+        <figure class="figure">
+          <div class="diagram">
+            <div class="node"><strong>Input quality</strong>Validate source data, identify missing context, and expose assumptions before action.</div>
+            <div class="node"><strong>Decision transparency</strong>Show recommendation logic, source references, confidence, and exception triggers.</div>
+            <div class="node"><strong>Accountable intervention</strong>Define who can override, approve, escalate, and audit each workflow state.</div>
+          </div>
+          <figcaption class="caption">Figure 1. A practical trust architecture for operational AI workflows.</figcaption>
+        </figure>
+      </section>
+
+      <section class="page-break">
+        <h2>3. Implementation Model</h2>
+        <div class="note-grid">
+          <article class="note">
+            <strong>Start narrow</strong>
+            Select workflows with clear success measures and enough repetition to expose quality patterns.
+          </article>
+          <article class="note">
+            <strong>Instrument decisions</strong>
+            Track recommendation acceptance, override reasons, cycle time, and downstream rework.
+          </article>
+          <article class="note">
+            <strong>Govern exceptions</strong>
+            Make escalation criteria explicit before increasing automation coverage.
+          </article>
+        </div>
+        <p>The best rollout pattern is a controlled expansion: begin with assisted recommendations, add partial automation where confidence is proven, and reserve full automation for low-risk decisions with strong audit trails.</p>
+        <p>This sequence gives teams the chance to develop operational literacy around the system. It also gives leaders a reliable basis for investment decisions, because adoption and quality data accumulate before the program becomes difficult to reverse.</p>
+      </section>
+
+      <section>
+        <h2>References</h2>
+        <ol class="references">
+          <li>Internal workflow interviews, Operations Research Group, May 2026.</li>
+          <li>Customer support quality audit, Product Operations, Q2 2026.</li>
+          <li>Automation governance review, Risk and Compliance Office, 2026.</li>
+        </ol>
+      </section>
+    </article>
+  </main>
+</body>
+</html>

@@ -111,6 +111,10 @@ contextBridge.exposeInMainWorld("polaragent", {
   shell: {
     exec: (request) => invoke("shell:exec", { request }),
   },
+  office: {
+    htmlToPdf: (request) => invoke("office:html-to-pdf", { request }),
+    htmlToPptx: (request) => invoke("office:html-to-pptx", { request }),
+  },
   cli: {
     detect: (cliName) => invoke("cli:detect", { cliName }),
     detectBatch: (cliNames) => invoke("cli:detect-batch", { cliNames }),

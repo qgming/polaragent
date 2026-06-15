@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Executive Brief</title>
+  <style>
+    :root {
+      --paper: #f8f7f3;
+      --surface: #ffffff;
+      --ink: #20242c;
+      --muted: #667085;
+      --line: #d7d9dd;
+      --accent: #0f766e;
+      --accent-soft: #d9f1ec;
+      --signal: #b42318;
+      --font-body: "Aptos", "Inter", "Segoe UI", Arial, sans-serif;
+      --font-heading: "Georgia", "Times New Roman", serif;
+    }
+
+    @page {
+      size: A4;
+      margin: 18mm 16mm 20mm;
+    }
+
+    * { box-sizing: border-box; }
+    html { color: var(--ink); background: var(--paper); }
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      font-size: 10.5pt;
+      line-height: 1.55;
+      letter-spacing: 0;
+      color: var(--ink);
+      background: var(--paper);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    main { max-width: 184mm; margin: 0 auto; }
+    section { margin: 0 0 18mm; }
+    h1, h2, h3 { margin: 0; font-family: var(--font-heading); line-height: 1.08; font-weight: 600; }
+    h1 { font-size: 34pt; max-width: 150mm; }
+    h2 { font-size: 18pt; padding-bottom: 4mm; border-bottom: 1px solid var(--line); }
+    h3 { font-size: 12.5pt; font-family: var(--font-body); }
+    p { margin: 0 0 4mm; }
+    ul { margin: 0; padding-left: 5mm; }
+    li { margin-bottom: 2mm; }
+
+    .cover {
+      min-height: 236mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 10mm 0 0;
+      break-after: page;
+    }
+    .brand-row, .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 8.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--accent);
+      display: inline-block;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    .deck {
+      display: grid;
+      grid-template-columns: 1.4fr 0.6fr;
+      gap: 14mm;
+      align-items: end;
+    }
+    .subtitle {
+      margin-top: 8mm;
+      font-size: 14pt;
+      line-height: 1.45;
+      color: #3c4450;
+      max-width: 130mm;
+    }
+    .status-panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      padding: 7mm;
+      break-inside: avoid;
+    }
+    .status-panel strong { display: block; font-size: 20pt; line-height: 1; margin: 2mm 0; }
+    .eyebrow {
+      display: block;
+      color: var(--accent);
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 2mm;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      margin-top: 8mm;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6mm;
+      break-inside: avoid;
+    }
+    .card p { color: var(--muted); margin-bottom: 0; }
+    .decision-list {
+      display: grid;
+      grid-template-columns: 0.75fr 1.25fr;
+      gap: 6mm;
+      margin-top: 7mm;
+    }
+    .callout {
+      background: var(--accent-soft);
+      border-radius: 8px;
+      padding: 6mm;
+      break-inside: avoid;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+      margin-top: 7mm;
+    }
+    .risk {
+      border-left: 4px solid var(--signal);
+      padding-left: 4mm;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6mm;
+      font-size: 9.5pt;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 3mm 2mm;
+    }
+    th { color: var(--muted); font-size: 8pt; text-transform: uppercase; letter-spacing: 0; }
+    thead { display: table-header-group; }
+    .page-break { break-before: page; }
+    .avoid-break, .card, table, .callout { break-inside: avoid; }
+    @media print {
+      a { color: inherit; text-decoration: none; }
+      h1, h2, h3 { break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="cover">
+      <div class="brand-row">
+        <div><span class="mark"></span>Northstar Operations</div>
+        <div>Confidential brief</div>
+      </div>
+      <div class="deck">
+        <div>
+          <span class="eyebrow">Executive brief</span>
+          <h1>Market Expansion Readiness Review</h1>
+          <p class="subtitle">A concise decision memo on launch readiness, operating risks, and the near-term investment required to protect adoption quality.</p>
+        </div>
+        <aside class="status-panel">
+          <span class="eyebrow">Recommendation</span>
+          <strong>Go</strong>
+          <p>Proceed with a two-city rollout while holding enterprise automation for phase two.</p>
+        </aside>
+      </div>
+      <div class="meta-row">
+        <span>Prepared for Leadership Team</span>
+        <span>15 June 2026</span>
+      </div>
+    </section>
+
+    <section>
+      <span class="eyebrow">What matters</span>
+      <h2>Executive Summary</h2>
+      <div class="summary-grid">
+        <article class="card">
+          <h3>Demand is validated</h3>
+          <p>Qualified pipeline is 1.8x the launch threshold, with the strongest signal from mid-market operations teams.</p>
+        </article>
+        <article class="card">
+          <h3>Service quality is the constraint</h3>
+          <p>Launch risk is concentrated in onboarding capacity, not acquisition or product completeness.</p>
+        </article>
+        <article class="card">
+          <h3>Scope control is decisive</h3>
+          <p>Deferring advanced automation preserves delivery reliability and reduces support load during the first 60 days.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="decision-list">
+      <aside class="callout">
+        <span class="eyebrow">Decision requested</span>
+        <p>Approve the phased rollout plan and allocate two implementation specialists through the end of Q3.</p>
+      </aside>
+      <div>
+        <h2>Recommended Path</h2>
+        <p>Launch in Shanghai and Singapore with standard onboarding, weekly executive telemetry, and a narrow success definition: activated accounts, time to value, and first-month retention.</p>
+        <ul>
+          <li>Keep launch messaging focused on workflow reliability and measurable handoff speed.</li>
+          <li>Route complex integration requests into a controlled design partner queue.</li>
+          <li>Review expansion readiness after 30 activated customers or 45 days, whichever comes first.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="page-break">
+      <span class="eyebrow">Operating view</span>
+      <h2>Risks and Mitigations</h2>
+      <div class="two-col">
+        <article class="card risk">
+          <h3>Onboarding queue pressure</h3>
+          <p>Mitigation: cap weekly new starts and prioritize customers with complete implementation inputs.</p>
+        </article>
+        <article class="card risk">
+          <h3>Enterprise feature pull</h3>
+          <p>Mitigation: publish a phase-two roadmap and require approval for any custom launch commitments.</p>
+        </article>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Decision area</th><th>Current position</th><th>Action</th><th>Owner</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Launch cities</td><td>Shanghai and Singapore</td><td>Confirm local customer success coverage</td><td>Growth</td></tr>
+          <tr><td>Product scope</td><td>Core workflow plus standard integrations</td><td>Freeze advanced automation until review</td><td>Product</td></tr>
+          <tr><td>Capacity</td><td>Two specialists required</td><td>Approve temporary allocation</td><td>Operations</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
