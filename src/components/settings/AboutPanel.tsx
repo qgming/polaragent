@@ -20,7 +20,9 @@ import logo from "@/assets/logo.png";
 export function AboutPanel() {
   const toastSuccess = useToast((state) => state.success);
   const toastError = useToast((state) => state.error);
-  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
+    null,
+  );
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [checking, setChecking] = useState(false);
 
@@ -36,7 +38,8 @@ export function AboutPanel() {
         if (!disposed) setUpdateStatus(status);
       })
       .catch((error) => {
-        if (!disposed) toastError(error instanceof Error ? error.message : String(error));
+        if (!disposed)
+          toastError(error instanceof Error ? error.message : String(error));
       });
 
     const unsubscribe = onUpdateStatus((status) => {
@@ -88,7 +91,11 @@ export function AboutPanel() {
           <div className="flex items-center gap-6">
             {/* 左侧 Logo - 纯 logo，无边框无背景 */}
             <div className="size-20 shrink-0">
-              <img src={logo} alt="PolarAgent Logo" className="size-full object-contain" />
+              <img
+                src={logo}
+                alt="PolarAgent Logo"
+                className="size-full object-contain"
+              />
             </div>
 
             {/* 右侧名称和版本 */}
@@ -103,7 +110,8 @@ export function AboutPanel() {
           {/* 下方介绍 - 无背景卡片 */}
           <div className="mt-6">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              面向本地工作的 AI Agent 桌面应用，支持普通会话、团队协作、技能与工具扩展。
+              面向本地工作的 AI Agent
+              桌面应用，支持普通会话、团队协作、技能与工具扩展。
             </p>
           </div>
         </div>
@@ -111,8 +119,14 @@ export function AboutPanel() {
 
       <div className="mt-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-5 py-4">
         <span className="text-sm font-medium">检查更新</span>
-        <Button variant="outline" onClick={() => void handleCheckUpdates()} disabled={isChecking}>
-          <RefreshCw className={isChecking ? "size-4 animate-spin" : "size-4"} />
+        <Button
+          variant="outline"
+          onClick={() => void handleCheckUpdates()}
+          disabled={isChecking}
+        >
+          <RefreshCw
+            className={isChecking ? "size-4 animate-spin" : "size-4"}
+          />
           {isChecking ? "检查中" : "检查更新"}
         </Button>
       </div>
@@ -126,7 +140,7 @@ export function AboutPanel() {
       {/* 底部版权 */}
       <div className="mt-8 text-center">
         <p className="text-xs text-muted-foreground">
-          © 2025 PolarAgent. All rights reserved.
+          © 2026 PolarAgent. All rights reserved.
         </p>
       </div>
     </section>
