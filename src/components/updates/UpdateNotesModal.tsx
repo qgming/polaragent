@@ -1,7 +1,6 @@
 import { Download, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import { Button } from "@/components/ui/button";
 import {
   Modal,
@@ -22,6 +21,8 @@ import {
   openExternal,
   type AppUpdateStatus,
 } from "@/lib/electron/electron-api";
+
+import { ReleaseNotesRenderer } from "./ReleaseNotesRenderer";
 
 interface UpdateNotesModalProps {
   open: boolean;
@@ -178,11 +179,7 @@ export function UpdateNotesModal({
         <ModalBody>
           <div className="min-h-[260px] rounded-lg border border-border bg-background px-4 py-4">
             {releaseNotes ? (
-              <MarkdownContent
-                content={releaseNotes}
-                variant="compact"
-                className="prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2"
-              />
+              <ReleaseNotesRenderer content={releaseNotes} />
             ) : (
               <div className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground">
                 {isChecking ? "正在获取更新日志..." : "暂未获取到该版本的更新日志。"}
