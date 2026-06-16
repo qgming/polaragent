@@ -87,6 +87,13 @@ function register(ipcMain) {
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
+  ipcMain.handle("dialog:pick-zip-file", async () => {
+    const result = await dialog.showOpenDialog(getMainWindow(), {
+      properties: ["openFile"],
+      filters: [{ name: "压缩包文件", extensions: ["zip"] }],
+    });
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
 
   ipcMain.handle("window:minimize", (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle("window:toggle-maximize", (event) => {

@@ -13,6 +13,7 @@ interface Window {
       pickWorkingDirectory: () => Promise<string | null>;
       pickTextFile: () => Promise<string | null>;
       pickMultipleFiles: () => Promise<string[]>;
+      pickZipFile: () => Promise<string | null>;
       getPathForFile: (file: File) => string;
       pickImageFile: () => Promise<string | null>;
       pickAudioFile: () => Promise<string | null>;
@@ -147,6 +148,8 @@ interface Window {
       readMetadata: (skillId: string) => Promise<string>;
       installFromGit: (repoUrl: string) => Promise<string>;
       installFromLocal: (sourcePath: string) => Promise<string>;
+      installFromZip: (zipPath: string) => Promise<string>;
+      uninstall: (skillId: string) => Promise<boolean>;
     };
     mcp: {
       stdioListTools: (server: import("@/lib/mcp").McpServerConfig) => Promise<import("@/lib/mcp").McpDiscoveredTool[]>;

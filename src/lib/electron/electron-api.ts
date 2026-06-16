@@ -140,6 +140,7 @@ export function listRemoteModels(baseUrl: string, apiKey: string) {
 export const pickWorkingDirectory = () => api().app.pickWorkingDirectory();
 export const pickTextFile = (): Promise<string | null> => api().app.pickTextFile();
 export const pickMultipleFiles = (): Promise<string[]> => api().app.pickMultipleFiles();
+export const pickZipFile = (): Promise<string | null> => api().app.pickZipFile();
 export const getPathForFile = (file: File): string => api().app.getPathForFile(file);
 export const pickImageFile = () => api().app.pickImageFile();
 export const pickAudioFile = () => api().app.pickAudioFile();
@@ -169,6 +170,8 @@ export const createDirectory = (path: string) => api().fs.createDirectory(path);
 export const deleteFile = (path: string) => api().fs.deletePath(path);
 export const installSkillFromGit = (repoUrl: string) => api().skills.installFromGit(repoUrl);
 export const installSkillFromLocal = (sourcePath: string) => api().skills.installFromLocal(sourcePath);
+export const installSkillFromZip = (zipPath: string) => api().skills.installFromZip(zipPath);
+export const uninstallSkill = (skillId: string) => api().skills.uninstall(skillId);
 export const listSkills = (skillType: "builtin" | "custom") => api().skills.list(skillType);
 export const readSkillMetadata = (skillId: string) => api().skills.readMetadata(skillId);
 

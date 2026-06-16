@@ -69,10 +69,30 @@ async function ensureDataDir() {
   await syncBuiltinResources();
 }
 
+// 同步读取 window.closeToTray 配置（默认 true，关闭到托盘保留后台运行）
+function readSettingCloseToTray() {
+  try {
+    const p = path.join(dataDir(), "config", "settings.json");
+    if (!fs.existsSync(p)) return true;
+    return JSON.parse(fs.readFileSync(p, "utf-8"))?.window?.closeToTray ?? true;
+  } catch { return true; }
+}
+
+// 同步读取 window.startInSystemTray 配置（默认 false，正常启动显示窗口）
+function readSettingStartInSystemTray() {
+  try {
+    const p = path.join(dataDir(), "config", "settings.json");
+    if (!fs.existsSync(p)) return false;
+    return JSON.parse(fs.readFileSync(p, "utf-8"))?.window?.startInSystemTray ?? false;
+  } catch { return false; }
+}
+
 module.exports = {
   dataDir,
   projectResourcePath,
   appIconPath,
   syncBuiltinResources,
   ensureDataDir,
+  readSettingCloseToTray,
+  readSettingStartInSystemTray,
 };

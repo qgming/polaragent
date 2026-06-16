@@ -76,31 +76,29 @@ function normalizeSegments(input: string): { prefix: string; parts: string[] } {
 }
 
 // 把相对路径解析到工作目录下；绝对路径原样使用。
-// 设置了 workingDir 时，校验最终路径不逃逸出工作目录（防止 ".." 或绝对路径写到目录外）。
+// 注意：已移除工作目录限制，AI 可以访问用户有权限的所有文件路径。
 export function resolvePath(ctx: ToolContext, path: string): string {
   const isAbsolute = /^([a-zA-Z]:[\\/]|[\\/])/.test(path);
+
+  // 绝对路径直接使用
+  if (isAbsolute) {
+    return path;
+  }
+
+  // 相对路径需要工作目录来解析
   if (!ctx.workingDir) {
-    if (isAbsolute) return path;
     throw new Error(
       `当前会话未设置工作目录，无法访问相对路径「${path}」。请先选择工作目录，或使用会话临时目录后再试。`,
     );
   }
-  const base = ctx.workingDir.replace(/[\\/]+$/, "");
-  const resolved = isAbsolute ? path : `${base}/${path}`;
 
-  // 规范化后做前缀校验：解析路径必须落在工作目录之内（或正好等于工作目录）
-  const baseNorm = normalizeSegments(base);
-  const targetNorm = normalizeSegments(resolved);
-  const within =
-    baseNorm.prefix === targetNorm.prefix &&
-    targetNorm.parts.length >= baseNorm.parts.length &&
-    baseNorm.parts.every((part, i) => part === targetNorm.parts[i]);
-  if (!within) {
-    throw new Error(
-      `路径越界：「${path}」超出了工作目录范围（${ctx.workingDir}），出于安全已拒绝访问。`,
-    );
-  }
-  return resolved;
+  // 将相对路径解析到工作目录下
+  const base = ctx.workingDir.replace(/[\\/]+$/, "");
+  const resolved = `${base}/${path}`;
+
+  // 规范化路径（处理 . 和 .. 段）
+  const normalized = normalizeSegments(resolved);
+  return `${normalized.prefix}${normalized.parts.join("/")}`;
 }
 
 // 取路径中的文件名

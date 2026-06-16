@@ -17,23 +17,39 @@ function getMainWindow() {
 }
 
 // 创建并加载主窗口
-function createMainWindow() {
+// - closeToTray: 关闭时隐藏到托盘而非退出（默认 true）
+// - startInTray: 启动时不显示窗口，仅显示托盘图标（默认 false）
+function createMainWindow({ closeToTray = true, startInTray = false } = {}) {
   mainWindow = createWindow({
     width: 1000,    // 默认宽度：1240 → 1000 (适配主流软件标准)
     height: 700,    // 默认高度：820 → 700 (保持16:9舒适比例)
     minWidth: 600,  // 最小宽度：860 → 600 (双屏/三分屏友好)
     minHeight: 450, // 最小高度：560 → 450 (保持纵横比)
     title: APP_NAME,
+    _skipShow: startInTray, // 内部选项：启动时不显示窗口
   });
   loadApp(mainWindow);
+
+  // 关闭拦截：closeToTray 且非真正退出时 → 隐藏窗口到托盘
+  mainWindow.on("close", (event) => {
+    const { getIsQuitting } = require("./tray.cjs");
+    const { readSettingCloseToTray } = require("./app-paths.cjs");
+    // 每次动态读取配置，确保设置变更立即生效（无重启）
+    if (readSettingCloseToTray() && !getIsQuitting()) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   return mainWindow;
 }
 
 // 通用无边框窗口创建；监听窗口最大化状态变化并广播给渲染进程
 function createWindow(options) {
+  const { _skipShow, ...windowOptions } = options; // 提取内部选项，不传给 BrowserWindow
   const icon = appIconPath();
   const win = new BrowserWindow({
-    ...options,
+    ...windowOptions,
     ...(icon ? { icon } : {}),
     titleBarStyle: "hidden",
     frame: false,
@@ -46,7 +62,9 @@ function createWindow(options) {
     },
   });
 
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => {
+    if (!_skipShow) win.show();
+  });
   const notifyMaximized = () => win.webContents.send("window:maximized-change", win.isMaximized());
   win.on("maximize", notifyMaximized);
   win.on("unmaximize", notifyMaximized);

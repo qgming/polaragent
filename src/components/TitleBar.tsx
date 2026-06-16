@@ -282,6 +282,7 @@ function TeamPanelToggleButton({ threadId }: { threadId: string }) {
 
 function WindowControls() {
   const [maximized, setMaximized] = useState(false);
+  const closeToTray = useConfigStore((state) => state.settings.window.closeToTray);
 
   useEffect(() => {
     const windowApi = getElectronWindowApi();
@@ -323,7 +324,7 @@ function WindowControls() {
           <SquareIcon className="size-4" />
         )}
       </WindowButton>
-      <WindowButton close label="退出" onClick={close}>
+      <WindowButton close label={closeToTray ? "关闭" : "退出"} onClick={close}>
         <X className="size-4" />
       </WindowButton>
     </div>

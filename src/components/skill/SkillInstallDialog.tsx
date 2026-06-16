@@ -1,7 +1,7 @@
 // Skills 安装对话框
 
 import { useState } from "react";
-import { Download, FolderOpen, Loader2, Wrench } from "lucide-react";
+import { Download, FileArchive, Loader2, Wrench } from "lucide-react";
 import {
   Modal,
   ModalBody,
@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/useToast";
 import { skillLoader } from "@/lib/skill";
+import { pickZipFile } from "@/lib/electron/electron-api";
 
 interface SkillInstallDialogProps {
   isOpen: boolean;
@@ -24,7 +25,7 @@ export function SkillInstallDialog({
   onClose,
   onInstallSuccess,
 }: SkillInstallDialogProps) {
-  const [installType, setInstallType] = useState<"git" | "local" | null>(null);
+  const [installType, setInstallType] = useState<"git" | "zip" | null>(null);
   const [source, setSource] = useState("");
   const [isInstalling, setIsInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,9 +33,23 @@ export function SkillInstallDialog({
 
   if (!isOpen) return null;
 
+  const handleSelectZip = async () => {
+    try {
+      const zipPath = await pickZipFile();
+      if (zipPath) {
+        setSource(zipPath);
+        setError(null);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "选择文件失败";
+      toast.error(message);
+      setError(message);
+    }
+  };
+
   const handleInstall = async () => {
     if (!installType || !source.trim()) {
-      setError("请输入有效的源地址");
+      setError("请选择有效的源");
       return;
     }
 
@@ -47,7 +62,7 @@ export function SkillInstallDialog({
       if (installType === "git") {
         success = await skillLoader.installSkillFromGit(source);
       } else {
-        success = await skillLoader.installSkillFromLocal(source);
+        success = await skillLoader.installSkillFromZip(source);
       }
 
       if (success) {
@@ -56,7 +71,7 @@ export function SkillInstallDialog({
         onClose();
       } else {
         toast.error("技能安装失败");
-        setError("安装失败，请检查源地址");
+        setError("安装失败，请检查源");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "安装失败";
@@ -76,7 +91,7 @@ export function SkillInstallDialog({
           <span className="min-w-0 truncate text-sm font-medium">安装 Skill</span>
           {installType && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              · {installType === "git" ? "Git 仓库" : "本地目录"}
+              · {installType === "git" ? "Git 仓库" : "本地压缩包"}
             </span>
           )}
         </header>
@@ -100,14 +115,14 @@ export function SkillInstallDialog({
               </button>
 
               <button
-                onClick={() => setInstallType("local")}
+                onClick={() => setInstallType("zip")}
                 className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-accent"
               >
-                <FolderOpen className="size-5 text-primary" />
+                <FileArchive className="size-5 text-primary" />
                 <div>
-                  <p className="font-medium">从本地目录安装</p>
+                  <p className="font-medium">从本地压缩包安装</p>
                   <p className="text-xs text-muted-foreground">
-                    从本地文件系统导入 Skill
+                    从本地 .zip 压缩包导入 Skill
                   </p>
                 </div>
               </button>
@@ -116,23 +131,44 @@ export function SkillInstallDialog({
 
           {installType && (
             <div className="space-y-4">
-              <div>
-                <label className="mb-2 block text-sm font-medium">
-                  {installType === "git" ? "Git 仓库 URL" : "本地目录路径"}
-                </label>
-                <input
-                  type="text"
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  placeholder={
-                    installType === "git"
-                      ? "https://github.com/user/skill-repo.git"
-                      : "C:\\Users\\...\\my-skill"
-                  }
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                  disabled={isInstalling}
-                />
-              </div>
+              {installType === "git" ? (
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Git 仓库 URL
+                  </label>
+                  <input
+                    type="text"
+                    value={source}
+                    onChange={(e) => setSource(e.target.value)}
+                    placeholder="https://github.com/user/skill-repo.git"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    disabled={isInstalling}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    压缩包文件
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={source}
+                      readOnly
+                      placeholder="请选择 .zip 压缩包文件"
+                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      disabled={isInstalling}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={handleSelectZip}
+                      disabled={isInstalling}
+                    >
+                      选择文件
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {error && (
                 <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">

@@ -7,6 +7,8 @@ import {
   getHomeDir,
   installSkillFromGit,
   installSkillFromLocal,
+  installSkillFromZip,
+  uninstallSkill as uninstallSkillApi,
   readFile,
   listDirectory,
 } from "@/lib/electron/electron-api";
@@ -272,11 +274,27 @@ export class SkillLoader {
   }
 
   /**
+   * 从压缩包安装 Skill
+   */
+  async installSkillFromZip(zipPath: string): Promise<boolean> {
+    try {
+      console.log(`开始从压缩包安装 Skill: ${zipPath}`);
+      await installSkillFromZip(zipPath);
+      await this.initialize();
+      return true;
+    } catch (error) {
+      console.error("从压缩包安装 Skill 失败:", error);
+      throw error;
+    }
+  }
+
+  /**
    * 卸载 Skill
    */
   async uninstallSkill(id: string): Promise<boolean> {
     const skill = this.skills.get(id);
     if (!skill) {
+      console.error(`技能不存在: ${id}`);
       return false;
     }
 
@@ -285,10 +303,18 @@ export class SkillLoader {
       return false;
     }
 
-    // TODO: 实现 Skill 卸载逻辑
-    this.skills.delete(id);
-    console.log(`Skill ${skill.name} 已卸载`);
-    return true;
+    try {
+      // 调用主进程删除技能目录
+      await uninstallSkillApi(id);
+
+      // 从内存中移除
+      this.skills.delete(id);
+      console.log(`Skill ${skill.name} 已卸载`);
+      return true;
+    } catch (error) {
+      console.error(`卸载 Skill 失败: ${id}`, error);
+      throw error;
+    }
   }
 
   /**

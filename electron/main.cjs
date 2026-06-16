@@ -3,8 +3,9 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 
 const { APP_ID, APP_NAME } = require("./lib/constants.cjs");
-const { ensureDataDir } = require("./lib/app-paths.cjs");
+const { ensureDataDir, readSettingCloseToTray, readSettingStartInSystemTray } = require("./lib/app-paths.cjs");
 const { createMainWindow } = require("./lib/windows.cjs");
+const { createTray, destroyTray, setIsQuitting } = require("./lib/tray.cjs");
 const updates = require("./ipc/updates.cjs");
 
 // 各 IPC 域模块（均导出 register(ipcMain)）
@@ -35,13 +36,29 @@ app.setName(APP_NAME);
 registerHandlers();
 app.whenReady().then(async () => {
   await ensureDataDir();
-  createMainWindow();
+  const closeToTray = readSettingCloseToTray();
+  const startInTray = readSettingStartInSystemTray();
+  createMainWindow({ closeToTray, startInTray });
+  createTray();
   updates.initializeAutoUpdates();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow({ closeToTray: readSettingCloseToTray(), startInTray: false });
+    }
   });
 });
 
+// window-all-closed：hide 的窗口不会触发此事件，仅真正销毁后才触发
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// 任何形式的 app.quit() 都标记为真正退出（托盘菜单 / 自动更新 / 系统关机）
+app.on("before-quit", () => {
+  setIsQuitting(true);
+});
+
+// 退出时销毁托盘，防止 Windows 上图标残留
+app.on("will-quit", () => {
+  destroyTray();
 });

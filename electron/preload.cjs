@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("polaragent", {
     pickWorkingDirectory: () => invoke("dialog:pick-directory"),
     pickTextFile: () => invoke("dialog:pick-text-file"),
     pickMultipleFiles: () => invoke("dialog:pick-multiple-files"),
+    pickZipFile: () => invoke("dialog:pick-zip-file"),
     getPathForFile: (file) => webUtils.getPathForFile(file),
     pickImageFile: () => invoke("dialog:pick-image-file"),
     pickAudioFile: () => invoke("dialog:pick-audio-file"),
@@ -103,6 +104,8 @@ contextBridge.exposeInMainWorld("polaragent", {
     readMetadata: (skillId) => invoke("skills:read-metadata", { skillId }),
     installFromGit: (repoUrl) => invoke("skills:install-git", { repoUrl }),
     installFromLocal: (sourcePath) => invoke("skills:install-local", { sourcePath }),
+    installFromZip: (zipPath) => invoke("skills:install-zip", { zipPath }),
+    uninstall: (skillId) => invoke("skills:uninstall", { skillId }),
   },
   mcp: {
     stdioListTools: (server) => invoke("mcp:stdio-list-tools", { server }),

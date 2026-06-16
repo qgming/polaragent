@@ -1,4 +1,4 @@
-// IPC：技能（Skill）列举、元数据读取、从 Git/本地安装
+// IPC：技能（Skill）列举、元数据读取、从 Git/本地/压缩包安装
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -6,6 +6,14 @@ const { spawn } = require("node:child_process");
 
 const { dataDir } = require("../lib/app-paths.cjs");
 const { ensureDir, readText, listJsonIds } = require("../lib/fs-utils.cjs");
+
+// 检查是否安装了 jszip 模块
+let JSZip;
+try {
+  JSZip = require("jszip");
+} catch (error) {
+  console.warn("jszip 模块未安装，压缩包安装功能将不可用");
+}
 
 // 是否受支持的 Git URL
 function supportedGitUrl(input) {
@@ -142,6 +150,51 @@ async function installSkillFromLocal(sourcePath) {
   return target;
 }
 
+// 从压缩包安装 Skill（解压到临时目录后复制）
+async function installSkillFromZip(zipPath) {
+  if (!JSZip) throw new Error("jszip 模块未安装，无法解压缩包");
+  const source = String(zipPath || "").trim();
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error("压缩包文件不存在");
+  if (!source.toLowerCase().endsWith(".zip")) throw new Error("仅支持 .zip 格式的压缩包");
+
+  const customDir = path.join(dataDir(), "skills", "custom");
+  const tmpRoot = path.join(dataDir(), "skills", ".tmp-install");
+  await ensureDir(customDir);
+  await ensureDir(tmpRoot);
+
+  const baseSlug = sanitizeSlug(path.basename(source, ".zip"));
+  const tempDir = uniqueChild(tmpRoot, baseSlug);
+  await ensureDir(tempDir);
+
+  try {
+    // 读取压缩包
+    const zipData = await fsp.readFile(source);
+    const zip = await JSZip.loadAsync(zipData);
+
+    // 解压所有文件到临时目录
+    const extractPromises = [];
+    zip.forEach((relativePath, zipEntry) => {
+      if (zipEntry.dir) return;
+      const targetPath = path.join(tempDir, relativePath);
+      extractPromises.push(
+        zipEntry.async("nodebuffer").then(async (content) => {
+          await ensureDir(path.dirname(targetPath));
+          await fsp.writeFile(targetPath, content);
+        })
+      );
+    });
+    await Promise.all(extractPromises);
+
+    // 查找技能根目录
+    const skillRoot = await installableSkillRoot(tempDir);
+    const target = uniqueChild(customDir, sanitizeSlug(path.basename(skillRoot) || baseSlug));
+    await copySkill(skillRoot, target);
+    return target;
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 // 列举 builtin/custom 下的 Skill（优先按 JSON id，回退按子目录名）
 async function listSkills(skillType) {
   const dir = path.join(dataDir(), "skills", skillType === "builtin" ? "builtin" : "custom");
@@ -160,11 +213,34 @@ async function readSkillMetadata(skillId) {
   throw new Error(`Skill not found: ${skillId}`);
 }
 
+// 删除指定的 Skill（仅支持 custom 类型）
+async function uninstallSkill(skillId) {
+  const customDir = path.join(dataDir(), "skills", "custom", skillId);
+  const builtinDir = path.join(dataDir(), "skills", "builtin", skillId);
+
+  // 检查是否是内置技能
+  if (fs.existsSync(builtinDir)) {
+    throw new Error("无法删除内置技能");
+  }
+
+  // 检查自定义技能是否存在
+  if (!fs.existsSync(customDir)) {
+    throw new Error(`技能不存在: ${skillId}`);
+  }
+
+  // 删除技能目录
+  await fsp.rm(customDir, { recursive: true, force: true });
+  console.log(`技能已删除: ${skillId}`);
+  return true;
+}
+
 function register(ipcMain) {
   ipcMain.handle("skills:list", (_event, { skillType }) => listSkills(skillType));
   ipcMain.handle("skills:read-metadata", (_event, { skillId }) => readSkillMetadata(skillId));
   ipcMain.handle("skills:install-git", (_event, { repoUrl }) => installSkillFromGit(repoUrl));
   ipcMain.handle("skills:install-local", (_event, { sourcePath }) => installSkillFromLocal(sourcePath));
+  ipcMain.handle("skills:install-zip", (_event, { zipPath }) => installSkillFromZip(zipPath));
+  ipcMain.handle("skills:uninstall", (_event, { skillId }) => uninstallSkill(skillId));
 }
 
 module.exports = { register };

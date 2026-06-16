@@ -89,10 +89,54 @@ export function PreferencesPanel({
         />
       </div>
 
+      <WindowBehaviorCard settings={settings} onUpdate={onUpdate} />
+
       <VoiceInputCard settings={settings} onUpdate={onUpdate} />
 
       <SkillsApiKeyCard settings={settings} onUpdate={onUpdate} />
     </section>
+  );
+}
+
+// 窗口行为卡片（关闭到托盘 / 启动时隐藏到托盘）
+function WindowBehaviorCard({
+  settings,
+  onUpdate,
+}: {
+  settings: Settings;
+  onUpdate: (updates: Partial<Settings>) => Promise<void>;
+}) {
+  const setWindow = (updates: Partial<Settings["window"]>) =>
+    onUpdate({
+      window: {
+        ...settings.window,
+        ...updates,
+      },
+    });
+
+  return (
+    <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
+      <SettingRow
+        title="关闭时最小化到托盘"
+        description="点击窗口关闭按钮时隐藏到系统托盘并保留后台运行；可通过托盘图标重新打开。"
+        control={
+          <Switch
+            checked={settings.window.closeToTray}
+            onCheckedChange={(checked) => void setWindow({ closeToTray: checked })}
+          />
+        }
+      />
+      <SettingRow
+        title="启动时隐藏到托盘"
+        description="应用启动后不显示主窗口，直接在后台运行。可通过托盘图标打开窗口。"
+        control={
+          <Switch
+            checked={settings.window.startInSystemTray}
+            onCheckedChange={(checked) => void setWindow({ startInSystemTray: checked })}
+          />
+        }
+      />
+    </div>
   );
 }
 
