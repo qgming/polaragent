@@ -2,6 +2,7 @@
 // src/components/TitleBar.tsx
 
 import {
+  BadgeHelp,
   CopyMinus,
   Info,
   Menu,
@@ -49,6 +50,7 @@ import { cn } from "@/lib/utils";
 export function TitleBar({
   onOpenAbout,
   onOpenSearch,
+  onOpenTutorial,
   onToggleSidebar,
   showPanelToggle,
   sidebarCollapsed,
@@ -56,6 +58,7 @@ export function TitleBar({
 }: {
   onOpenAbout: () => void;
   onOpenSearch: () => void;
+  onOpenTutorial: () => void;
   onToggleSidebar: () => void;
   showPanelToggle: boolean;
   sidebarCollapsed: boolean;
@@ -85,6 +88,13 @@ export function TitleBar({
           onClick={onOpenSearch}
         >
           <Search className="size-4" />
+        </IconButton>
+        <IconButton
+          className="size-8"
+          label="使用教程"
+          onClick={onOpenTutorial}
+        >
+          <BadgeHelp className="size-4" />
         </IconButton>
       </div>
 

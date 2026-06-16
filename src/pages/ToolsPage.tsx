@@ -23,6 +23,7 @@ import { McpProviderDiscovery } from "@/components/mcp/McpProviderDiscovery";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/hooks/useToast";
 import { openExternal } from "@/lib/electron/electron-api";
 import { createEmptyMcpTool, mcpTransportLabel } from "@/lib/mcp";
@@ -40,6 +41,7 @@ export function ToolsPage() {
   const [expandedMcpIds, setExpandedMcpIds] = useState<string[]>([]);
   const [browserStatus, setBrowserStatus] = useState<{ connected: boolean } | null>(null);
   const [computerStatus, setComputerStatus] = useState<{ ok: boolean } | null>(null);
+  const [deletingTool, setDeletingTool] = useState<McpToolConfig | null>(null);
   const toast = useToast();
 
   const builtinMcpTools = useToolsStore((state) => state.builtinMcpTools);
@@ -116,6 +118,14 @@ export function ToolsPage() {
     await addCustomTools(tools);
     setActiveTab("installed");
     setEditor(null);
+  };
+
+  // 删除 MCP 工具
+  const handleDeleteTool = () => {
+    if (!deletingTool) return;
+    removeCustomTool(deletingTool.id);
+    toast.success(`已删除工具：${deletingTool.name}`);
+    setDeletingTool(null);
   };
 
   return (
@@ -229,7 +239,7 @@ export function ToolsPage() {
                   tool={tool}
                   expanded={expandedMcpIds.includes(tool.id)}
                   onEdit={() => setEditor({ mode: "edit", tool })}
-                  onDelete={() => removeCustomTool(tool.id)}
+                  onDelete={() => setDeletingTool(tool)}
                   onToggleExpand={() =>
                     setExpandedMcpIds((ids) =>
                       ids.includes(tool.id)
@@ -263,6 +273,16 @@ export function ToolsPage() {
         }}
         onSave={saveMcpTool}
         onSaveMany={saveManyMcpTools}
+      />
+
+      <ConfirmDialog
+        open={deletingTool !== null}
+        onOpenChange={(open) => !open && setDeletingTool(null)}
+        title="删除工具"
+        message={`确定删除「${deletingTool?.name}」吗？此操作不可撤销。`}
+        confirmLabel="删除"
+        variant="destructive"
+        onConfirm={handleDeleteTool}
       />
     </div>
   );

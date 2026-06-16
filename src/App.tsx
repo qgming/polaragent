@@ -28,6 +28,7 @@ import { SkillsPage } from "@/pages/SkillsPage";
 import { TeamPage } from "@/pages/TeamPage";
 import { TeamChatPage } from "@/pages/TeamChatPage";
 import { ToolsPage } from "@/pages/ToolsPage";
+import { TutorialPage } from "@/pages/TutorialPage";
 import {
   useChatStore,
   useThreadAgentId,
@@ -46,6 +47,7 @@ function App() {
     useState<SettingsSection>("preferences");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"tasks" | "team">("tasks");
   // 团队聊天视图：非空时主区域渲染 TeamChatPage（覆盖普通页面内容）。
   const [teamChatView, setTeamChatView] = useState<{
@@ -232,6 +234,7 @@ function App() {
         <TitleBar
           onOpenAbout={() => openSettingsSection("about")}
           onOpenSearch={() => setSearchOpen(true)}
+          onOpenTutorial={() => setTutorialOpen(true)}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           showPanelToggle={
             teamChatView ? true : activePage === "chat" && !!activeThreadId
@@ -245,6 +248,12 @@ function App() {
             <SettingsPage
               initialSection={settingsSection}
               onBack={() => setActivePage("chat")}
+            />
+          </main>
+        ) : tutorialOpen ? (
+          <main className="min-h-0 flex-1 bg-background">
+            <TutorialPage
+              onBack={() => setTutorialOpen(false)}
             />
           </main>
         ) : (

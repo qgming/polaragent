@@ -18,6 +18,7 @@ import { AgentEditorModal } from "@/components/AgentEditorModal";
 import { PageHero } from "@/components/PageHero";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/hooks/useToast";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
@@ -37,12 +38,15 @@ export function AgentsPage({
   const agents = useConfigStore((state) => state.agents);
   const updateAgent = useConfigStore((state) => state.updateAgent);
   const addAgent = useConfigStore((state) => state.addAgent);
+  const removeAgent = useConfigStore((state) => state.removeAgent);
   const skills = useSkillsStore((state) => state.skills);
   const loadSkills = useSkillsStore((state) => state.loadSkills);
   const [activeTab, setActiveTab] = useState<AgentTab>("market");
   const [search, setSearch] = useState("");
   const [editingAgent, setEditingAgent] = useState<AgentConfig | null>(null);
   const [creatingAgent, setCreatingAgent] = useState(false);
+  const [deletingAgent, setDeletingAgent] = useState<AgentConfig | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     void loadSkills();
@@ -101,6 +105,21 @@ export function AgentsPage({
     },
   });
 
+  // 删除助手
+  const handleDeleteAgent = async () => {
+    if (!deletingAgent) return;
+
+    try {
+      await removeAgent(deletingAgent.id);
+      initializeAiRuntime();
+      toast.success(`已删除助手：${deletingAgent.name}`);
+      setDeletingAgent(null);
+    } catch (error) {
+      toast.error(`删除助手失败：${deletingAgent.name}`);
+      console.error("删除助手失败:", error);
+    }
+  };
+
   return (
     <div className="app-scrollbar h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-[1100px] px-6 py-6">
@@ -146,6 +165,7 @@ export function AgentsPage({
             custom
             emptyTitle="还没有自定义助手"
             onEdit={setEditingAgent}
+            onDelete={setDeletingAgent}
             onStartChat={onStartChat}
           />
         ) : null}
@@ -170,6 +190,16 @@ export function AgentsPage({
           onStartChat={onStartChat}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={deletingAgent !== null}
+        onOpenChange={(open) => !open && setDeletingAgent(null)}
+        title="删除助手"
+        message={`确定删除「${deletingAgent?.name}」吗？此操作不可撤销。`}
+        confirmLabel="删除"
+        variant="destructive"
+        onConfirm={handleDeleteAgent}
+      />
     </div>
   );
 }
@@ -510,12 +540,14 @@ function AgentList({
   custom,
   emptyTitle,
   onEdit,
+  onDelete,
   onStartChat,
 }: {
   agents: AgentConfig[];
   custom?: boolean;
   emptyTitle: string;
   onEdit: (agent: AgentConfig) => void;
+  onDelete?: (agent: AgentConfig) => void;
   onStartChat: (agentId: string) => void;
 }) {
   if (agents.length === 0) {
@@ -536,6 +568,7 @@ function AgentList({
           agent={agent}
           custom={custom}
           onEdit={() => onEdit(agent)}
+          onDelete={onDelete ? () => onDelete(agent) : undefined}
           onStartChat={() => onStartChat(agent.id)}
         />
       ))}
@@ -547,11 +580,13 @@ function AgentRow({
   agent,
   custom,
   onEdit,
+  onDelete,
   onStartChat,
 }: {
   agent: AgentConfig;
   custom?: boolean;
   onEdit: () => void;
+  onDelete?: () => void;
   onStartChat: () => void;
 }) {
   return (
@@ -579,8 +614,8 @@ function AgentRow({
           <Settings className="size-4" />
           编辑
         </Button>
-        {custom ? (
-          <Button variant="outline" size="sm">
+        {custom && onDelete ? (
+          <Button variant="outline" size="sm" onClick={onDelete}>
             <Trash2 className="size-4" />
             删除
           </Button>

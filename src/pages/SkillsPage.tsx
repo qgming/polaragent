@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/hooks/useToast";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import {
@@ -40,11 +41,14 @@ export function SkillsPage() {
   const isLoading = useSkillsStore((state) => state.isLoading);
   const loadSkills = useSkillsStore((state) => state.loadSkills);
   const toggleSkill = useSkillsStore((state) => state.toggleSkill);
+  const uninstallSkill = useSkillsStore((state) => state.uninstallSkill);
 
   const [activeTab, setActiveTab] = useState<SkillTab>("market");
   const [search, setSearch] = useState("");
   const [showInstallDialog, setShowInstallDialog] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillConfig | null>(null);
+  const [deletingSkill, setDeletingSkill] = useState<SkillConfig | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     void loadSkills();
@@ -92,6 +96,19 @@ export function SkillsPage() {
       void refreshMarket(true);
     } else {
       void loadSkills();
+    }
+  };
+
+  // 删除技能
+  const handleDeleteSkill = async () => {
+    if (!deletingSkill) return;
+
+    const success = await uninstallSkill(deletingSkill.id);
+    if (success) {
+      toast.success(`已删除技能：${deletingSkill.name || deletingSkill.id}`);
+      setDeletingSkill(null);
+    } else {
+      toast.error(`删除技能失败：${deletingSkill.name || deletingSkill.id}`);
     }
   };
 
@@ -175,6 +192,7 @@ export function SkillsPage() {
                     removable
                     skill={skill}
                     onEdit={() => setEditingSkill(skill)}
+                    onDelete={() => setDeletingSkill(skill)}
                     onToggle={() => toggleSkill(skill.id, !skill.enabled)}
                   />
                 ))}
@@ -222,6 +240,15 @@ export function SkillsPage() {
           skill={editingSkill}
           onClose={() => setEditingSkill(null)}
           onSaved={() => void loadSkills()}
+        />
+        <ConfirmDialog
+          open={deletingSkill !== null}
+          onOpenChange={(open) => !open && setDeletingSkill(null)}
+          title="删除技能"
+          message={`确定删除「${deletingSkill?.name || deletingSkill?.id}」吗？此操作不可撤销。`}
+          confirmLabel="删除"
+          variant="destructive"
+          onConfirm={handleDeleteSkill}
         />
       </div>
     </div>
@@ -523,11 +550,13 @@ function InstalledSkillRow({
   removable,
   skill,
   onEdit,
+  onDelete,
   onToggle,
 }: {
   removable?: boolean;
   skill: SkillConfig;
   onEdit: () => void;
+  onDelete?: () => void;
   onToggle: () => void;
 }) {
   return (
@@ -543,8 +572,8 @@ function InstalledSkillRow({
           <Pencil className="size-4" />
           编辑
         </Button>
-        {removable ? (
-          <Button variant="outline" size="sm">
+        {removable && onDelete ? (
+          <Button variant="outline" size="sm" onClick={onDelete}>
             <Trash2 className="size-4" />
             删除
           </Button>
