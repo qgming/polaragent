@@ -1,0 +1,83 @@
+{
+  "page": {
+    "title": "Agents",
+    "bannerTitle": "A dedicated helper for every kind of work",
+    "bannerDescription": "Assign specialized agents to recurring work so you do not have to explain the same context every time.",
+    "kitLabel": "Agent Kit",
+    "searchPlaceholder": "Search agents",
+    "create": "Create Agent"
+  },
+  "tabs": {
+    "market": "Market",
+    "builtin": "Built-in",
+    "installed": "Installed"
+  },
+  "empty": {
+    "builtin": "No built-in agents found",
+    "custom": "No custom agents yet",
+    "listDescription": "Install agents from the market, or create a new one.",
+    "marketTitle": "No matching agents",
+    "marketDescription": "Try another category or search by keyword above.",
+    "noDescription": "No description"
+  },
+  "market": {
+    "loadFailed": "Failed to load agent market",
+    "installed": "Added",
+    "install": "Add Agent",
+    "installSuccess": "Agent added: {{name}}",
+    "installFailed": "Failed to add agent: {{name}}",
+    "categories": {
+      "通用": "General",
+      "设计": "Design",
+      "翻译": "Translation",
+      "编程": "Programming",
+      "生活": "Life",
+      "游戏": "Games",
+      "文案": "Copywriting",
+      "教育": "Education",
+      "情感": "Emotional Support",
+      "工具": "Tools",
+      "学术": "Academic",
+      "娱乐": "Entertainment",
+      "商业": "Business",
+      "创意": "Creative",
+      "写作": "Writing"
+    }
+  },
+  "list": {
+    "defaultModel": "Use model settings",
+    "startChat": "Start Chat",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "delete": {
+    "title": "Delete Agent",
+    "message": "Delete \"{{name}}\"? This action cannot be undone.",
+    "success": "Agent deleted: {{name}}",
+    "failed": "Failed to delete agent: {{name}}",
+    "logFailed": "Failed to delete agent:"
+  },
+  "editor": {
+    "newAgent": "New Agent",
+    "title": "Agent Details",
+    "avatarName": "Avatar and Name",
+    "pickEmoji": "Choose Emoji",
+    "namePlaceholder": "Agent name",
+    "description": "Agent Description",
+    "descriptionPlaceholder": "Describe what this agent is good at",
+    "modelProvider": "Model Service",
+    "selectProvider": "Select model service",
+    "followModelSettings": "Use model settings",
+    "model": "Model",
+    "selectModel": "Select model",
+    "followDefaultModel": "Use default routing model",
+    "manualModelPlaceholder": "No models in this service. Enter one manually.",
+    "systemPrompt": "System Prompt",
+    "systemPromptPlaceholder": "Define this agent's role, boundaries, response style, and tool strategy",
+    "enabledSkills": "Enabled Skills",
+    "allSkills": "All Skills",
+    "allSkillsDescription": "When enabled, runtime automatically uses all current built-in and installed skills, including future additions.",
+    "noSkills": "No skills available",
+    "startChat": "Start Chat"
+  }
+}

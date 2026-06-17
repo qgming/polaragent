@@ -2,6 +2,7 @@
 // src/components/ConfirmDialog.tsx
 
 import { AlertCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   Modal,
   ModalBody,
@@ -24,14 +25,15 @@ interface ConfirmDialogProps {
 
 export function ConfirmDialog({
   isOpen,
-  title,
-  description,
-  confirmLabel = "确认",
-  cancelLabel = "取消",
+ title,
+ description,
+  confirmLabel,
+  cancelLabel,
   variant = "default",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation("common");
   if (!isOpen) return null;
 
   return (
@@ -49,13 +51,13 @@ export function ConfirmDialog({
 
         <ModalFooter>
           <Button variant="outline" onClick={onCancel}>
-            {cancelLabel}
+            {cancelLabel ?? t("cancel")}
           </Button>
           <Button
             variant={variant === "destructive" ? "destructive" : "default"}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {confirmLabel ?? t("confirm")}
           </Button>
         </ModalFooter>
       </ModalContent>

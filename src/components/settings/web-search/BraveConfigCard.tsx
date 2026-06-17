@@ -2,6 +2,7 @@
 // API Key、国家代码、搜索语言。
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Settings } from "@/types/config";
 import {
   ApiKeyField,
@@ -19,6 +20,7 @@ export function BraveConfigCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const config = settings.webSearch?.brave ?? { apiKey: "" };
   const [apiKey, setApiKey] = useState(config.apiKey ?? "");
   const [country, setCountry] = useState(config.country ?? "");
@@ -50,30 +52,30 @@ export function BraveConfigCard({
 
   return (
     <ConfigCard
-      title="Brave Search 配置"
+      title={t("webSearch.braveTitle")}
       description={
         <>
-          访问{" "}
+          {t("webSearch.visit")}{" "}
           <ExternalLink url="https://brave.com/search/api/">Brave Search API</ExternalLink>{" "}
-          注册并获取 API Key。免费账户每月 2,000 次搜索。
+          {t("webSearch.signupQuota2000")}
         </>
       }
     >
       <ApiKeyField value={apiKey} onChange={setApiKey} placeholder="BSA..." />
 
       <TextField
-        label="国家代码（可选）"
+        label={t("webSearch.countryCodeOptional")}
         value={country}
         onChange={setCountry}
         placeholder="cn"
-        hint="如 cn（中国）、us（美国）"
+        hint={t("webSearch.countryCodeShortHint")}
       />
       <TextField
-        label="搜索语言（可选）"
+        label={t("webSearch.searchLanguage")}
         value={searchLang}
         onChange={setSearchLang}
         placeholder="zh"
-        hint="如 zh（中文）、en（英语）"
+        hint={t("webSearch.searchLanguageHint")}
       />
 
       <SaveButton state={saveState} onSave={handleSave} />

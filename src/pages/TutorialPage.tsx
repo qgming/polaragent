@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { ArrowLeft, BookOpen, MessageSquare, Bot, Wrench, Package, Users, Database, Settings2, Lightbulb, HelpCircle, Globe, Monitor } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { QuickStartGuide } from "@/components/tutorial/QuickStartGuide";
 import { ChatGuide } from "@/components/tutorial/ChatGuide";
@@ -33,39 +34,39 @@ export type TutorialSection =
 
 // 左侧导航分组
 const navGroups: Array<{
-  title: string;
-  items: Array<{ id: TutorialSection; label: string; icon: typeof BookOpen }>;
+  titleKey: string;
+  items: Array<{ id: TutorialSection; labelKey: string; icon: typeof BookOpen }>;
 }> = [
   {
-    title: "快速开始",
+    titleKey: "nav.groups.quickstart",
     items: [
-      { id: "quickstart", label: "快速开始指南", icon: BookOpen },
+      { id: "quickstart", labelKey: "nav.items.quickstart", icon: BookOpen },
     ],
   },
   {
-    title: "基础功能",
+    titleKey: "nav.groups.basic",
     items: [
-      { id: "chat", label: "对话功能", icon: MessageSquare },
-      { id: "agent", label: "助手管理", icon: Bot },
-      { id: "skill", label: "技能使用", icon: Package },
-      { id: "tool", label: "工具集成", icon: Wrench },
+      { id: "chat", labelKey: "nav.items.chat", icon: MessageSquare },
+      { id: "agent", labelKey: "nav.items.agent", icon: Bot },
+      { id: "skill", labelKey: "nav.items.skill", icon: Package },
+      { id: "tool", labelKey: "nav.items.tool", icon: Wrench },
     ],
   },
   {
-    title: "高级功能",
+    titleKey: "nav.groups.advanced",
     items: [
-      { id: "team", label: "团队协作", icon: Users },
-      { id: "knowledge", label: "知识库配置", icon: Database },
-      { id: "model", label: "模型设置", icon: Settings2 },
-      { id: "browseruse", label: "Browser Use", icon: Globe },
-      { id: "computeruse", label: "Computer Use", icon: Monitor },
+      { id: "team", labelKey: "nav.items.team", icon: Users },
+      { id: "knowledge", labelKey: "nav.items.knowledge", icon: Database },
+      { id: "model", labelKey: "nav.items.model", icon: Settings2 },
+      { id: "browseruse", labelKey: "nav.items.browseruse", icon: Globe },
+      { id: "computeruse", labelKey: "nav.items.computeruse", icon: Monitor },
     ],
   },
   {
-    title: "更多帮助",
+    titleKey: "nav.groups.help",
     items: [
-      { id: "tips", label: "使用技巧", icon: Lightbulb },
-      { id: "faq", label: "常见问题", icon: HelpCircle },
+      { id: "tips", labelKey: "nav.items.tips", icon: Lightbulb },
+      { id: "faq", labelKey: "nav.items.faq", icon: HelpCircle },
     ],
   },
 ];
@@ -77,6 +78,7 @@ export function TutorialPage({
   initialSection?: TutorialSection;
   onBack: () => void;
 }) {
+  const { t } = useTranslation("tutorial");
   const [activeSection, setActiveSection] = useState<TutorialSection>(initialSection);
 
   return (
@@ -88,13 +90,13 @@ export function TutorialPage({
           className="mb-8 flex items-center gap-2 px-2 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          返回应用
+          {t("backToApp")}
         </button>
 
         {navGroups.map((group, index) => (
-          <div key={group.title} className={index > 0 ? "mt-6" : undefined}>
+          <div key={group.titleKey} className={index > 0 ? "mt-6" : undefined}>
             <p className="mb-2 px-3 text-xs font-medium text-muted-foreground">
-              {group.title}
+              {t(group.titleKey)}
             </p>
             <nav className="space-y-1">
               {group.items.map((item) => (
@@ -103,6 +105,7 @@ export function TutorialPage({
                   item={item}
                   active={activeSection === item.id}
                   onClick={() => setActiveSection(item.id)}
+                  label={t(item.labelKey)}
                 />
               ))}
             </nav>
@@ -133,10 +136,12 @@ export function TutorialPage({
 // 左侧导航按钮
 function NavButton({
   item,
+  label,
   active,
   onClick,
 }: {
-  item: { id: TutorialSection; label: string; icon: typeof BookOpen };
+  item: { id: TutorialSection; labelKey: string; icon: typeof BookOpen };
+  label: string;
   active: boolean;
   onClick: () => void;
 }) {
@@ -153,7 +158,7 @@ function NavButton({
       )}
     >
       <Icon className="size-4 shrink-0" />
-      <span className="min-w-0 truncate text-sm font-medium">{item.label}</span>
+      <span className="min-w-0 truncate text-sm font-medium">{label}</span>
     </button>
   );
 }

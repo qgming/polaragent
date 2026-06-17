@@ -16,9 +16,15 @@ export interface OpenAiChatValue {
 
 export function OpenAiChatFields({
   value,
+  actualRequestLabel,
+  imageModelLabel,
+  modelPlaceholder,
   onChange,
 }: {
   value: OpenAiChatValue;
+  actualRequestLabel: (url: string) => string;
+  imageModelLabel: string;
+  modelPlaceholder: string;
   onChange: (patch: Partial<OpenAiChatValue>) => void;
 }) {
   const fallback = "https://api.openai.com/v1";
@@ -29,14 +35,14 @@ export function OpenAiChatFields({
         value={value.baseURL}
         onChange={(v) => onChange({ baseURL: v })}
         placeholder={fallback}
-        hint={`实际请求：${previewOpenAiUrl(value.baseURL, fallback, "/chat/completions")}`}
+        hint={actualRequestLabel(previewOpenAiUrl(value.baseURL, fallback, "/chat/completions"))}
       />
       <ApiKeyField value={value.apiKey} onChange={(v) => onChange({ apiKey: v })} />
       <TextField
-        label="图片模型"
+        label={imageModelLabel}
         value={value.model}
         onChange={(v) => onChange({ model: v })}
-        placeholder="如 doubao-seedream / gemini-3-pro-image-preview"
+        placeholder={modelPlaceholder}
       />
     </>
   );

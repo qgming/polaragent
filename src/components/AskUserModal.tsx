@@ -1,5 +1,6 @@
 import { Check, MessageCircleQuestion } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   cancelAskUserRequest,
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useAskUserStore } from "@/stores/ask-user-store";
 
 export function AskUserModal() {
+  const { t } = useTranslation("common");
   const request = useAskUserStore((state) => state.activeRequest);
   const queuedCount = useAskUserStore((state) => state.queuedRequests.length);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -74,13 +76,13 @@ export function AskUserModal() {
       }}
     >
       <ModalContent size="md" showCloseButton={true} className="max-h-[calc(100vh-4rem)] rounded-lg bg-background">
-        <ModalTitle className="sr-only">需要你的输入</ModalTitle>
+        <ModalTitle className="sr-only">{t("askUser.title")}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <MessageCircleQuestion className="size-4 shrink-0 text-[#7b5ac8]" />
-          <span className="min-w-0 truncate text-sm font-medium">需要你的输入</span>
+          <span className="min-w-0 truncate text-sm font-medium">{t("askUser.title")}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
             · {request.requesterName}
-            {queuedCount > 0 ? ` · 还有 ${queuedCount} 个请求` : ""}
+            {queuedCount > 0 ? ` · ${t("askUser.queuedCount", { count: queuedCount })}` : ""}
           </span>
         </header>
 
@@ -93,7 +95,7 @@ export function AskUserModal() {
             <textarea
               value={textValue}
               onChange={(event) => setTextValue(event.target.value)}
-              placeholder="输入回复"
+              placeholder={t("askUser.replyPlaceholder")}
               className="app-scrollbar min-h-[120px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus:border-[#9b6fe0]"
               autoFocus
             />
@@ -138,12 +140,12 @@ export function AskUserModal() {
               {request.allowCustomInput ? (
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">
-                    {request.customInputLabel || "其他 / 补充输入"}
+                    {request.customInputLabel || t("askUser.customInputLabel")}
                   </label>
                   <textarea
                     value={customValue}
                     onChange={(event) => setCustomValue(event.target.value)}
-                    placeholder="可以输入选项之外的信息"
+                    placeholder={t("askUser.customInputPlaceholder")}
                     className="app-scrollbar min-h-[88px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 outline-none transition-colors focus:border-[#9b6fe0]"
                   />
                 </div>
@@ -154,10 +156,10 @@ export function AskUserModal() {
 
         <ModalFooter>
           <Button variant="outline" onClick={cancel}>
-            取消
+            {t("cancel")}
           </Button>
           <Button variant="default" onClick={submit} disabled={!canSubmit}>
-            提交回复
+            {t("askUser.submit")}
           </Button>
         </ModalFooter>
       </ModalContent>

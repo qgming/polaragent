@@ -1,0 +1,19 @@
+{
+  "heading": "不止聊天，搞定一切",
+  "subheading": "本地运行、自主规划、安全可控的 AI 工作搭子",
+  "placeholder": "描述任务，/ 快捷调用，@ 添加文件",
+  "generalType": "通用",
+  "teamType": "团队",
+  "generalLabel": "通用对话",
+  "teamLabel": "团队协作",
+  "defaultAgent": "默认助手",
+  "noAgents": "暂无助手",
+  "selectTeam": "选择团队",
+  "noTeams": "暂无团队",
+  "selectDirectory": "选择工作目录",
+  "send": "发送",
+  "alertNoModel": "未配置模型",
+  "alertNoTeam": "未选择团队",
+  "alertNoTeamDesc": "请先选择一个团队",
+  "newChat": "新对话"
+}

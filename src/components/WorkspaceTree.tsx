@@ -7,6 +7,7 @@
 //   - 目录在前、文件在后，由后端排序
 
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronRight,
   ExternalLink,
@@ -33,6 +34,7 @@ function joinPath(base: string, name: string): string {
 }
 
 export function WorkspaceTree({ rootDir }: { rootDir: string }) {
+  const { t } = useTranslation("chat");
   const [entries, setEntries] = useState<DirEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +82,7 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
           type="button"
           onClick={() => void openPath(rootDir)}
           className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="在文件资源管理器中打开"
+	          title={t("workspace.openInExplorer")}
         >
           <ExternalLink className="size-3.5" />
         </button>
@@ -88,7 +90,7 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
           className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="刷新"
+	          title={t("workspace.refresh")}
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </button>
@@ -97,12 +99,12 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
       <div className="mt-1">
         {error ? (
           <p className="px-3 py-2 text-xs leading-5 text-destructive">
-            读取目录失败：{error}
+	            {t("workspace.readFailed", { message: error })}
           </p>
         ) : loading && !entries ? (
           <p className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
-            正在读取…
+	            {t("workspace.reading")}
           </p>
         ) : entries && entries.length > 0 ? (
           <ul className="space-y-0.5">
@@ -118,7 +120,7 @@ export function WorkspaceTree({ rootDir }: { rootDir: string }) {
           </ul>
         ) : (
           <p className="px-3 py-2 text-xs leading-5 text-muted-foreground">
-            该目录为空
+	            {t("workspace.empty")}
           </p>
         )}
       </div>

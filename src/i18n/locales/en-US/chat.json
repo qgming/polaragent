@@ -1,0 +1,89 @@
+{
+  "newChat": "New Chat",
+  "noModelConfigured": "Model Not Configured",
+  "attachmentNotSupported": "Attachments Not Supported in Guidance",
+  "attachmentNotSupportedDesc": "Only text guidance can be sent during an active task. Wait for the task to finish, then send attachments in a new message.",
+  "cutInFailed": "Cut-in Failed",
+  "cutInFailedDesc": "The current task just ended. Please resend as a new message.",
+  "placeholder": "Describe a task, / for shortcuts, @ to add files",
+  "guidePlaceholder": "Enter guidance — sent messages will be prioritized",
+  "tempDir": "Temp Directory",
+  "selectDirectory": "Select Directory",
+  "stop": "Stop",
+  "startRecording": "Start Recording",
+  "recording": "Recording",
+  "optimizing": "Optimizing",
+  "converting": "Converting",
+  "sendGuide": "Send Guidance",
+  "send": "Send",
+  "asrNotConfigured": "ASR Not Configured",
+  "asrNotConfiguredDesc": "Voice recognition is not configured. Please set up ASR in Settings.",
+  "asrFailed": "Voice Recognition Failed",
+  "userStopped": "User Stopped",
+  "asrFailedDesc": "Voice recognition failed. Check your network or configuration.",
+  "toolbar": {
+    "pickSkill": "Choose skill",
+    "noSkills": "No skills available",
+    "addAttachment": "Add attachment",
+    "textFile": "Text file",
+    "image": "Image",
+    "audio": "Audio",
+    "document": "Document (PDF/Word)"
+  },
+  "permission": {
+    "readonly": {
+      "label": "Read only",
+      "description": "Allow reading, searching, viewing, and interaction. Block writes, deletes, and command execution."
+    },
+    "full": {
+      "label": "Full",
+      "description": "No extra permission interception. Tool-level safety checks still apply."
+    },
+    "aiReview": {
+      "label": "AI review",
+      "description": "Let AI decide before each tool execution. Deny when uncertain."
+    }
+  },
+  "trace": {
+    "stepCount": "View {{count}} step",
+    "stepCount_other": "View {{count}} steps",
+    "deepThinking": "Deep thinking",
+    "taskCompleted": "Task completed",
+    "guided": "Conversation guided"
+  },
+  "actions": {
+    "copyPlainText": "Copy plain text",
+    "copyMarkdown": "Copy Markdown"
+  },
+  "monitor": {
+    "sections": {
+      "goal": "Goal",
+      "todos": "Todos",
+      "artifacts": "Artifacts"
+    },
+    "empty": {
+      "todos": "Task todos will appear here while the task runs",
+      "artifacts": "Generated files will appear here",
+      "noWorkspace": "No workspace selected",
+      "noSessionDir": "Session file directory does not exist"
+    },
+    "tabs": {
+      "final": "Generated files",
+      "workspace": "Workspace",
+      "session": "Temporary directory"
+    },
+    "artifactGroups": {
+      "final": "Final files",
+      "working": "Working files"
+    },
+    "previewTitle": "Preview {{path}}",
+    "playTitle": "Play {{name}}"
+  },
+  "workspace": {
+    "openInExplorer": "Open in File Explorer",
+    "refresh": "Refresh",
+    "readFailed": "Failed to read directory: {{message}}",
+    "reading": "Reading...",
+    "empty": "This directory is empty"
+  }
+}

@@ -1,5 +1,6 @@
 // 知识库多选下拉菜单
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +23,7 @@ export function KnowledgeBaseSelector({
   selectedIds,
   onChange,
 }: KnowledgeBaseSelectorProps) {
+  const { t } = useTranslation("knowledge");
   const allSources = useKnowledgeStore((state) => state.knowledgeBases);
   const sources = useMemo(
     () => allSources.filter((kb) => kb.enabled),
@@ -62,7 +64,7 @@ export function KnowledgeBaseSelector({
           variant="ghost"
           size="sm"
           type="button"
-          title={selectedKnowledgeBase?.name ?? "知识库"}
+          title={selectedKnowledgeBase?.name ?? t("selector.title")}
           className={cn(
             "h-7 hover:bg-muted hover:text-foreground transition-colors",
             hasSelection
@@ -81,7 +83,7 @@ export function KnowledgeBaseSelector({
       <DropdownMenuContent align="start" className="w-64">
         {sources.length === 0 ? (
           <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-            暂无可用知识库
+            {t("selector.empty")}
           </div>
         ) : (
           <>
@@ -100,7 +102,7 @@ export function KnowledgeBaseSelector({
                 <div className="flex flex-col gap-0.5">
                   <span className="text-sm">{kb.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    {kb.chunkCount} 块 · {kb.fileCount} 文档
+                    {t("selector.itemMeta", { chunks: kb.chunkCount, files: kb.fileCount })}
                   </span>
                 </div>
               </DropdownMenuItem>
@@ -115,7 +117,7 @@ export function KnowledgeBaseSelector({
                 selectedIds.length === sources.length && "bg-muted text-foreground",
               )}
             >
-              {selectedIds.length === sources.length ? "全部禁用" : "全部选中"}
+              {selectedIds.length === sources.length ? t("selector.disableAll") : t("selector.selectAll")}
             </DropdownMenuItem>
           </>
         )}

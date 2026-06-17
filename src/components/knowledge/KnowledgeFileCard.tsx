@@ -1,5 +1,6 @@
 // 文件卡片组件
 import { RefreshCw, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   Tooltip,
   TooltipContent,
@@ -20,12 +21,13 @@ export function KnowledgeFileCard({
   onReindex,
   disabled = false,
 }: KnowledgeFileCardProps) {
+  const { t, i18n } = useTranslation("knowledge");
   const statusLabels = {
-    pending: "待处理",
-    processing: "索引中",
-    ready: "就绪",
-    error: "错误",
-    incompatible: "异常",
+    pending: t("file.statuses.pending"),
+    processing: t("file.statuses.processing"),
+    ready: t("file.statuses.ready"),
+    error: t("file.statuses.error"),
+    incompatible: t("file.statuses.incompatible"),
   };
   const statusDotColors = {
     pending: "bg-amber-400",
@@ -48,8 +50,8 @@ export function KnowledgeFileCard({
         {file.error && <p className="mt-1 text-xs text-destructive">{file.error}</p>}
         <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
           <span>{(file.size / 1024).toFixed(1)} KB</span>
-          <span>{file.chunkCount} 分块</span>
-          <span>{new Date(file.createdAt).toLocaleString("zh-CN")}</span>
+          <span>{t("file.chunks", { count: file.chunkCount })}</span>
+          <span>{new Date(file.createdAt).toLocaleString(i18n.language)}</span>
         </div>
       </div>
       <div className="ml-3 flex items-center gap-2">
@@ -61,29 +63,29 @@ export function KnowledgeFileCard({
                 onClick={onReindex}
                 disabled={disabled || isProcessing}
                 className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                aria-label={`重新索引 ${file.name}`}
+                aria-label={t("file.reindex", { name: file.name })}
               >
                 <RefreshCw className={`size-4 ${isProcessing ? "animate-spin" : ""}`} />
               </button>
             </span>
           </TooltipTrigger>
-          <TooltipContent>{isProcessing ? "正在索引" : "重新索引该文件"}</TooltipContent>
+          <TooltipContent>{isProcessing ? t("file.indexing") : t("file.reindexTooltip")}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <span
               className={`size-2.5 shrink-0 rounded-full ${statusDotColors[file.status]}`}
-              aria-label={`状态：${statusLabels[file.status]}`}
+              aria-label={t("file.status", { status: statusLabels[file.status] })}
             />
           </TooltipTrigger>
-          <TooltipContent>状态：{statusLabels[file.status]}</TooltipContent>
+          <TooltipContent>{t("file.status", { status: statusLabels[file.status] })}</TooltipContent>
         </Tooltip>
         <button
           type="button"
           onClick={onRemove}
           className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-          title="删除"
-          aria-label={`删除 ${file.name}`}
+          title={t("file.delete")}
+          aria-label={t("file.deleteLabel", { name: file.name })}
         >
           <Trash2 className="size-4" />
         </button>

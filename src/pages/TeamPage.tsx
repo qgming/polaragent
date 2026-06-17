@@ -3,6 +3,7 @@
 // src/pages/TeamPage.tsx
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { v4 as uuidv4 } from "uuid";
 import { FolderOpen, Pencil, Plus, Search, Users } from "lucide-react";
 
@@ -17,6 +18,7 @@ import { useTeamsStore } from "@/stores/team/teams-store";
 import type { TeamConfig } from "@/types/config";
 
 export function TeamPage() {
+  const { t } = useTranslation("team");
   const teams = useTeamsStore((state) => state.teams);
   const addTeam = useTeamsStore((state) => state.addTeam);
   const updateTeam = useTeamsStore((state) => state.updateTeam);
@@ -63,7 +65,7 @@ export function TeamPage() {
   // 创建空白团队模板
   const createEmptyTeam = (): TeamConfig => ({
     id: uuidv4(),
-    name: "新建团队",
+    name: t("defaults.newTeamName"),
     avatar: "👥",
     description: "",
     version: "1.0.0",
@@ -85,11 +87,11 @@ export function TeamPage() {
         />
 
         <PageHero
-          title="团队"
-          bannerTitle="一群助手一起把事做成"
-          bannerDescription="让多个助手分工协作，复杂的事拆开来一起推进。"
+          title={t("page.title")}
+          bannerTitle={t("page.bannerTitle")}
+          bannerDescription={t("page.bannerDescription")}
           icon={Users}
-          kitLabel="Team Kit"
+          kitLabel={t("page.kitLabel")}
         />
 
         {visibleTeams.length > 0 ? (
@@ -142,6 +144,7 @@ function TeamCard({
   onClear: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation("team");
   const visibleMemberIds = team.memberIds.slice(0, 5);
   const hiddenMemberCount = Math.max(
     0,
@@ -152,7 +155,7 @@ function TeamCard({
       ? `+${hiddenMemberCount}`
       : `${team.memberIds.length}`;
   const modeLabel =
-    team.mode === "leader" ? "领导调度" : "头脑风暴";
+    team.mode === "leader" ? t("mode.leaderShort") : t("mode.equalShort");
 
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-[#9b6fe0]/30 hover:shadow-sm">
@@ -163,7 +166,7 @@ function TeamCard({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold">{team.name}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            {modeLabel} · {team.memberIds.length} 名成员
+            {modeLabel} · {t("card.memberCount", { count: team.memberIds.length })}
           </p>
         </div>
         {/* 右上角「更多」：hover 出现 */}
@@ -178,13 +181,13 @@ function TeamCard({
       </div>
 
       <p className="mt-2 line-clamp-2 h-10 overflow-hidden text-sm leading-5 text-muted-foreground">
-        {team.description || "暂无描述"}
+        {team.description || t("common.noDescription")}
       </p>
 
       {/* 成员头像簇：5 个头像 + 1 个数量圆，圆形随卡片宽度自动缩放。 */}
       <div className="mt-3">
         <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-          成员
+          {t("card.members")}
         </div>
         <div className="grid grid-cols-6 gap-1.5">
           {team.memberIds.length > 0 ? (
@@ -230,7 +233,7 @@ function TeamCard({
       <div className="mt-3 flex justify-end pt-0.5">
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="size-4" />
-          编辑团队
+          {t("card.edit")}
         </Button>
       </div>
     </div>
@@ -246,6 +249,7 @@ function TopToolbar({
   setSearch: (value: string) => void;
   onCreateTeam: () => void;
 }) {
+  const { t } = useTranslation("team");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
@@ -254,24 +258,25 @@ function TopToolbar({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
-          placeholder="搜索团队"
+          placeholder={t("toolbar.searchPlaceholder")}
         />
       </div>
       <Button onClick={onCreateTeam}>
         <Plus className="size-4" />
-        新建团队
+        {t("toolbar.create")}
       </Button>
     </div>
   );
 }
 
 function EmptyState() {
+  const { t } = useTranslation("team");
   return (
     <div className="mt-6 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-20 text-center">
       <FolderOpen className="size-9 text-muted-foreground" />
-      <h3 className="mt-4 text-base font-semibold">还没有团队</h3>
+      <h3 className="mt-4 text-base font-semibold">{t("empty.title")}</h3>
       <p className="mt-2 max-w-[420px] text-sm leading-6 text-muted-foreground">
-        点击右上角「新建团队」，挑选成员、选择协作模式，保存你的协作配置。
+        {t("empty.description")}
       </p>
     </div>
   );

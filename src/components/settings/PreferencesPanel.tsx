@@ -1,7 +1,8 @@
-// 偏好设置面板（主题/对话字体/字号 + SkillsMP API Key）
+// 偏好设置面板（主题/对话字体/字号 + 语言 + SkillsMP API Key）
 // src/components/settings/PreferencesPanel.tsx
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, Eye, EyeOff, KeyRound, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -16,6 +17,8 @@ export function PreferencesPanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
+
   const setAppearance = (updates: Partial<Settings["appearance"]>) =>
     onUpdate({
       appearance: {
@@ -26,12 +29,31 @@ export function PreferencesPanel({
 
   return (
     <section>
-      <PageTitle title="偏好设置" description="调整外观、对话与语音输入等个人偏好。" />
+      <PageTitle title={t("preferences.title")} description={t("preferences.description")} />
 
       <div className="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
         <SettingRow
-          title="主题亮暗"
-          description="浅色、深色，或跟随系统。"
+          title={t("preferences.language")}
+          description={t("preferences.languageDesc")}
+          control={
+            <SettingDropdown
+              value={settings.appearance.language}
+              onChange={(lang) =>
+                void setAppearance({
+                  language: lang as Settings["appearance"]["language"],
+                })
+              }
+              options={[
+                { value: "system", label: t("preferences.followSystem") },
+                { value: "zh-CN", label: t("preferences.simplifiedChinese") },
+                { value: "en-US", label: t("preferences.english") },
+              ]}
+            />
+          }
+        />
+        <SettingRow
+          title={t("preferences.theme")}
+          description={t("preferences.themeDesc")}
           control={
             <SettingDropdown
               value={settings.appearance.theme}
@@ -41,16 +63,16 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "light", label: "亮色" },
-                { value: "dark", label: "深色" },
-                { value: "system", label: "跟随系统" },
+                { value: "light", label: t("preferences.light") },
+                { value: "dark", label: t("preferences.dark") },
+                { value: "system", label: t("preferences.followSystem") },
               ]}
             />
           }
         />
         <SettingRow
-          title="对话字体"
-          description="对话内容使用无衬线、衬线或等宽字体。"
+          title={t("preferences.chatFont")}
+          description={t("preferences.chatFontDesc")}
           control={
             <SettingDropdown
               value={settings.appearance.chatFont}
@@ -60,16 +82,16 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "sans", label: "无衬线" },
-                { value: "serif", label: "衬线" },
-                { value: "mono", label: "等宽" },
+                { value: "sans", label: t("preferences.sans") },
+                { value: "serif", label: t("preferences.serif") },
+                { value: "mono", label: t("preferences.mono") },
               ]}
             />
           }
         />
         <SettingRow
-          title="对话字号"
-          description="调整对话中的文字大小。"
+          title={t("preferences.chatFontSize")}
+          description={t("preferences.chatFontSizeDesc")}
           control={
             <SettingDropdown
               value={settings.appearance.chatFontSize}
@@ -79,10 +101,10 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "small", label: "小" },
-                { value: "medium", label: "中" },
-                { value: "large", label: "大" },
-                { value: "xlarge", label: "特大" },
+                { value: "small", label: t("preferences.small") },
+                { value: "medium", label: t("preferences.medium") },
+                { value: "large", label: t("preferences.large") },
+                { value: "xlarge", label: t("preferences.xlarge") },
               ]}
             />
           }
@@ -106,6 +128,8 @@ function WindowBehaviorCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
+
   const setWindow = (updates: Partial<Settings["window"]>) =>
     onUpdate({
       window: {
@@ -117,8 +141,8 @@ function WindowBehaviorCard({
   return (
     <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
       <SettingRow
-        title="关闭时最小化到托盘"
-        description="点击窗口关闭按钮时隐藏到系统托盘并保留后台运行；可通过托盘图标重新打开。"
+        title={t("preferences.closeToTray")}
+        description={t("preferences.closeToTrayDesc")}
         control={
           <Switch
             checked={settings.window.closeToTray}
@@ -127,8 +151,8 @@ function WindowBehaviorCard({
         }
       />
       <SettingRow
-        title="启动时隐藏到托盘"
-        description="应用启动后不显示主窗口，直接在后台运行。可通过托盘图标打开窗口。"
+        title={t("preferences.startInSystemTray")}
+        description={t("preferences.startInSystemTrayDesc")}
         control={
           <Switch
             checked={settings.window.startInSystemTray}
@@ -148,6 +172,8 @@ function VoiceInputCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
+
   const audioDefaults = () => settings.audio ?? defaultSettings.audio!;
   const inputOptimization =
     settings.audio?.inputOptimization ??
@@ -170,8 +196,8 @@ function VoiceInputCard({
   return (
     <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
       <SettingRow
-        title="语音识别后自动发送"
-        description="语音识别完成后自动发送消息；与口语优化同时开启时，将在文本整理完成后发送。"
+        title={t("preferences.voiceAutoSend")}
+        description={t("preferences.voiceAutoSendDesc")}
         control={
           <Switch
             checked={inputOptimization.autoSend}
@@ -180,8 +206,8 @@ function VoiceInputCard({
         }
       />
       <SettingRow
-        title="语音识别文本优化"
-        description="识别完成后调用 AI 对文本进行整理，去除口头语与语气词，使表达更清晰、正式。"
+        title={t("preferences.voiceRefineText")}
+        description={t("preferences.voiceRefineTextDesc")}
         control={
           <Switch
             checked={inputOptimization.refineText}
@@ -201,6 +227,8 @@ function SkillsApiKeyCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
+
   const [value, setValue] = useState(settings.skillsApiKey ?? "");
   const [show, setShow] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
@@ -223,10 +251,10 @@ function SkillsApiKeyCard({
       <div className="px-5 py-5">
         <div className="flex items-center gap-2">
           <KeyRound className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">SkillsMP API Key</h3>
+          <h3 className="text-sm font-semibold">{t("preferences.skillsApiKeyTitle")}</h3>
         </div>
         <p className="mt-2 text-sm text-muted-foreground">
-          技能广场来自 SkillsMP。不填也能搜索（匿名额度较低）；填写后可提升每日配额。
+          {t("preferences.skillsApiKeyDesc")}
         </p>
         <div className="mt-4 flex items-center gap-2">
           <div className="relative flex-1">
@@ -253,7 +281,7 @@ function SkillsApiKeyCard({
             ) : (
               <Save className="size-4" />
             )}
-            保存
+            {t("common:save")}
           </Button>
         </div>
       </div>

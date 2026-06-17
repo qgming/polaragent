@@ -1,0 +1,155 @@
+{
+  "common": {
+    "noDescription": "No description"
+  },
+  "defaults": {
+    "newTeamName": "New team"
+  },
+  "page": {
+    "title": "Teams",
+    "bannerTitle": "A group of assistants, working together",
+    "bannerDescription": "Let multiple assistants divide the work and move complex tasks forward together.",
+    "kitLabel": "Team Kit"
+  },
+  "toolbar": {
+    "searchPlaceholder": "Search teams",
+    "create": "New team"
+  },
+  "mode": {
+    "leaderShort": "Leader orchestration",
+    "equalShort": "Brainstorm"
+  },
+  "card": {
+    "memberCount": "{{count}} member",
+    "memberCount_other": "{{count}} members",
+    "members": "Members",
+    "edit": "Edit team"
+  },
+  "empty": {
+    "title": "No teams yet",
+    "description": "Use New team to choose members, select a collaboration mode, and save your setup."
+  },
+  "actions": {
+    "edit": "Edit team",
+    "clearSessions": "Clear sessions",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "save": "Save"
+  },
+  "clear": {
+    "title": "Clear sessions",
+    "description": "Clear all team sessions for \"{{name}}\"? Members and configuration will be kept so you can start again. This cannot be undone."
+  },
+  "delete": {
+    "title": "Delete team",
+    "description": "Delete \"{{name}}\"? The team and all of its sessions will be removed. This cannot be undone."
+  },
+  "editor": {
+    "title": "Team details",
+    "errors": {
+      "nameRequired": "Enter a team name",
+      "minMembers": "A team needs at least 2 members"
+    },
+    "identity": {
+      "label": "Avatar and name",
+      "pickEmoji": "Choose emoji",
+      "namePlaceholder": "Team name"
+    },
+    "description": {
+      "label": "Team description",
+      "placeholder": "Describe what this team is good at"
+    },
+    "mode": {
+      "label": "Collaboration mode",
+      "placeholder": "Select collaboration mode",
+      "leaderOption": "👑 Leader mode - centralized orchestration",
+      "equalOption": "💡 Brainstorm - equal exploration",
+      "leaderDescription": "Centralized orchestration where members hand off or finish through control tools. Best for complex project execution.",
+      "equalDescription": "Equal exploration where members branch out, hand off, or converge through control tools. Best for brainstorming and direction finding."
+    },
+    "members": {
+      "label": "Team members (from built-in and installed assistants)",
+      "empty": "No assistants available. Create or install one on the Assistants page first."
+    },
+    "leader": {
+      "label": "Leader (choose from selected members)",
+      "placeholder": "Select leader",
+      "empty": "Select at least one member first"
+    },
+    "systemPrompt": {
+      "label": "Team system prompt",
+      "placeholder": "Define collaboration goals, roles, and boundaries for the team. This is added to every member's system prompt."
+    },
+    "skills": {
+      "label": "Team skills (available to everyone, even if a member has not enabled them)",
+      "empty": "No skills available"
+    },
+    "workspace": {
+      "label": "Workspace directory",
+      "select": "Choose workspace directory"
+    }
+  },
+  "chat": {
+    "emptyHintLeader": "the leader will coordinate members to finish it",
+    "emptyHintEqual": "members will explore as equals and hand off with control tools",
+    "emptyMessage": "Start a task for the team, and {{hint}}.",
+    "fallbackTeamName": "Team",
+    "fallbackMemberName": "Member",
+    "speaking": "Speaking...",
+    "processCount": "View {{count}} process steps",
+    "tempDirectory": "Temporary directory",
+    "chooseWorkspace": "Choose workspace",
+    "guidancePlaceholder": "Enter guidance; it will be added to the ongoing collaboration",
+    "composerPlaceholder": "Describe a task, use / for skills, @ for files, or choose members to direct speech",
+    "memberMenuTooltip": "Choose member (@ direct speech)",
+    "noMembers": "No members",
+    "stop": "Stop",
+    "sendGuidance": "Send guidance",
+    "send": "Send",
+    "alerts": {
+      "guidanceNoAttachmentsTitle": "Guidance does not support attachments",
+      "guidanceNoAttachmentsMessage": "While a team task is running, you can only send text guidance. Wait for the task to finish before sending a new message with attachments.",
+      "steerFailedTitle": "Failed to insert guidance",
+      "steerFailedMessage": "The team task has just finished. Send it again as a new message.",
+      "modelMissingTitle": "Model not configured"
+    }
+  },
+  "monitor": {
+    "sections": {
+      "todos": "Todos",
+      "votes": "Votes",
+      "artifacts": "Artifacts"
+    },
+    "empty": {
+      "todos": "Team todos will appear here while tasks run",
+      "votes": "No votes yet",
+      "artifacts": "Generated files will appear here",
+      "noWorkspace": "No workspace selected",
+      "noSessionDir": "Session file directory does not exist"
+    },
+    "tabs": {
+      "final": "Generated files",
+      "workspace": "Workspace",
+      "session": "Temporary directory"
+    },
+    "artifactGroups": {
+      "final": "Final files",
+      "working": "Working files"
+    },
+    "previewTitle": "Preview {{path}}",
+    "unknownMember": "Unknown",
+    "vote": {
+      "completed": "Completed",
+      "cancelled": "Incomplete",
+      "inProgress": "In progress {{voted}}/{{total}}",
+      "waiting": "Waiting for members to vote",
+      "voting": "Voting",
+      "voted": "Voted",
+      "failed": "Failed",
+      "pending": "Pending",
+      "voteCount": "{{count}} vote",
+      "voteCount_other": "{{count}} votes"
+    }
+  }
+}

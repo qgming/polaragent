@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./i18n"; // 必须在 App 之前导入，确保 i18next 在 react-i18next 之前就绪
 import App from "./App";
 import { PreviewWindow } from "./components/PreviewWindow";
 import { ErrorBoundary } from "./components/ErrorBoundary";

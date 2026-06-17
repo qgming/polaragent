@@ -2,6 +2,7 @@
 // API Key、国家代码（gl）、语言代码（hl）。
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Settings } from "@/types/config";
 import {
   ApiKeyField,
@@ -19,6 +20,7 @@ export function SerperConfigCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const config = settings.webSearch?.serper ?? { apiKey: "" };
   const [apiKey, setApiKey] = useState(config.apiKey ?? "");
   const [gl, setGl] = useState(config.gl ?? "cn");
@@ -50,29 +52,29 @@ export function SerperConfigCard({
 
   return (
     <ConfigCard
-      title="Serper 配置"
+      title={t("webSearch.serperTitle")}
       description={
         <>
-          访问 <ExternalLink url="https://serper.dev">serper.dev</ExternalLink>{" "}
-          注册并获取 API Key。免费账户每月 2,500 次搜索。
+          {t("webSearch.visit")} <ExternalLink url="https://serper.dev">serper.dev</ExternalLink>{" "}
+          {t("webSearch.signupQuota2500")}
         </>
       }
     >
       <ApiKeyField value={apiKey} onChange={setApiKey} />
 
       <TextField
-        label="国家代码（gl）"
+        label={t("webSearch.countryCode")}
         value={gl}
         onChange={setGl}
         placeholder="cn"
-        hint="如 cn（中国）、us（美国）、jp（日本）"
+        hint={t("webSearch.countryCodeHint")}
       />
       <TextField
-        label="语言代码（hl）"
+        label={t("webSearch.languageCode")}
         value={hl}
         onChange={setHl}
         placeholder="zh-cn"
-        hint="如 zh-cn（简体中文）、en（英语）、ja（日语）"
+        hint={t("webSearch.languageCodeHint")}
       />
 
       <SaveButton state={saveState} onSave={handleSave} />

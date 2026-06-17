@@ -3,6 +3,7 @@
 // 基础字段（ApiKeyField / TextField）复用自 settings/shared-fields。
 
 import { type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, Loader2, Save, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { openExternal } from "@/lib/electron/electron-api";
@@ -73,14 +74,15 @@ export function CheckboxRow({
 
 // 「完整内容选项」分组块（带标题与底部提示）
 export function ContentOptionsGroup({ children }: { children: ReactNode }) {
+  const { t } = useTranslation("settings");
   return (
     <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
       <h4 className="mb-3 text-xs font-semibold text-foreground">
-        完整内容选项（增强搜索结果）
+        {t("webSearch.contentOptionsTitle")}
       </h4>
       <div className="space-y-2">{children}</div>
       <p className="mt-2 text-xs text-muted-foreground">
-        注意：启用这些选项会返回更多内容，但会消耗更多 token。
+        {t("webSearch.contentOptionsNote")}
       </p>
     </div>
   );
@@ -88,6 +90,7 @@ export function ContentOptionsGroup({ children }: { children: ReactNode }) {
 
 // 底部保存按钮（统一三态展示）
 export function SaveButton({ state, onSave }: { state: SaveState; onSave: () => void }) {
+  const { t } = useTranslation("settings");
   return (
     <div className="flex justify-end pt-2">
       <Button onClick={() => void onSave()} disabled={state === "saving"}>
@@ -98,7 +101,7 @@ export function SaveButton({ state, onSave }: { state: SaveState; onSave: () => 
         ) : (
           <Save className="size-4" />
         )}
-        保存配置
+        {t("common:saveConfig")}
       </Button>
     </div>
   );

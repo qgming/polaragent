@@ -3,6 +3,7 @@
 // 各服务商配置卡拆分在 ./web-search 子目录。
 
 import type { Settings, WebSearchProvider } from "@/types/config";
+import { useTranslation } from "react-i18next";
 import { PageTitle, SettingDropdown } from "./settings-shared";
 import { PROVIDER_META } from "./web-search/web-search-meta";
 import { TavilyConfigCard } from "./web-search/TavilyConfigCard";
@@ -18,6 +19,7 @@ export function WebSearchPanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const webSearch = settings.webSearch ?? {
     provider: "tavily",
     tavily: { apiKey: "" },
@@ -38,16 +40,16 @@ export function WebSearchPanel({
   return (
     <section>
       <PageTitle
-        title="网络搜索"
-        description="配置 AI 使用的网络搜索服务，获取实时信息。"
+        title={t("webSearch.title")}
+        description={t("webSearch.description")}
       />
 
       <div className="mt-8 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-3.5">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium">搜索服务商</h3>
+            <h3 className="text-sm font-medium">{t("webSearch.provider")}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              选择一个服务商，AI 将使用它进行网络搜索。
+              {t("webSearch.providerDesc")}
             </p>
           </div>
           <div className="shrink-0">

@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import bigmodelLogo from "@/assets/mcp/zhipu-color.svg";
 import composioLogo from "@/assets/mcp/composio-white.svg";
@@ -23,42 +24,42 @@ const MCP_PROVIDERS: McpProvider[] = [
   {
     id: "bigmodel",
     name: "BigModel MCP Market",
-    description: "精选 MCP，极速接入",
+    description: "Curated MCP providers for fast setup",
     url: "https://bigmodel.cn/marketplace/index/mcp",
     logoSrc: bigmodelLogo,
   },
   {
     id: "modelscope",
     name: "modelscope.cn",
-    description: "魔搭社区 MCP 服务器",
+    description: "ModelScope community MCP servers",
     url: "https://modelscope.cn/mcp",
     logoSrc: modelscopeLogo,
   },
   {
     id: "higress",
     name: "mcp.higress.ai",
-    description: "Higress MCP 服务器",
+    description: "Higress MCP servers",
     url: "https://mcp.higress.ai/",
     logoSrc: higressLogo,
   },
   {
     id: "mcp-so",
     name: "mcp.so",
-    description: "MCP 服务器发现平台",
+    description: "MCP server discovery platform",
     url: "https://mcp.so/",
     logoSrc: mcpsoLogo,
   },
   {
     id: "smithery",
     name: "smithery.ai",
-    description: "Smithery MCP 工具",
+    description: "Smithery MCP tools",
     url: "https://smithery.ai/",
     logoSrc: smitheryLogo,
   },
   {
     id: "glama",
     name: "glama.ai",
-    description: "Glama MCP 服务器目录",
+    description: "Glama MCP server directory",
     url: "https://glama.ai/mcp/servers",
     logoSrc: glamaLogo,
     logoTone: "white",
@@ -66,7 +67,7 @@ const MCP_PROVIDERS: McpProvider[] = [
   {
     id: "pulsemcp",
     name: "pulsemcp.com",
-    description: "Pulse MCP 服务器",
+    description: "Pulse MCP servers",
     url: "https://www.pulsemcp.com/",
     logoSrc: mcpLogo,
     logoTone: "white",
@@ -74,7 +75,7 @@ const MCP_PROVIDERS: McpProvider[] = [
   {
     id: "composio",
     name: "mcp.composio.dev",
-    description: "Composio MCP 开发工具",
+    description: "Composio MCP developer tools",
     url: "https://mcp.composio.dev/",
     logoSrc: composioLogo,
     logoTone: "dark",
@@ -82,7 +83,7 @@ const MCP_PROVIDERS: McpProvider[] = [
   {
     id: "official",
     name: "Model Context Protocol Servers",
-    description: "官方 MCP 服务器集合",
+    description: "Official MCP server collection",
     url: "https://github.com/modelcontextprotocol/servers",
     logoSrc: mcpLogo,
     logoTone: "white",
@@ -90,7 +91,7 @@ const MCP_PROVIDERS: McpProvider[] = [
   {
     id: "awesome",
     name: "Awesome MCP Servers",
-    description: "精选的 MCP 服务器列表",
+    description: "Curated list of MCP servers",
     url: "https://github.com/punkpeye/awesome-mcp-servers",
     logoSrc: githubLogo,
     logoTone: "white",
@@ -102,6 +103,7 @@ export function McpProviderDiscovery({
 }: {
   onOpenUrl: (url: string) => void;
 }) {
+  const { t } = useTranslation("tools");
   return (
     <section className="mt-5">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -109,6 +111,7 @@ export function McpProviderDiscovery({
           <McpProviderCard
             key={provider.id}
             provider={provider}
+            description={t(`discover.providers.${provider.id}`, { defaultValue: provider.description })}
             onOpen={() => onOpenUrl(provider.url)}
           />
         ))}
@@ -118,9 +121,11 @@ export function McpProviderDiscovery({
 }
 
 function McpProviderCard({
+  description,
   onOpen,
   provider,
 }: {
+  description: string;
   onOpen: () => void;
   provider: McpProvider;
 }) {
@@ -148,7 +153,7 @@ function McpProviderCard({
       </div>
 
       <p className="mt-3 line-clamp-2 min-h-[40px] text-sm leading-5 text-muted-foreground">
-        {provider.description}
+        {description}
       </p>
     </button>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import hljs from "highlight.js/lib/common";
 
 import { Button } from "@/components/ui/button";
@@ -106,6 +107,7 @@ export function CodeBlock({
   language = "text",
   searchQuery = "",
 }: CodeBlockProps) {
+  const { t } = useTranslation("common");
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +168,7 @@ export function CodeBlock({
               className="h-7 gap-1 px-2 text-xs text-gray-400 hover:text-white"
             >
               {expanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-              {expanded ? "收起" : "展开"}
+	              {expanded ? t("collapse") : t("expand")}
             </Button>
           ) : null}
           <Button
@@ -178,12 +180,12 @@ export function CodeBlock({
             {copied ? (
               <>
                 <Check className="size-3" />
-                已复制
+	                {t("copied")}
               </>
             ) : (
               <>
                 <Copy className="size-3" />
-                复制代码
+	                {t("copyCode")}
               </>
             )}
           </Button>

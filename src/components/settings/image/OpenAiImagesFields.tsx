@@ -16,9 +16,13 @@ export interface OpenAiImagesValue {
 
 export function OpenAiImagesFields({
   value,
+  actualRequestLabel,
+  imageModelLabel,
   onChange,
 }: {
   value: OpenAiImagesValue;
+  actualRequestLabel: (url: string) => string;
+  imageModelLabel: string;
   onChange: (patch: Partial<OpenAiImagesValue>) => void;
 }) {
   const fallback = "https://api.openai.com/v1";
@@ -29,11 +33,11 @@ export function OpenAiImagesFields({
         value={value.baseURL}
         onChange={(v) => onChange({ baseURL: v })}
         placeholder={fallback}
-        hint={`实际请求：${previewOpenAiUrl(value.baseURL, fallback, "/images/generations")}`}
+        hint={actualRequestLabel(previewOpenAiUrl(value.baseURL, fallback, "/images/generations"))}
       />
       <ApiKeyField value={value.apiKey} onChange={(v) => onChange({ apiKey: v })} />
       <TextField
-        label="图片模型"
+        label={imageModelLabel}
         value={value.model}
         onChange={(v) => onChange({ model: v })}
         placeholder="gpt-image-2"

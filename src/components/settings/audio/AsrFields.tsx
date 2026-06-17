@@ -1,5 +1,6 @@
 // ASR 字段组件
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Eye, EyeOff } from "lucide-react";
 
 export interface AsrValue {
@@ -21,6 +22,7 @@ export function AsrFields({
   value: AsrValue;
   onChange: (patch: Partial<AsrValue>) => void;
 }) {
+  const { t } = useTranslation("settings");
   const [showKey, setShowKey] = useState(false);
 
   return (
@@ -37,7 +39,7 @@ export function AsrFields({
           className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
         />
         <p className="mt-1.5 text-xs text-muted-foreground">
-          实际请求：{previewUrl(value.baseURL, "https://api.openai.com/v1", "/audio/transcriptions")}
+          {t("audio.actualRequest", { url: previewUrl(value.baseURL, "https://api.openai.com/v1", "/audio/transcriptions") })}
         </p>
       </div>
 
@@ -56,6 +58,7 @@ export function AsrFields({
           <button
             type="button"
             onClick={() => setShowKey(!showKey)}
+            aria-label={showKey ? t("models.hideApiKey") : t("models.showApiKey")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -65,7 +68,7 @@ export function AsrFields({
 
       <div>
         <label className="mb-2 block text-xs font-medium text-muted-foreground">
-          识别模型
+          {t("audio.asrModel")}
         </label>
         <input
           type="text"
@@ -78,7 +81,7 @@ export function AsrFields({
 
       <div>
         <label className="mb-2 block text-xs font-medium text-muted-foreground">
-          语言 (可选，如 zh/en，留空自动检测)
+          {t("audio.language")}
         </label>
         <input
           type="text"

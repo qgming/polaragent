@@ -2,6 +2,7 @@
 // src/components/ui/alert-dialog.tsx
 
 import { AlertTriangle, Info, CheckCircle2, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Modal, ModalBody, ModalContent, ModalTitle } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -46,10 +47,11 @@ export function AlertDialog({
   onOpenChange,
   title,
   message,
-  confirmLabel = "我知道了",
+  confirmLabel,
   variant = "info",
   onConfirm,
 }: AlertDialogProps) {
+  const { t } = useTranslation("common");
   const config = variantConfig[variant];
   const Icon = config.icon;
 
@@ -74,7 +76,7 @@ export function AlertDialog({
             </div>
 
             <Button onClick={handleConfirm} className="w-full">
-              {confirmLabel}
+	              {confirmLabel ?? t("alert.ok")}
             </Button>
           </div>
         </ModalBody>

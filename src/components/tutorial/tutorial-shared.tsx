@@ -2,6 +2,7 @@
 // src/components/tutorial/tutorial-shared.tsx
 
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 // 教程页面标题
 export function TutorialTitle({
@@ -77,10 +78,11 @@ export function OrderedListItem({ number, children }: { number: number; children
 
 // 提示卡片
 export function TipCard({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation("tutorial");
   return (
     <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
       <div className="flex gap-2">
-        <span className="text-xs font-medium text-primary">💡 提示</span>
+        <span className="text-xs font-medium text-primary">{t("tipLabel")}</span>
       </div>
       <div className="mt-2 text-sm leading-relaxed text-muted-foreground">
         {children}

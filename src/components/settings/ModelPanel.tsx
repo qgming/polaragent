@@ -4,6 +4,7 @@
 // 模型服务卡片与「添加模型服务」弹窗拆分至 model/ 子目录。
 
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -28,14 +29,15 @@ export function ModelPanel({
   onRemoveProvider: (id: string) => Promise<void>;
   onSetDefaultModel: (providerId: string, modelId: string) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   return (
     <section>
       <PageTitle
-        title="模型设置"
-        description="统一管理模型服务与默认路由模型，聊天、团队和标题生成会通过这里切换服务商和模型。"
+        title={t("models.title")}
+        description={t("models.description")}
       />
 
       <DefaultModelCard
@@ -44,10 +46,10 @@ export function ModelPanel({
       />
 
       <div className="mt-8 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">模型服务</h2>
+        <h2 className="text-sm font-semibold">{t("models.modelServices")}</h2>
         <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
           <Plus className="size-4" />
-          添加服务
+          {t("models.addService")}
         </Button>
       </div>
 
@@ -64,7 +66,7 @@ export function ModelPanel({
         </div>
       ) : (
         <div className="mt-4 rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center text-sm text-muted-foreground">
-          还没有模型服务，点击右上角「添加服务」开始配置。
+          {t("models.emptyState")}
         </div>
       )}
 
@@ -81,9 +83,9 @@ export function ModelPanel({
       {removingId ? (
         <ConfirmDialog
           isOpen
-          title="删除模型服务"
-          description="删除后该模型服务及其模型配置将被移除，使用它的助手会回退到模型设置里的默认路由模型。确定删除吗？"
-          confirmLabel="删除"
+          title={t("models.deleteService")}
+          description={t("models.deleteServiceDesc")}
+          confirmLabel={t("common:delete")}
           variant="destructive"
           onConfirm={async () => {
             await onRemoveProvider(removingId);
@@ -104,6 +106,7 @@ function DefaultModelCard({
   providers: ProvidersConfig;
   onSetDefaultModel: (providerId: string, modelId: string) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   // 把所有 provider 的 models 拍平成可选项，value 编码为 "providerId::modelId"
   const options = useMemo(() => {
     const list: Array<{ value: string; label: string }> = [];
@@ -127,15 +130,15 @@ function DefaultModelCard({
     <div className="mt-8 rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">默认路由模型</h3>
+          <h3 className="text-sm font-semibold">{t("models.defaultModel")}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            未单独锁定模型的助手会自动使用这里选择的服务和模型，切换后后续调用立即生效。
+            {t("models.defaultModelDesc")}
           </p>
         </div>
         {options.length > 0 ? (
           <SettingDropdown
             value={currentValue}
-            placeholder="选择默认路由模型"
+            placeholder={t("models.selectDefaultModel")}
             options={options}
             onChange={(value) => {
               const [providerId, modelId] = value.split("::");
@@ -144,7 +147,7 @@ function DefaultModelCard({
           />
         ) : (
           <span className="text-xs text-muted-foreground">
-            请先在下方添加模型服务和模型
+            {t("models.noModelHint")}
           </span>
         )}
       </div>

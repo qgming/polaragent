@@ -2,6 +2,7 @@
 // API Key、搜索类型、Autoprompt、分类过滤，以及完整内容增强选项。
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Settings } from "@/types/config";
 import { SettingDropdown } from "../settings-shared";
 import {
@@ -23,6 +24,7 @@ export function ExaConfigCard({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const config = settings.webSearch?.exa ?? { apiKey: "" };
   const [apiKey, setApiKey] = useState(config.apiKey ?? "");
   const [type, setType] = useState<"neural" | "keyword">(config.type ?? "neural");
@@ -66,24 +68,24 @@ export function ExaConfigCard({
 
   return (
     <ConfigCard
-      title="Exa 配置"
+      title={t("webSearch.exaTitle")}
       description={
         <>
-          访问 <ExternalLink url="https://exa.ai">exa.ai</ExternalLink>{" "}
-          注册并获取 API Key。免费账户每月 1,000 次搜索。
+          {t("webSearch.visit")} <ExternalLink url="https://exa.ai">exa.ai</ExternalLink>{" "}
+          {t("webSearch.signupQuota1000")}
         </>
       }
     >
       <ApiKeyField value={apiKey} onChange={setApiKey} placeholder="exa_..." />
 
       <div>
-        <label className={labelClass}>搜索类型</label>
+        <label className={labelClass}>{t("webSearch.searchType")}</label>
         <SettingDropdown
           value={type}
           onChange={(v) => setType(v as "neural" | "keyword")}
           options={[
-            { value: "neural", label: "神经网络（语义理解）" },
-            { value: "keyword", label: "关键词匹配" },
+            { value: "neural", label: t("webSearch.typeNeural") },
+            { value: "keyword", label: t("webSearch.typeKeyword") },
           ]}
           className="w-full"
         />
@@ -97,12 +99,12 @@ export function ExaConfigCard({
             onChange={(e) => setUseAutoprompt(e.target.checked)}
             className="size-4"
           />
-          使用 Autoprompt（AI 自动优化查询）
+          {t("webSearch.useAutoprompt")}
         </label>
       </div>
 
       <TextField
-        label="分类过滤（可选）"
+        label={t("webSearch.categoryFilter")}
         value={category}
         onChange={setCategory}
         placeholder="news, research, company"
@@ -110,13 +112,13 @@ export function ExaConfigCard({
 
       <ContentOptionsGroup>
         <CheckboxRow checked={includeText} onChange={setIncludeText}>
-          包含完整文本内容
+          {t("webSearch.includeText")}
         </CheckboxRow>
         <CheckboxRow checked={includeHighlights} onChange={setIncludeHighlights}>
-          包含高亮摘要
+          {t("webSearch.includeHighlights")}
         </CheckboxRow>
         <CheckboxRow checked={includeSummary} onChange={setIncludeSummary}>
-          包含 AI 生成的摘要
+          {t("webSearch.includeSummary")}
         </CheckboxRow>
       </ContentOptionsGroup>
 

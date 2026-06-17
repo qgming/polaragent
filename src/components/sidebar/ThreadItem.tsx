@@ -1,6 +1,7 @@
 // 对话列表项：点击进入对话；hover 出「更多」菜单（重命名/清空/删除）
 import { Loader2, MoreHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,7 @@ export function ThreadItem({
   running: boolean;
   thread: { id: string; title: string; updatedAt: number };
 }) {
+  const { t } = useTranslation("common");
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
@@ -85,23 +87,23 @@ export function ThreadItem({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-32">
               <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-                重命名
+	                {t("sidebar.rename")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setClearOpen(true)}>
-                清空对话
+	                {t("sidebar.clearChat")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setDeleteOpen(true)}
               >
-                删除
+	                {t("delete")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           {running ? (
             <span
               className="flex size-7 shrink-0 items-center justify-center text-[#9b6fe0]"
-              title="后台运行中"
+	              title={t("sidebar.running")}
             >
               <Loader2 className="size-4 animate-spin" />
             </span>
@@ -112,10 +114,10 @@ export function ThreadItem({
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>重命名对话</DialogTitle>
-            <DialogDescription>
-              修改后会立即更新侧边栏里的对话名称。
-            </DialogDescription>
+	            <DialogTitle>{t("sidebar.renameChatTitle")}</DialogTitle>
+	            <DialogDescription>
+	              {t("sidebar.renameChatDescription")}
+	            </DialogDescription>
           </DialogHeader>
           <input
             autoFocus
@@ -132,11 +134,11 @@ export function ThreadItem({
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+	                {t("cancel")}
               </Button>
             </DialogClose>
             <Button onClick={handleRename} type="button">
-              保存
+	              {t("save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -145,15 +147,15 @@ export function ThreadItem({
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>删除对话</DialogTitle>
-            <DialogDescription>
-              确定删除「{thread.title}」吗？此操作会从当前列表移除该对话。
-            </DialogDescription>
+	            <DialogTitle>{t("sidebar.deleteChatTitle")}</DialogTitle>
+	            <DialogDescription>
+	              {t("sidebar.deleteChatDescription", { title: thread.title })}
+	            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+	                {t("cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -164,7 +166,7 @@ export function ThreadItem({
               }}
               type="button"
             >
-              删除
+	              {t("delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -173,15 +175,15 @@ export function ThreadItem({
       <Dialog open={clearOpen} onOpenChange={setClearOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>清空对话</DialogTitle>
-            <DialogDescription>
-              确定清空「{thread.title}」的所有消息吗？会话与所选助手会保留，方便继续与该助手开始新对话。此操作不可撤销。
-            </DialogDescription>
+	            <DialogTitle>{t("sidebar.clearChatTitle")}</DialogTitle>
+	            <DialogDescription>
+	              {t("sidebar.clearChatDescription", { title: thread.title })}
+	            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+	                {t("cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -192,7 +194,7 @@ export function ThreadItem({
               }}
               type="button"
             >
-              清空
+	              {t("sidebar.clear")}
             </Button>
           </DialogFooter>
         </DialogContent>

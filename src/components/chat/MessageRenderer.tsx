@@ -2,6 +2,7 @@
 // 从 ChatPage 抽出——这些属于「消息呈现」逻辑，与页面骨架解耦。
 import { Copy, FileCode, Zap } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   ThinkingRow,
@@ -34,6 +35,7 @@ export const ChatMessageView = memo(function ChatMessageView({
   message: ChatMessage;
   threadId: string;
 }) {
+  const { t } = useTranslation("chat");
   // 该条 assistant 消息关联的工具步骤轨迹（按 messageId 分组）
   // 注意：selector 必须返回引用稳定的值。直接在 selector 里 .filter() 会每次
   // 产生新数组，触发 Zustand 无限重渲染并使整个应用白屏。这里只订阅原始
@@ -109,15 +111,15 @@ export const ChatMessageView = memo(function ChatMessageView({
 
           {/* 复制按钮 */}
           <div className="mt-3 flex items-center gap-1 text-muted-foreground">
-            <IconButton
-              label="复制纯文本"
-              onClick={() => void copyText(stripMarkdown(message.content))}
-            >
+	            <IconButton
+	              label={t("actions.copyPlainText")}
+	              onClick={() => void copyText(stripMarkdown(message.content))}
+	            >
               <Copy className="size-3.5" />
             </IconButton>
-          <IconButton
-            label="复制 Markdown"
-            onClick={() => void copyText(message.content)}
+	          <IconButton
+	            label={t("actions.copyMarkdown")}
+	            onClick={() => void copyText(message.content)}
           >
             <FileCode className="size-3.5" />
           </IconButton>

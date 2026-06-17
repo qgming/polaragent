@@ -2,6 +2,7 @@
 // src/pages/SettingsPage.tsx
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, AudioLines, Bot, Database, Globe, Image, Info, Monitor, Search, Settings2 } from "lucide-react";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
@@ -19,34 +20,39 @@ import { AboutPanel } from "@/components/settings/AboutPanel";
 
 export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "data" | "computerUse" | "browserUse" | "about";
 
-// 左侧导航按分组组织（通用 / 高级）
-const navGroups: Array<{
-  title: string;
-  items: Array<{ id: SettingsSection; label: string; icon: typeof Settings2 }>;
-}> = [
-  {
-    title: "通用",
-    items: [
-      { id: "preferences", label: "偏好设置", icon: Settings2 },
-      { id: "models", label: "模型设置", icon: Bot },
-      { id: "imageGeneration", label: "图片设置", icon: Image },
-      { id: "audio", label: "音频设置", icon: AudioLines },
-      { id: "webSearch", label: "网络搜索", icon: Search },
-      { id: "knowledge", label: "嵌入配置", icon: Database },
-    ],
-  },
-  {
-    title: "高级",
-    items: [
-      { id: "data", label: "数据管理", icon: Database },
-      { id: "computerUse", label: "Computer Use", icon: Monitor },
-      { id: "browserUse", label: "Browser Use", icon: Globe },
-    ],
-  },
-  {
-    title: "关于",
-    items: [{ id: "about", label: "关于软件", icon: Info }],
-  },
+// 设置项定义（标签由 i18n 驱动，此处只放 id + icon）
+const navItems: Array<{ id: SettingsSection; icon: typeof Settings2 }> = [
+  { id: "preferences", icon: Settings2 },
+  { id: "models", icon: Bot },
+  { id: "imageGeneration", icon: Image },
+  { id: "audio", icon: AudioLines },
+  { id: "webSearch", icon: Search },
+  { id: "knowledge", icon: Database },
+  { id: "data", icon: Database },
+  { id: "computerUse", icon: Monitor },
+  { id: "browserUse", icon: Globe },
+  { id: "about", icon: Info },
+];
+
+// 支持的语言标题 i18n key 映射
+const navLabelKey: Record<SettingsSection, string> = {
+  preferences: "settings:nav.preferences",
+  models: "settings:nav.models",
+  imageGeneration: "settings:nav.image",
+  audio: "settings:nav.audio",
+  webSearch: "settings:nav.webSearch",
+  knowledge: "settings:nav.knowledge",
+  data: "settings:nav.data",
+  computerUse: "Computer Use",
+  browserUse: "Browser Use",
+  about: "settings:nav.about",
+};
+
+// 导航分组
+const navGroupIds: Array<{ titleKey: string; items: SettingsSection[] }> = [
+  { titleKey: "settings:nav.general", items: ["preferences", "models", "imageGeneration", "audio", "webSearch", "knowledge"] },
+  { titleKey: "settings:nav.advanced", items: ["data", "computerUse", "browserUse"] },
+  { titleKey: "settings:nav.aboutGroup", items: ["about"] },
 ];
 
 export function SettingsPage({
@@ -56,6 +62,7 @@ export function SettingsPage({
   initialSection?: SettingsSection;
   onBack: () => void;
 }) {
+  const { t } = useTranslation();
   const providers = useConfigStore((state) => state.providers);
   const settings = useConfigStore((state) => state.settings);
   const updateSettings = useConfigStore((state) => state.updateSettings);
@@ -79,23 +86,27 @@ export function SettingsPage({
           className="mb-8 flex items-center gap-2 px-2 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          返回应用
+          {t("settings:nav.backToApp")}
         </button>
 
-        {navGroups.map((group, index) => (
-          <div key={group.title} className={index > 0 ? "mt-6" : undefined}>
+        {navGroupIds.map((group, index) => (
+          <div key={group.titleKey} className={index > 0 ? "mt-6" : undefined}>
             <p className="mb-2 px-3 text-xs font-medium text-muted-foreground">
-              {group.title}
+              {t(group.titleKey)}
             </p>
             <nav className="space-y-1">
-              {group.items.map((item) => (
-                <NavButton
-                  key={item.id}
-                  item={item}
-                  active={activeSection === item.id}
-                  onClick={() => setActiveSection(item.id)}
-                />
-              ))}
+              {group.items.map((itemId) => {
+                const item = navItems.find((n) => n.id === itemId)!;
+                const label = navLabelKey[itemId].includes(":") ? t(navLabelKey[itemId]) : navLabelKey[itemId];
+                return (
+                  <NavButton
+                    key={item.id}
+                    item={{ ...item, label }}
+                    active={activeSection === item.id}
+                    onClick={() => setActiveSection(item.id)}
+                  />
+                );
+              })}
             </nav>
           </div>
         ))}

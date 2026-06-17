@@ -6,6 +6,7 @@
 import { MessageCircle, Settings, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   primaryNav,
@@ -67,6 +68,7 @@ export function AppSidebar({
   setSidebarTab: (tab: "tasks" | "team") => void;
   threads: Array<{ id: string; title: string; updatedAt: number }>;
 }) {
+  const { t } = useTranslation("nav");
   // 记录上一个 tab，用于推导内容横滑方向：切到右侧 tab → 内容从右进(+1)，反之 -1
   const tabOrder: Array<"tasks" | "team"> = ["tasks", "team"];
   const prevTabRef = useRef(sidebarTab);
@@ -100,7 +102,7 @@ export function AppSidebar({
               }
               icon={item.icon}
               key={item.id}
-              label={item.label}
+              label={t(`sidebar.${item.id}`)}
               onClick={() => onOpenPage(item.id)}
             />
           ))}
@@ -117,7 +119,7 @@ export function AppSidebar({
               active={activePage === item.id && !activeTeamId}
               icon={item.icon}
               key={item.id}
-              label={item.label}
+              label={t(`sidebar.${item.id}`)}
               onClick={() => onOpenPage(item.id)}
             />
           ))}
@@ -128,7 +130,7 @@ export function AppSidebar({
           {tabOrder.map((tab) => {
             const active = sidebarTab === tab;
             const Icon = tab === "tasks" ? MessageCircle : Users;
-            const label = tab === "tasks" ? "对话" : "团队";
+            const label = tab === "tasks" ? t("sidebar.tasks") : t("sidebar.teamTab");
             return (
               <button
                 key={tab}
@@ -211,7 +213,7 @@ export function AppSidebar({
           <SidebarButton
             active={activePage === "settings"}
             icon={Settings}
-            label="设置"
+            label={t("sidebar.settings")}
             onClick={() => onOpenPage("settings")}
           />
         </nav>

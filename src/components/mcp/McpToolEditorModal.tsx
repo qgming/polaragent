@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Braces, ListChecks, Loader2 } from "lucide-react";
 
 import {
@@ -17,16 +18,6 @@ export type McpEditorMode = "create" | "edit" | "install";
 const textareaClass =
   "min-h-[360px] w-full resize-y rounded-lg border border-border bg-background px-3 py-3 font-mono text-xs leading-5 outline-none focus:border-ring";
 
-const createPlaceholder = `粘贴 MCP 客户端配置，例如：
-{
-  "mcpServers": {
-    "server-name": {
-      "command": "npx",
-      "args": ["-y", "your-mcp-package"]
-    }
-  }
-}`;
-
 export function McpToolEditorModal({
   mode,
   onOpenChange,
@@ -42,6 +33,7 @@ export function McpToolEditorModal({
   open: boolean;
   tool: McpToolConfig;
 }) {
+  const { t } = useTranslation("tools");
   const [jsonText, setJsonText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -73,7 +65,7 @@ export function McpToolEditorModal({
   };
 
   const title =
-    mode === "create" ? "新增 MCP 工具" : mode === "install" ? "配置并安装 MCP" : "编辑 MCP 工具";
+    mode === "create" ? t("editor.titleCreate") : mode === "install" ? t("editor.titleInstall") : t("editor.titleEdit");
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
@@ -83,7 +75,7 @@ export function McpToolEditorModal({
           <Braces className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate text-sm font-medium">{title}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
-            · 直接粘贴 MCP 客户端配置
+            · {t("editor.subtitle")}
           </span>
         </header>
 
@@ -102,7 +94,7 @@ export function McpToolEditorModal({
                   if (error) setError(null);
                 }}
                 className={textareaClass}
-                placeholder={mode === "create" ? createPlaceholder : undefined}
+                placeholder={mode === "create" ? t("editor.placeholder") : undefined}
                 spellCheck={false}
               />
           </div>
@@ -122,16 +114,16 @@ export function McpToolEditorModal({
 
         <ModalFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
-            取消
+            {t("editor.cancel")}
           </Button>
           <Button variant="default" onClick={() => void submit()} disabled={isSaving}>
             {isSaving ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                获取工具中
+                {t("editor.fetchingTools")}
               </>
             ) : (
-              mode === "install" ? "安装" : "保存"
+              mode === "install" ? t("editor.install") : t("editor.save")
             )}
           </Button>
         </ModalFooter>
@@ -147,23 +139,24 @@ function DiscoveredToolsPanel({
   tools: McpDiscoveredTool[];
   visible: boolean;
 }) {
+  const { t } = useTranslation("tools");
   if (!visible) return null;
 
   return (
     <div className="rounded-lg border border-border bg-background">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-2">
-          <ListChecks className="size-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">已获取工具</span>
+          <div className="flex items-center gap-2">
+            <ListChecks className="size-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{t("editor.discoveredTools")}</span>
         </div>
         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          {tools.length} 个
+          {t("editor.toolCount", { count: tools.length })}
         </span>
       </div>
 
       {tools.length === 0 ? (
         <div className="px-4 py-5 text-sm text-muted-foreground">
-          暂未获取到远端工具，保存时会重新连接 MCP server。
+          {t("editor.noDiscoveredTools")}
         </div>
       ) : (
         <div className="max-h-[320px] overflow-y-auto">
@@ -177,6 +170,7 @@ function DiscoveredToolsPanel({
 }
 
 function RemoteToolCard({ tool }: { tool: McpDiscoveredTool }) {
+  const { t } = useTranslation("tools");
   const fields = extractSchemaFields(tool.inputSchema);
 
   return (
@@ -191,12 +185,12 @@ function RemoteToolCard({ tool }: { tool: McpDiscoveredTool }) {
           ) : null}
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-          {tool.description || "暂无描述"}
+          {tool.description || t("common.noDescription")}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
         <Braces className="size-3" />
-        {fields.length} 参数
+        {t("editor.parameterCount", { count: fields.length })}
       </div>
     </div>
   );

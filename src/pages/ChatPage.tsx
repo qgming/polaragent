@@ -13,6 +13,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 import { abortAgentThread, promptAgent, steerAgentThread } from "@/ai/agent";
 import {
@@ -112,6 +113,7 @@ export function ChatPage({
   const stickToBottomRef = useRef(true);
   // 自定义对话框
   const { alert: showAlert, AlertDialog } = useAlert();
+  const { t } = useTranslation();
 
   // 该会话是否已产生监控数据（待办/产物/步骤）——决定面板默认是否展开
   const hasMonitorData = useTaskMonitorStore((state) => {
@@ -211,8 +213,8 @@ export function ChatPage({
       // 引导插队是纯文本语义：带附件时无法随引导发送，避免静默丢弃，给出明确提示。
       if (attachments.length > 0) {
         await showAlert({
-          title: "引导不支持附件",
-          message: "任务进行中只能发送文本引导。请等任务结束后，再带附件作为新消息发送。",
+          title: t("chat:attachmentNotSupported"),
+          message: t("chat:attachmentNotSupportedDesc"),
           variant: "warning",
         });
         return;
@@ -232,8 +234,8 @@ export function ChatPage({
 
       setComposer(input);
       await showAlert({
-        title: "插队失败",
-        message: "当前任务刚好结束，请重新发送为新消息。",
+        title: t("chat:cutInFailed"),
+        message: t("chat:cutInFailedDesc"),
         variant: "warning",
       });
       return;
@@ -243,7 +245,7 @@ export function ChatPage({
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
       await showAlert({
-        title: "未配置模型",
+        title: t("chat:noModelConfigured"),
         message: providerCheck.message,
         variant: "warning",
       });
@@ -344,7 +346,7 @@ export function ChatPage({
         type: "goal_paused",
         status: "paused",
         timestamp: Date.now(),
-        error: "用户手动停止",
+        error: t("chat:userStopped"),
       });
     }
     abortAgentThread(threadId);
@@ -354,7 +356,7 @@ export function ChatPage({
     <>
       <div className="flex h-full min-w-0">
         <section className="relative flex h-full min-w-0 flex-1 flex-col">
-          <PageHeader title={activeThreadTitle || "新对话"} />
+          <PageHeader title={activeThreadTitle || t("chat:newChat")} />
 
           <div
             ref={scrollAreaRef}
@@ -462,6 +464,7 @@ function Composer({
   knowledgeBaseIds: string[];
   onKnowledgeChange: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
@@ -476,10 +479,10 @@ function Composer({
     sessionFilesDir &&
     normalizeDir(workingDir) === normalizeDir(sessionFilesDir);
   const dirLabel = isTempDir
-    ? "临时目录"
+    ? t("chat:tempDir")
     : workingDir
       ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
-      : "选择工作目录";
+      : t("chat:selectDirectory");
 
   // 响应式：narrow 模式下工作目录按钮最大宽度更小
   const dirButtonMaxWidth = breakpoint === "narrow" ? "max-w-[120px]" : "max-w-[260px]";
@@ -505,11 +508,11 @@ function Composer({
         // 获取 ASR 配置
         const settings = useConfigStore.getState().settings.audio;
         const asrConfig = settings?.asr;
-        if (!asrConfig?.provider) throw new Error("ASR 接口未配置");
+        if (!asrConfig?.provider) throw new Error(t("chat:asrNotConfigured"));
 
         const activeConfig = asrConfig.provider === "audio" ? asrConfig.audio : asrConfig.chat;
         if (!activeConfig?.apiKey?.trim() || !activeConfig.model?.trim()) {
-          throw new Error("语音识别未配置，请在设置中配置 ASR");
+          throw new Error(t("chat:asrNotConfiguredDesc"));
         }
 
         // 将 Blob 转为 base64
@@ -579,7 +582,7 @@ function Composer({
         }
       } catch (err) {
         console.error("语音识别失败", err);
-        const message = err instanceof Error ? err.message : "语音识别失败";
+        const message = err instanceof Error ? err.message : t("chat:asrFailed");
         alert(message);
         // 出错时也删除临时文件
         if (tempPath) {
@@ -605,7 +608,7 @@ function Composer({
           onSkillsChange={onSkillsChange}
           onFilesChange={onFilesChange}
           onEnter={onEnter}
-          placeholder={isResponding ? "输入引导，发送后会插队到后续步骤" : "描述任务，/ 快捷调用，@ 添加文件"}
+          placeholder={isResponding ? t("chat:guidePlaceholder") : t("chat:placeholder")}
           className="app-scrollbar max-h-[220px] min-h-[74px] overflow-y-auto px-4 py-3"
         />
 
@@ -641,13 +644,13 @@ function Composer({
                   {breakpoint !== "narrow" ? <span className="truncate">{dirLabel}</span> : null}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{workingDir || "选择工作目录"}</TooltipContent>
+              <TooltipContent>{workingDir || t("chat:selectDirectory")}</TooltipContent>
             </Tooltip>
           </div>
 
           <div className="flex items-center gap-2">
             {isResponding ? (
-              <IconButton label="停止" onClick={onAbort}>
+              <IconButton label={t("chat:stop")} onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
             ) : null}
@@ -672,18 +675,18 @@ function Composer({
                 ) : isRefining ? (
                   <>
                     <AudioLines animate loop size={16} />
-                    <span className="text-xs">优化中</span>
+                    <span className="text-xs">{t("chat:optimizing")}</span>
                   </>
                 ) : isTranscribing ? (
                   <>
                     <AudioLines animate loop size={16} />
-                    <span className="text-xs">转换中</span>
+                    <span className="text-xs">{t("chat:converting")}</span>
                   </>
                 ) : (
                   <AudioLines size={16} />
                 )}
                 <span className="sr-only">
-                  {audioRecorder.isRecording ? "录音中" : isRefining ? "优化中" : isTranscribing ? "转换中" : "开始录音"}
+                  {audioRecorder.isRecording ? t("chat:recording") : isRefining ? t("chat:optimizing") : isTranscribing ? t("chat:converting") : t("chat:startRecording")}
                 </span>
               </Button>
             )}
@@ -696,7 +699,7 @@ function Composer({
                 type="button"
               >
                 <SendHorizontal className="size-4" />
-                <span className="sr-only">{isResponding ? "发送引导" : "发送"}</span>
+                <span className="sr-only">{isResponding ? t("chat:sendGuide") : t("common:send")}</span>
               </Button>
             ) : null}
           </div>

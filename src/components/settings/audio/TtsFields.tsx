@@ -1,5 +1,6 @@
 // TTS 字段组件
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, Plus, Edit2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { VoiceConfig } from "@/types/config";
@@ -24,6 +25,7 @@ export function TtsFields({
   value: TtsValue;
   onChange: (patch: Partial<TtsValue>) => void;
 }) {
+  const { t } = useTranslation("settings");
   const [showKey, setShowKey] = useState(false);
   const [editingVoice, setEditingVoice] = useState<VoiceConfig | null>(null);
   const [showDialog, setShowDialog] = useState(false);
@@ -76,7 +78,7 @@ export function TtsFields({
           className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
         />
         <p className="mt-1.5 text-xs text-muted-foreground">
-          实际请求：{previewUrl(value.baseURL, "https://api.openai.com/v1", "/chat/completions")}
+          {t("audio.actualRequest", { url: previewUrl(value.baseURL, "https://api.openai.com/v1", "/chat/completions") })}
         </p>
       </div>
 
@@ -95,6 +97,7 @@ export function TtsFields({
           <button
             type="button"
             onClick={() => setShowKey(!showKey)}
+            aria-label={showKey ? t("models.hideApiKey") : t("models.showApiKey")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -104,7 +107,7 @@ export function TtsFields({
 
       <div>
         <label className="mb-2 block text-xs font-medium text-muted-foreground">
-          模型
+          {t("audio.model")}
         </label>
         <input
           type="text"
@@ -118,11 +121,11 @@ export function TtsFields({
       <div>
         <div className="mb-3 flex items-center justify-between">
           <label className="text-xs font-medium text-muted-foreground">
-            音色列表
+            {t("audio.voiceList")}
           </label>
           <Button variant="outline" size="sm" onClick={handleAddVoice} className="h-7 gap-1 text-xs">
             <Plus className="size-3.5" />
-            添加音色
+            {t("audio.addVoice")}
           </Button>
         </div>
 
@@ -144,12 +147,12 @@ export function TtsFields({
                     <span className="text-sm font-medium">{voice.voice}</span>
                     {value.defaultVoice === voice.id && (
                       <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
-                        默认
+                        {t("audio.default")}
                       </span>
                     )}
                   </div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    语速: {voice.speed}
+                    {t("audio.voiceSpeed", { speed: voice.speed })}
                   </div>
                 </div>
               </div>
@@ -179,13 +182,13 @@ export function TtsFields({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-lg">
             <h3 className="mb-4 text-lg font-semibold">
-              {value.voices.find((v) => v.id === editingVoice.id) ? "编辑音色" : "添加音色"}
+              {value.voices.find((v) => v.id === editingVoice.id) ? t("audio.editVoice") : t("audio.addVoice")}
             </h3>
 
             <div className="space-y-4">
               <div>
                 <label className="mb-2 block text-xs font-medium text-muted-foreground">
-                  音色标识
+                  {t("audio.voiceId")}
                 </label>
                 <input
                   type="text"
@@ -197,7 +200,7 @@ export function TtsFields({
 
               <div>
                 <label className="mb-2 block text-xs font-medium text-muted-foreground">
-                  语速 (0.25 - 4.0)
+                  {t("audio.speed")}
                 </label>
                 <input
                   type="number"
@@ -212,7 +215,7 @@ export function TtsFields({
 
               <div>
                 <label className="mb-2 block text-xs font-medium text-muted-foreground">
-                  音频格式
+                  {t("audio.audioFormat")}
                 </label>
                 <select
                   value={editingVoice.format}
@@ -242,9 +245,9 @@ export function TtsFields({
                   setEditingVoice(null);
                 }}
               >
-                取消
+                {t("common:cancel")}
               </Button>
-              <Button onClick={handleSaveVoice}>保存</Button>
+              <Button onClick={handleSaveVoice}>{t("common:save")}</Button>
             </div>
           </div>
         </div>

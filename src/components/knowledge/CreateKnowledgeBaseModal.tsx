@@ -1,5 +1,6 @@
 // 创建知识库弹窗
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Modal, ModalBody, ModalContent, ModalHeader, ModalTitle } from "@/components/ui/modal";
 import { useKnowledgeStore } from "@/stores/knowledge-store";
@@ -10,6 +11,7 @@ interface CreateKnowledgeBaseModalProps {
 }
 
 export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledgeBaseModalProps) {
+  const { t } = useTranslation("knowledge");
   const createKnowledgeBase = useKnowledgeStore((state) => state.createKnowledgeBase);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -35,7 +37,7 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
       setChunkSize(512);
       setOverlap(50);
     } catch (error) {
-      console.error("创建知识库失败:", error);
+      console.error(t("form.createFailed"), error);
     } finally {
       setSubmitting(false);
     }
@@ -45,19 +47,19 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
     <Modal open={open} onOpenChange={onOpenChange}>
       <ModalContent>
         <ModalHeader>
-          <ModalTitle>新建知识库</ModalTitle>
+          <ModalTitle>{t("form.createTitle")}</ModalTitle>
         </ModalHeader>
         <ModalBody>
           <form onSubmit={handleSubmit} className="space-y-4">
             <label className="block">
               <span className="mb-1.5 block text-sm text-muted-foreground">
-                名称 <span className="text-destructive">*</span>
+                {t("form.name")} <span className="text-destructive">*</span>
               </span>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例如：项目文档、技术手册"
+                placeholder={t("form.namePlaceholder")}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 required
                 autoFocus
@@ -65,11 +67,11 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-sm text-muted-foreground">简介</span>
+              <span className="mb-1.5 block text-sm text-muted-foreground">{t("form.description")}</span>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="简要说明这个知识库的内容范围"
+                placeholder={t("form.descriptionPlaceholder")}
                 rows={3}
                 className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               />
@@ -78,7 +80,7 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
                 <span className="mb-1.5 block text-sm text-muted-foreground">
-                  分块大小 (tokens)
+                  {t("form.chunkSize")}
                 </span>
                 <select
                   value={chunkSize}
@@ -86,14 +88,14 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 >
                   <option value={256}>256</option>
-                  <option value={512}>512（推荐）</option>
+                  <option value={512}>{t("form.recommended", { value: 512 })}</option>
                   <option value={1024}>1024</option>
                 </select>
               </label>
 
               <label className="block">
                 <span className="mb-1.5 block text-sm text-muted-foreground">
-                  块重叠 (tokens)
+                  {t("form.overlap")}
                 </span>
                 <select
                   value={overlap}
@@ -102,7 +104,7 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
                 >
                   <option value={0}>0</option>
                   <option value={25}>25</option>
-                  <option value={50}>50（推荐）</option>
+                  <option value={50}>{t("form.recommended", { value: 50 })}</option>
                   <option value={100}>100</option>
                 </select>
               </label>
@@ -110,10 +112,10 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
 
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                取消
+                {t("common:cancel")}
               </Button>
               <Button type="submit" disabled={!name.trim() || submitting}>
-                创建
+                {t("form.create")}
               </Button>
             </div>
           </form>

@@ -2,6 +2,7 @@
 // src/components/goal/GoalSection.tsx
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AlertCircle,
   CheckCircle2,
@@ -38,6 +39,7 @@ export function GoalSection({
   threadId: string;
   agentId: string;
 }) {
+  const { t } = useTranslation("common");
   const goal = useGoalStore((s) => s.getGoal(threadId));
   const clearGoal = useGoalStore((s) => s.clearGoal);
   const setStatus = useGoalStore((s) => s.setStatus);
@@ -68,7 +70,7 @@ export function GoalSection({
             onClick={() => setIsEditModalOpen(true)}
           >
             <Plus className="size-3.5" />
-            创建目标
+	            {t("goal.createTitle")}
           </Button>
         </div>
 
@@ -82,7 +84,7 @@ export function GoalSection({
     );
   }
 
-  const statusInfo = getStatusInfo(goal.status);
+  const statusInfo = getStatusInfo(goal.status, t);
   const isRunning = isGoalRunningStatus(goal.status);
   const canStart = goal.status === "ready";
   const canResume =
@@ -100,7 +102,7 @@ export function GoalSection({
       type: "goal_paused",
       status: "paused",
       timestamp: Date.now(),
-      error: "用户手动暂停",
+	      error: t("goal.manualPause"),
     });
     abortAgentThread(threadId);
   };
@@ -134,7 +136,7 @@ export function GoalSection({
       type: "goal_cleared",
       status: goal.status,
       timestamp: Date.now(),
-      error: "用户清除目标",
+	      error: t("goal.manualClear"),
     });
     clearGoal(threadId);
   };
@@ -155,7 +157,7 @@ export function GoalSection({
                 {statusInfo.label}
               </span>
               <span className="text-[11px] text-muted-foreground">
-                {goal.evaluatedTurnCount}/{goal.maxTurns ?? "-"} 轮
+	                {t("goal.turns", { current: goal.evaluatedTurnCount, total: goal.maxTurns ?? "-" })}
               </span>
             </div>
             <p className="line-clamp-4 text-sm leading-relaxed text-foreground">
@@ -170,7 +172,7 @@ export function GoalSection({
                 size="icon"
                 className="size-7"
                 onClick={handlePause}
-                title="暂停目标"
+	                title={t("goal.pause")}
               >
                 <Pause className="size-3.5" />
               </Button>
@@ -180,7 +182,7 @@ export function GoalSection({
                 size="icon"
                 className="size-7"
                 onClick={handleResume}
-                title="恢复目标"
+	                title={t("goal.resume")}
               >
                 <Play className="size-3.5" />
               </Button>
@@ -190,7 +192,7 @@ export function GoalSection({
                 size="icon"
                 className="size-7"
                 onClick={handleStart}
-                title="启动目标"
+	                title={t("goal.start")}
               >
                 <Play className="size-3.5" />
               </Button>
@@ -201,7 +203,7 @@ export function GoalSection({
               className="size-7"
               onClick={() => setIsEditModalOpen(true)}
               disabled={!canEdit}
-              title="编辑目标"
+	              title={t("goal.editTitle")}
             >
               <Edit className="size-3.5" />
             </Button>
@@ -211,7 +213,7 @@ export function GoalSection({
               className="size-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={handleRemove}
               disabled={isRunning}
-              title="移除目标"
+	              title={t("goal.remove")}
             >
               <Trash2 className="size-3.5" />
             </Button>
@@ -222,13 +224,13 @@ export function GoalSection({
           <div className="space-y-2 rounded-md bg-muted/45 px-3 py-2 text-xs leading-relaxed">
             {goal.successCriteria ? (
               <div>
-                <span className="font-medium text-foreground">验收：</span>
+	                <span className="font-medium text-foreground">{t("goal.successCriteriaLabel")}</span>
                 <span className="text-muted-foreground">{goal.successCriteria}</span>
               </div>
             ) : null}
             {goal.constraints ? (
               <div>
-                <span className="font-medium text-foreground">约束：</span>
+	                <span className="font-medium text-foreground">{t("goal.constraintsLabel")}</span>
                 <span className="text-muted-foreground">{goal.constraints}</span>
               </div>
             ) : null}
@@ -246,7 +248,7 @@ export function GoalSection({
           />
           <Metric
             icon={<Gauge className="size-3.5" />}
-            label={`${goal.autoContinueCount} 次续跑`}
+	            label={t("goal.continueCount", { count: goal.autoContinueCount })}
           />
         </div>
 
@@ -279,6 +281,7 @@ function Metric({
 }
 
 function GoalEvaluationDetails({ goal }: { goal: GoalState }) {
+  const { t } = useTranslation("common");
   const evaluation = goal.lastEvaluation;
   if (!evaluation && !goal.lastError) return null;
 
@@ -290,7 +293,7 @@ function GoalEvaluationDetails({ goal }: { goal: GoalState }) {
 
       {evaluation?.missingItems.length ? (
         <div>
-          <div className="mb-1 font-medium text-muted-foreground">未完成</div>
+	          <div className="mb-1 font-medium text-muted-foreground">{t("goal.missingItems")}</div>
           <ul className="space-y-1 text-muted-foreground">
             {evaluation.missingItems.slice(0, 4).map((item) => (
               <li key={item} className="line-clamp-2">
@@ -303,7 +306,7 @@ function GoalEvaluationDetails({ goal }: { goal: GoalState }) {
 
       {evaluation?.evidence.length ? (
         <div>
-          <div className="mb-1 font-medium text-muted-foreground">证据</div>
+	          <div className="mb-1 font-medium text-muted-foreground">{t("goal.evidence")}</div>
           <ul className="space-y-1 text-muted-foreground">
             {evaluation.evidence.slice(0, 4).map((item) => (
               <li key={item} className="line-clamp-2">
@@ -321,65 +324,65 @@ function GoalEvaluationDetails({ goal }: { goal: GoalState }) {
   );
 }
 
-function getStatusInfo(status: GoalStatus) {
+function getStatusInfo(status: GoalStatus, t: (key: string) => string) {
   switch (status) {
     case "ready":
       return {
-        label: "就绪",
+        label: t("goal.status.ready"),
         className: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
         icon: <Pause className="size-3" />,
       };
     case "running":
       return {
-        label: "执行中",
+        label: t("goal.status.running"),
         className: "bg-green-500/10 text-green-600 dark:text-green-400",
         icon: <Loader2 className="size-3 animate-spin" />,
       };
     case "evaluating":
       return {
-        label: "评估中",
+        label: t("goal.status.evaluating"),
         className: "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400",
         icon: <Loader2 className="size-3 animate-spin" />,
       };
     case "continuing":
       return {
-        label: "续跑中",
+        label: t("goal.status.continuing"),
         className: "bg-green-500/10 text-green-600 dark:text-green-400",
         icon: <Loader2 className="size-3 animate-spin" />,
       };
     case "completed":
       return {
-        label: "已完成",
+        label: t("goal.status.completed"),
         className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         icon: <CheckCircle2 className="size-3" />,
       };
     case "paused":
       return {
-        label: "已暂停",
+        label: t("goal.status.paused"),
         className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
         icon: <Pause className="size-3" />,
       };
     case "needs_user_input":
       return {
-        label: "等输入",
+        label: t("goal.status.needsUserInput"),
         className: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-400",
         icon: <AlertCircle className="size-3" />,
       };
     case "blocked":
       return {
-        label: "已阻塞",
+        label: t("goal.status.blocked"),
         className: "bg-red-500/10 text-red-600 dark:text-red-400",
         icon: <ShieldAlert className="size-3" />,
       };
     case "budget_exhausted":
       return {
-        label: "预算耗尽",
+        label: t("goal.status.budgetExhausted"),
         className: "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
         icon: <Gauge className="size-3" />,
       };
     case "errored":
       return {
-        label: "出错",
+        label: t("goal.status.errored"),
         className: "bg-red-500/10 text-red-600 dark:text-red-400",
         icon: <AlertCircle className="size-3" />,
       };

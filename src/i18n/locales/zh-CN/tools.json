@@ -1,0 +1,364 @@
+{
+  "page": {
+    "title": "工具",
+    "bannerTitle": "让助手能用上更多外部能力",
+    "bannerDescription": "接入外部服务后，助手能查信息、连平台，把事真正办到底。",
+    "kitLabel": "Tool Hub"
+  },
+  "tabs": {
+    "discover": "发现",
+    "builtin": "内置",
+    "installed": "已安装"
+  },
+  "toolbar": {
+    "addMcp": "新增 MCP"
+  },
+  "empty": {
+    "builtinTitle": "没有找到内置工具",
+    "builtinDescription": "内置工具由运行时注册表和 mcp/builtin 自动生成。",
+    "installedTitle": "还没有已安装的 MCP 工具",
+    "installedDescription": "可以从发现页找到 MCP 提供商，也可以新建自定义 MCP 工具。"
+  },
+  "errors": {
+    "openLinkFailed": "打开链接失败"
+  },
+  "delete": {
+    "title": "删除工具",
+    "message": "确定删除「{{name}}」吗？此操作不可撤销。",
+    "confirm": "删除",
+    "success": "已删除工具：{{name}}"
+  },
+  "actions": {
+    "edit": "编辑",
+    "check": "检测",
+    "checking": "检测中",
+    "checkTitle": "检测 MCP 是否可用",
+    "delete": "删除"
+  },
+  "common": {
+    "noDescription": "暂无描述"
+  },
+  "mcp": {
+    "requiresConfig": "需要配置",
+    "expandTools": "展开工具清单",
+    "collapseTools": "收起工具清单",
+    "noRemoteTools": "暂未获取到工具清单，编辑保存后会重新拉取。"
+  },
+  "status": {
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "available": "可用",
+    "pendingCheck": "待检查"
+  },
+  "installStatus": {
+    "checking": "检测中",
+    "installed": "可用",
+    "installedWithCount": "可用 · {{count}}",
+    "failed": "失败",
+    "unknown": "未检测",
+    "checkedAt": "检测时间：{{time}}"
+  },
+  "editor": {
+    "titleCreate": "新增 MCP 工具",
+    "titleInstall": "配置并安装 MCP",
+    "titleEdit": "编辑 MCP 工具",
+    "subtitle": "直接粘贴 MCP 客户端配置",
+    "placeholder": "粘贴 MCP 客户端配置，例如：\n{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"your-mcp-package\"]\n    }\n  }\n}",
+    "cancel": "取消",
+    "fetchingTools": "获取工具中",
+    "install": "安装",
+    "save": "保存",
+    "discoveredTools": "已获取工具",
+    "toolCount": "{{count}} 个",
+    "noDiscoveredTools": "暂未获取到远端工具，保存时会重新连接 MCP server。",
+    "parameterCount": "{{count}} 参数"
+  },
+  "discover": {
+    "providers": {
+      "bigmodel": "精选 MCP，极速接入",
+      "modelscope": "魔搭社区 MCP 服务器",
+      "higress": "Higress MCP 服务器",
+      "mcp-so": "MCP 服务器发现平台",
+      "smithery": "Smithery MCP 工具",
+      "glama": "Glama MCP 服务器目录",
+      "pulsemcp": "Pulse MCP 服务器",
+      "composio": "Composio MCP 开发工具",
+      "official": "官方 MCP 服务器集合",
+      "awesome": "精选的 MCP 服务器列表"
+    }
+  },
+  "builtin": {
+    "groups": {
+      "system": {
+        "name": "系统信息",
+        "description": "获取时间、位置、硬件、网络等系统信息"
+      },
+      "computeruse": {
+        "name": "Computer Use",
+        "description": "控制 Windows 桌面应用程序"
+      },
+      "browseruse": {
+        "name": "Browser Use",
+        "description": "控制 Chrome 浏览器，操作网页"
+      },
+      "task": {
+        "name": "任务管理",
+        "description": "维护待办清单，跟踪任务进展"
+      },
+      "network": {
+        "name": "网络工具",
+        "description": "搜索互联网信息，读取网页内容"
+      },
+      "file": {
+        "name": "文件操作",
+        "description": "读写编辑文件，管理目录结构"
+      },
+      "office": {
+        "name": "办公创作",
+        "description": "生成 Word、PPT、PDF 办公文件"
+      },
+      "knowledge": {
+        "name": "知识库",
+        "description": "检索知识库文档，获取相关内容"
+      },
+      "image": {
+        "name": "图片工具",
+        "description": "生成图片并保存为会话产物"
+      },
+      "audio": {
+        "name": "音频工具",
+        "description": "语音识别与语音合成"
+      },
+      "dev": {
+        "name": "开发工具",
+        "description": "执行 shell 命令，运行项目脚本"
+      },
+      "skill": {
+        "name": "技能",
+        "description": "查看并读取当前助手可用技能"
+      },
+      "interaction": {
+        "name": "用户交互",
+        "description": "向用户请求输入，收集选择反馈"
+      },
+      "team": {
+        "name": "团队协作",
+        "description": "控制协作流程，发起和参与投票"
+      }
+    },
+    "tools": {
+      "system_info": {
+        "name": "系统信息",
+        "description": "获取电脑的系统信息，包括当前时间、时区、位置、硬件配置、网络状态等。"
+      },
+      "windows_snapshot": {
+        "name": "Windows 截图",
+        "description": "获取 Windows 活动窗口或桌面的截图和 UI 树结构，包含可点击元素的位置和信息。"
+      },
+      "windows_accessibility_tree": {
+        "name": "获取 UI 树",
+        "description": "获取 UI Automation 树结构（无截图），比 snapshot 更快，适合频繁读取 UI 状态。"
+      },
+      "windows_list_windows": {
+        "name": "列出窗口",
+        "description": "列出所有顶级桌面窗口，返回窗口标题、进程ID、窗口句柄等信息。"
+      },
+      "windows_find": {
+        "name": "Windows 查找",
+        "description": "在 Windows 应用中查找 UI 元素。"
+      },
+      "windows_element_info": {
+        "name": "元素信息",
+        "description": "获取指定 UI 元素或坐标处元素的详细信息。"
+      },
+      "windows_focus": {
+        "name": "聚焦元素",
+        "description": "使用 UI Automation 将焦点移动到指定元素。"
+      },
+      "windows_invoke": {
+        "name": "调用元素",
+        "description": "优先使用 UIA Pattern 操作元素，必要时回退点击。"
+      },
+      "windows_set_value": {
+        "name": "设置元素值",
+        "description": "优先使用 UIA ValuePattern 设置输入框值。"
+      },
+      "windows_activate_window": {
+        "name": "激活窗口",
+        "description": "按标题、进程 ID 或 HWND 激活目标窗口。"
+      },
+      "windows_click": {
+        "name": "Windows 点击",
+        "description": "在 Windows 应用中点击指定坐标或 UI 元素。"
+      },
+      "windows_double_click": {
+        "name": "Windows 双击",
+        "description": "在 Windows 应用中双击指定坐标或 UI 元素，用于打开文件、展开树节点等。"
+      },
+      "windows_move": {
+        "name": "移动鼠标",
+        "description": "移动鼠标指针到指定坐标或 UI 元素中心。"
+      },
+      "windows_drag": {
+        "name": "Windows 拖拽",
+        "description": "按路径执行鼠标拖拽。"
+      },
+      "windows_scroll": {
+        "name": "Windows 滚动",
+        "description": "在 Windows 应用中滚动内容。"
+      },
+      "windows_type": {
+        "name": "Windows 输入",
+        "description": "在 Windows 应用的当前焦点控件中输入文本。"
+      },
+      "windows_keypress": {
+        "name": "Windows 按键",
+        "description": "在 Windows 应用中按下键盘按键或组合键。"
+      },
+      "windows_wait": {
+        "name": "Windows 等待",
+        "description": "等待窗口动画、加载或焦点变化完成。"
+      },
+      "windows_batch": {
+        "name": "Windows 批量操作",
+        "description": "按顺序执行多个 Computer Use 动作，减少多轮调用开销。"
+      },
+      "browser_tabs": {
+        "name": "列出标签页",
+        "description": "列出当前所有浏览器标签页。"
+      },
+      "browser_open": {
+        "name": "打开标签页",
+        "description": "打开新的浏览器标签页。"
+      },
+      "browser_close": {
+        "name": "关闭标签页",
+        "description": "关闭指定的浏览器标签页。"
+      },
+      "browser_scan": {
+        "name": "扫描页面",
+        "description": "扫描页面内容，获取文本或结构化信息。"
+      },
+      "browser_snapshot": {
+        "name": "页面快照",
+        "description": "获取页面可操作元素快照，生成 @e 引用用于后续点击或填充。"
+      },
+      "browser_click": {
+        "name": "点击元素",
+        "description": "点击页面元素，支持 CSS 选择器或 @e 引用。"
+      },
+      "browser_fill": {
+        "name": "填充表单",
+        "description": "填充表单输入框。"
+      },
+      "browser_execute": {
+        "name": "执行脚本",
+        "description": "在页面中执行 JavaScript 代码。"
+      },
+      "browser_screenshot": {
+        "name": "浏览器截图",
+        "description": "截取页面截图。"
+      },
+      "browser_network": {
+        "name": "网络监控",
+        "description": "监控网络请求。"
+      },
+      "browser_console": {
+        "name": "控制台日志",
+        "description": "监听并读取页面 console 与异常日志。"
+      },
+      "update_todos": {
+        "name": "更新待办",
+        "description": "维护当前任务的待办清单，用完整列表同步任务进度。"
+      },
+      "ask_user": {
+        "name": "询问用户",
+        "description": "向用户请求文本输入、单选或多选，并等待用户在模态窗中提交。"
+      },
+      "list_skills": {
+        "name": "列出技能",
+        "description": "列出当前助手或团队上下文可用的技能名称与适用场景。"
+      },
+      "read_skill": {
+        "name": "读取技能",
+        "description": "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。"
+      },
+      "read_skill_file": {
+        "name": "读取技能文件",
+        "description": "读取可用技能目录内 references、examples 等子文件。"
+      },
+      "control_team_flow": {
+        "name": "控制团队流程",
+        "description": "团队协作中控制继续、交接、结束或标记阻塞，可附带给下一位成员的私聊提示。"
+      },
+      "request_team_vote": {
+        "name": "发起团队投票",
+        "description": "团队协作中发起投票决策，收集团队成员对方案、方向或是否结束的选择。"
+      },
+      "cast_team_vote": {
+        "name": "提交团队投票",
+        "description": "团队投票收集阶段提交当前成员的投票选择。"
+      },
+      "read_file": {
+        "name": "读取文件",
+        "description": "读取工作目录下指定文件的文本内容。"
+      },
+      "write_file": {
+        "name": "写入文件",
+        "description": "把内容写入工作目录下的文件（覆盖写入），写入后出现在产物面板。"
+      },
+      "edit_file": {
+        "name": "编辑文件",
+        "description": "对文件做精确替换编辑（oldString→newString），适合定点修改而非整篇重写。"
+      },
+      "create_directory": {
+        "name": "新建目录",
+        "description": "在工作目录下创建目录，会自动创建必要的父目录。"
+      },
+      "delete_file": {
+        "name": "删除路径",
+        "description": "删除工作目录下的文件或目录；目录会递归删除其内部文件。"
+      },
+      "list_directory": {
+        "name": "列出目录",
+        "description": "列出工作目录或指定目录下的文件与子目录。"
+      },
+      "create_office_document": {
+        "name": "创建办公文档",
+        "description": "生成 Word、PPT 或 PDF 文件，保存后出现在产物面板并可用独立预览窗口打开。"
+      },
+      "web_search": {
+        "name": "网络搜索",
+        "description": "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。"
+      },
+      "web_fetch": {
+        "name": "网页读取",
+        "description": "读取网页正文并提取主要文本，支持按标题或锚点分段提取与链接、表格抽取。"
+      },
+      "image_generation": {
+        "name": "生成图片",
+        "description": "调用图片生成模型，根据提示词生成图片并保存到工作目录。"
+      },
+      "image_edit": {
+        "name": "编辑图片",
+        "description": "调用图片编辑模型，基于本地源图和可选蒙版编辑图片并保存结果。"
+      },
+      "speech_recognition": {
+        "name": "语音识别",
+        "description": "将音频文件转写为文字，支持常见音频格式（mp3/wav/m4a/webm/ogg 等）。"
+      },
+      "speech_synthesis": {
+        "name": "语音合成",
+        "description": "将文字合成为语音并保存到工作目录，登记为产物。"
+      },
+      "run_bash": {
+        "name": "运行命令",
+        "description": "在会话工作目录下执行 shell 命令，返回标准输出与错误输出。高危命令会被拦截。"
+      },
+      "search_knowledge": {
+        "name": "检索知识库",
+        "description": "在已启用的知识库中检索相关文档片段，获取项目文档、技术规范等上下文信息。"
+      }
+    }
+  }
+}

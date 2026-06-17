@@ -5,6 +5,7 @@
 // 具体字段组件拆分在 ./image 子目录。
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, Image, Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
@@ -46,6 +47,7 @@ export function ImageGenerationPanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const initial = deriveState(settings.imageGeneration ?? imageGenerationDefaults());
 
   const [provider, setProvider] = useState<ImageApiStandard>(initial.provider);
@@ -103,7 +105,7 @@ export function ImageGenerationPanel({
         if (mountedRef.current) setSaveState("idle");
       }, 1500);
     } catch (error) {
-      console.error("保存图片模式配置失败", error);
+      console.error(t("image.saveImageFailed"), error);
       if (!mountedRef.current) return;
       setSaveState("error");
       resetTimerRef.current = setTimeout(() => {
@@ -113,21 +115,22 @@ export function ImageGenerationPanel({
   };
 
   const activeStandard = STANDARDS.find((s) => s.id === provider) ?? STANDARDS[0];
+  const activeStandardHint = t(`image.standards.${activeStandard.id}`);
 
   return (
     <section>
       <PageTitle
-        title="图片模式"
-        description="选择图片生成使用的接口标准并配置模型。"
+        title={t("image.title")}
+        description={t("image.description")}
       />
 
       {/* 接口标准选择（下拉，与网络搜索一致） */}
       <div className="mt-8 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-3.5">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium">接口标准</h3>
+            <h3 className="text-sm font-medium">{t("image.standard")}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              选择图片生成使用的接口标准。
+              {t("image.standardDesc")}
             </p>
           </div>
           <div className="shrink-0">
@@ -153,31 +156,39 @@ export function ImageGenerationPanel({
           {provider === "openai-images" && (
             <OpenAiImagesFields
               value={openaiImages}
+              actualRequestLabel={(url) => t("image.actualRequest", { url })}
+              imageModelLabel={t("image.imageModel")}
               onChange={(patch) => setOpenaiImages((prev) => ({ ...prev, ...patch }))}
             />
           )}
           {provider === "openai-chat" && (
             <OpenAiChatFields
               value={openaiChat}
+              actualRequestLabel={(url) => t("image.actualRequest", { url })}
+              imageModelLabel={t("image.imageModel")}
+              modelPlaceholder={t("image.chatModelPlaceholder")}
               onChange={(patch) => setOpenaiChat((prev) => ({ ...prev, ...patch }))}
             />
           )}
           {provider === "gemini" && (
             <GeminiFields
               value={gemini}
+              actualRequestLabel={(url) => t("image.actualRequest", { url })}
+              baseUrlLabel={t("image.geminiBaseUrl")}
+              imageModelLabel={t("image.imageModel")}
               onChange={(patch) => setGemini((prev) => ({ ...prev, ...patch }))}
             />
           )}
 
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-            {activeStandard.hint}
+            {activeStandardHint}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
             {saveState === "error" ? (
               <span className="flex items-center gap-1.5 text-xs text-destructive">
                 <AlertCircle className="size-3.5" />
-                保存失败，请重试
+                {t("image.saveFailedRetry")}
               </span>
             ) : null}
             <Button onClick={() => void handleSave()} disabled={saveState === "saving"}>
@@ -190,7 +201,7 @@ export function ImageGenerationPanel({
               ) : (
                 <Save className="size-4" />
               )}
-              保存配置
+              {t("common:saveConfig")}
             </Button>
           </div>
         </div>

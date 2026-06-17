@@ -1,0 +1,42 @@
+{
+  "pages": {
+    "chat": { "title": "新对话", "description": "创建任务、提问或继续一次对话" },
+    "skills": { "title": "技能", "description": "管理可被 Agent 调用的能力与工作流" },
+    "tools": { "title": "工具", "description": "管理内置工具和 MCP 服务器" },
+    "agent": { "title": "助手", "description": "编排模型、工具、记忆和执行策略" },
+    "team": { "title": "团队", "description": "编排多个助手协作完成复杂任务" },
+    "knowledge": { "title": "知识库", "description": "管理可被 AI 检索的文档与资料" },
+    "settings": { "title": "设置", "description": "配置模型、窗口行为、外观和本地数据" }
+  },
+  "sidebar": {
+    "chat": "新对话",
+    "tasks": "对话",
+    "teamTab": "团队",
+    "newChat": "新对话",
+    "knowledge": "知识库",
+    "extensions": "扩展",
+    "skills": "技能",
+    "tools": "工具",
+    "agent": "助手",
+    "team": "团队",
+    "settings": "设置"
+  },
+  "titleBar": {
+    "menu": "主菜单",
+    "theme": "主题设置",
+    "light": "亮色",
+    "dark": "深色",
+    "followSystem": "跟随系统",
+    "checkUpdate": "检查更新",
+    "checking": "检查中",
+    "about": "关于软件",
+    "openSidebar": "打开侧边栏",
+    "closeSidebar": "关闭侧边栏",
+    "searchSessions": "搜索会话",
+    "tutorial": "使用教程",
+    "expandPanel": "展开监控面板",
+    "collapsePanel": "收起监控面板",
+    "expandTeamPanel": "展开团队监控面板",
+    "collapseTeamPanel": "收起团队监控面板"
+  }
+}

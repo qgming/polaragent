@@ -3,6 +3,7 @@
 
 import { Bot, FolderOpen, Sparkles, Star, Users, Wrench, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Field, SettingDropdown } from "@/components/settings/settings-shared";
 import { Button } from "@/components/ui/button";
@@ -20,12 +21,6 @@ import { useConfigStore } from "@/stores/config-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import type { TeamConfig } from "@/types/config";
 
-// 协作模式选项
-const MODE_OPTIONS = [
-  { value: "leader", label: "👑 领导模式 - 中心化调度" },
-  { value: "equal", label: "💡 头脑风暴 - 平等发散" },
-];
-
 type TeamMode = TeamConfig["mode"];
 
 export function TeamEditorModal({
@@ -37,6 +32,7 @@ export function TeamEditorModal({
   onClose: () => void;
   onSave: (team: TeamConfig) => void;
 }) {
+  const { t } = useTranslation("team");
   const [name, setName] = useState(team.name);
   const [avatar, setAvatar] = useState(team.avatar || "👥");
   const [description, setDescription] = useState(team.description);
@@ -54,6 +50,14 @@ export function TeamEditorModal({
   // 可选成员 = 全部助手（内置+已安装）；技能 = 全部技能
   const agents = useConfigStore((state) => state.agents);
   const skills = useSkillsStore((state) => state.skills);
+
+  const modeOptions = useMemo(
+    () => [
+      { value: "leader", label: t("editor.mode.leaderOption") },
+      { value: "equal", label: t("editor.mode.equalOption") },
+    ],
+    [t],
+  );
 
   // 已选成员的领导下拉选项
   const leaderOptions = useMemo(
@@ -96,11 +100,11 @@ export function TeamEditorModal({
   const save = () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("请填写团队名称");
+      setError(t("editor.errors.nameRequired"));
       return;
     }
     if (memberIds.length < 2) {
-      setError("团队至少需要 2 名成员");
+      setError(t("editor.errors.minMembers"));
       return;
     }
     // 领导兜底：未指定或不在成员里时取第一个成员（领导模式需要）
@@ -124,27 +128,27 @@ export function TeamEditorModal({
   // 工作目录显示：仅末级名称
   const dirLabel = workspaceDir
     ? workspaceDir.split(/[\\/]/).filter(Boolean).pop() || workspaceDir
-    : "选择工作目录";
+    : t("editor.workspace.select");
 
   return (
     <Modal open onOpenChange={(next) => { if (!next) onClose(); }}>
       <ModalContent size="2xl" showCloseButton={true} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
-        <ModalTitle className="sr-only">团队详情</ModalTitle>
+        <ModalTitle className="sr-only">{t("editor.title")}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Users className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium">团队详情</span>
+          <span className="min-w-0 truncate text-sm font-medium">{t("editor.title")}</span>
         </header>
 
         <ModalBody className="bg-background">
           <div className="space-y-6">
             {/* 头像与名称 */}
-            <Field icon={Sparkles} label="头像与名称">
+            <Field icon={Sparkles} label={t("editor.identity.label")}>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setShowEmojiPicker(true)}
                   className="flex size-12 shrink-0 items-center justify-center rounded-lg border border-input bg-muted/60 text-2xl transition-colors hover:border-ring hover:bg-muted"
-                  title="点击选择 Emoji"
+                  title={t("editor.identity.pickEmoji")}
                 >
                   {avatar || "👥"}
                 </button>
@@ -152,39 +156,39 @@ export function TeamEditorModal({
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   className="h-12 flex-1 rounded-lg border border-input bg-background px-4 text-base outline-none transition-colors focus:border-ring"
-                  placeholder="团队名称"
+                  placeholder={t("editor.identity.namePlaceholder")}
                 />
               </div>
             </Field>
 
             {/* 团队简介 */}
-            <Field icon={Bot} label="团队简介">
+            <Field icon={Bot} label={t("editor.description.label")}>
               <textarea
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 className="app-scrollbar min-h-[80px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring"
-                placeholder="描述这个团队适合处理什么任务"
+                placeholder={t("editor.description.placeholder")}
               />
             </Field>
 
             {/* 协作模式 */}
-            <Field icon={Zap} label="协作模式">
+            <Field icon={Zap} label={t("editor.mode.label")}>
               <SettingDropdown
                 value={mode}
-                placeholder="选择协作模式"
-                options={MODE_OPTIONS}
+                placeholder={t("editor.mode.placeholder")}
+                options={modeOptions}
                 onChange={(value) => setMode(value as TeamMode)}
                 className="h-11 w-full justify-between"
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {mode === "leader"
-                  ? "中心化调度，成员通过控制工具交接或结束，适合复杂项目推进"
-                  : "平等发散观点，成员通过控制工具交接或收束，适合头脑风暴和方向探索"}
+                  ? t("editor.mode.leaderDescription")
+                  : t("editor.mode.equalDescription")}
               </p>
             </Field>
 
             {/* 团队成员 */}
-            <Field icon={Users} label="团队成员（从内置/已安装助手中选）">
+            <Field icon={Users} label={t("editor.members.label")}>
               <div className="app-scrollbar max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                 {agents.length > 0 ? (
                   agents.map((agent) => (
@@ -200,7 +204,7 @@ export function TeamEditorModal({
                           {agent.name}
                         </span>
                         <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                          {agent.description || "暂无描述"}
+                          {agent.description || t("common.noDescription")}
                         </span>
                       </span>
                       <Switch
@@ -211,7 +215,7 @@ export function TeamEditorModal({
                   ))
                 ) : (
                   <div className="flex min-h-[100px] items-center justify-center text-sm text-muted-foreground">
-                    暂无可选助手，请先在「助手」页创建或安装
+                    {t("editor.members.empty")}
                   </div>
                 )}
               </div>
@@ -219,35 +223,35 @@ export function TeamEditorModal({
 
             {/* 领导（仅领导模式） */}
             {mode === "leader" && (
-              <Field icon={Star} label="领导（从已选成员里指定）">
+              <Field icon={Star} label={t("editor.leader.label")}>
                 {leaderOptions.length > 0 ? (
                   <SettingDropdown
                     value={leaderId}
-                    placeholder="选择领导"
+                    placeholder={t("editor.leader.placeholder")}
                     options={leaderOptions}
                     onChange={setLeaderId}
                     className="h-11 w-full justify-between"
                   />
                 ) : (
                   <div className="flex h-11 items-center rounded-lg border border-dashed border-border px-4 text-sm text-muted-foreground">
-                    请先选择至少一名成员
+                    {t("editor.leader.empty")}
                   </div>
                 )}
               </Field>
             )}
 
             {/* 团队系统提示词 */}
-            <Field icon={Bot} label="团队系统提示词">
+            <Field icon={Bot} label={t("editor.systemPrompt.label")}>
               <textarea
                 value={systemPrompt}
                 onChange={(event) => setSystemPrompt(event.target.value)}
                 className="app-scrollbar min-h-[160px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring"
-                placeholder="定义团队协作目标、分工与边界（会叠加到每位成员的系统提示词）"
+                placeholder={t("editor.systemPrompt.placeholder")}
               />
             </Field>
 
             {/* 团队技能 */}
-            <Field icon={Wrench} label="团队技能（对全员可用，即使成员自身未启用）">
+            <Field icon={Wrench} label={t("editor.skills.label")}>
               <div className="app-scrollbar max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                 {skills.length > 0 ? (
                   skills.map((skill) => (
@@ -271,19 +275,19 @@ export function TeamEditorModal({
                   ))
                 ) : (
                   <div className="flex min-h-[100px] items-center justify-center text-sm text-muted-foreground">
-                    暂无可用技能
+                    {t("editor.skills.empty")}
                   </div>
                 )}
               </div>
             </Field>
 
             {/* 工作区目录 */}
-            <Field icon={FolderOpen} label="工作区目录">
+            <Field icon={FolderOpen} label={t("editor.workspace.label")}>
               <Button
                 variant="outline"
                 className="h-11 w-full justify-start gap-2 px-4 font-normal"
                 onClick={() => void handlePickDir()}
-                title={workspaceDir || "选择工作目录"}
+                title={workspaceDir || t("editor.workspace.select")}
               >
                 <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{dirLabel}</span>
@@ -298,14 +302,14 @@ export function TeamEditorModal({
 
         <ModalFooter>
           <Button variant="outline" onClick={onClose}>
-            取消
+            {t("actions.cancel")}
           </Button>
           <Button
             variant="default"
             onClick={save}
             disabled={memberIds.length < 2 || !name.trim()}
           >
-            保存
+            {t("actions.save")}
           </Button>
         </ModalFooter>
       </ModalContent>

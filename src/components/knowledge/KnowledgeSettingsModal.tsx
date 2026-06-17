@@ -1,5 +1,6 @@
 // 知识库设置弹窗
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Modal, ModalBody, ModalContent, ModalHeader, ModalTitle } from "@/components/ui/modal";
 import { Switch } from "@/components/ui/switch";
@@ -17,6 +18,7 @@ export function KnowledgeSettingsModal({
   open,
   onOpenChange,
 }: KnowledgeSettingsModalProps) {
+  const { t } = useTranslation("knowledge");
   const updateKnowledgeBase = useKnowledgeStore((state) => state.updateKnowledgeBase);
   const [name, setName] = useState(knowledgeBase.name);
   const [description, setDescription] = useState(knowledgeBase.description || "");
@@ -40,7 +42,7 @@ export function KnowledgeSettingsModal({
       });
       onOpenChange(false);
     } catch (error) {
-      console.error("更新知识库失败:", error);
+      console.error(t("form.updateFailed"), error);
     } finally {
       setSubmitting(false);
     }
@@ -50,13 +52,13 @@ export function KnowledgeSettingsModal({
     <Modal open={open} onOpenChange={onOpenChange}>
       <ModalContent size="lg">
         <ModalHeader>
-          <ModalTitle>知识库设置</ModalTitle>
+          <ModalTitle>{t("form.settingsTitle")}</ModalTitle>
         </ModalHeader>
         <ModalBody>
           <form onSubmit={handleSubmit} className="space-y-4">
             <label className="block">
               <span className="mb-1.5 block text-sm text-muted-foreground">
-                名称 <span className="text-destructive">*</span>
+                {t("form.name")} <span className="text-destructive">*</span>
               </span>
               <input
                 type="text"
@@ -68,7 +70,7 @@ export function KnowledgeSettingsModal({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-sm text-muted-foreground">简介</span>
+              <span className="mb-1.5 block text-sm text-muted-foreground">{t("form.description")}</span>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -78,14 +80,14 @@ export function KnowledgeSettingsModal({
             </label>
 
             <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2.5">
-              <span className="text-sm text-muted-foreground">启用此知识库</span>
+              <span className="text-sm text-muted-foreground">{t("form.enabled")}</span>
               <Switch checked={enabled} onCheckedChange={setEnabled} />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <label className="block">
                 <span className="mb-1.5 block text-sm text-muted-foreground">
-                  分块大小 (tokens)
+                  {t("form.chunkSize")}
                 </span>
                 <select
                   value={chunkSize}
@@ -100,7 +102,7 @@ export function KnowledgeSettingsModal({
 
               <label className="block">
                 <span className="mb-1.5 block text-sm text-muted-foreground">
-                  块重叠 (tokens)
+                  {t("form.overlap")}
                 </span>
                 <select
                   value={overlap}
@@ -116,15 +118,15 @@ export function KnowledgeSettingsModal({
             </div>
 
             <div className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">
-              修改分块配置后，需要重建索引才能生效
+              {t("form.rebuildNotice")}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                取消
+                {t("common:cancel")}
               </Button>
               <Button type="submit" disabled={!name.trim() || submitting}>
-                保存
+                {t("common:save")}
               </Button>
             </div>
           </form>

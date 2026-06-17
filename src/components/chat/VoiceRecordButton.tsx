@@ -2,6 +2,7 @@
 // src/components/chat/VoiceRecordButton.tsx
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -18,6 +19,7 @@ export function VoiceRecordButton({
   onTranscriptionComplete,
   disabled = false,
 }: VoiceRecordButtonProps) {
+  const { t } = useTranslation("chat");
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
@@ -42,11 +44,11 @@ export function VoiceRecordButton({
         // 获取 ASR 配置
         const settings = useConfigStore.getState().settings.audio;
         const asrConfig = settings?.asr;
-        if (!asrConfig?.provider) throw new Error("ASR 接口未配置");
+        if (!asrConfig?.provider) throw new Error(t("asrNotConfigured"));
 
         const activeConfig = asrConfig.provider === "audio" ? asrConfig.audio : asrConfig.chat;
         if (!activeConfig?.apiKey?.trim() || !activeConfig.model?.trim()) {
-          throw new Error("语音识别未配置，请在设置中配置 ASR");
+          throw new Error(t("asrNotConfiguredDesc"));
         }
 
         // 将 Blob 转为 base64
@@ -109,7 +111,7 @@ export function VoiceRecordButton({
       } catch (error) {
         console.error("语音识别失败", error);
         const message =
-          error instanceof Error ? error.message : "语音识别失败，请检查网络或配置";
+          error instanceof Error ? error.message : t("asrFailedDesc");
         alert(message);
       } finally {
         setIsTranscribing(false);
@@ -142,24 +144,24 @@ export function VoiceRecordButton({
       ) : isRefining ? (
         <>
           <AudioLines animate loop size={16} />
-          <span className="text-xs">优化中</span>
+          <span className="text-xs">{t("optimizing")}</span>
         </>
       ) : isTranscribing ? (
         <>
           <AudioLines animate loop size={16} />
-          <span className="text-xs">转换中</span>
+          <span className="text-xs">{t("converting")}</span>
         </>
       ) : (
         <AudioLines size={16} />
       )}
       <span className="sr-only">
         {audioRecorder.isRecording
-          ? "录音中"
+          ? t("recording")
           : isRefining
-            ? "优化中"
+            ? t("optimizing")
             : isTranscribing
-              ? "转换中"
-              : "开始录音"}
+              ? t("converting")
+              : t("startRecording")}
       </span>
     </Button>
   );

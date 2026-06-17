@@ -1,5 +1,6 @@
 // 嵌入配置面板（OpenAI 标准 embeddings + 检索配置）
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, Database, Eye, EyeOff, Loader2, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ export function KnowledgePanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const config = settings.knowledge ?? defaultSettings.knowledge!;
 
   const [apiKey, setApiKey] = useState(config.embedding.apiKey ?? "");
@@ -64,7 +66,7 @@ export function KnowledgePanel({
         if (mountedRef.current) setSaveState("idle");
       }, 1500);
     } catch (error) {
-      console.error("保存嵌入配置失败", error);
+      console.error(t("knowledge.saveFailed"), error);
       if (!mountedRef.current) return;
       setSaveState("error");
       resetTimerRef.current = setTimeout(() => {
@@ -76,8 +78,8 @@ export function KnowledgePanel({
   return (
     <section>
       <PageTitle
-        title="嵌入配置"
-        description="配置 OpenAI 标准 embeddings 接口，用于知识库向量化与检索"
+        title={t("knowledge.title")}
+        description={t("knowledge.description")}
       />
 
       <div className="mt-8 space-y-6">
@@ -116,7 +118,7 @@ export function KnowledgePanel({
                   type="button"
                   onClick={() => setShowKey((value) => !value)}
                   className="rounded-md border border-input bg-background px-3 text-muted-foreground hover:bg-muted"
-                  aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
+                  aria-label={showKey ? t("knowledge.hideApiKey") : t("knowledge.showApiKey")}
                 >
                   {showKey ? (
                     <EyeOff className="size-4" />
@@ -129,7 +131,7 @@ export function KnowledgePanel({
 
             <label className="block">
               <span className="mb-1.5 block text-sm text-muted-foreground">
-                模型
+                {t("knowledge.model")}
               </span>
               <input
                 type="text"
@@ -143,11 +145,11 @@ export function KnowledgePanel({
         </div>
 
         <div className="rounded-xl border border-border bg-card p-6">
-          <h3 className="mb-4 text-sm font-medium">检索配置</h3>
+          <h3 className="mb-4 text-sm font-medium">{t("knowledge.retrieval")}</h3>
           <div className="space-y-4">
             <label className="block">
               <span className="mb-1.5 block text-sm text-muted-foreground">
-                TopK (每次检索返回的相似块数量)
+                {t("knowledge.topK")}
               </span>
               <select
                 value={topK}
@@ -164,7 +166,7 @@ export function KnowledgePanel({
 
             <label className="block">
               <span className="mb-1.5 block text-sm text-muted-foreground">
-                相似度阈值 (低于此值的结果会被过滤)
+                {t("knowledge.threshold")}
               </span>
               <select
                 value={threshold}
@@ -188,12 +190,12 @@ export function KnowledgePanel({
             )}
             {saveState === "saved" && <Check className="size-4" />}
             {saveState === "idle" && <Save className="size-4" />}
-            {saveState === "error" && "重试"}
+            {saveState === "error" && t("common:retry")}
             {saveState === "saving"
-              ? "保存中..."
+              ? t("common:saving")
               : saveState === "saved"
-                ? "已保存"
-                : "保存"}
+                ? t("common:saved")
+                : t("common:save")}
           </Button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 // Skills 安装对话框
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Download, FileArchive, Loader2, Wrench } from "lucide-react";
 import {
   Modal,
@@ -25,6 +26,7 @@ export function SkillInstallDialog({
   onClose,
   onInstallSuccess,
 }: SkillInstallDialogProps) {
+  const { t } = useTranslation("skills");
   const [installType, setInstallType] = useState<"git" | "zip" | null>(null);
   const [source, setSource] = useState("");
   const [isInstalling, setIsInstalling] = useState(false);
@@ -41,7 +43,7 @@ export function SkillInstallDialog({
         setError(null);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "选择文件失败";
+      const message = err instanceof Error ? err.message : t("installDialog.selectFileFailed");
       toast.error(message);
       setError(message);
     }
@@ -49,7 +51,7 @@ export function SkillInstallDialog({
 
   const handleInstall = async () => {
     if (!installType || !source.trim()) {
-      setError("请选择有效的源");
+      setError(t("installDialog.selectValidSource"));
       return;
     }
 
@@ -66,15 +68,15 @@ export function SkillInstallDialog({
       }
 
       if (success) {
-        toast.success("技能安装成功");
+        toast.success(t("installDialog.success"));
         onInstallSuccess();
         onClose();
       } else {
-        toast.error("技能安装失败");
-        setError("安装失败，请检查源");
+        toast.error(t("installDialog.failed"));
+        setError(t("installDialog.failedCheckSource"));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "安装失败";
+      const message = err instanceof Error ? err.message : t("installDialog.failedShort");
       toast.error(message);
       setError(message);
     } finally {
@@ -85,13 +87,13 @@ export function SkillInstallDialog({
   return (
     <Modal open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <ModalContent size="md" showCloseButton={true} className="max-w-lg rounded-lg bg-background">
-        <ModalTitle className="sr-only">安装 Skill</ModalTitle>
+        <ModalTitle className="sr-only">{t("installDialog.title")}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Wrench className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium">安装 Skill</span>
+          <span className="min-w-0 truncate text-sm font-medium">{t("installDialog.title")}</span>
           {installType && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              · {installType === "git" ? "Git 仓库" : "本地压缩包"}
+              · {installType === "git" ? t("installDialog.gitRepo") : t("installDialog.localZip")}
             </span>
           )}
         </header>
@@ -99,7 +101,7 @@ export function SkillInstallDialog({
         <ModalBody className="space-y-4">
           {!installType && (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">选择安装方式：</p>
+              <p className="text-sm text-muted-foreground">{t("installDialog.chooseMethod")}</p>
 
               <button
                 onClick={() => setInstallType("git")}
@@ -107,9 +109,9 @@ export function SkillInstallDialog({
               >
                 <Download className="size-5 text-primary" />
                 <div>
-                  <p className="font-medium">从 Git 仓库安装</p>
+                  <p className="font-medium">{t("installDialog.fromGit")}</p>
                   <p className="text-xs text-muted-foreground">
-                    从 GitHub、GitLab 等 Git 仓库克隆 Skill
+                    {t("installDialog.fromGitDesc")}
                   </p>
                 </div>
               </button>
@@ -120,9 +122,9 @@ export function SkillInstallDialog({
               >
                 <FileArchive className="size-5 text-primary" />
                 <div>
-                  <p className="font-medium">从本地压缩包安装</p>
+                  <p className="font-medium">{t("installDialog.fromZip")}</p>
                   <p className="text-xs text-muted-foreground">
-                    从本地 .zip 压缩包导入 Skill
+                    {t("installDialog.fromZipDesc")}
                   </p>
                 </div>
               </button>
@@ -134,7 +136,7 @@ export function SkillInstallDialog({
               {installType === "git" ? (
                 <div>
                   <label className="mb-2 block text-sm font-medium">
-                    Git 仓库 URL
+                    {t("installDialog.gitUrl")}
                   </label>
                   <input
                     type="text"
@@ -148,14 +150,14 @@ export function SkillInstallDialog({
               ) : (
                 <div>
                   <label className="mb-2 block text-sm font-medium">
-                    压缩包文件
+                    {t("installDialog.zipFile")}
                   </label>
                   <div className="flex gap-2">
                     <input
                       type="text"
                       value={source}
                       readOnly
-                      placeholder="请选择 .zip 压缩包文件"
+                      placeholder={t("installDialog.zipPlaceholder")}
                       className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
                       disabled={isInstalling}
                     />
@@ -164,7 +166,7 @@ export function SkillInstallDialog({
                       onClick={handleSelectZip}
                       disabled={isInstalling}
                     >
-                      选择文件
+                      {t("installDialog.chooseFile")}
                     </Button>
                   </div>
                 </div>
@@ -190,7 +192,7 @@ export function SkillInstallDialog({
               }}
               disabled={isInstalling}
             >
-              返回
+              {t("installDialog.back")}
             </Button>
             <Button
               variant="default"
@@ -200,10 +202,10 @@ export function SkillInstallDialog({
               {isInstalling ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  安装中...
+                  {t("installDialog.installing")}
                 </>
               ) : (
-                "安装"
+                t("installDialog.install")
               )}
             </Button>
           </ModalFooter>

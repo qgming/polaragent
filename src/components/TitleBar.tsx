@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { IconButton } from "@/components/IconButton";
 import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
@@ -64,6 +65,8 @@ export function TitleBar({
   sidebarCollapsed: boolean;
   teamPanelThreadId?: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     <header
       data-electron-drag-region
@@ -73,7 +76,7 @@ export function TitleBar({
         <AppMenu onOpenAbout={onOpenAbout} />
         <IconButton
           className="size-8"
-          label={sidebarCollapsed ? "打开侧边栏" : "关闭侧边栏"}
+          label={sidebarCollapsed ? t("nav:titleBar.openSidebar") : t("nav:titleBar.closeSidebar")}
           onClick={onToggleSidebar}
         >
           {sidebarCollapsed ? (
@@ -84,14 +87,14 @@ export function TitleBar({
         </IconButton>
         <IconButton
           className="size-8"
-          label="搜索会话"
+          label={t("nav:titleBar.searchSessions")}
           onClick={onOpenSearch}
         >
           <Search className="size-4" />
         </IconButton>
         <IconButton
           className="size-8"
-          label="使用教程"
+          label={t("nav:titleBar.tutorial")}
           onClick={onOpenTutorial}
         >
           <BadgeHelp className="size-4" />
@@ -113,6 +116,7 @@ export function TitleBar({
 }
 
 function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
+  const { t } = useTranslation();
   const settings = useConfigStore((state) => state.settings);
   const updateSettings = useConfigStore((state) => state.updateSettings);
   const toastSuccess = useToast((state) => state.success);
@@ -136,7 +140,7 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
     try {
       const status = await checkForUpdates();
       if (status.phase === "up-to-date") {
-        toastSuccess("当前已是最新版本");
+        toastSuccess(t("settings:about.upToDate"));
         return;
       }
       if (status.updateAvailable) {
@@ -144,10 +148,10 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
         return;
       }
       if (status.phase === "check-error") {
-        toastError(status.error || "检查更新失败");
+        toastError(status.error || t("settings:about.checkFailed"));
         return;
       }
-      toastError(status.message || "未找到可用更新");
+      toastError(status.message || t("settings:about.noUpdate"));
     } catch (error) {
       toastError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -161,11 +165,11 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
         <DropdownMenuTrigger asChild>
           <button
             className="flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/35"
-            title="主菜单"
+            title={t("nav:titleBar.menu")}
             type="button"
           >
             <Menu className="size-4" />
-            <span className="sr-only">主菜单</span>
+            <span className="sr-only">{t("nav:titleBar.menu")}</span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -179,7 +183,7 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
               className="rounded-md px-2 py-1.5"
             >
               <Palette className="size-4" />
-              主题设置
+              {t("nav:titleBar.theme")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent
               alignOffset={-2}
@@ -194,13 +198,13 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
                 }
               >
                 <DropdownMenuRadioItem value="light" className="rounded-md px-2 py-1.5">
-                  亮色
+                  {t("nav:titleBar.light")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="dark" className="rounded-md px-2 py-1.5">
-                  深色
+                  {t("nav:titleBar.dark")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="system" className="rounded-md px-2 py-1.5">
-                  跟随系统
+                  {t("nav:titleBar.followSystem")}
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
@@ -211,14 +215,14 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
             disabled={checking}
           >
             <RefreshCw className={checking ? "size-4 animate-spin" : "size-4"} />
-            {checking ? "检查中" : "检查更新"}
+            {checking ? t("nav:titleBar.checking") : t("nav:titleBar.checkUpdate")}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="rounded-md px-2 py-1.5"
             onSelect={onOpenAbout}
           >
             <Info className="size-4" />
-            关于软件
+            {t("nav:titleBar.about")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -241,13 +245,14 @@ function PanelToggleButton({ teamThreadId }: { teamThreadId?: string }) {
 }
 
 function ChatPanelToggleButton() {
+  const { t } = useTranslation();
   const panelOpen = usePanelOpen();
   const toggle = usePanelStore((state) => state.toggle);
 
   return (
     <IconButton
       className="size-8"
-      label={panelOpen ? "收起监控面板" : "展开监控面板"}
+      label={panelOpen ? t("nav:titleBar.collapsePanel") : t("nav:titleBar.expandPanel")}
       onClick={toggle}
     >
       {panelOpen ? (
@@ -260,6 +265,7 @@ function ChatPanelToggleButton() {
 }
 
 function TeamPanelToggleButton({ threadId }: { threadId: string }) {
+  const { t } = useTranslation();
   const panelOpen = useTeamPanelStore(
     (state) => state.openByThread[threadId] ?? false,
   );
@@ -268,7 +274,7 @@ function TeamPanelToggleButton({ threadId }: { threadId: string }) {
   return (
     <IconButton
       className="size-8"
-      label={panelOpen ? "收起团队监控面板" : "展开团队监控面板"}
+      label={panelOpen ? t("nav:titleBar.collapseTeamPanel") : t("nav:titleBar.expandTeamPanel")}
       onClick={() => toggle(threadId)}
     >
       {panelOpen ? (
@@ -281,6 +287,7 @@ function TeamPanelToggleButton({ threadId }: { threadId: string }) {
 }
 
 function WindowControls() {
+  const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
   const closeToTray = useConfigStore((state) => state.settings.window.closeToTray);
 
@@ -311,11 +318,11 @@ function WindowControls() {
 
   return (
     <div className="flex h-full items-center">
-      <WindowButton label="最小化" onClick={minimize}>
+      <WindowButton label={t("common:minimize")} onClick={minimize}>
         <Minus className="size-4" />
       </WindowButton>
       <WindowButton
-        label={maximized ? "还原" : "最大化"}
+        label={maximized ? t("common:restore") : t("common:maximize")}
         onClick={toggleMaximize}
       >
         {maximized ? (
@@ -324,7 +331,7 @@ function WindowControls() {
           <SquareIcon className="size-4" />
         )}
       </WindowButton>
-      <WindowButton close label={closeToTray ? "关闭" : "退出"} onClick={close}>
+      <WindowButton close label={closeToTray ? t("common:close") : t("common:exit")} onClick={close}>
         <X className="size-4" />
       </WindowButton>
     </div>

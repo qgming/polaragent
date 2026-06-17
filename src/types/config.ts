@@ -222,6 +222,8 @@ export interface Settings {
     chatFont: "sans" | "serif" | "mono";
     // 对话内容字号：小 / 中 / 大 / 特大
     chatFontSize: "small" | "medium" | "large" | "xlarge";
+    // 软件语言：跟随系统 / 简体中文 / English
+    language: "system" | "zh-CN" | "en-US";
   };
   behavior: {
     autoSaveConversations: boolean;

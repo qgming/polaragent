@@ -2,6 +2,7 @@
 // 各设置模块（图片模式、网络搜索、音频等）复用的输入框样式与基础字段。
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Eye, EyeOff } from "lucide-react";
 
 // 输入框统一样式
@@ -21,6 +22,7 @@ export function ApiKeyField({
   onChange: (value: string) => void;
   placeholder?: string;
 }) {
+  const { t } = useTranslation("settings");
   const [showKey, setShowKey] = useState(false);
   return (
     <div>
@@ -36,7 +38,7 @@ export function ApiKeyField({
         <button
           type="button"
           onClick={() => setShowKey((v) => !v)}
-          aria-label={showKey ? "隐藏密钥" : "显示密钥"}
+          aria-label={showKey ? t("models.hideApiKey") : t("models.showApiKey")}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
         >
           {showKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}

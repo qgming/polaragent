@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
   ChevronDown,
@@ -35,6 +36,7 @@ export function TeamMonitorPanel({
   teamId: string;
   sessionFilesDir?: string;
 }) {
+  const { t } = useTranslation("team");
   const team = useTeamsStore((state) =>
     state.teams.find((t) => t.id === teamId),
   );
@@ -81,13 +83,13 @@ export function TeamMonitorPanel({
 
     if (vote.status === "completed") {
       return {
-        label: "已完成",
+        label: t("monitor.vote.completed"),
         className: "bg-green-500/10 text-green-700 dark:text-green-300",
       };
     }
     if (vote.status === "cancelled") {
       return {
-        label: "未完成",
+        label: t("monitor.vote.cancelled"),
         className: "bg-red-500/10 text-red-700 dark:text-red-300",
       };
     }
@@ -96,10 +98,10 @@ export function TeamMonitorPanel({
       (item) => item.status === "voted",
     ).length;
     return {
-      label: `进行中 ${votedCount}/${memberInfo.size}`,
+      label: t("monitor.vote.inProgress", { voted: votedCount, total: memberInfo.size }),
       className: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
-  }, [latestVote?.vote, memberInfo.size]);
+  }, [latestVote?.vote, memberInfo.size, t]);
 
   return (
     <motion.aside
@@ -113,7 +115,7 @@ export function TeamMonitorPanel({
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
           {/* 待办 */}
           <Section
-            title="待办"
+            title={t("monitor.sections.todos")}
             count={
               todos.length > 0 ? `${completedTodos}/${todos.length}` : undefined
             }
@@ -125,13 +127,13 @@ export function TeamMonitorPanel({
                 ))}
               </ul>
             ) : (
-              <EmptyHint text="团队执行任务时，待办清单会显示在这里" />
+              <EmptyHint text={t("monitor.empty.todos")} />
             )}
           </Section>
 
           {/* 投票 */}
           <Section
-            title="投票"
+            title={t("monitor.sections.votes")}
             count={voteStatusBadge?.label}
             countClassName={voteStatusBadge?.className}
           >
@@ -139,13 +141,13 @@ export function TeamMonitorPanel({
               {latestVote?.vote ? (
                 <VoteList vote={latestVote.vote} memberInfo={memberInfo} />
               ) : (
-                <EmptyHint text="暂无投票" />
+                <EmptyHint text={t("monitor.empty.votes")} />
               )}
             </div>
           </Section>
 
           {/* 产物 */}
-          <Section title="产物">
+          <Section title={t("monitor.sections.artifacts")}>
             <ArtifactsTabs
               finalFiles={finalFiles}
               workingFiles={workingFiles}
@@ -253,6 +255,7 @@ function ArtifactsTabs({
   workingDir?: string;
   sessionFilesDir?: string;
 }) {
+  const { t } = useTranslation("team");
   // 判断是否选择了工作目录（非临时目录）
   const hasWorkingDir = workingDir && workingDir !== sessionFilesDir;
   // 动态 tab 列表：有工作目录时显示「final + workspace」，无则显示「final + session」
@@ -284,9 +287,9 @@ function ArtifactsTabs({
         "grid gap-0.5 rounded-md bg-muted p-0.5",
         availableTabs.length === 2 ? "grid-cols-2" : "grid-cols-3"
       )}>
-        {availableTabs.map((value) => {
-          const active = tab === value;
-          const label = value === "final" ? "生成文件" : value === "workspace" ? "工作目录" : "临时目录";
+	        {availableTabs.map((value) => {
+	          const active = tab === value;
+	          const label = value === "final" ? t("monitor.tabs.final") : value === "workspace" ? t("monitor.tabs.workspace") : t("monitor.tabs.session");
           return (
             <button
               key={value}
@@ -332,33 +335,33 @@ function ArtifactsTabs({
               finalFiles.length > 0 || workingFiles.length > 0 ? (
                 <div className="space-y-1.5">
                   {finalFiles.length > 0 ? (
-                    <ArtifactGroup
-                      label="最终文件"
+	                    <ArtifactGroup
+	                      label={t("monitor.artifactGroups.final")}
                       files={finalFiles}
                       workingDir={workingDir}
                     />
                   ) : null}
                   {workingFiles.length > 0 ? (
-                    <ArtifactGroup
-                      label="工作文件"
+	                    <ArtifactGroup
+	                      label={t("monitor.artifactGroups.working")}
                       files={workingFiles}
                       workingDir={workingDir}
                     />
                   ) : null}
                 </div>
               ) : (
-                <EmptyHint text="生成的文件会出现在这里" />
+	                <EmptyHint text={t("monitor.empty.artifacts")} />
               )
             ) : tab === "workspace" ? (
               workingDir ? (
                 <WorkspaceTree rootDir={workingDir} />
               ) : (
-                <EmptyHint text="未选择工作目录" />
+	                <EmptyHint text={t("monitor.empty.noWorkspace")} />
               )
             ) : sessionFilesDir ? (
               <WorkspaceTree rootDir={sessionFilesDir} />
             ) : (
-              <EmptyHint text="会话文件目录不存在" />
+	              <EmptyHint text={t("monitor.empty.noSessionDir")} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -376,6 +379,7 @@ function ArtifactGroup({
   files: ArtifactItem[];
   workingDir?: string;
 }) {
+  const { t } = useTranslation("team");
   return (
     <div>
       <p className="mb-0.5 px-3 text-xs text-muted-foreground">{label}</p>
@@ -401,7 +405,7 @@ function ArtifactGroup({
                     ? "cursor-pointer hover:bg-muted hover:text-foreground"
                     : "cursor-default",
                 )}
-                title={previewable ? `预览 ${absolutePath}` : absolutePath}
+	                title={previewable ? t("monitor.previewTitle", { path: absolutePath }) : absolutePath}
               >
                 <Icon className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{file.name}</span>
@@ -464,10 +468,11 @@ function VoteProgressList({
   >["memberStatuses"];
   memberInfo: Map<string, { avatar: string; name: string }>;
 }) {
+  const { t } = useTranslation("team");
   if (!statuses || statuses.length === 0) {
     return (
       <div className="rounded-md bg-muted/40 px-2 py-2 text-xs text-muted-foreground">
-        正在等待成员投票
+        {t("monitor.vote.waiting")}
       </div>
     );
   }
@@ -478,12 +483,12 @@ function VoteProgressList({
         const info = memberInfo.get(item.agentId);
         const label =
           item.status === "voting"
-            ? "投票中"
+            ? t("monitor.vote.voting")
             : item.status === "voted"
-              ? "已投"
+              ? t("monitor.vote.voted")
               : item.status === "failed"
-                ? "失败"
-                : "待投";
+                ? t("monitor.vote.failed")
+                : t("monitor.vote.pending");
         return (
           <span
             key={item.agentId}
@@ -502,7 +507,7 @@ function VoteProgressList({
             <span className="shrink-0 leading-none">
               {info?.avatar ?? "⚡"}
             </span>
-            <span className="truncate">{info?.name ?? "未知"}</span>
+            <span className="truncate">{info?.name ?? t("monitor.unknownMember")}</span>
             <span className="shrink-0 opacity-80">{label}</span>
           </span>
         );
@@ -518,6 +523,7 @@ function VoteResultList({
   vote: NonNullable<NonNullable<ReturnType<typeof useTeamThreadMessages>>[number]["vote"]>;
   memberInfo: Map<string, { avatar: string; name: string }>;
 }) {
+  const { t } = useTranslation("team");
   return (
     <div className="space-y-1.5">
       {vote.options.map((option) => {
@@ -538,9 +544,9 @@ function VoteResultList({
               <span className="min-w-0 truncate font-medium text-foreground">
                 {option.label}
               </span>
-              <span className="shrink-0 text-muted-foreground">
-                {optionVotes.length} 票
-              </span>
+	              <span className="shrink-0 text-muted-foreground">
+	                {t("monitor.vote.voteCount", { count: optionVotes.length })}
+	              </span>
             </div>
             {optionVotes.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -554,13 +560,13 @@ function VoteResultList({
                       <span className="shrink-0 leading-none">
                         {info?.avatar ?? "⚡"}
                       </span>
-                      <span className="truncate">{info?.name ?? "未知"}</span>
+	                      <span className="truncate">{info?.name ?? t("monitor.unknownMember")}</span>
                     </span>
                   );
                 })}
               </div>
             ) : (
-              <div className="text-xs text-muted-foreground">暂无投票</div>
+	              <div className="text-xs text-muted-foreground">{t("monitor.empty.votes")}</div>
             )}
           </div>
         );

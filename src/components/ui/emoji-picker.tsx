@@ -2,6 +2,7 @@
 // src/components/ui/emoji-picker.tsx
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Modal,
   ModalBody,
@@ -14,7 +15,7 @@ import { cn } from "@/lib/utils";
 // 常用 emoji 分类
 const EMOJI_CATEGORIES = [
   {
-    name: "笑脸",
+    key: "smile",
     emojis: [
       "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "🙃",
       "😉", "😊", "😇", "🥰", "😍", "🤩", "😘", "😗", "😚", "😙",
@@ -24,7 +25,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "手势",
+    key: "gesture",
     emojis: [
       "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞",
       "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍",
@@ -34,7 +35,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "动物",
+    key: "animal",
     emojis: [
       "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯",
       "🦁", "🐮", "🐷", "🐽", "🐸", "🐵", "🙈", "🙉", "🙊", "🐔",
@@ -44,7 +45,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "食物",
+    key: "food",
     emojis: [
       "🍎", "🍏", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐", "🍈",
       "🍒", "🍑", "🥭", "🍍", "🥥", "🥝", "🍅", "🍆", "🥑", "🥦",
@@ -54,7 +55,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "活动",
+    key: "activity",
     emojis: [
       "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱",
       "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳",
@@ -64,7 +65,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "交通",
+    key: "travel",
     emojis: [
       "🚗", "🚕", "🚙", "🚌", "🚎", "🏎️", "🚓", "🚑", "🚒", "🚐",
       "🛻", "🚚", "🚛", "🚜", "🦯", "🦽", "🦼", "🛴", "🚲", "🛵",
@@ -74,7 +75,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "符号",
+    key: "symbol",
     emojis: [
       "⚡", "🔥", "✨", "⭐", "🌟", "💫", "🔴", "🟠", "🟡", "🟢",
       "🔵", "🟣", "🟤", "⚫", "⚪", "🟥", "🟧", "🟨", "🟩", "🟦",
@@ -84,7 +85,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "物品",
+    key: "object",
     emojis: [
       "📱", "💻", "⌨️", "🖥️", "🖨️", "🖱️", "🖲️", "🕹️", "🗜️", "💽",
       "💾", "💿", "📀", "📼", "📷", "📸", "📹", "🎥", "📽️", "🎞️",
@@ -94,7 +95,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "工作",
+    key: "work",
     emojis: [
       "💼", "📁", "📂", "🗂️", "📅", "📆", "🗒️", "🗓️", "📇", "📈",
       "📉", "📊", "📋", "📌", "📍", "📎", "🖇️", "📏", "📐", "✂️",
@@ -104,7 +105,7 @@ const EMOJI_CATEGORIES = [
     ],
   },
   {
-    name: "旗帜",
+    key: "flag",
     emojis: [
       "🏁", "🚩", "🎌", "🏴", "🏳️", "🏳️‍🌈", "🏳️‍⚧️", "🏴‍☠️", "🇨🇳", "🇺🇸",
       "🇬🇧", "🇯🇵", "🇰🇷", "🇫🇷", "🇩🇪", "🇮🇹", "🇪🇸", "🇷🇺", "🇨🇦", "🇦🇺",
@@ -122,6 +123,7 @@ export function EmojiPicker({
   onClose: () => void;
   onSelect: (emoji: string) => void;
 }) {
+  const { t } = useTranslation("common");
   const [activeCategory, setActiveCategory] = useState(0);
 
   const handleSelect = (emoji: string) => {
@@ -133,7 +135,7 @@ export function EmojiPicker({
     <Modal open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <ModalContent size="md">
         <ModalHeader>
-          <ModalTitle>选择 Emoji</ModalTitle>
+	          <ModalTitle>{t("emoji.title")}</ModalTitle>
         </ModalHeader>
 
         <ModalBody className="bg-background">
@@ -141,7 +143,7 @@ export function EmojiPicker({
           <div className="app-scrollbar mb-4 flex gap-2 overflow-x-auto pb-2">
             {EMOJI_CATEGORIES.map((category, index) => (
               <button
-                key={category.name}
+	                key={category.key}
                 type="button"
                 onClick={() => setActiveCategory(index)}
                 className={cn(
@@ -151,7 +153,7 @@ export function EmojiPicker({
                     : "bg-muted text-muted-foreground hover:bg-muted/80",
                 )}
               >
-                {category.name}
+	                {t(`emoji.categories.${category.key}`)}
               </button>
             ))}
           </div>

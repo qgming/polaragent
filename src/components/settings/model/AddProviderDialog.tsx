@@ -1,5 +1,6 @@
 // 添加模型服务弹窗
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Bot, KeyRound, Loader2, Plug, Settings2, X } from "lucide-react";
 import {
   Modal,
@@ -18,6 +19,7 @@ export function AddProviderDialog({
   onClose: () => void;
   onCreate: (provider: ProviderConfig) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const [name, setName] = useState("");
   const [type, setType] =
     useState<ProviderConfig["type"]>("openai-completions");
@@ -46,26 +48,26 @@ export function AddProviderDialog({
   return (
     <Modal open onOpenChange={(open) => { if (!open) onClose(); }}>
       <ModalContent size="md" showCloseButton={false} className="max-w-[460px] rounded-xl bg-card">
-        <ModalTitle className="sr-only">添加模型服务</ModalTitle>
+        <ModalTitle className="sr-only">{t("models.addDialogTitle")}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Settings2 className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium">添加模型服务</span>
+          <span className="min-w-0 truncate text-sm font-medium">{t("models.addDialogTitle")}</span>
 
           <div className="ml-auto flex h-full items-center gap-0.5">
             <button
               type="button"
               onClick={() => void submit()}
               disabled={!name.trim() || creating}
-              title={creating ? "创建中..." : "创建"}
+              title={creating ? t("models.creating") : t("models.create")}
               className="flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
             >
               {creating ? <Loader2 className="size-4 animate-spin" /> : null}
-              创建
+              {t("models.create")}
             </button>
             <button
               type="button"
               onClick={onClose}
-              title="关闭"
+              title={t("common:close")}
               className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <X className="size-4" />
@@ -74,15 +76,15 @@ export function AddProviderDialog({
         </header>
 
         <ModalBody className="space-y-4">
-          <Field icon={Bot} label="名称">
+          <Field icon={Bot} label={t("models.name")}>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如 DeepSeek、Claude 代理"
+              placeholder={t("models.namePlaceholder")}
               className="h-11 w-full rounded-lg border border-input bg-background px-3 text-base outline-none focus:border-ring"
             />
           </Field>
-          <Field icon={Settings2} label="接口格式">
+          <Field icon={Settings2} label={t("models.apiFormat")}>
             <SettingDropdown
               value={type}
               options={PROVIDER_TYPE_OPTIONS}

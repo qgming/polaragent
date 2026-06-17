@@ -3,6 +3,7 @@
 
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
@@ -18,6 +19,7 @@ import { PageTitle } from "./settings-shared";
 import logo from "@/assets/logo.png";
 
 export function AboutPanel() {
+  const { t } = useTranslation("settings");
   const toastSuccess = useToast((state) => state.success);
   const toastError = useToast((state) => state.error);
   const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
@@ -61,7 +63,7 @@ export function AboutPanel() {
       const status = await checkForUpdates();
       setUpdateStatus(status);
       if (status.phase === "up-to-date") {
-        toastSuccess("当前已是最新版本");
+        toastSuccess(t("about.upToDate"));
         return;
       }
       if (status.updateAvailable) {
@@ -69,10 +71,10 @@ export function AboutPanel() {
         return;
       }
       if (status.phase === "check-error") {
-        toastError(status.error || "检查更新失败");
+        toastError(status.error || t("about.checkFailed"));
         return;
       }
-      toastError(status.message || "未找到可用更新");
+      toastError(status.message || t("about.noUpdate"));
     } catch (error) {
       toastError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -82,7 +84,7 @@ export function AboutPanel() {
 
   return (
     <section>
-      <PageTitle title="关于软件" description="PolarAgent 的版本与应用信息。" />
+      <PageTitle title={t("about.title")} description={t("about.description")} />
 
       {/* 主卡片 - Logo 和基本信息 */}
       <div className="mt-8 rounded-xl border border-border bg-gradient-to-br from-card to-muted/20">
@@ -110,15 +112,14 @@ export function AboutPanel() {
           {/* 下方介绍 - 无背景卡片 */}
           <div className="mt-6">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              面向本地工作的 AI Agent
-              桌面应用，支持普通会话、团队协作、技能与工具扩展。
+              {t("about.appDescription")}
             </p>
           </div>
         </div>
       </div>
 
       <div className="mt-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-5 py-4">
-        <span className="text-sm font-medium">检查更新</span>
+        <span className="text-sm font-medium">{t("about.checkUpdate")}</span>
         <Button
           variant="outline"
           onClick={() => void handleCheckUpdates()}
@@ -127,7 +128,7 @@ export function AboutPanel() {
           <RefreshCw
             className={isChecking ? "size-4 animate-spin" : "size-4"}
           />
-          {isChecking ? "检查中" : "检查更新"}
+          {isChecking ? t("about.checking") : t("about.checkUpdate")}
         </Button>
       </div>
 

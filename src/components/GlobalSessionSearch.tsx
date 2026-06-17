@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Dialog,
@@ -88,6 +89,7 @@ export function GlobalSessionSearch({
   onOpenThread: (threadId: string) => void;
   open: boolean;
 }) {
+  const { t } = useTranslation("common");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -169,8 +171,8 @@ export function GlobalSessionSearch({
   }, [open, trimmedQuery]);
 
   const results = useMemo(
-    () => buildResults(trimmedQuery, threads, teamThreads, teams),
-    [teamThreads, teams, threads, trimmedQuery],
+    () => buildResults(trimmedQuery, threads, teamThreads, teams, t("globalSearch.teamFallback")),
+    [teamThreads, teams, threads, trimmedQuery, t],
   );
 
   const handleSelect = (result: SearchResult) => {
@@ -194,10 +196,10 @@ export function GlobalSessionSearch({
           transition={{ type: "spring", stiffness: 520, damping: 38 }}
           className="w-full min-w-0 overflow-hidden"
         >
-          <DialogTitle className="sr-only">全局会话搜索</DialogTitle>
-          <DialogDescription className="sr-only">
-            搜索普通会话和团队会话中的内容。
-          </DialogDescription>
+	          <DialogTitle className="sr-only">{t("globalSearch.title")}</DialogTitle>
+	          <DialogDescription className="sr-only">
+	            {t("globalSearch.description")}
+	          </DialogDescription>
 
           <div className="flex h-16 items-center gap-3 border-b border-border px-5">
             <Search className="size-5 shrink-0 text-muted-foreground" />
@@ -205,7 +207,7 @@ export function GlobalSessionSearch({
               ref={inputRef}
               className="h-full min-w-0 flex-1 bg-transparent text-lg text-foreground outline-none placeholder:text-muted-foreground"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索会话内容..."
+	              placeholder={t("globalSearch.placeholder")}
               value={query}
             />
           </div>
@@ -253,7 +255,7 @@ export function GlobalSessionSearch({
                                 !result.excerpt && "italic",
                               )}
                             >
-                              {result.excerpt || "标题匹配"}
+	                              {result.excerpt || t("globalSearch.titleMatch")}
                             </span>
                           </span>
                         </button>
@@ -261,7 +263,7 @@ export function GlobalSessionSearch({
                     </div>
                   ) : (
                     <div className="flex h-44 items-center justify-center text-sm text-muted-foreground">
-                      {loading ? "搜索中..." : "未找到匹配的会话"}
+	                      {loading ? t("globalSearch.searching") : t("globalSearch.noResults")}
                     </div>
                   )}
                 </motion.div>
@@ -279,6 +281,7 @@ function buildResults(
   threads: ChatThread[],
   teamThreads: TeamThread[],
   teams: Array<{ id: string; name: string }>,
+  teamFallback: string,
 ): SearchResult[] {
   if (!query) {
     return [];
@@ -296,7 +299,7 @@ function buildResults(
       }
       return {
         ...scored,
-        teamName: teamNames.get(thread.teamId) ?? "团队",
+	        teamName: teamNames.get(thread.teamId) ?? teamFallback,
       };
     })
     .filter((result): result is TeamSearchResult => result !== null);
@@ -335,7 +338,7 @@ function scoreTeamThread(
     id: `team-${thread.id}`,
     kind: "team",
     teamId: thread.teamId,
-    teamName: "团队",
+    teamName: "",
     threadId: thread.id,
     title: thread.title,
     updatedAt: thread.updatedAt,

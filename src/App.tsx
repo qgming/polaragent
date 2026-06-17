@@ -15,6 +15,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AutoUpdateHandler } from "@/components/updates/AutoUpdateHandler";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
+import { useLanguage } from "@/hooks/useLanguage";
 import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
 import { TeamEditorModal } from "@/components/team/TeamEditorModal";
@@ -111,6 +112,9 @@ function App() {
 
   // 应用主题到 <html class="dark">
   useTheme();
+
+  // 应用语言设置到 i18next
+  useLanguage();
 
   // 将对话字体/字号映射为 CSS 变量写到 <html>，供 ChatMessage 的内容区消费
   useEffect(() => {

@@ -1,0 +1,88 @@
+{
+  "newChat": "新对话",
+  "noModelConfigured": "未配置模型",
+  "attachmentNotSupported": "引导不支持附件",
+  "attachmentNotSupportedDesc": "任务进行中只能发送文本引导。请等任务结束后，再带附件作为新消息发送。",
+  "cutInFailed": "插队失败",
+  "cutInFailedDesc": "当前任务刚好结束，请重新发送为新消息。",
+  "placeholder": "描述任务，/ 快捷调用，@ 添加文件",
+  "guidePlaceholder": "输入引导，发送后会插队到后续步骤",
+  "tempDir": "临时目录",
+  "selectDirectory": "选择工作目录",
+  "stop": "停止",
+  "startRecording": "开始录音",
+  "recording": "录音中",
+  "optimizing": "优化中",
+  "converting": "转换中",
+  "sendGuide": "发送引导",
+  "send": "发送",
+  "asrNotConfigured": "ASR 接口未配置",
+  "asrNotConfiguredDesc": "语音识别未配置，请在设置中配置 ASR",
+  "asrFailed": "语音识别失败",
+  "userStopped": "用户手动停止",
+  "asrFailedDesc": "语音识别失败，请检查网络或配置",
+  "toolbar": {
+    "pickSkill": "选择技能",
+    "noSkills": "暂无可用技能",
+    "addAttachment": "添加附件",
+    "textFile": "文本文件",
+    "image": "图片",
+    "audio": "音频",
+    "document": "文档 (PDF/Word)"
+  },
+  "permission": {
+    "readonly": {
+      "label": "只读",
+      "description": "允许读取、搜索、查看和交互，阻止写入、删除和命令执行。"
+    },
+    "full": {
+      "label": "完全",
+      "description": "不做额外权限拦截，仍保留工具自身的安全校验。"
+    },
+    "aiReview": {
+      "label": "自动审查",
+      "description": "每次工具执行前由 AI 判断是否允许，不确定时拒绝。"
+    }
+  },
+  "trace": {
+    "stepCount": "查看 {{count}} 个步骤",
+    "deepThinking": "深度思考",
+    "taskCompleted": "任务已完成",
+    "guided": "对话已引导"
+  },
+  "actions": {
+    "copyPlainText": "复制纯文本",
+    "copyMarkdown": "复制 Markdown"
+  },
+  "monitor": {
+    "sections": {
+      "goal": "目标",
+      "todos": "待办",
+      "artifacts": "产物"
+    },
+    "empty": {
+      "todos": "任务执行时，待办清单会显示在这里",
+      "artifacts": "生成的文件会出现在这里",
+      "noWorkspace": "未选择工作目录",
+      "noSessionDir": "会话文件目录不存在"
+    },
+    "tabs": {
+      "final": "生成文件",
+      "workspace": "工作目录",
+      "session": "临时目录"
+    },
+    "artifactGroups": {
+      "final": "最终文件",
+      "working": "工作文件"
+    },
+    "previewTitle": "预览 {{path}}",
+    "playTitle": "播放 {{name}}"
+  },
+  "workspace": {
+    "openInExplorer": "在文件资源管理器中打开",
+    "refresh": "刷新",
+    "readFailed": "读取目录失败：{{message}}",
+    "reading": "正在读取…",
+    "empty": "该目录为空"
+  }
+}

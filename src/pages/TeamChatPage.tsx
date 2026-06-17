@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence } from "motion/react";
+import { useTranslation } from "react-i18next";
 
 import { abortTeamThread, promptTeam, steerTeamThread } from "@/ai/team";
 import {
@@ -79,6 +80,7 @@ export function TeamChatPage({
   teamId: string;
   threadId: string;
 }) {
+  const { t } = useTranslation("team");
   const team = useTeamsStore((state) => state.teams.find((t) => t.id === teamId));
   const agents = useConfigStore((state) => state.agents);
   const messages = useTeamThreadMessages(threadId);
@@ -88,8 +90,8 @@ export function TeamChatPage({
   );
   const emptyHint =
     team?.mode === "leader"
-      ? "领导会调度成员协作完成"
-      : "成员会平等发散并用控制工具交接";
+      ? t("chat.emptyHintLeader")
+      : t("chat.emptyHintEqual");
   const isResponding = useIsTeamThreadResponding(threadId);
   const permissionMode = useTeamThreadPermissionMode(threadId);
   const composer = useTeamChatStore((state) => state.composer);
@@ -185,8 +187,8 @@ export function TeamChatPage({
       // 引导插队是纯文本语义：带附件时无法随引导发送，避免静默丢弃，给出明确提示。
       if (attachments.length > 0) {
         await showAlert({
-          title: "引导不支持附件",
-          message: "团队任务进行中只能发送文本引导。请等任务结束后，再带附件作为新消息发送。",
+          title: t("chat.alerts.guidanceNoAttachmentsTitle"),
+          message: t("chat.alerts.guidanceNoAttachmentsMessage"),
           variant: "warning",
         });
         return;
@@ -199,8 +201,8 @@ export function TeamChatPage({
       if (!accepted) {
         setComposer(input);
         await showAlert({
-          title: "插队失败",
-          message: "当前团队任务刚好结束，请重新发送为新消息。",
+          title: t("chat.alerts.steerFailedTitle"),
+          message: t("chat.alerts.steerFailedMessage"),
           variant: "warning",
         });
         return;
@@ -220,7 +222,7 @@ export function TeamChatPage({
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
       await showAlert({
-        title: "未配置模型",
+        title: t("chat.alerts.modelMissingTitle"),
         message: providerCheck.message,
         variant: "warning",
       });
@@ -262,7 +264,7 @@ export function TeamChatPage({
       <div className="flex h-full min-w-0">
         <section className="relative flex h-full min-w-0 flex-1 flex-col">
           <TeamHeader
-            teamName={team?.name ?? "团队"}
+            teamName={team?.name ?? t("chat.fallbackTeamName")}
             teamAvatar={team?.avatar ?? "👥"}
           />
 
@@ -273,9 +275,9 @@ export function TeamChatPage({
             <div className="mx-auto flex w-full max-w-[920px] flex-col gap-8 px-4 pb-48 pt-8 sm:px-8">
               {visibleMessages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center pt-24 text-center text-sm text-muted-foreground">
-                  <Users className="mb-3 size-8" />
-                  向团队发起任务，{emptyHint}。
-                </div>
+	                  <Users className="mb-3 size-8" />
+	                  {t("chat.emptyMessage", { hint: emptyHint })}
+	                </div>
               ) : (
                 visibleMessages.map((message) => (
                   <TeamMessageView
@@ -354,6 +356,7 @@ const TeamMessageView = memo(function TeamMessageView({
   message: TeamMessage;
   memberInfo: Map<string, { avatar: string; name: string }>;
 }) {
+  const { t } = useTranslation("team");
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -374,10 +377,10 @@ const TeamMessageView = memo(function TeamMessageView({
       <div className="mb-3 flex items-center gap-2.5 text-sm text-muted-foreground">
         <span className="text-2xl leading-none">{info?.avatar ?? "🤖"}</span>
         <span className="font-semibold text-foreground">
-          {info?.name ?? "成员"}
+          {info?.name ?? t("chat.fallbackMemberName")}
         </span>
         {message.status === "streaming" ? (
-          <span className="ml-1 text-xs text-accent-foreground">发言中…</span>
+          <span className="ml-1 text-xs text-accent-foreground">{t("chat.speaking")}</span>
         ) : null}
       </div>
       {message.status === "error" ? (
@@ -510,6 +513,7 @@ function ProcessFold({
 }: {
   blocks: Array<Exclude<SegmentBlock, { type: "text" }>>;
 }) {
+  const { t } = useTranslation("team");
   const [open, setOpen] = useState(false);
   const count = processBlockCount(blocks);
 
@@ -521,7 +525,7 @@ function ProcessFold({
         className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ListTree className="size-4 shrink-0" />
-        <span>查看 {count} 个过程</span>
+        <span>{t("chat.processCount", { count })}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
@@ -587,6 +591,7 @@ function Composer({
   knowledgeBaseIds: string[];
   onKnowledgeChange: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation("team");
   const canSend = value.trim().length > 0 || attachmentCount > 0;
   const showSendButton = !isResponding || canSend;
   // 响应式宽度断点
@@ -613,10 +618,10 @@ function Composer({
     sessionFilesDir &&
     normalizeDir(workingDir) === normalizeDir(sessionFilesDir);
   const dirLabel = isTempDir
-    ? "临时目录"
+    ? t("chat.tempDirectory")
     : workingDir
       ? workingDir.split(/[\\/]/).filter(Boolean).pop() || workingDir
-      : "选择工作目录";
+      : t("chat.chooseWorkspace");
 
   // 响应式：narrow 模式下工作目录按钮最大宽度更小
   const dirButtonMaxWidth = breakpoint === "narrow" ? "max-w-[120px]" : "max-w-[260px]";
@@ -629,11 +634,11 @@ function Composer({
           value={value}
           onChange={setValue}
           onSkillsChange={() => undefined}
-          onFilesChange={onFilesChange}
-          onEnter={onSend}
-          placeholder={isResponding ? "输入引导，发送后会加入后续协作" : "描述任务，/ 调用技能，@ 添加文件，选成员指定发言"}
-          className="app-scrollbar max-h-[220px] min-h-[74px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 outline-none"
-        />
+	          onFilesChange={onFilesChange}
+	          onEnter={onSend}
+	          placeholder={isResponding ? t("chat.guidancePlaceholder") : t("chat.composerPlaceholder")}
+	          className="app-scrollbar max-h-[220px] min-h-[74px] w-full resize-none overflow-y-auto bg-transparent px-4 py-3 text-sm leading-6 outline-none"
+	        />
 
         <div className="flex items-center justify-between gap-2 px-3 py-2">
           <div className="flex min-w-0 items-center gap-1">
@@ -667,7 +672,7 @@ function Composer({
                     </button>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
-                <TooltipContent>选择成员（@ 指定发言）</TooltipContent>
+	                <TooltipContent>{t("chat.memberMenuTooltip")}</TooltipContent>
               </Tooltip>
               <DropdownMenuContent
                 align="start"
@@ -684,7 +689,7 @@ function Composer({
                     </DropdownMenuItem>
                   ))
                 ) : (
-                  <DropdownMenuItem disabled>暂无成员</DropdownMenuItem>
+	                  <DropdownMenuItem disabled>{t("chat.noMembers")}</DropdownMenuItem>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -706,13 +711,13 @@ function Composer({
                   {breakpoint !== "narrow" ? <span className="truncate">{dirLabel}</span> : null}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{workingDir || "选择工作目录"}</TooltipContent>
+	              <TooltipContent>{workingDir || t("chat.chooseWorkspace")}</TooltipContent>
             </Tooltip>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
             {isResponding ? (
-              <IconButton label="停止" onClick={onAbort}>
+	              <IconButton label={t("chat.stop")} onClick={onAbort}>
                 <SquareIcon className="size-4 fill-current" />
               </IconButton>
             ) : null}
@@ -726,7 +731,7 @@ function Composer({
                 type="button"
               >
                 <SendHorizontal className="size-4" />
-                <span className="sr-only">{isResponding ? "发送引导" : "发送"}</span>
+	                <span className="sr-only">{isResponding ? t("chat.sendGuidance") : t("chat.send")}</span>
               </Button>
             ) : null}
           </div>

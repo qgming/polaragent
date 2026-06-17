@@ -4,6 +4,7 @@
 
 import { Bot, Brain, Sparkles, Wrench, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Field, SettingDropdown } from "@/components/settings/settings-shared";
 import {
@@ -37,6 +38,7 @@ export function AgentEditorModal({
   onSave: (agent: AgentConfig) => void;
   onStartChat: (agentId: string) => void;
 }) {
+  const { t } = useTranslation("agents");
   const [name, setName] = useState(agent.name);
   const [avatar, setAvatar] = useState(agent.avatar || "⚡");
   const [description, setDescription] = useState(agent.description);
@@ -53,25 +55,25 @@ export function AgentEditorModal({
   const providers = useConfigStore((state) => state.providers);
   const providerOptions = useMemo(
     () => [
-      { value: "", label: "跟随模型设置" },
+      { value: "", label: t("editor.followModelSettings") },
       ...providers.providers.map((item) => ({
         value: item.id,
         label: item.name,
       })),
     ],
-    [providers.providers],
+    [providers.providers, t],
   );
   // 当前所选模型服务下的模型选项
   const modelOptions = useMemo(() => {
     if (!provider) {
-      return [{ value: "", label: "跟随默认路由模型" }];
+      return [{ value: "", label: t("editor.followDefaultModel") }];
     }
     const current = providers.providers.find((item) => item.id === provider);
     return (current?.models ?? []).map((item) => ({
       value: item.id,
       label: item.name || item.id,
     }));
-  }, [providers.providers, provider]);
+  }, [providers.providers, provider, t]);
 
   const toggleSkill = (skillId: string) => {
     setEnabledSkills((current) =>
@@ -104,22 +106,22 @@ export function AgentEditorModal({
   return (
     <Modal open onOpenChange={(next) => { if (!next) onClose(); }}>
       <ModalContent size="2xl" showCloseButton={true} className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background">
-        <ModalTitle className="sr-only">助手详情</ModalTitle>
+        <ModalTitle className="sr-only">{t("editor.title")}</ModalTitle>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
           <Bot className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-sm font-medium">助手详情</span>
+          <span className="min-w-0 truncate text-sm font-medium">{t("editor.title")}</span>
         </header>
 
         <ModalBody className="bg-background">
           <div className="space-y-6">
             {/* 头像与名称 */}
-            <Field icon={Sparkles} label="头像与名称">
+            <Field icon={Sparkles} label={t("editor.avatarName")}>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setShowEmojiPicker(true)}
                   className="flex size-12 shrink-0 items-center justify-center rounded-lg border border-input bg-muted/60 text-2xl transition-colors hover:border-ring hover:bg-muted"
-                  title="点击选择 Emoji"
+                  title={t("editor.pickEmoji")}
                 >
                   {avatar || "⚡"}
                 </button>
@@ -127,27 +129,27 @@ export function AgentEditorModal({
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   className="h-12 flex-1 rounded-lg border border-input bg-background px-4 text-base outline-none transition-colors focus:border-ring"
-                  placeholder="助手名称"
+                  placeholder={t("editor.namePlaceholder")}
                 />
               </div>
             </Field>
 
             {/* 助手描述 */}
-            <Field icon={Bot} label="助手描述">
+            <Field icon={Bot} label={t("editor.description")}>
               <textarea
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 className="app-scrollbar min-h-[96px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring"
-                placeholder="描述这个助手适合处理什么任务"
+                placeholder={t("editor.descriptionPlaceholder")}
               />
             </Field>
 
             {/* 模型服务与模型 */}
             <div className="grid gap-6 sm:grid-cols-2">
-              <Field icon={Zap} label="模型服务">
+              <Field icon={Zap} label={t("editor.modelProvider")}>
                 <SettingDropdown
                   value={provider}
-                  placeholder="选择模型服务"
+                  placeholder={t("editor.selectProvider")}
                   options={providerOptions}
                   onChange={(value) => {
                     setProvider(value);
@@ -157,11 +159,11 @@ export function AgentEditorModal({
                   className="h-11 w-full justify-between"
                 />
               </Field>
-              <Field icon={Brain} label="模型">
+              <Field icon={Brain} label={t("editor.model")}>
                 {modelOptions.length > 0 ? (
                   <SettingDropdown
                     value={model}
-                    placeholder="选择模型"
+                    placeholder={t("editor.selectModel")}
                     options={modelOptions}
                     onChange={setModel}
                     className="h-11 w-full justify-between"
@@ -171,34 +173,34 @@ export function AgentEditorModal({
                     value={model}
                     onChange={(event) => setModel(event.target.value)}
                     className="h-11 w-full rounded-lg border border-input bg-background px-4 text-sm outline-none transition-colors focus:border-ring"
-                    placeholder="该服务暂无模型，可手动输入"
+                    placeholder={t("editor.manualModelPlaceholder")}
                   />
                 )}
               </Field>
             </div>
 
             {/* 系统提示词 */}
-            <Field icon={Bot} label="系统提示词">
+            <Field icon={Bot} label={t("editor.systemPrompt")}>
               <textarea
                 value={systemPrompt}
                 onChange={(event) => setSystemPrompt(event.target.value)}
                 className="app-scrollbar min-h-[200px] w-full resize-none rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-ring"
-                placeholder="定义这个助手的身份、行为边界、回答风格和工具使用策略"
+                placeholder={t("editor.systemPromptPlaceholder")}
               />
             </Field>
 
             {/* 技能列表 */}
-            <Field icon={Wrench} label="启用技能">
+            <Field icon={Wrench} label={t("editor.enabledSkills")}>
               <div className="app-scrollbar max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                 {skills.length > 0 ? (
                   <>
                     <div className="flex min-h-[72px] items-center gap-4 border-b border-border bg-muted/30 px-5 py-4">
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-semibold">
-                          全部技能
+                          {t("editor.allSkills")}
                         </span>
                         <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                          开启后运行时自动使用当前所有内置与已安装技能，包括之后新增的技能。
+                          {t("editor.allSkillsDescription")}
                         </span>
                       </span>
                       <Switch
@@ -231,7 +233,7 @@ export function AgentEditorModal({
                   </>
                 ) : (
                   <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
-                    暂无可用技能
+                    {t("editor.noSkills")}
                   </div>
                 )}
               </div>
@@ -241,14 +243,14 @@ export function AgentEditorModal({
 
         <ModalFooter>
           <Button variant="outline" onClick={() => onStartChat(agent.id)}>
-            开始对话
+            {t("editor.startChat")}
           </Button>
           <div className="flex-1" />
           <Button variant="outline" onClick={onClose}>
-            取消
+            {t("common:cancel")}
           </Button>
           <Button variant="default" onClick={save}>
-            保存
+            {t("common:save")}
           </Button>
         </ModalFooter>
       </ModalContent>

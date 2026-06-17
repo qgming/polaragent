@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, CircleHelp, Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import type { McpInstallCheck } from "@/lib/mcp";
 
@@ -9,9 +10,16 @@ export function McpInstallStatusBadge({
   check?: McpInstallCheck;
   compact?: boolean;
 }) {
+  const { t } = useTranslation("tools");
   const status = check?.status ?? "unknown";
-  const label = statusLabel(status, check?.toolCount);
-  const title = [check?.message, formatCheckedAt(check?.checkedAt)]
+  const label =
+    status === "installed" && typeof check?.toolCount === "number"
+      ? t("installStatus.installedWithCount", { count: check.toolCount })
+      : t(`installStatus.${status}`);
+  const title = [
+    check?.message,
+    check?.checkedAt ? t("installStatus.checkedAt", { time: new Date(check.checkedAt).toLocaleString() }) : undefined,
+  ]
     .filter(Boolean)
     .join("\n");
 
@@ -35,13 +43,6 @@ export function McpInstallStatusBadge({
   );
 }
 
-function statusLabel(status: McpInstallCheck["status"], toolCount?: number): string {
-  if (status === "checking") return "检测中";
-  if (status === "installed") return `可用${typeof toolCount === "number" ? ` · ${toolCount}` : ""}`;
-  if (status === "failed") return "失败";
-  return "未检测";
-}
-
 function statusClass(status: McpInstallCheck["status"]): string {
   if (status === "installed") {
     return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
@@ -53,9 +54,4 @@ function statusClass(status: McpInstallCheck["status"]): string {
     return "bg-sky-500/10 text-sky-700 dark:text-sky-400";
   }
   return "bg-muted text-muted-foreground";
-}
-
-function formatCheckedAt(timestamp?: number): string | undefined {
-  if (!timestamp) return undefined;
-  return `检测时间：${new Date(timestamp).toLocaleString()}`;
 }

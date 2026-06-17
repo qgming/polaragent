@@ -6,6 +6,7 @@
 //   - 工具条：复制源码 / 下载 SVG / 下载 PNG / 点击放大查看
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import mermaid from "mermaid";
 import { Check, Copy, Download, Maximize2, FileImage } from "lucide-react";
 
@@ -96,6 +97,7 @@ interface MermaidDiagramProps {
 }
 
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
+  const { t } = useTranslation("common");
   // useId 提供稳定且唯一的渲染 id（mermaid.render 要求 DOM id 合法，去掉冒号）
   const rawId = useId();
   const renderId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -215,16 +217,16 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
         {/* hover 工具条 */}
         <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <ToolbarButton label={copied ? "已复制" : "复制源码"} onClick={handleCopy}>
+	          <ToolbarButton label={copied ? t("copied") : t("mermaid.copySource")} onClick={handleCopy}>
             {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           </ToolbarButton>
-          <ToolbarButton label="下载 SVG" onClick={handleDownloadSvg}>
+	          <ToolbarButton label={t("mermaid.downloadSvg")} onClick={handleDownloadSvg}>
             <Download className="size-3.5" />
           </ToolbarButton>
-          <ToolbarButton label="下载 PNG" onClick={() => void handleDownloadPng()}>
+	          <ToolbarButton label={t("mermaid.downloadPng")} onClick={() => void handleDownloadPng()}>
             <FileImage className="size-3.5" />
           </ToolbarButton>
-          <ToolbarButton label="放大查看" onClick={() => setZoomOpen(true)}>
+	          <ToolbarButton label={t("mermaid.zoom")} onClick={() => setZoomOpen(true)}>
             <Maximize2 className="size-3.5" />
           </ToolbarButton>
         </div>
@@ -293,7 +295,7 @@ function svgToPngDataUrl(svg: string): Promise<string> {
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         URL.revokeObjectURL(url);
-        reject(new Error("无法创建画布上下文"));
+        reject(new Error("Unable to create canvas context"));
         return;
       }
       // 白底，避免透明 PNG 在浅色处看不清
@@ -306,7 +308,7 @@ function svgToPngDataUrl(svg: string): Promise<string> {
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("SVG 加载失败"));
+      reject(new Error("SVG failed to load"));
     };
     img.src = url;
   });

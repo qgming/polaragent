@@ -2,6 +2,7 @@
 // src/components/ui/confirm-dialog.tsx
 
 import { AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Modal, ModalBody, ModalContent, ModalTitle } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,12 +26,13 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   message,
-  confirmLabel = "确定",
-  cancelLabel = "取消",
+  confirmLabel,
+  cancelLabel,
   variant = "default",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation("common");
   const handleConfirm = () => {
     onConfirm();
     onOpenChange(false);
@@ -66,16 +68,16 @@ export function ConfirmDialog({
               <p className="text-sm text-muted-foreground leading-relaxed">{message}</p>
             </div>
 
-            <div className="flex w-full gap-3">
-              <Button onClick={handleCancel} variant="outline" className="flex-1">
-                {cancelLabel}
-              </Button>
+	            <div className="flex w-full gap-3">
+	              <Button onClick={handleCancel} variant="outline" className="flex-1">
+	                {cancelLabel ?? t("cancel")}
+	              </Button>
               <Button
                 onClick={handleConfirm}
                 variant={variant === "destructive" ? "destructive" : "default"}
                 className="flex-1"
               >
-                {confirmLabel}
+	                {confirmLabel ?? t("confirm")}
               </Button>
             </div>
           </div>

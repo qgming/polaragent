@@ -1,0 +1,364 @@
+{
+  "page": {
+    "title": "Tools",
+    "bannerTitle": "Give assistants more external capabilities",
+    "bannerDescription": "Connect external services so assistants can look things up, work across platforms, and finish real tasks.",
+    "kitLabel": "Tool Hub"
+  },
+  "tabs": {
+    "discover": "Discover",
+    "builtin": "Built in",
+    "installed": "Installed"
+  },
+  "toolbar": {
+    "addMcp": "Add MCP"
+  },
+  "empty": {
+    "builtinTitle": "No built-in tools found",
+    "builtinDescription": "Built-in tools are generated from the runtime registry and mcp/builtin.",
+    "installedTitle": "No installed MCP tools yet",
+    "installedDescription": "Find MCP providers on the Discover tab or create a custom MCP tool."
+  },
+  "errors": {
+    "openLinkFailed": "Failed to open link"
+  },
+  "delete": {
+    "title": "Delete tool",
+    "message": "Delete \"{{name}}\"? This cannot be undone.",
+    "confirm": "Delete",
+    "success": "Deleted tool: {{name}}"
+  },
+  "actions": {
+    "edit": "Edit",
+    "check": "Check",
+    "checking": "Checking",
+    "checkTitle": "Check whether this MCP is available",
+    "delete": "Delete"
+  },
+  "common": {
+    "noDescription": "No description"
+  },
+  "mcp": {
+    "requiresConfig": "Requires config",
+    "expandTools": "Expand tool list",
+    "collapseTools": "Collapse tool list",
+    "noRemoteTools": "No tool list has been fetched yet. It will reconnect to the MCP server after you edit and save."
+  },
+  "status": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "available": "Available",
+    "pendingCheck": "Needs check"
+  },
+  "installStatus": {
+    "checking": "Checking",
+    "installed": "Available",
+    "installedWithCount": "Available · {{count}}",
+    "failed": "Failed",
+    "unknown": "Not checked",
+    "checkedAt": "Checked at: {{time}}"
+  },
+  "editor": {
+    "titleCreate": "Add MCP tool",
+    "titleInstall": "Configure and install MCP",
+    "titleEdit": "Edit MCP tool",
+    "subtitle": "Paste MCP client configuration directly",
+    "placeholder": "Paste MCP client configuration, for example:\n{\n  \"mcpServers\": {\n    \"server-name\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"your-mcp-package\"]\n    }\n  }\n}",
+    "cancel": "Cancel",
+    "fetchingTools": "Fetching tools",
+    "install": "Install",
+    "save": "Save",
+    "discoveredTools": "Fetched tools",
+    "toolCount": "{{count}} tools",
+    "noDiscoveredTools": "No remote tools have been fetched yet. Saving will reconnect to the MCP server.",
+    "parameterCount": "{{count}} parameters"
+  },
+  "discover": {
+    "providers": {
+      "bigmodel": "Curated MCP providers for fast setup",
+      "modelscope": "ModelScope community MCP servers",
+      "higress": "Higress MCP servers",
+      "mcp-so": "MCP server discovery platform",
+      "smithery": "Smithery MCP tools",
+      "glama": "Glama MCP server directory",
+      "pulsemcp": "Pulse MCP servers",
+      "composio": "Composio MCP developer tools",
+      "official": "Official MCP server collection",
+      "awesome": "Curated list of MCP servers"
+    }
+  },
+  "builtin": {
+    "groups": {
+      "system": {
+        "name": "System information",
+        "description": "Get time, location, hardware, network, and other system details"
+      },
+      "computeruse": {
+        "name": "Computer Use",
+        "description": "Control Windows desktop applications"
+      },
+      "browseruse": {
+        "name": "Browser Use",
+        "description": "Control Chrome and operate web pages"
+      },
+      "task": {
+        "name": "Task management",
+        "description": "Maintain todo lists and track task progress"
+      },
+      "network": {
+        "name": "Network tools",
+        "description": "Search the web and read page content"
+      },
+      "file": {
+        "name": "File operations",
+        "description": "Read, write, edit, and organize files and folders"
+      },
+      "office": {
+        "name": "Office creation",
+        "description": "Generate Word, PPT, and PDF files"
+      },
+      "knowledge": {
+        "name": "Knowledge base",
+        "description": "Search knowledge base documents for relevant context"
+      },
+      "image": {
+        "name": "Image tools",
+        "description": "Generate images and save them as session artifacts"
+      },
+      "audio": {
+        "name": "Audio tools",
+        "description": "Speech recognition and text-to-speech"
+      },
+      "dev": {
+        "name": "Developer tools",
+        "description": "Run shell commands and project scripts"
+      },
+      "skill": {
+        "name": "Skills",
+        "description": "Inspect and read skills available to the current assistant"
+      },
+      "interaction": {
+        "name": "User interaction",
+        "description": "Ask the user for input and collect choices"
+      },
+      "team": {
+        "name": "Team collaboration",
+        "description": "Control collaboration flow and coordinate team votes"
+      }
+    },
+    "tools": {
+      "system_info": {
+        "name": "System information",
+        "description": "Get system information including current time, time zone, location, hardware, and network status."
+      },
+      "windows_snapshot": {
+        "name": "Windows screenshot",
+        "description": "Capture the active Windows window or desktop with a UI tree, including clickable element positions and details."
+      },
+      "windows_accessibility_tree": {
+        "name": "Get UI tree",
+        "description": "Get the UI Automation tree without a screenshot. Faster than snapshot and useful for frequent UI reads."
+      },
+      "windows_list_windows": {
+        "name": "List windows",
+        "description": "List all top-level desktop windows with titles, process IDs, handles, and related information."
+      },
+      "windows_find": {
+        "name": "Windows find",
+        "description": "Find UI elements in Windows applications."
+      },
+      "windows_element_info": {
+        "name": "Element info",
+        "description": "Get detailed information for a UI element or the element at specific coordinates."
+      },
+      "windows_focus": {
+        "name": "Focus element",
+        "description": "Move focus to a specified element using UI Automation."
+      },
+      "windows_invoke": {
+        "name": "Invoke element",
+        "description": "Use UIA patterns to operate an element, falling back to click when needed."
+      },
+      "windows_set_value": {
+        "name": "Set element value",
+        "description": "Use UIA ValuePattern to set the value of an input control."
+      },
+      "windows_activate_window": {
+        "name": "Activate window",
+        "description": "Activate a target window by title, process ID, or HWND."
+      },
+      "windows_click": {
+        "name": "Windows click",
+        "description": "Click a coordinate or UI element in a Windows application."
+      },
+      "windows_double_click": {
+        "name": "Windows double-click",
+        "description": "Double-click a coordinate or UI element in a Windows application."
+      },
+      "windows_move": {
+        "name": "Move mouse",
+        "description": "Move the pointer to a coordinate or the center of a UI element."
+      },
+      "windows_drag": {
+        "name": "Windows drag",
+        "description": "Perform mouse dragging along a path."
+      },
+      "windows_scroll": {
+        "name": "Windows scroll",
+        "description": "Scroll content in a Windows application."
+      },
+      "windows_type": {
+        "name": "Windows type",
+        "description": "Type text into the currently focused Windows control."
+      },
+      "windows_keypress": {
+        "name": "Windows keypress",
+        "description": "Press keyboard keys or shortcuts in a Windows application."
+      },
+      "windows_wait": {
+        "name": "Windows wait",
+        "description": "Wait for animations, loading, or focus changes to complete."
+      },
+      "windows_batch": {
+        "name": "Windows batch actions",
+        "description": "Run multiple Computer Use actions in sequence to reduce round trips."
+      },
+      "browser_tabs": {
+        "name": "List tabs",
+        "description": "List all current browser tabs."
+      },
+      "browser_open": {
+        "name": "Open tab",
+        "description": "Open a new browser tab."
+      },
+      "browser_close": {
+        "name": "Close tab",
+        "description": "Close a specified browser tab."
+      },
+      "browser_scan": {
+        "name": "Scan page",
+        "description": "Scan page content and extract text or structured information."
+      },
+      "browser_snapshot": {
+        "name": "Page snapshot",
+        "description": "Get an actionable page snapshot and generate @e references for later clicks or fills."
+      },
+      "browser_click": {
+        "name": "Click element",
+        "description": "Click page elements using CSS selectors or @e references."
+      },
+      "browser_fill": {
+        "name": "Fill form",
+        "description": "Fill form input fields."
+      },
+      "browser_execute": {
+        "name": "Execute script",
+        "description": "Run JavaScript code on the page."
+      },
+      "browser_screenshot": {
+        "name": "Browser screenshot",
+        "description": "Capture a page screenshot."
+      },
+      "browser_network": {
+        "name": "Network monitor",
+        "description": "Monitor network requests."
+      },
+      "browser_console": {
+        "name": "Console logs",
+        "description": "Listen to and read page console logs and exceptions."
+      },
+      "update_todos": {
+        "name": "Update todos",
+        "description": "Maintain the current task todo list and sync progress with a complete list."
+      },
+      "ask_user": {
+        "name": "Ask user",
+        "description": "Request text input, single choice, or multiple choice from the user and wait for modal submission."
+      },
+      "list_skills": {
+        "name": "List skills",
+        "description": "List skill names and use cases available to the current assistant or team context."
+      },
+      "read_skill": {
+        "name": "Read skill",
+        "description": "Read the full SKILL.md instructions and directory tree for an available skill."
+      },
+      "read_skill_file": {
+        "name": "Read skill file",
+        "description": "Read files under references, examples, and other subfolders in an available skill directory."
+      },
+      "control_team_flow": {
+        "name": "Control team flow",
+        "description": "Control team collaboration by continuing, handing off, ending, or marking blocked, with optional private notes."
+      },
+      "request_team_vote": {
+        "name": "Request team vote",
+        "description": "Start a team vote to collect member choices about a plan, direction, or whether to finish."
+      },
+      "cast_team_vote": {
+        "name": "Cast team vote",
+        "description": "Submit the current member's vote during a team voting stage."
+      },
+      "read_file": {
+        "name": "Read file",
+        "description": "Read the text content of a specified file under the workspace."
+      },
+      "write_file": {
+        "name": "Write file",
+        "description": "Write content to a file under the workspace and register it in the artifacts panel."
+      },
+      "edit_file": {
+        "name": "Edit file",
+        "description": "Make exact replacement edits with oldString -> newString, suited for targeted changes."
+      },
+      "create_directory": {
+        "name": "Create directory",
+        "description": "Create a directory under the workspace, including required parent directories."
+      },
+      "delete_file": {
+        "name": "Delete path",
+        "description": "Delete a file or directory under the workspace; directories are removed recursively."
+      },
+      "list_directory": {
+        "name": "List directory",
+        "description": "List files and subdirectories under the workspace or a specified directory."
+      },
+      "create_office_document": {
+        "name": "Create office document",
+        "description": "Generate Word, PPT, or PDF files and save them as previewable artifacts."
+      },
+      "web_search": {
+        "name": "Web search",
+        "description": "Search the internet and return results with titles, links, and summaries."
+      },
+      "web_fetch": {
+        "name": "Read web page",
+        "description": "Read page body text with optional heading, anchor, link, and table extraction."
+      },
+      "image_generation": {
+        "name": "Generate image",
+        "description": "Call an image generation model and save generated images to the workspace."
+      },
+      "image_edit": {
+        "name": "Edit image",
+        "description": "Call an image editing model to edit a local source image with an optional mask."
+      },
+      "speech_recognition": {
+        "name": "Speech recognition",
+        "description": "Transcribe audio files to text, supporting common formats such as mp3, wav, m4a, webm, and ogg."
+      },
+      "speech_synthesis": {
+        "name": "Speech synthesis",
+        "description": "Synthesize text into speech, save it to the workspace, and register it as an artifact."
+      },
+      "run_bash": {
+        "name": "Run command",
+        "description": "Run a shell command in the session workspace and return stdout and stderr. Dangerous commands are blocked."
+      },
+      "search_knowledge": {
+        "name": "Search knowledge base",
+        "description": "Search enabled knowledge bases for relevant document snippets and project context."
+      }
+    }
+  }
+}

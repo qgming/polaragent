@@ -3,6 +3,7 @@
 import { ChevronRight } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { extensionNav, type PageId } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ export function ExtensionNavGroup({
   activeTeamId?: string;
   onOpenPage: (page: PageId) => void;
 }) {
+  const { t } = useTranslation("nav");
   // 当前是否有子项处于激活态（团队页另需排除团队会话激活的情况，与原顶层逻辑一致）
   const hasActiveChild = extensionNav.items.some(
     (item) => activePage === item.id && !activeTeamId,
@@ -53,7 +55,7 @@ export function ExtensionNavGroup({
         )}
       >
         <GroupIcon className="size-[18px] shrink-0" />
-        <span className="truncate">{extensionNav.label}</span>
+        <span className="truncate">{t("sidebar.extensions")}</span>
         <motion.span
           animate={{ rotate: expanded ? 90 : 0 }}
           transition={{ duration: 0.18 }}
@@ -90,7 +92,7 @@ export function ExtensionNavGroup({
                     )}
                   >
                     <Icon className="size-[18px] shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className="truncate">{t(`sidebar.${item.id}`)}</span>
                   </button>
                 );
               })}

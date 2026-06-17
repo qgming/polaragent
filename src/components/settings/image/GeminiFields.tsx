@@ -16,23 +16,29 @@ export interface GeminiValue {
 
 export function GeminiFields({
   value,
+  actualRequestLabel,
+  baseUrlLabel,
+  imageModelLabel,
   onChange,
 }: {
   value: GeminiValue;
+  actualRequestLabel: (url: string) => string;
+  baseUrlLabel: string;
+  imageModelLabel: string;
   onChange: (patch: Partial<GeminiValue>) => void;
 }) {
   return (
     <>
       <TextField
-        label="Base URL（可选，留空使用官方地址）"
+        label={baseUrlLabel}
         value={value.baseURL}
         onChange={(v) => onChange({ baseURL: v })}
         placeholder="https://generativelanguage.googleapis.com/v1beta"
-        hint={`实际请求：${previewGeminiUrl(value.baseURL, "https://generativelanguage.googleapis.com/v1beta", value.model)}`}
+        hint={actualRequestLabel(previewGeminiUrl(value.baseURL, "https://generativelanguage.googleapis.com/v1beta", value.model))}
       />
       <ApiKeyField value={value.apiKey} onChange={(v) => onChange({ apiKey: v })} />
       <TextField
-        label="图片模型"
+        label={imageModelLabel}
         value={value.model}
         onChange={(v) => onChange({ model: v })}
         placeholder="gemini-3-pro-image-preview"

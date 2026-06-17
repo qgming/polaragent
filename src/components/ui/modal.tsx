@@ -4,6 +4,7 @@
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -61,6 +62,7 @@ function ModalContent({
   size?: ModalSize;
   showCloseButton?: boolean;
 }) {
+  const { t } = useTranslation("common");
   return (
     <DialogPrimitive.Portal data-slot="modal-portal">
       <ModalOverlay />
@@ -77,7 +79,7 @@ function ModalContent({
         {showCloseButton ? (
           <DialogPrimitive.Close className="absolute top-4 right-4 rounded-sm opacity-70 outline-none transition-opacity hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/35 disabled:pointer-events-none">
             <X className="size-5" />
-            <span className="sr-only">关闭</span>
+	            <span className="sr-only">{t("close")}</span>
           </DialogPrimitive.Close>
         ) : null}
       </DialogPrimitive.Content>

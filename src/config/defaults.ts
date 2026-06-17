@@ -14,6 +14,7 @@ export const defaultSettings: Settings = {
     fontSize: 14,
     chatFont: "sans",
     chatFontSize: "medium",
+    language: "system", // 默认跟随系统语言
   },
   behavior: {
     autoSaveConversations: true,

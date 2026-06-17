@@ -1,0 +1,93 @@
+{
+  "page": {
+    "title": "知识库",
+    "bannerTitle": "让助手记住你的专属资料",
+    "bannerDescription": "导入你的资料，助手就能照着你的内容来回答。",
+    "kitLabel": "Knowledge Kit",
+    "searchPlaceholder": "搜索知识库",
+    "create": "新建知识库"
+  },
+  "empty": {
+    "noMatch": "没有匹配的知识库",
+    "none": "暂无知识库",
+    "noMatchDesc": "换个关键词试试，或新建一个知识库来整理新的资料。",
+    "noneDesc": "创建知识库并导入文档，让 AI 可以检索相关内容。",
+    "createFirst": "创建第一个知识库",
+    "noFiles": "暂无文件",
+    "noFilesDesc": "导入文档文件到此知识库"
+  },
+  "detail": {
+    "rebuild": "重建索引",
+    "import": "导入文件",
+    "dropTitle": "拖入文件到知识库",
+    "dropDesc": "支持 PDF、DOCX、Markdown、TXT、JSON、代码文件等",
+    "chooseFiles": "选择文件",
+    "noSupportedFiles": "未发现支持的文件",
+    "addFilesFailed": "添加文件失败:",
+    "dropFilesFailed": "拖入文件失败:",
+    "deleteFileFailed": "删除文件失败:",
+    "rebuildFileFailed": "重建文件索引失败:",
+    "rebuildFailed": "重建索引失败:",
+    "incompatibleTitle": "检测到 {{count}} 个文件向量不兼容",
+    "incompatibleTitle_plural": "检测到 {{count}} 个文件向量不兼容",
+    "incompatibleDesc": "嵌入模型已更改，这些文件需要重新生成向量",
+    "reembed": "重新嵌入"
+  },
+  "confirm": {
+    "deleteTitle": "确认删除",
+    "deleteFileMessage": "确定要删除此文件吗？",
+    "rebuildTitle": "确认重建索引",
+    "rebuildMessage": "确定要重建索引吗？这将重新处理所有文件。",
+    "rebuild": "重建"
+  },
+  "form": {
+    "createTitle": "新建知识库",
+    "settingsTitle": "知识库设置",
+    "name": "名称",
+    "namePlaceholder": "例如：项目文档、技术手册",
+    "description": "简介",
+    "descriptionPlaceholder": "简要说明这个知识库的内容范围",
+    "chunkSize": "分块大小 (tokens)",
+    "overlap": "块重叠 (tokens)",
+    "recommended": "{{value}}（推荐）",
+    "create": "创建",
+    "enabled": "启用此知识库",
+    "rebuildNotice": "修改分块配置后，需要重建索引才能生效",
+    "createFailed": "创建知识库失败:",
+    "updateFailed": "更新知识库失败:"
+  },
+  "card": {
+    "more": "更多",
+    "moreActions": "{{name}} 的更多操作",
+    "edit": "编辑知识库",
+    "delete": "删除",
+    "deleteConfirm": "确定要删除知识库\"{{name}}\"吗？此操作不可恢复。",
+    "deleteFailed": "删除知识库失败:",
+    "files": "{{count}} 文件",
+    "chunks": "{{count}} 分块",
+    "updated": "更新 {{time}}"
+  },
+  "file": {
+    "chunks": "{{count}} 分块",
+    "reindex": "重新索引 {{name}}",
+    "indexing": "正在索引",
+    "reindexTooltip": "重新索引该文件",
+    "status": "状态：{{status}}",
+    "delete": "删除",
+    "deleteLabel": "删除 {{name}}",
+    "statuses": {
+      "pending": "待处理",
+      "processing": "索引中",
+      "ready": "就绪",
+      "error": "错误",
+      "incompatible": "异常"
+    }
+  },
+  "selector": {
+    "title": "知识库",
+    "empty": "暂无可用知识库",
+    "itemMeta": "{{chunks}} 块 · {{files}} 文档",
+    "disableAll": "全部禁用",
+    "selectAll": "全部选中"
+  }
+}

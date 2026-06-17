@@ -11,6 +11,7 @@
 //   - 图片：固定 preview，不显示开关
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Code2,
   Eye,
@@ -56,6 +57,7 @@ function dirNameOf(path: string): string {
 }
 
 export function PreviewWindow({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   // 初始化配置 store（读取 config.json）
   useEffect(() => {
     void initializeApp();
@@ -186,8 +188,8 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
         <div className="ml-auto flex h-full items-center gap-0.5">
           {/* 保存：处于 code 编辑视图时显示 */}
           {canEdit && viewMode === "code" ? (
-            <ToolbarButton
-              label={saving ? "保存中…" : "保存 (Ctrl+S)"}
+	            <ToolbarButton
+	              label={saving ? t("previewWindow.saving") : t("previewWindow.save")}
               onClick={() => void handleSave()}
               disabled={saving || !dirty}
             >
@@ -201,7 +203,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
 
           {!isBinaryPreview ? (
             <ToolbarButton
-              label="页内搜索 (Ctrl+F)"
+	              label={t("previewWindow.search")}
               onClick={() => setSearchOpen((v) => !v)}
               active={searchOpen}
             >
@@ -209,12 +211,12 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
             </ToolbarButton>
           ) : null}
 
-          <ToolbarButton label="刷新" onClick={() => void load()}>
+	          <ToolbarButton label={t("previewWindow.refresh")} onClick={() => void load()}>
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </ToolbarButton>
 
           <ToolbarButton
-            label="在文件资源管理器中打开"
+	            label={t("previewWindow.openInExplorer")}
             onClick={() => void openPath(dirNameOf(filePath))}
           >
             <FolderOpen className="size-4" />
@@ -222,14 +224,14 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
 
           {kind === "html" ? (
             <ToolbarButton
-              label="使用系统浏览器打开"
+	              label={t("previewWindow.openInBrowser")}
               onClick={() => void openInSystemBrowser()}
             >
               <Globe className="size-4" />
             </ToolbarButton>
           ) : null}
 
-          <ToolbarButton label="关闭" onClick={closeWindow} close>
+	          <ToolbarButton label={t("close")} onClick={closeWindow} close>
             <X className="size-4" />
           </ToolbarButton>
         </div>
@@ -243,7 +245,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="在文件中查找…"
+	            placeholder={t("previewWindow.searchPlaceholder")}
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <button
@@ -253,7 +255,7 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
               setQuery("");
             }}
             className="text-muted-foreground hover:text-foreground"
-            title="关闭搜索"
+	            title={t("previewWindow.closeSearch")}
           >
             <X className="size-3.5" />
           </button>
@@ -270,11 +272,11 @@ export function PreviewWindow({ filePath }: { filePath: string }) {
         )}
       >
         {error ? (
-          <div className="p-6 text-sm text-destructive">读取失败：{error}</div>
+	          <div className="p-6 text-sm text-destructive">{t("previewWindow.readFailed", { message: error })}</div>
         ) : loading ? (
           <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            正在读取…
+	            {t("previewWindow.reading")}
           </div>
         ) : (
           <PreviewContent
@@ -301,12 +303,13 @@ function ViewModeSwitch({
   value: ViewMode;
   onChange: (mode: ViewMode) => void;
 }) {
+  const { t } = useTranslation("common");
   return (
     <div className="flex shrink-0 items-center rounded-md border border-border p-0.5">
       <button
         type="button"
         onClick={() => onChange("code")}
-        title="代码（可编辑）"
+	        title={t("previewWindow.codeEditable")}
         className={cn(
           "flex size-6 items-center justify-center rounded transition-colors",
           value === "code"
@@ -315,12 +318,12 @@ function ViewModeSwitch({
         )}
       >
         <Code2 className="size-3.5" />
-        <span className="sr-only">代码</span>
+	        <span className="sr-only">{t("previewWindow.code")}</span>
       </button>
       <button
         type="button"
         onClick={() => onChange("preview")}
-        title="预览"
+	        title={t("previewWindow.preview")}
         className={cn(
           "flex size-6 items-center justify-center rounded transition-colors",
           value === "preview"
@@ -329,7 +332,7 @@ function ViewModeSwitch({
         )}
       >
         <Eye className="size-3.5" />
-        <span className="sr-only">预览</span>
+	        <span className="sr-only">{t("previewWindow.preview")}</span>
       </button>
     </div>
   );
@@ -432,6 +435,7 @@ function PreviewContent({
 }
 
 function ImagePreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   const [src, setSrc] = useState("");
   // 图片加载失败（文件损坏、格式不支持、内容为空等）时切换为友好提示。
   const [failed, setFailed] = useState(false);
@@ -453,10 +457,10 @@ function ImagePreview({ filePath }: { filePath: string }) {
       {failed ? (
         <div className="flex max-w-sm flex-col items-center gap-2 text-center text-muted-foreground">
           <ImageOff className="size-10 opacity-60" />
-          <p className="text-sm font-medium text-foreground">无法显示这张图片</p>
-          <p className="text-xs">
-            图片可能已损坏或格式不受支持，可尝试用其他看图软件打开该文件。
-          </p>
+	          <p className="text-sm font-medium text-foreground">{t("previewWindow.imageErrorTitle")}</p>
+	          <p className="text-xs">
+	            {t("previewWindow.imageErrorDescription")}
+	          </p>
         </div>
       ) : src ? (
         <img
@@ -472,6 +476,7 @@ function ImagePreview({ filePath }: { filePath: string }) {
 
 // HTML 预览：使用 file:// URL 以支持加载本地资源
 function HtmlPreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   const [src, setSrc] = useState("");
 
   useEffect(() => {
@@ -486,7 +491,7 @@ function HtmlPreview({ filePath }: { filePath: string }) {
 
   return src ? (
     <iframe
-      title="HTML 预览"
+	      title={t("previewWindow.htmlPreview")}
       src={src}
       sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
       referrerPolicy="no-referrer"

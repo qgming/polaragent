@@ -2,6 +2,7 @@
 // src/pages/AgentsPage.tsx
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { v4 as uuidv4 } from "uuid";
 import {
   Bot,
@@ -35,6 +36,7 @@ export function AgentsPage({
 }: {
   onStartChat: (agentId: string) => void;
 }) {
+  const { t } = useTranslation("agents");
   const agents = useConfigStore((state) => state.agents);
   const updateAgent = useConfigStore((state) => state.updateAgent);
   const addAgent = useConfigStore((state) => state.addAgent);
@@ -92,7 +94,7 @@ export function AgentsPage({
   // 创建空白助手模板
   const createEmptyAgent = (): AgentConfig => ({
     id: uuidv4(),
-    name: "新建助手",
+    name: t("editor.newAgent"),
     avatar: "⚡",
     description: "",
     version: "1.0.0",
@@ -112,11 +114,11 @@ export function AgentsPage({
     try {
       await removeAgent(deletingAgent.id);
       initializeAiRuntime();
-      toast.success(`已删除助手：${deletingAgent.name}`);
+      toast.success(t("delete.success", { name: deletingAgent.name }));
       setDeletingAgent(null);
     } catch (error) {
-      toast.error(`删除助手失败：${deletingAgent.name}`);
-      console.error("删除助手失败:", error);
+      toast.error(t("delete.failed", { name: deletingAgent.name }));
+      console.error(t("delete.logFailed"), error);
     }
   };
 
@@ -126,19 +128,19 @@ export function AgentsPage({
         <TopToolbar search={search} setSearch={setSearch} onCreateAgent={handleCreateAgent} />
 
         <PageHero
-          title="助手"
-          bannerTitle="每件事都有专属的帮手"
-          bannerDescription="给不同的事配上专属助手，省去每次重新解释的功夫。"
+          title={t("page.title")}
+          bannerTitle={t("page.bannerTitle")}
+          bannerDescription={t("page.bannerDescription")}
           icon={Bot}
-          kitLabel="Agent Kit"
+          kitLabel={t("page.kitLabel")}
         />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AgentTab)}>
           <TabsList className="mt-3 h-9 bg-transparent p-0">
-            <TabTrigger value="market">广场</TabTrigger>
-            <TabTrigger value="builtin">内置</TabTrigger>
+            <TabTrigger value="market">{t("tabs.market")}</TabTrigger>
+            <TabTrigger value="builtin">{t("tabs.builtin")}</TabTrigger>
             <TabTrigger value="custom">
-              已安装
+              {t("tabs.installed")}
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
                 {customAgents.length}
               </span>
@@ -153,7 +155,7 @@ export function AgentsPage({
         {activeTab === "builtin" ? (
           <AgentList
             agents={visibleBuiltin}
-            emptyTitle="没有找到内置助手"
+            emptyTitle={t("empty.builtin")}
             onEdit={setEditingAgent}
             onStartChat={onStartChat}
           />
@@ -163,7 +165,7 @@ export function AgentsPage({
           <AgentList
             agents={visibleCustom}
             custom
-            emptyTitle="还没有自定义助手"
+            emptyTitle={t("empty.custom")}
             onEdit={setEditingAgent}
             onDelete={setDeletingAgent}
             onStartChat={onStartChat}
@@ -194,9 +196,9 @@ export function AgentsPage({
       <ConfirmDialog
         open={deletingAgent !== null}
         onOpenChange={(open) => !open && setDeletingAgent(null)}
-        title="删除助手"
-        message={`确定删除「${deletingAgent?.name}」吗？此操作不可撤销。`}
-        confirmLabel="删除"
+        title={t("delete.title")}
+        message={t("delete.message", { name: deletingAgent?.name ?? "" })}
+        confirmLabel={t("common:delete")}
         variant="destructive"
         onConfirm={handleDeleteAgent}
       />
@@ -213,6 +215,7 @@ function AgentMarketView({
   installedNames: Set<string>;
   search: string;
 }) {
+  const { t } = useTranslation("agents");
   const categories = useAgentsMarketStore((state) => state.categories);
   const byCategory = useAgentsMarketStore((state) => state.byCategory);
   const activeGroup = useAgentsMarketStore((state) => state.activeGroup);
@@ -304,9 +307,9 @@ function AgentMarketView({
   const handleInstall = async (agent: MarketAgent) => {
     const ok = await install(agent);
     if (ok) {
-      toast.success(`已添加助手：${agent.name}`);
+      toast.success(t("market.installSuccess", { name: agent.name }));
     } else {
-      toast.error(`添加助手失败：${agent.name}`);
+      toast.error(t("market.installFailed", { name: agent.name }));
     }
   };
 
@@ -319,7 +322,7 @@ function AgentMarketView({
             key={c.category}
             active={activeGroup === c.category}
             icon={c.icon}
-            label={c.category}
+            label={t(`market.categories.${c.category}`, { defaultValue: c.category })}
             onClick={() => setActiveGroup(c.category)}
           />
         ))}
@@ -354,8 +357,8 @@ function AgentMarketView({
         </>
       ) : (
         <EmptyCloudState
-          title="没有匹配的助手"
-          description="换个分类或在上方搜索框输入关键词试试。"
+          title={t("empty.marketTitle")}
+          description={t("empty.marketDescription")}
         />
       )}
     </div>
@@ -409,6 +412,7 @@ function MarketAgentCard({
   installing: boolean;
   onInstall: () => void;
 }) {
+  const { t } = useTranslation("agents");
   return (
     <div className="flex flex-col rounded-xl border border-border bg-card p-4 transition-all hover:border-[#9b6fe0]/30 hover:shadow-sm">
       <div className="flex items-center gap-3">
@@ -421,7 +425,7 @@ function MarketAgentCard({
       </div>
 
       <p className="mt-3 line-clamp-2 min-h-[40px] text-sm leading-5 text-muted-foreground">
-        {agent.description || "暂无描述"}
+        {agent.description || t("empty.noDescription")}
       </p>
 
       <div className="mt-4 flex items-center justify-between gap-2">
@@ -431,14 +435,14 @@ function MarketAgentCard({
               key={group}
               className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
             >
-              {group}
+              {t(`market.categories.${group}`, { defaultValue: group })}
             </span>
           ))}
         </div>
         {installed ? (
           <Button variant="outline" size="sm" disabled>
             <Check className="size-4" />
-            已添加
+            {t("market.installed")}
           </Button>
         ) : (
           <Button
@@ -452,7 +456,7 @@ function MarketAgentCard({
             ) : (
               <Plus className="size-4" />
             )}
-            添加助手
+            {t("market.install")}
           </Button>
         )}
       </div>
@@ -480,9 +484,10 @@ function AgentCardSkeleton() {
 }
 
 function MarketError({ message }: { message: string }) {
+  const { t } = useTranslation("agents");
   return (
     <div className="mt-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
-      <h3 className="text-base font-semibold">加载助手广场失败</h3>
+      <h3 className="text-base font-semibold">{t("market.loadFailed")}</h3>
       <p className="mt-2 max-w-[460px] text-sm leading-6 text-muted-foreground">
         {message}
       </p>
@@ -499,6 +504,7 @@ function TopToolbar({
   setSearch: (value: string) => void;
   onCreateAgent: () => void;
 }) {
+  const { t } = useTranslation("agents");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
@@ -507,12 +513,12 @@ function TopToolbar({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
-          placeholder="搜索助手"
+          placeholder={t("page.searchPlaceholder")}
         />
       </div>
       <Button onClick={onCreateAgent}>
         <Plus className="size-4" />
-        创建助手
+        {t("page.create")}
       </Button>
     </div>
   );
@@ -550,12 +556,13 @@ function AgentList({
   onDelete?: (agent: AgentConfig) => void;
   onStartChat: (agentId: string) => void;
 }) {
+  const { t } = useTranslation("agents");
   if (agents.length === 0) {
     return (
       <EmptyCloudState
         compact
         title={emptyTitle}
-        description="可从助手广场安装，或使用创建按钮新增。"
+        description={t("empty.listDescription")}
       />
     );
   }
@@ -589,6 +596,7 @@ function AgentRow({
   onDelete?: () => void;
   onStartChat: () => void;
 }) {
+  const { t } = useTranslation("agents");
   return (
     <div className="grid min-h-[92px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0">
       <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-background text-2xl shadow-sm">
@@ -598,7 +606,7 @@ function AgentRow({
         <div className="flex items-center gap-2">
           <h3 className="truncate text-base font-semibold">{agent.name}</h3>
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {agent.config.model || "跟随模型设置"}
+            {agent.config.model || t("list.defaultModel")}
           </span>
         </div>
         <p className="mt-1 truncate text-sm text-muted-foreground">
@@ -608,16 +616,16 @@ function AgentRow({
       <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onStartChat}>
           <MessageCircle className="size-4" />
-          开始对话
+          {t("list.startChat")}
         </Button>
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Settings className="size-4" />
-          编辑
+          {t("list.edit")}
         </Button>
         {custom && onDelete ? (
           <Button variant="outline" size="sm" onClick={onDelete}>
             <Trash2 className="size-4" />
-            删除
+            {t("list.delete")}
           </Button>
         ) : null}
       </div>

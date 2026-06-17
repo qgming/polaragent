@@ -6,6 +6,7 @@
 // "@" 按钮：选择文本文件、图片、音频或文档，选中后通过 onPickFile 通知上层插入附件 chip。
 
 import { AtSign, FileText, Image, Music, FileCheck, Slash } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   DropdownMenu,
@@ -39,6 +40,7 @@ export function ComposerToolbar({
   // 选中某个附件时回调（上层据此在富文本输入区插入附件 chip）
   onPickFile: (file: { path: string; name: string; kind: "text" | "image" | "audio" | "document" }) => void;
 }) {
+  const { t } = useTranslation("chat");
   // 全部技能（内置 + 已安装），与技能页两类一致；store 为空时回退空列表
   const skills = useSkillsStore((state) => state.skills);
 
@@ -82,7 +84,7 @@ export function ComposerToolbar({
               </button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>选择技能</TooltipContent>
+          <TooltipContent>{t("toolbar.pickSkill")}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent
           align="start"
@@ -108,7 +110,7 @@ export function ComposerToolbar({
               </Tooltip>
             ))
           ) : (
-            <DropdownMenuItem disabled>暂无可用技能</DropdownMenuItem>
+            <DropdownMenuItem disabled>{t("toolbar.noSkills")}</DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -123,24 +125,24 @@ export function ComposerToolbar({
               </button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>添加附件</TooltipContent>
+          <TooltipContent>{t("toolbar.addAttachment")}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" className="w-44">
           <DropdownMenuItem onSelect={() => void handlePickTextFile()}>
             <FileText className="size-4" />
-            <span>文本文件</span>
+            <span>{t("toolbar.textFile")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void handlePickImageFile()}>
             <Image className="size-4" />
-            <span>图片</span>
+            <span>{t("toolbar.image")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void handlePickAudioFile()}>
             <Music className="size-4" />
-            <span>音频</span>
+            <span>{t("toolbar.audio")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void handlePickDocumentFile()}>
             <FileCheck className="size-4" />
-            <span>文档 (PDF/Word)</span>
+            <span>{t("toolbar.document")}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -6,6 +6,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   ChevronRight,
@@ -72,6 +73,7 @@ export function OfficeFilePreview({ filePath, kind }: OfficeFilePreviewProps) {
 }
 
 function PdfPreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   const [document, setDocument] = useState<PdfDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -164,22 +166,22 @@ function PdfPreview({ filePath }: { filePath: string }) {
     setZoom((value) => clamp(Math.round((value + delta) * 10) / 10, 0.4, 2.6));
   };
 
-  if (loading) return <PreviewLoading text="正在打开 PDF" />;
+  if (loading) return <PreviewLoading text={t("officePreview.openingPdf")} />;
   if (error) return <PreviewError message={error} />;
-  if (!document) return <PreviewError message="PDF 文档为空或无法读取。" />;
+  if (!document) return <PreviewError message={t("officePreview.emptyPdf")} />;
 
   return (
     <div className="flex h-full flex-col bg-[#dfe0dc] text-[#202421]">
       <div className="flex h-11 shrink-0 items-center gap-1 border-b border-[#c8cbc5] bg-[#f7f7f4] px-3 shadow-sm">
         <ReaderButton
-          label="上一页"
+          label={t("officePreview.previousPage")}
           disabled={pageNumber <= 1}
           onClick={() => scrollToPage(pageNumber - 1)}
         >
           <ChevronLeft className="size-4" />
         </ReaderButton>
         <ReaderButton
-          label="下一页"
+          label={t("officePreview.nextPage")}
           disabled={pageNumber >= document.numPages}
           onClick={() => scrollToPage(pageNumber + 1)}
         >
@@ -194,7 +196,7 @@ function PdfPreview({ filePath }: { filePath: string }) {
 
         <div className="mx-2 h-5 w-px bg-[#d3d5d0]" />
 
-        <ReaderButton label="缩小" onClick={() => changeZoom(-0.1)}>
+        <ReaderButton label={t("officePreview.zoomOut")} onClick={() => changeZoom(-0.1)}>
           <ZoomOut className="size-4" />
         </ReaderButton>
         <button
@@ -206,15 +208,15 @@ function PdfPreview({ filePath }: { filePath: string }) {
               ? "bg-[#202421] text-white"
               : "text-[#4c544e] hover:bg-[#e9ebe6]",
           )}
-          title="适合宽度"
+          title={t("officePreview.fitWidth")}
         >
-          {zoomMode === "fit-width" ? "适合宽度" : `${Math.round(zoom * 100)}%`}
+          {zoomMode === "fit-width" ? t("officePreview.fitWidth") : `${Math.round(zoom * 100)}%`}
         </button>
-        <ReaderButton label="放大" onClick={() => changeZoom(0.1)}>
+        <ReaderButton label={t("officePreview.zoomIn")} onClick={() => changeZoom(0.1)}>
           <ZoomIn className="size-4" />
         </ReaderButton>
         <ReaderButton
-          label="旋转"
+          label={t("officePreview.rotate")}
           onClick={() => setRotation((value) => (value + 90) % 360)}
         >
           <RotateCw className="size-4" />
@@ -222,7 +224,7 @@ function PdfPreview({ filePath }: { filePath: string }) {
 
         <div className="ml-auto flex items-center gap-1 text-xs text-[#69716b]">
           <Maximize2 className="size-3.5" />
-          <span>连续页面</span>
+          <span>{t("officePreview.continuousPages")}</span>
         </div>
       </div>
 
@@ -298,7 +300,7 @@ function PdfPageCanvas({
       const canvas = canvasRef.current;
       const context = canvas?.getContext("2d");
       if (!canvas || !context) {
-        throw new Error("无法创建 PDF 画布。");
+        throw new Error("Unable to create PDF canvas.");
       }
 
       const outputScale = clamp(window.devicePixelRatio || 1, 1, 2);
@@ -360,6 +362,7 @@ function PdfPageCanvas({
 }
 
 function DocxPreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -397,20 +400,21 @@ function DocxPreview({ filePath }: { filePath: string }) {
     };
   }, [filePath]);
 
-  if (loading) return <PreviewLoading text="正在解析 Word" />;
+  if (loading) return <PreviewLoading text={t("officePreview.parsingWord")} />;
   if (error) return <PreviewError message={error} />;
 
   return (
     <div className="app-scrollbar h-full overflow-auto bg-[#ecece8] px-4 py-6">
       <article
         className="mx-auto min-h-[980px] w-full max-w-[794px] bg-white px-6 py-8 text-[15px] leading-7 text-[#202421] shadow-[0_18px_52px_rgba(30,32,30,0.16)] sm:px-14 sm:py-12 [&_a]:text-[#315f8c] [&_h1]:mb-6 [&_h1]:mt-0 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h2]:mb-4 [&_h2]:mt-8 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:leading-tight [&_h3]:mb-3 [&_h3]:mt-6 [&_h3]:text-xl [&_h3]:font-semibold [&_img]:my-4 [&_img]:max-w-full [&_li]:my-1.5 [&_ol]:my-4 [&_ol]:pl-6 [&_p]:my-3 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-[#d6d8d4] [&_td]:p-2 [&_th]:border [&_th]:border-[#c8cbc5] [&_th]:bg-[#f3f4f1] [&_th]:p-2 [&_ul]:my-4 [&_ul]:pl-6"
-        dangerouslySetInnerHTML={{ __html: html || "<p>空白文档</p>" }}
+        dangerouslySetInnerHTML={{ __html: html || `<p>${t("officePreview.blankDocument")}</p>` }}
       />
     </div>
   );
 }
 
 function PptxPreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation("common");
   const [deck, setDeck] = useState<PptxDeckPreview>({
     slides: [],
     size: DEFAULT_SLIDE_SIZE,
@@ -441,18 +445,18 @@ function PptxPreview({ filePath }: { filePath: string }) {
   }, [filePath]);
 
   const slides =
-    deck.slides.length > 0 ? deck.slides : [{ title: "空白演示", bullets: [] }];
+    deck.slides.length > 0 ? deck.slides : [{ title: t("officePreview.blankPresentation"), bullets: [] }];
   const ratioLabel = formatSlideRatio(deck.size);
 
-  if (loading) return <PreviewLoading text="正在解析 PPT" />;
+  if (loading) return <PreviewLoading text={t("officePreview.parsingPpt")} />;
   if (error) return <PreviewError message={error} />;
 
   return (
     <div className="flex h-full flex-col bg-[#ecece8] text-[#202421]">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-[#d7d9d3] bg-[#f7f7f4] px-4 text-xs text-[#69716b]">
-        <span className="font-medium text-[#202421]">幻灯片预览</span>
+        <span className="font-medium text-[#202421]">{t("officePreview.slidePreview")}</span>
         <span className="tabular-nums">
-          {slides.length} 页 · {ratioLabel}
+          {t("officePreview.pageCount", { count: slides.length })} · {ratioLabel}
         </span>
       </div>
       <div className="app-scrollbar min-h-0 flex-1 overflow-auto p-4">
@@ -543,11 +547,12 @@ function PreviewLoading({ text }: { text: string }) {
 }
 
 function PreviewError({ message }: { message: string }) {
+  const { t } = useTranslation("common");
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="flex max-w-sm flex-col items-center gap-2 text-center text-muted-foreground">
         <FileQuestion className="size-10 opacity-60" />
-        <p className="text-sm font-medium text-foreground">无法预览此文件</p>
+	        <p className="text-sm font-medium text-foreground">{t("officePreview.cannotPreview")}</p>
         <p className="text-xs leading-5">{message}</p>
       </div>
     </div>

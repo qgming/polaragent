@@ -1,0 +1,83 @@
+{
+  "page": {
+    "title": "助手",
+    "bannerTitle": "每件事都有专属的帮手",
+    "bannerDescription": "给不同的事配上专属助手，省去每次重新解释的功夫。",
+    "kitLabel": "Agent Kit",
+    "searchPlaceholder": "搜索助手",
+    "create": "创建助手"
+  },
+  "tabs": {
+    "market": "广场",
+    "builtin": "内置",
+    "installed": "已安装"
+  },
+  "empty": {
+    "builtin": "没有找到内置助手",
+    "custom": "还没有自定义助手",
+    "listDescription": "可从助手广场安装，或使用创建按钮新增。",
+    "marketTitle": "没有匹配的助手",
+    "marketDescription": "换个分类或在上方搜索框输入关键词试试。",
+    "noDescription": "暂无描述"
+  },
+  "market": {
+    "loadFailed": "加载助手广场失败",
+    "installed": "已添加",
+    "install": "添加助手",
+    "installSuccess": "已添加助手：{{name}}",
+    "installFailed": "添加助手失败：{{name}}",
+    "categories": {
+      "通用": "通用",
+      "设计": "设计",
+      "翻译": "翻译",
+      "编程": "编程",
+      "生活": "生活",
+      "游戏": "游戏",
+      "文案": "文案",
+      "教育": "教育",
+      "情感": "情感",
+      "工具": "工具",
+      "学术": "学术",
+      "娱乐": "娱乐",
+      "商业": "商业",
+      "创意": "创意",
+      "写作": "写作"
+    }
+  },
+  "list": {
+    "defaultModel": "跟随模型设置",
+    "startChat": "开始对话",
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "delete": {
+    "title": "删除助手",
+    "message": "确定删除「{{name}}」吗？此操作不可撤销。",
+    "success": "已删除助手：{{name}}",
+    "failed": "删除助手失败：{{name}}",
+    "logFailed": "删除助手失败:"
+  },
+  "editor": {
+    "newAgent": "新建助手",
+    "title": "助手详情",
+    "avatarName": "头像与名称",
+    "pickEmoji": "点击选择 Emoji",
+    "namePlaceholder": "助手名称",
+    "description": "助手描述",
+    "descriptionPlaceholder": "描述这个助手适合处理什么任务",
+    "modelProvider": "模型服务",
+    "selectProvider": "选择模型服务",
+    "followModelSettings": "跟随模型设置",
+    "model": "模型",
+    "selectModel": "选择模型",
+    "followDefaultModel": "跟随默认路由模型",
+    "manualModelPlaceholder": "该服务暂无模型，可手动输入",
+    "systemPrompt": "系统提示词",
+    "systemPromptPlaceholder": "定义这个助手的身份、行为边界、回答风格和工具使用策略",
+    "enabledSkills": "启用技能",
+    "allSkills": "全部技能",
+    "allSkillsDescription": "开启后运行时自动使用当前所有内置与已安装技能，包括之后新增的技能。",
+    "noSkills": "暂无可用技能",
+    "startChat": "开始对话"
+  }
+}

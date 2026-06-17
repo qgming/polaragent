@@ -2,6 +2,7 @@
 // src/components/goal/GoalEditModal.tsx
 
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useGoalStore } from "@/stores/goal-store";
@@ -23,6 +24,7 @@ export function GoalEditModal({
   threadId: string;
   initialGoal?: GoalState;
 }) {
+  const { t } = useTranslation("common");
   const setGoal = useGoalStore((s) => s.setGoal);
   const [goalText, setGoalText] = useState("");
   const [successCriteria, setSuccessCriteria] = useState("");
@@ -102,7 +104,7 @@ export function GoalEditModal({
         {/* 标题栏 */}
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-foreground">
-            {isCreating ? "创建目标" : "编辑目标"}
+	            {isCreating ? t("goal.createTitle") : t("goal.editTitle")}
           </h2>
           <button
             type="button"
@@ -116,11 +118,11 @@ export function GoalEditModal({
         {/* 目标内容输入 */}
         <div className="mb-4">
           <label className="mb-2 block text-sm font-medium text-foreground">
-            目标内容
+	            {t("goal.goalText")}
           </label>
           <textarea
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            placeholder="描述你想要完成的目标..."
+	            placeholder={t("goal.goalTextPlaceholder")}
             rows={6}
             value={goalText}
             onChange={(e) => setGoalText(e.target.value)}
@@ -130,11 +132,11 @@ export function GoalEditModal({
 
         <div className="mb-4">
           <label className="mb-2 block text-sm font-medium text-foreground">
-            完成标准
+	            {t("goal.successCriteria")}
           </label>
           <textarea
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            placeholder="列出必须满足的验收条件，例如构建通过、测试通过、功能可用..."
+	            placeholder={t("goal.successCriteriaPlaceholder")}
             rows={3}
             value={successCriteria}
             onChange={(e) => setSuccessCriteria(e.target.value)}
@@ -143,11 +145,11 @@ export function GoalEditModal({
 
         <div className="mb-4">
           <label className="mb-2 block text-sm font-medium text-foreground">
-            执行约束
+	            {t("goal.constraints")}
           </label>
           <textarea
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            placeholder="限定修改范围、禁止事项、偏好或风险边界..."
+	            placeholder={t("goal.constraintsPlaceholder")}
             rows={3}
             value={constraints}
             onChange={(e) => setConstraints(e.target.value)}
@@ -156,7 +158,7 @@ export function GoalEditModal({
 
         <div className="mb-5 grid gap-3 sm:grid-cols-3">
           <label className="block text-sm font-medium text-foreground">
-            最大轮数
+	            {t("goal.maxTurns")}
             <input
               className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               inputMode="numeric"
@@ -168,24 +170,24 @@ export function GoalEditModal({
             />
           </label>
           <label className="block text-sm font-medium text-foreground">
-            Token 预算
+	            {t("goal.tokenBudget")}
             <input
               className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               inputMode="numeric"
               min={1}
-              placeholder="不限"
+	              placeholder={t("goal.unlimited")}
               type="number"
               value={maxTokens}
               onChange={(e) => setMaxTokens(e.target.value)}
             />
           </label>
           <label className="block text-sm font-medium text-foreground">
-            分钟预算
+	            {t("goal.minuteBudget")}
             <input
               className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               inputMode="numeric"
               min={1}
-              placeholder="不限"
+	              placeholder={t("goal.unlimited")}
               type="number"
               value={maxRuntimeMinutes}
               onChange={(e) => setMaxRuntimeMinutes(e.target.value)}
@@ -201,7 +203,7 @@ export function GoalEditModal({
             className="h-8 px-4 text-sm"
             onClick={handleCancel}
           >
-            取消
+	            {t("cancel")}
           </Button>
           <Button
             size="sm"
@@ -209,7 +211,7 @@ export function GoalEditModal({
             onClick={handleSave}
             disabled={!goalText.trim()}
           >
-            {isCreating ? "创建" : "保存"}
+	            {isCreating ? t("goal.create") : t("save")}
           </Button>
         </div>
       </div>

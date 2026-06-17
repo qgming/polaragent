@@ -2,6 +2,7 @@
 // 参考图片设置和网络搜索的设计模式，接口标准选择 + 配置卡
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, Loader2, Mic, Save, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AudioApiStandard, AudioConfig, Settings } from "@/types/config";
@@ -31,6 +32,7 @@ export function AudioPanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const initial = deriveState(settings.audio ?? audioDefaults());
 
   const [ttsProvider, setTtsProvider] = useState<AudioApiStandard>(initial.ttsProvider);
@@ -94,7 +96,7 @@ export function AudioPanel({
         if (mountedRef.current) setTtsSaveState("idle");
       }, 1500);
     } catch (error) {
-      console.error("保存 TTS 配置失败", error);
+      console.error(t("audio.saveTtsFailed"), error);
       if (!mountedRef.current) return;
       setTtsSaveState("error");
       ttsResetTimerRef.current = setTimeout(() => {
@@ -135,7 +137,7 @@ export function AudioPanel({
         if (mountedRef.current) setAsrSaveState("idle");
       }, 1500);
     } catch (error) {
-      console.error("保存 ASR 配置失败", error);
+      console.error(t("audio.saveAsrFailed"), error);
       if (!mountedRef.current) return;
       setAsrSaveState("error");
       asrResetTimerRef.current = setTimeout(() => {
@@ -146,21 +148,23 @@ export function AudioPanel({
 
   const activeTtsStandard = API_STANDARDS.find((s) => s.id === ttsProvider) ?? API_STANDARDS[0];
   const activeAsrStandard = API_STANDARDS.find((s) => s.id === asrProvider) ?? API_STANDARDS[0];
+  const activeTtsHint = t(`audio.standards.${activeTtsStandard.id}`);
+  const activeAsrHint = t(`audio.standards.${activeAsrStandard.id}`);
 
   return (
     <section>
       <PageTitle
-        title="音频设置"
-        description="配置语音合成 (TTS) 与语音识别 (ASR)。"
+        title={t("audio.title")}
+        description={t("audio.description")}
       />
 
       {/* TTS 接口标准选择 */}
       <div className="mt-8 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-3.5">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium">语音合成接口标准</h3>
+            <h3 className="text-sm font-medium">{t("audio.ttsStandard")}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              选择 TTS 使用的接口标准
+              {t("audio.ttsStandardDesc")}
             </p>
           </div>
           <div className="shrink-0">
@@ -196,14 +200,14 @@ export function AudioPanel({
           )}
 
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-            {activeTtsStandard.hint}
+            {activeTtsHint}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
             {ttsSaveState === "error" && (
               <span className="flex items-center gap-1.5 text-xs text-destructive">
                 <AlertCircle className="size-3.5" />
-                保存失败，请重试
+                {t("audio.saveFailedRetry")}
               </span>
             )}
             <Button onClick={() => void handleSaveTts()} disabled={ttsSaveState === "saving"}>
@@ -216,7 +220,7 @@ export function AudioPanel({
               ) : (
                 <Save className="size-4" />
               )}
-              保存配置
+              {t("common:saveConfig")}
             </Button>
           </div>
         </div>
@@ -226,9 +230,9 @@ export function AudioPanel({
       <div className="mt-6 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-3.5">
           <div className="min-w-0">
-            <h3 className="text-sm font-medium">语音识别接口标准</h3>
+            <h3 className="text-sm font-medium">{t("audio.asrStandard")}</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              选择 ASR 使用的接口标准
+              {t("audio.asrStandardDesc")}
             </p>
           </div>
           <div className="shrink-0">
@@ -264,14 +268,14 @@ export function AudioPanel({
           )}
 
           <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
-            {activeAsrStandard.hint}
+            {activeAsrHint}
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
             {asrSaveState === "error" && (
               <span className="flex items-center gap-1.5 text-xs text-destructive">
                 <AlertCircle className="size-3.5" />
-                保存失败，请重试
+                {t("audio.saveFailedRetry")}
               </span>
             )}
             <Button onClick={() => void handleSaveAsr()} disabled={asrSaveState === "saving"}>
@@ -284,7 +288,7 @@ export function AudioPanel({
               ) : (
                 <Save className="size-4" />
               )}
-              保存配置
+              {t("common:saveConfig")}
             </Button>
           </div>
         </div>

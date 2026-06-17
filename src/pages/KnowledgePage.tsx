@@ -1,5 +1,6 @@
 // 知识库管理主页面
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   BookOpen,
@@ -62,6 +63,7 @@ const SUPPORTED_KNOWLEDGE_FILE_EXTENSIONS = new Set([
 ]);
 
 export function KnowledgePage() {
+  const { t } = useTranslation("knowledge");
   const knowledgeBases = useKnowledgeStore((state) => state.knowledgeBases);
   const currentKbId = useKnowledgeStore((state) => state.currentKbId);
   const loadKnowledgeBases = useKnowledgeStore((state) => state.loadKnowledgeBases);
@@ -98,11 +100,11 @@ export function KnowledgePage() {
         />
 
         <PageHero
-          title="知识库"
-          bannerTitle="让助手记住你的专属资料"
-          bannerDescription="导入你的资料，助手就能照着你的内容来回答。"
+          title={t("page.title")}
+          bannerTitle={t("page.bannerTitle")}
+          bannerDescription={t("page.bannerDescription")}
           icon={Database}
-          kitLabel="Knowledge Kit"
+          kitLabel={t("page.kitLabel")}
         />
 
         {error && (
@@ -155,6 +157,7 @@ function TopToolbar({
   onCreateKnowledgeBase: () => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation("knowledge");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <div className="relative w-[300px] max-w-full">
@@ -163,12 +166,12 @@ function TopToolbar({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
-          placeholder="搜索知识库"
+          placeholder={t("page.searchPlaceholder")}
         />
       </div>
       <Button onClick={onCreateKnowledgeBase} disabled={disabled}>
         <Plus className="size-4" />
-        新建知识库
+        {t("page.create")}
       </Button>
     </div>
   );
@@ -181,21 +184,22 @@ function KnowledgeEmptyState({
   hasKnowledgeBases: boolean;
   onCreateKnowledgeBase: () => void;
 }) {
+  const { t } = useTranslation("knowledge");
   return (
     <div className="mt-6 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 py-20 text-center">
       <BookOpen className="size-9 text-muted-foreground" />
       <h3 className="mt-4 text-base font-semibold">
-        {hasKnowledgeBases ? "没有匹配的知识库" : "暂无知识库"}
+        {hasKnowledgeBases ? t("empty.noMatch") : t("empty.none")}
       </h3>
       <p className="mt-2 max-w-[420px] text-sm leading-6 text-muted-foreground">
         {hasKnowledgeBases
-          ? "换个关键词试试，或新建一个知识库来整理新的资料。"
-          : "创建知识库并导入文档，让 AI 可以检索相关内容。"}
+          ? t("empty.noMatchDesc")
+          : t("empty.noneDesc")}
       </p>
       {!hasKnowledgeBases ? (
         <Button className="mt-5" onClick={onCreateKnowledgeBase}>
           <Plus className="size-4" />
-          创建第一个知识库
+          {t("empty.createFirst")}
         </Button>
       ) : null}
     </div>
@@ -203,6 +207,7 @@ function KnowledgeEmptyState({
 }
 
 function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
+  const { t } = useTranslation("knowledge");
   const setCurrentKnowledgeBase = useKnowledgeStore((state) => state.setCurrentKnowledgeBase);
   const currentFiles = useKnowledgeStore((state) => state.currentFiles);
   const addFiles = useKnowledgeStore((state) => state.addFiles);
@@ -234,7 +239,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
   const importFiles = async (filePaths: string[]) => {
     const supportedFiles = filePaths.filter(isSupportedKnowledgeFilePath);
     if (supportedFiles.length === 0) {
-      alert("未发现支持的文件");
+      alert(t("detail.noSupportedFiles"));
       return;
     }
     await addFiles(supportedFiles);
@@ -247,7 +252,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
         await importFiles(files);
       }
     } catch (error) {
-      console.error("添加文件失败:", error);
+      console.error(t("detail.addFilesFailed"), error);
     }
   };
 
@@ -262,7 +267,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
         .filter(Boolean);
       await importFiles(filePaths);
     } catch (error) {
-      console.error("拖入文件失败:", error);
+      console.error(t("detail.dropFilesFailed"), error);
     }
   };
 
@@ -293,7 +298,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
     try {
       await removeFile(pendingDeleteFileId);
     } catch (error) {
-      console.error("删除文件失败:", error);
+      console.error(t("detail.deleteFileFailed"), error);
     } finally {
       setPendingDeleteFileId(null);
     }
@@ -303,7 +308,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
     try {
       await rebuildFile(fileId);
     } catch (error) {
-      console.error("重建文件索引失败:", error);
+      console.error(t("detail.rebuildFileFailed"), error);
     }
   };
 
@@ -315,7 +320,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
     try {
       await rebuildCurrentKnowledgeBase();
     } catch (error) {
-      console.error("重建索引失败:", error);
+      console.error(t("detail.rebuildFailed"), error);
     }
   };
 
@@ -341,11 +346,11 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
             disabled={isLoading || currentFiles.length === 0}
           >
             <RefreshCw className="size-4" />
-            重建索引
+            {t("detail.rebuild")}
           </Button>
           <Button onClick={handleAddFiles} disabled={isLoading}>
             <Upload className="size-4" />
-            导入文件
+            {t("detail.import")}
           </Button>
         </div>
       </header>
@@ -367,14 +372,14 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
               <Upload className="size-5" />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium">拖入文件到知识库</p>
+              <p className="text-sm font-medium">{t("detail.dropTitle")}</p>
               <p className="mt-1 truncate text-xs text-muted-foreground">
-                支持 PDF、DOCX、Markdown、TXT、JSON、代码文件等
+                {t("detail.dropDesc")}
               </p>
             </div>
           </div>
           <Button variant="outline" size="sm" onClick={handleAddFiles} disabled={isLoading}>
-            选择文件
+            {t("detail.chooseFiles")}
           </Button>
         </div>
 
@@ -389,10 +394,10 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                  检测到 {incompatibleCount} 个文件向量不兼容
+                  {t("detail.incompatibleTitle", { count: incompatibleCount })}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  嵌入模型已更改,这些文件需要重新生成向量
+                  {t("detail.incompatibleDesc")}
                 </p>
               </div>
               <Button
@@ -402,7 +407,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
                 disabled={isLoading}
               >
                 <RefreshCw className="size-4" />
-                重新嵌入
+                {t("detail.reembed")}
               </Button>
             </div>
           </div>
@@ -411,9 +416,9 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
         {currentFiles.length === 0 ? (
           <EmptyState
             icon={Upload}
-            title="暂无文件"
-            description="导入文档文件到此知识库"
-            actionLabel="导入文件"
+            title={t("empty.noFiles")}
+            description={t("empty.noFilesDesc")}
+            actionLabel={t("detail.import")}
             onAction={handleAddFiles}
           />
         ) : (
@@ -434,9 +439,9 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
       <ConfirmDialog
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
-        title="确认删除"
-        message="确定要删除此文件吗？"
-        confirmLabel="删除"
+        title={t("confirm.deleteTitle")}
+        message={t("confirm.deleteFileMessage")}
+        confirmLabel={t("common:delete")}
         variant="destructive"
         onConfirm={handleConfirmDelete}
       />
@@ -444,9 +449,9 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
       <ConfirmDialog
         open={rebuildConfirmOpen}
         onOpenChange={setRebuildConfirmOpen}
-        title="确认重建索引"
-        message="确定要重建索引吗？这将重新处理所有文件。"
-        confirmLabel="重建"
+        title={t("confirm.rebuildTitle")}
+        message={t("confirm.rebuildMessage")}
+        confirmLabel={t("confirm.rebuild")}
         onConfirm={handleConfirmRebuild}
       />
     </div>

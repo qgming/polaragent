@@ -3,6 +3,7 @@
 
 import { MoreHorizontal } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +37,7 @@ export function TeamActionsMenu({
   // 触发按钮的额外样式（如侧边栏的 hover 显隐）
   className?: string;
 }) {
+  const { t } = useTranslation("team");
   const [clearOpen, setClearOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -56,15 +58,15 @@ export function TeamActionsMenu({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-32">
-          <DropdownMenuItem onSelect={onEdit}>编辑团队</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onEdit}>{t("actions.edit")}</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setClearOpen(true)}>
-            清空会话
+            {t("actions.clearSessions")}
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setDeleteOpen(true)}
           >
-            删除
+            {t("actions.delete")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -72,15 +74,15 @@ export function TeamActionsMenu({
       <Dialog open={clearOpen} onOpenChange={setClearOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>清空会话</DialogTitle>
+            <DialogTitle>{t("clear.title")}</DialogTitle>
             <DialogDescription>
-              确定清空「{teamName}」的所有团队会话吗？团队成员与配置会保留，方便重新开始。此操作不可撤销。
+              {t("clear.description", { name: teamName })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+                {t("actions.cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -91,7 +93,7 @@ export function TeamActionsMenu({
                 setClearOpen(false);
               }}
             >
-              清空
+              {t("actions.clear")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -100,15 +102,15 @@ export function TeamActionsMenu({
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>删除团队</DialogTitle>
+            <DialogTitle>{t("delete.title")}</DialogTitle>
             <DialogDescription>
-              确定删除「{teamName}」吗？该团队及其所有会话都会被移除。此操作不可撤销。
+              {t("delete.description", { name: teamName })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+                {t("actions.cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -119,7 +121,7 @@ export function TeamActionsMenu({
                 setDeleteOpen(false);
               }}
             >
-              删除
+              {t("actions.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

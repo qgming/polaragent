@@ -2,6 +2,7 @@
 // src/components/settings/ComputerUsePanel.tsx
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Activity, CheckCircle2, Loader2, Monitor, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +28,7 @@ export function ComputerUsePanel({
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
 }) {
+  const { t } = useTranslation("settings");
   const computerUse = useMemo(
     () => ({
       ...DEFAULT_COMPUTER_USE,
@@ -94,9 +96,9 @@ export function ComputerUsePanel({
         persistentWorker: nextAutomation.computerUse.persistentWorker,
         actionTimeoutMs: nextAutomation.computerUse.actionTimeoutMs,
       }));
-      setMessage("Computer Use 默认行为已保存。");
+      setMessage(t("computerUse.saved"));
     } catch (error) {
-      setMessage(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+      setMessage(t("computerUse.saveFailed", { message: error instanceof Error ? error.message : String(error) }));
     } finally {
       setSaving(false);
     }
@@ -108,7 +110,7 @@ export function ComputerUsePanel({
     <section>
       <PageTitle
         title="Computer Use"
-        description="通过 Windows UI Automation 控制桌面应用。默认值会影响 AI 工具调用时的观察范围和输入行为。"
+        description={t("computerUse.description")}
       />
 
       <div className="mt-8 rounded-xl border border-border bg-card">
@@ -118,19 +120,19 @@ export function ComputerUsePanel({
               <Monitor className="size-4 text-foreground" />
               <h2 className="text-sm font-semibold">Computer Use</h2>
             </div>
-            <StatusPill active={healthy} activeText="可用" inactiveText="待检查" />
+            <StatusPill active={healthy} activeText={t("computerUse.available")} inactiveText={t("computerUse.checkPending")} />
           </div>
         </div>
 
         <div className="grid gap-4 px-5 py-5 md:grid-cols-2">
-          <Metric icon={CheckCircle2} label="UI Automation" value={healthy ? "可用" : "未知"} />
-          <Metric icon={Activity} label="Worker" value={workerStatus?.running ? "运行中" : draft.persistentWorker ? "待启动" : "关闭"} />
+          <Metric icon={CheckCircle2} label="UI Automation" value={healthy ? t("computerUse.available") : t("computerUse.unknown")} />
+          <Metric icon={Activity} label="Worker" value={workerStatus?.running ? t("computerUse.workerRunning") : draft.persistentWorker ? t("computerUse.workerPending") : t("computerUse.workerOff")} />
         </div>
 
         <div className="border-t border-border">
           <SettingRow
-            title="默认 UI 树深度"
-            description="越大越完整，也越慢。常规窗口建议 4-6。"
+            title={t("computerUse.defaultDepth")}
+            description={t("computerUse.defaultDepthDesc")}
             control={
               <NumberInput
                 value={draft.defaultMaxDepth}
@@ -139,8 +141,8 @@ export function ComputerUsePanel({
             }
           />
           <SettingRow
-            title="默认包含截图"
-            description="关闭后 windows_snapshot 更快，但模型少一层视觉信息。"
+            title={t("computerUse.includeScreenshot")}
+            description={t("computerUse.includeScreenshotDesc")}
             control={
               <Switch
                 checked={draft.includeScreenshotByDefault}
@@ -149,8 +151,8 @@ export function ComputerUsePanel({
             }
           />
           <SettingRow
-            title="输入后恢复剪贴板"
-            description="文本输入会临时使用剪贴板，建议保持开启。"
+            title={t("computerUse.restoreClipboard")}
+            description={t("computerUse.restoreClipboardDesc")}
             control={
               <Switch
                 checked={draft.restoreClipboard}
@@ -159,8 +161,8 @@ export function ComputerUsePanel({
             }
           />
           <SettingRow
-            title="动作超时"
-            description="单次桌面动作允许的最长执行时间。"
+            title={t("computerUse.actionTimeout")}
+            description={t("computerUse.actionTimeoutDesc")}
             control={
               <NumberInput
                 suffix="ms"
@@ -173,13 +175,13 @@ export function ComputerUsePanel({
 
         <div className="border-t border-border px-5 py-4">
           <div className="grid gap-2 text-xs text-muted-foreground">
-            <InfoLine label="状态" value={workerStatus?.busy ? "执行中" : workerStatus?.running ? "空闲" : "未启动"} />
+            <InfoLine label={t("computerUse.status")} value={workerStatus?.busy ? t("computerUse.busy") : workerStatus?.running ? t("computerUse.idle") : t("computerUse.notStarted")} />
           </div>
           {message ? <p className="mt-3 text-xs text-muted-foreground">{message}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
             <Button onClick={() => void save()} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-              保存默认值
+              {t("computerUse.saveDefaults")}
             </Button>
           </div>
         </div>

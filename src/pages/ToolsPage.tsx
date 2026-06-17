@@ -2,6 +2,7 @@
 // src/pages/ToolsPage.tsx
 
 import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   Edit3,
@@ -33,6 +34,7 @@ import type { McpToolConfig } from "@/lib/mcp";
 type ToolTab = "discover" | "builtin" | "installed";
 
 export function ToolsPage() {
+  const { t } = useTranslation("tools");
   const [activeTab, setActiveTab] = useState<ToolTab>("discover");
   const [editor, setEditor] = useState<{
     mode: McpEditorMode;
@@ -96,7 +98,7 @@ export function ToolsPage() {
     try {
       await openExternal(url);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "打开链接失败");
+      toast.error(error instanceof Error ? error.message : t("errors.openLinkFailed"));
     }
   };
 
@@ -124,7 +126,7 @@ export function ToolsPage() {
   const handleDeleteTool = () => {
     if (!deletingTool) return;
     removeCustomTool(deletingTool.id);
-    toast.success(`已删除工具：${deletingTool.name}`);
+    toast.success(t("delete.success", { name: deletingTool.name }));
     setDeletingTool(null);
   };
 
@@ -138,20 +140,20 @@ export function ToolsPage() {
         />
 
         <PageHero
-          title="工具"
-          bannerTitle="让助手能用上更多外部能力"
-          bannerDescription="接入外部服务后，助手能查信息、连平台，把事真正办到底。"
+          title={t("page.title")}
+          bannerTitle={t("page.bannerTitle")}
+          bannerDescription={t("page.bannerDescription")}
           icon={Wrench}
-          kitLabel="Tool Hub"
+          kitLabel={t("page.kitLabel")}
           rotate="left"
         />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ToolTab)}>
           <TabsList className="mt-3 h-9 bg-transparent p-0">
-            <TabTrigger value="discover">发现</TabTrigger>
-            <TabTrigger value="builtin">内置</TabTrigger>
+            <TabTrigger value="discover">{t("tabs.discover")}</TabTrigger>
+            <TabTrigger value="builtin">{t("tabs.builtin")}</TabTrigger>
             <TabTrigger value="installed">
-              已安装
+              {t("tabs.installed")}
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
                 {customTools.length}
               </span>
@@ -193,8 +195,8 @@ export function ToolsPage() {
                     <ToolGroupRow
                       key={groupKey}
                       groupKey={groupKey}
-                      groupName={TOOL_GROUPS[groupKey]?.name ?? groupKey}
-                      description={TOOL_GROUPS[groupKey]?.description ?? ""}
+                      groupName={t(`builtin.groups.${groupKey}.name`, { defaultValue: TOOL_GROUPS[groupKey]?.name ?? groupKey })}
+                      description={t(`builtin.groups.${groupKey}.description`, { defaultValue: TOOL_GROUPS[groupKey]?.description ?? "" })}
                       tools={tools}
                       expanded={expandedGroups.includes(groupKey)}
                       onToggleExpand={() => toggleGroupExpand(groupKey)}
@@ -222,8 +224,8 @@ export function ToolsPage() {
               </>
             ) : (
               <EmptyCloudState
-                title="没有找到内置工具"
-                description="内置工具由运行时注册表和 mcp/builtin 自动生成。"
+                title={t("empty.builtinTitle")}
+                description={t("empty.builtinDescription")}
                 compact
               />
             )}
@@ -255,8 +257,8 @@ export function ToolsPage() {
               ))
             ) : (
               <EmptyCloudState
-                title="还没有已安装的 MCP 工具"
-                description="可以从发现页找到 MCP 提供商，也可以新建自定义 MCP 工具。"
+                title={t("empty.installedTitle")}
+                description={t("empty.installedDescription")}
                 compact
               />
             )}
@@ -278,9 +280,9 @@ export function ToolsPage() {
       <ConfirmDialog
         open={deletingTool !== null}
         onOpenChange={(open) => !open && setDeletingTool(null)}
-        title="删除工具"
-        message={`确定删除「${deletingTool?.name}」吗？此操作不可撤销。`}
-        confirmLabel="删除"
+        title={t("delete.title")}
+        message={t("delete.message", { name: deletingTool?.name })}
+        confirmLabel={t("delete.confirm")}
         variant="destructive"
         onConfirm={handleDeleteTool}
       />
@@ -293,11 +295,12 @@ function TopToolbar({
 }: {
   onCreate: () => void;
 }) {
+  const { t } = useTranslation("tools");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <Button onClick={onCreate}>
         <Plus className="size-4" />
-        新增 MCP
+        {t("toolbar.addMcp")}
       </Button>
     </div>
   );
@@ -329,6 +332,7 @@ function ToolSection({ children }: { children: ReactNode }) {
 }
 
 function BuiltinToolRow({ tool }: { tool: ToolMeta }) {
+  const { t } = useTranslation("tools");
   const enabled = useToolsStore((state) => state.isBuiltinToolEnabled(tool.id));
   const toggleBuiltinTool = useToolsStore((state) => state.toggleBuiltinTool);
 
@@ -336,8 +340,8 @@ function BuiltinToolRow({ tool }: { tool: ToolMeta }) {
     <div className="border-b border-border last:border-b-0">
       <ToolRowShell>
         <ToolIdentity
-          name={tool.name}
-          description={tool.description}
+          name={t(`builtin.tools.${tool.id}.name`, { defaultValue: tool.name })}
+          description={t(`builtin.tools.${tool.id}.description`, { defaultValue: tool.description })}
         />
         <div className="flex items-center gap-3">
           <Switch
@@ -367,6 +371,7 @@ function McpToolRow({
   onToggleRemoteTool?: (remoteToolName: string, enabled: boolean) => void;
   tool: McpToolConfig;
 }) {
+  const { t } = useTranslation("tools");
   const enabled = useToolsStore((state) => state.isMcpServerEnabled(tool.id));
   const toggleMcpServer = useToolsStore((state) => state.toggleMcpServer);
   const isMcpRemoteToolEnabled = useToolsStore(
@@ -390,7 +395,7 @@ function McpToolRow({
             "MCP",
             tool.category,
             mcpTransportLabel(tool.server.transport),
-            tool.configFields?.some((field) => field.required) ? "需要配置" : null,
+            tool.configFields?.some((field) => field.required) ? t("mcp.requiresConfig") : null,
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -403,7 +408,7 @@ function McpToolRow({
           <Button
             variant="ghost"
             size="icon-sm"
-            title={expanded ? "收起工具清单" : "展开工具清单"}
+            title={expanded ? t("mcp.collapseTools") : t("mcp.expandTools")}
             onClick={onToggleExpand}
           >
             <ChevronDown
@@ -411,25 +416,25 @@ function McpToolRow({
             />
           </Button>
           {onEdit ? (
-            <Button variant="outline" size="sm" title="编辑" onClick={onEdit}>
+            <Button variant="outline" size="sm" title={t("actions.edit")} onClick={onEdit}>
               <Edit3 className="size-4" />
-              编辑
+              {t("actions.edit")}
             </Button>
           ) : null}
           <Button
             variant="outline"
             size="sm"
-            title="检测 MCP 是否可用"
+            title={t("actions.checkTitle")}
             onClick={onCheck}
             disabled={isChecking}
           >
             <RefreshCw className={`size-4 ${isChecking ? "animate-spin" : ""}`} />
-            {isChecking ? "检测中" : "检测"}
+            {isChecking ? t("actions.checking") : t("actions.check")}
           </Button>
           {tool.origin !== "builtin" ? (
-            <Button variant="outline" size="sm" title="删除" onClick={onDelete}>
+            <Button variant="outline" size="sm" title={t("actions.delete")} onClick={onDelete}>
               <Trash2 className="size-4" />
-              删除
+              {t("actions.delete")}
             </Button>
           ) : null}
           <Switch
@@ -482,10 +487,11 @@ function RemoteToolList({
   serverEnabled: boolean;
   tools: NonNullable<McpToolConfig["discoveredTools"]>;
 }) {
+  const { t } = useTranslation("tools");
   if (tools.length === 0) {
     return (
       <div className="border-t border-border bg-background px-14 py-4 text-sm text-muted-foreground">
-        暂未获取到工具清单，编辑保存后会重新拉取。
+        {t("mcp.noRemoteTools")}
       </div>
     );
   }
@@ -510,7 +516,7 @@ function RemoteToolList({
                 ) : null}
               </div>
               <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                {remoteTool.description || "暂无描述"}
+                {remoteTool.description || t("common.noDescription")}
               </p>
             </div>
             <Switch
@@ -538,6 +544,7 @@ function ToolIdentity({
   name: string;
   status?: ReactNode;
 }) {
+  const { t } = useTranslation("tools");
   return (
     <div className="flex min-w-0 items-center">
       <div className="min-w-0">
@@ -559,7 +566,7 @@ function ToolIdentity({
           {status}
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-          {description || "暂无描述"}
+          {description || t("common.noDescription")}
         </p>
       </div>
     </div>
@@ -621,6 +628,7 @@ function ToolGroupRow({
   status?: { connected?: boolean; ok?: boolean } | null;
   tools: ToolMeta[];
 }) {
+  const { t } = useTranslation("tools");
   const isBuiltinToolEnabled = useToolsStore((state) => state.isBuiltinToolEnabled);
   const toggleBuiltinTool = useToolsStore((state) => state.toggleBuiltinTool);
 
@@ -641,7 +649,7 @@ function ToolGroupRow({
               : "bg-muted text-muted-foreground"
           }`}
         >
-          {connected ? "已连接" : "未连接"}
+          {connected ? t("status.connected") : t("status.disconnected")}
         </span>
       );
     } else if (groupKey === "computeruse") {
@@ -654,7 +662,7 @@ function ToolGroupRow({
               : "bg-muted text-muted-foreground"
           }`}
         >
-          {available ? "可用" : "待检查"}
+          {available ? t("status.available") : t("status.pendingCheck")}
         </span>
       );
     }
@@ -673,7 +681,7 @@ function ToolGroupRow({
           <Button
             variant="ghost"
             size="icon-sm"
-            title={expanded ? "收起工具清单" : "展开工具清单"}
+            title={expanded ? t("mcp.collapseTools") : t("mcp.expandTools")}
             onClick={onToggleExpand}
           >
             <ChevronDown
@@ -696,8 +704,8 @@ function ToolGroupRow({
               <ToolRowShell>
                 <div className="pl-6">
                   <ToolIdentity
-                    name={tool.name}
-                    description={tool.description}
+                    name={t(`builtin.tools.${tool.id}.name`, { defaultValue: tool.name })}
+                    description={t(`builtin.tools.${tool.id}.description`, { defaultValue: tool.description })}
                   />
                 </div>
                 <Switch

@@ -1,0 +1,108 @@
+{
+  "page": {
+    "title": "Skills",
+    "bannerTitle": "Teach agents more useful abilities",
+    "bannerDescription": "Install the right skills so writing, research, and organizing work can be safely delegated.",
+    "kitLabel": "Skill Hub",
+    "searchPlaceholder": "Search skills (press Enter to search market)",
+    "install": "Install Skill"
+  },
+  "tabs": {
+    "market": "Market",
+    "builtin": "Built-in",
+    "installed": "Installed",
+    "global": "Global"
+  },
+  "empty": {
+    "builtinTitle": "No built-in skills found",
+    "builtinDesc": "Built-in skills from the resources directory are synced automatically at startup.",
+    "customTitle": "No custom skills installed yet",
+    "customDesc": "Click \"Install Skill\" to add a custom skill from Git or a local archive.",
+    "globalTitle": "No global skills found",
+    "globalDesc": "Use npx skills add to install global skills.",
+    "marketTitle": "No matching skills",
+    "marketDesc": "Try another category or search by keyword above.",
+    "noDescription": "No description"
+  },
+  "delete": {
+    "title": "Delete Skill",
+    "message": "Delete \"{{name}}\"? This action cannot be undone.",
+    "success": "Skill deleted: {{name}}",
+    "failed": "Failed to delete skill: {{name}}"
+  },
+  "market": {
+    "installed": "Installed",
+    "install": "Install Skill",
+    "installSuccess": "Skill installed: {{name}}",
+    "installFailed": "Failed to install skill: {{name}}",
+    "repo": "View repository",
+    "loadFailed": "Failed to load skill market",
+    "quotaHint": "If this happens often, add a SkillsMP API Key in Settings to increase your quota.",
+    "categories": {
+      "tools": "Tools",
+      "business": "Business",
+      "development": "Development",
+      "testing-security": "Testing & Security",
+      "data-ai": "Data & AI",
+      "devops": "DevOps",
+      "documentation": "Documentation",
+      "content-media": "Content & Media",
+      "research": "Research",
+      "lifestyle": "Lifestyle",
+      "databases": "Databases",
+      "blockchain": "Blockchain"
+    }
+  },
+  "list": {
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "installDialog": {
+    "title": "Install Skill",
+    "gitRepo": "Git Repository",
+    "localZip": "Local Archive",
+    "chooseMethod": "Choose installation method:",
+    "fromGit": "Install from Git Repository",
+    "fromGitDesc": "Clone a Skill from GitHub, GitLab, or another Git repository",
+    "fromZip": "Install from Local Archive",
+    "fromZipDesc": "Import a Skill from a local .zip archive",
+    "gitUrl": "Git Repository URL",
+    "zipFile": "Archive File",
+    "zipPlaceholder": "Choose a .zip archive file",
+    "chooseFile": "Choose File",
+    "back": "Back",
+    "installing": "Installing...",
+    "install": "Install",
+    "selectFileFailed": "Failed to choose file",
+    "selectValidSource": "Choose a valid source",
+    "success": "Skill installed successfully",
+    "failed": "Skill installation failed",
+    "failedCheckSource": "Installation failed. Check the source.",
+    "failedShort": "Installation failed"
+  },
+  "detail": {
+    "missingPath": "This skill is missing its SKILL.md path and cannot be opened.",
+    "unsavedTitle": "Unsaved changes",
+    "switchUnsaved": "The current file has unsaved changes. Switch files anyway?",
+    "closeUnsaved": "The current file has unsaved changes. Close anyway?",
+    "saved": "Saved: {{name}}",
+    "saveFailed": "Save failed: {{message}}",
+    "modalTitle": "Edit Skill: {{name}}",
+    "notSelected": "Not selected",
+    "saving": "Saving...",
+    "save": "Save",
+    "refresh": "Refresh",
+    "openDir": "Open Skill Folder",
+    "close": "Close",
+    "dirty": "Unsaved",
+    "selectFile": "Select a file to view its contents",
+    "reading": "Reading...",
+    "emptyDirectory": "Empty directory",
+    "source": "Source",
+    "preview": "Preview",
+    "skillDirectory": "Skill Folder",
+    "chooseFromLeft": "Choose a file from the left",
+    "readFailed": "Read failed: {{message}}",
+    "htmlPreview": "HTML preview"
+  }
+}

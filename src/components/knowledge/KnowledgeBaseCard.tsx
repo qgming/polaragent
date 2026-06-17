@@ -1,5 +1,6 @@
 // 知识库卡片组件
 import { BookOpen, FileText, Layers3, MoreHorizontal } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import {
   DropdownMenu,
@@ -21,14 +22,15 @@ export function KnowledgeBaseCard({
   onClick,
   onEdit,
 }: KnowledgeBaseCardProps) {
+  const { t, i18n } = useTranslation("knowledge");
   const deleteKnowledgeBase = useKnowledgeStore((state) => state.deleteKnowledgeBase);
 
   const handleDelete = async () => {
-    if (confirm(`确定要删除知识库"${knowledgeBase.name}"吗？此操作不可恢复。`)) {
+    if (confirm(t("card.deleteConfirm", { name: knowledgeBase.name }))) {
       try {
         await deleteKnowledgeBase(knowledgeBase.id);
       } catch (error) {
-        console.error("删除知识库失败:", error);
+        console.error(t("card.deleteFailed"), error);
       }
     }
   };
@@ -50,8 +52,8 @@ export function KnowledgeBaseCard({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
               className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground"
-              title="更多"
-              aria-label={`更多操作 ${knowledgeBase.name}`}
+              title={t("card.more")}
+              aria-label={t("card.moreActions", { name: knowledgeBase.name })}
             >
               <MoreHorizontal className="size-4" />
             </button>
@@ -65,14 +67,14 @@ export function KnowledgeBaseCard({
               onClick={(event) => event.stopPropagation()}
               onSelect={onEdit}
             >
-              编辑知识库
+              {t("card.edit")}
             </DropdownMenuItem>
             <DropdownMenuItem
               variant="destructive"
               onClick={(event) => event.stopPropagation()}
               onSelect={handleDelete}
             >
-              删除
+              {t("card.delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -88,23 +90,23 @@ export function KnowledgeBaseCard({
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex items-center gap-1.5 tabular-nums">
             <FileText className="size-3.5" />
-            {knowledgeBase.fileCount} 文件
+            {t("card.files", { count: knowledgeBase.fileCount })}
           </span>
           <span className="flex items-center gap-1.5 tabular-nums">
             <Layers3 className="size-3.5" />
-            {knowledgeBase.chunkCount} 分块
+            {t("card.chunks", { count: knowledgeBase.chunkCount })}
           </span>
         </div>
         <p className="shrink-0 truncate">
-          更新 {formatUpdatedAt(knowledgeBase.updatedAt)}
+          {t("card.updated", { time: formatUpdatedAt(knowledgeBase.updatedAt, i18n.language) })}
         </p>
       </div>
     </div>
   );
 }
 
-function formatUpdatedAt(timestamp: number) {
-  return new Date(timestamp).toLocaleDateString("zh-CN", {
+function formatUpdatedAt(timestamp: number, language: string) {
+  return new Date(timestamp).toLocaleDateString(language, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",

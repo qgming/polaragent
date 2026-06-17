@@ -2,6 +2,7 @@
 // src/components/settings/AdvancedPanel.tsx
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { FolderOpen, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { openDataDir } from "@/lib/electron/electron-api";
@@ -9,9 +10,11 @@ import { useConfigStore } from "@/stores/config-store";
 import { PageTitle } from "./settings-shared";
 
 export function AdvancedPanel() {
+  const { t } = useTranslation("settings");
+
   return (
     <section>
-      <PageTitle title="数据管理" description="管理应用的本地数据存放位置。" />
+      <PageTitle title={t("data.title")} description={t("data.description")} />
       <DataDirectoryCard />
     </section>
   );
@@ -19,6 +22,7 @@ export function AdvancedPanel() {
 
 // 数据目录卡片：展示当前路径，并提供在系统文件管理器中打开的按钮
 function DataDirectoryCard() {
+  const { t } = useTranslation("settings");
   const dataDir = useConfigStore((state) => state.dataDir);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +34,8 @@ function DataDirectoryCard() {
       await openDataDir();
     } catch (err) {
       const detail =
-        err instanceof Error ? err.message : String(err ?? "未知错误");
-      setError(`无法打开数据目录：${detail}`);
+        err instanceof Error ? err.message : String(err ?? t("data.unknownError"));
+      setError(`${t("data.openFailed")}${detail}`);
     } finally {
       setOpening(false);
     }
@@ -42,15 +46,15 @@ function DataDirectoryCard() {
       <div className="px-5 py-5">
         <div className="flex items-center gap-2">
           <FolderOpen className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">数据目录</h3>
+          <h3 className="text-sm font-semibold">{t("data.dataDirectory")}</h3>
         </div>
         <p className="mt-2 text-sm text-muted-foreground">
-          应用的配置、助手、技能与会话都保存在这里。
+          {t("data.dataDirectoryDesc")}
         </p>
 
         <div className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
           <code className="block break-all text-xs text-muted-foreground">
-            {dataDir || "（尚未初始化）"}
+            {dataDir || t("data.uninitialized")}
           </code>
         </div>
 
@@ -65,7 +69,7 @@ function DataDirectoryCard() {
             ) : (
               <FolderOpen className="size-4" />
             )}
-            在文件管理器中打开
+            {t("data.openInFileManager")}
           </Button>
         </div>
       </div>

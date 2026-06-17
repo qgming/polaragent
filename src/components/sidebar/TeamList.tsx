@@ -1,6 +1,7 @@
 // 团队 tab 内容：团队列表 + 每个团队可展开的会话子列表
 import { ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +48,7 @@ export function TeamList({
   onDeleteTeamThread: (threadId: string) => void;
   runningTeamThreadIds: string[];
 }) {
+  const { t } = useTranslation("common");
   const teams = useTeamsStore((state) => state.teams);
   // 展开的团队 id 集合（点团队名切换展开/收起）
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -66,7 +68,7 @@ export function TeamList({
   if (teams.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-2 text-center text-sm text-muted-foreground">
-        还没有团队，去「团队」页新建一个
+	        {t("sidebar.noTeams")}
       </div>
     );
   }
@@ -134,6 +136,7 @@ function TeamRow({
   onDeleteTeamThread: (threadId: string) => void;
   runningTeamThreadIds: string[];
 }) {
+  const { t } = useTranslation("common");
   // 仅展开时才订阅该团队的会话列表，避免无谓重渲染
   const threads = useTeamThreadsOf(team.id);
   const running = threads.some((thread) =>
@@ -178,7 +181,7 @@ function TeamRow({
           {running ? (
             <span
               className="flex size-6 shrink-0 items-center justify-center text-[#9b6fe0]"
-              title="后台运行中"
+	              title={t("sidebar.running")}
             >
               <Loader2 className="size-3.5 animate-spin" />
             </span>
@@ -195,7 +198,7 @@ function TeamRow({
             className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <Plus className="size-3.5 shrink-0" />
-            <span className="truncate">新建会话</span>
+	            <span className="truncate">{t("sidebar.newSession")}</span>
           </button>
           {threads.map((thread) => (
             <TeamThreadItem
@@ -230,6 +233,7 @@ function TeamThreadItem({
   onRename: (title: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation("common");
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState(thread.title);
@@ -273,20 +277,20 @@ function TeamThreadItem({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-32">
               <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-                重命名
+	                {t("sidebar.rename")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setDeleteOpen(true)}
               >
-                删除
+	                {t("delete")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           {running ? (
             <span
               className="flex size-6 shrink-0 items-center justify-center text-[#9b6fe0]"
-              title="后台运行中"
+	              title={t("sidebar.running")}
             >
               <Loader2 className="size-3.5 animate-spin" />
             </span>
@@ -297,8 +301,8 @@ function TeamThreadItem({
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>重命名会话</DialogTitle>
-            <DialogDescription>修改后会立即更新侧边栏里的会话名称。</DialogDescription>
+	            <DialogTitle>{t("sidebar.renameSessionTitle")}</DialogTitle>
+	            <DialogDescription>{t("sidebar.renameSessionDescription")}</DialogDescription>
           </DialogHeader>
           <input
             autoFocus
@@ -315,11 +319,11 @@ function TeamThreadItem({
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+	                {t("cancel")}
               </Button>
             </DialogClose>
             <Button onClick={handleRename} type="button">
-              保存
+	              {t("save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -328,15 +332,15 @@ function TeamThreadItem({
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>删除会话</DialogTitle>
-            <DialogDescription>
-              确定删除「{thread.title}」吗？此操作会移除该团队会话及其历史，不可撤销。
-            </DialogDescription>
+	            <DialogTitle>{t("sidebar.deleteSessionTitle")}</DialogTitle>
+	            <DialogDescription>
+	              {t("sidebar.deleteSessionDescription", { title: thread.title })}
+	            </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline" type="button">
-                取消
+	                {t("cancel")}
               </Button>
             </DialogClose>
             <Button
@@ -347,7 +351,7 @@ function TeamThreadItem({
                 setDeleteOpen(false);
               }}
             >
-              删除
+	              {t("delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

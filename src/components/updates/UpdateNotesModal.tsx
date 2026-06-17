@@ -1,5 +1,6 @@
 import { Download, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -35,6 +36,7 @@ export function UpdateNotesModal({
   onOpenChange,
   checkOnOpenKey = 0,
 }: UpdateNotesModalProps) {
+  const { t } = useTranslation("common");
   const toastSuccess = useToast((state) => state.success);
   const toastError = useToast((state) => state.error);
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
@@ -68,13 +70,13 @@ export function UpdateNotesModal({
 
       // 下载完成后 toast 提示
       if (nextStatus.phase === "downloaded") {
-        toastSuccess("新版本已下载完成，点击重启安装");
+        toastSuccess(t("update.downloadedToast"));
         setDownloading(false);
       }
 
       // 下载失败 toast 提示
       if (nextStatus.phase === "download-error" || nextStatus.phase === "download-unavailable") {
-        toastError(nextStatus.message || "下载失败");
+        toastError(nextStatus.message || t("update.downloadFailed"));
         setDownloading(false);
       }
     });
@@ -83,7 +85,7 @@ export function UpdateNotesModal({
       disposed = true;
       unsubscribe();
     };
-  }, [electronRuntime, toastError, toastSuccess]);
+  }, [electronRuntime, t, toastError, toastSuccess]);
 
   const handleCheckUpdates = useCallback(async () => {
     if (!electronRuntime) return;
@@ -150,11 +152,11 @@ export function UpdateNotesModal({
   }
 
   const getActionButtonLabel = () => {
-    if (installing) return "正在重启";
-    if (canInstall) return "重启安装";
-    if (isDownloading) return "下载中";
-    if (canDownload) return "立即更新";
-    return "去发布页";
+    if (installing) return t("update.restarting");
+    if (canInstall) return t("update.restartInstall");
+    if (isDownloading) return t("update.downloading");
+    if (canDownload) return t("update.updateNow");
+    return t("update.openRelease");
   };
 
   const getActionButtonIcon = () => {
@@ -172,7 +174,7 @@ export function UpdateNotesModal({
       <ModalContent size="xl">
         <ModalHeader className="py-5">
           <ModalTitle className="text-xl">
-            {displayVersion ? `新版本 ${displayVersion}` : isChecking ? "正在检查更新" : "版本更新"}
+            {displayVersion ? t("update.newVersion", { version: displayVersion }) : isChecking ? t("update.checking") : t("update.title")}
           </ModalTitle>
         </ModalHeader>
 
@@ -182,7 +184,7 @@ export function UpdateNotesModal({
               <ReleaseNotesRenderer content={releaseNotes} />
             ) : (
               <div className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground">
-                {isChecking ? "正在获取更新日志..." : "暂未获取到该版本的更新日志。"}
+                {isChecking ? t("update.fetchingNotes") : t("update.noNotes")}
               </div>
             )}
             {status?.releaseNotesError ? (
@@ -198,7 +200,7 @@ export function UpdateNotesModal({
           {status?.releaseUrl ? (
             <Button variant="outline" onClick={() => void handleOpenReleases()}>
               <ExternalLink className="size-4" />
-              去发布页
+	              {t("update.openRelease")}
             </Button>
           ) : null}
           <Button

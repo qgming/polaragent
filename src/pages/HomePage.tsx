@@ -3,6 +3,7 @@
 
 import { ChevronDown, FolderOpen, SendHorizontal, MessageCircle, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { promptAgent } from "@/ai/agent";
 import { promptTeam } from "@/ai/team";
@@ -95,6 +96,7 @@ export function HomePage({
   };
   onCreateTeamThread: (teamId: string, threadId: string) => void;
 }) {
+  const { t } = useTranslation();
   const activeAgent =
     agents.find((agent) => agent.id === activeAgentId) ?? agents[0];
   const workingDir = useChatStore((state) => state.workingDir);
@@ -118,7 +120,7 @@ export function HomePage({
   useEffect(() => {
     if (!selectedTeamId && teams.length > 0) {
       setSelectedTeamId(teams[0].id);
-    } else if (selectedTeamId && !teams.find((t) => t.id === selectedTeamId)) {
+    } else if (selectedTeamId && !teams.find((tm) => tm.id === selectedTeamId)) {
       setSelectedTeamId(teams[0]?.id || "");
     }
   }, [teams, selectedTeamId]);
@@ -163,7 +165,7 @@ export function HomePage({
     const providerCheck = checkProviderConfig();
     if (!providerCheck.isConfigured) {
       await showAlert({
-        title: "未配置模型",
+        title: t("home:alertNoModel"),
         message: providerCheck.message,
         variant: "warning",
       });
@@ -173,10 +175,10 @@ export function HomePage({
     // 根据类型选择创建通用对话或团队对话
     if (chatType === "team") {
       // 创建团队对话
-      if (!selectedTeamId || !teams.find((t) => t.id === selectedTeamId)) {
+      if (!selectedTeamId || !teams.find((tm) => tm.id === selectedTeamId)) {
         await showAlert({
-          title: "未选择团队",
-          message: "请先选择一个团队",
+          title: t("home:alertNoTeam"),
+          message: t("home:alertNoTeamDesc"),
           variant: "warning",
         });
         return;
@@ -192,7 +194,7 @@ export function HomePage({
       const pendingAttachments = attachments;
 
       // 获取工作目录
-      let workingDir = teams.find((t) => t.id === selectedTeamId)?.workspaceDir || undefined;
+      let workingDir = teams.find((tm) => tm.id === selectedTeamId)?.workspaceDir || undefined;
       if (!workingDir) {
         workingDir = await getTeamSessionFilesDir(threadId);
         await ensureTeamSessionFilesDir(threadId);
@@ -282,10 +284,10 @@ export function HomePage({
             className="mb-6 size-14 object-contain"
           />
           <h1 className="text-3xl font-semibold tracking-normal">
-            不止聊天，搞定一切
+            {t("home:heading")}
           </h1>
           <p className="mt-4 text-base text-muted-foreground">
-            本地运行、自主规划、安全可控的 AI 工作搭子
+            {t("home:subheading")}
           </p>
         </div>
 
@@ -297,7 +299,7 @@ export function HomePage({
             onSkillsChange={setSkillIds}
             onFilesChange={setAttachments}
             onEnter={() => void handleSend()}
-            placeholder="描述任务，/ 快捷调用，@ 添加文件"
+            placeholder={t("home:placeholder")}
             className="app-scrollbar max-h-[240px] min-h-[96px] overflow-y-auto px-5 py-4 text-base"
           />
           <div className="flex items-center justify-between px-4 py-3">
@@ -335,22 +337,22 @@ export function HomePage({
                           <Users className="size-4" />
                         )}
                         {breakpoint !== "narrow" ? (
-                          <span className="text-sm">{chatType === "general" ? "通用" : "团队"}</span>
+                          <span className="text-sm">{chatType === "general" ? t("home:generalType") : t("home:teamType")}</span>
                         ) : null}
                         {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
                       </Button>
                     </DropdownMenuTrigger>
                   </TooltipTrigger>
-                  <TooltipContent>{chatType === "general" ? "通用对话" : "团队协作"}</TooltipContent>
+                  <TooltipContent>{chatType === "general" ? t("home:generalLabel") : t("home:teamLabel")}</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="start" className="w-32">
                   <DropdownMenuItem onSelect={() => setChatType("general")}>
                     <MessageCircle className="size-4" />
-                    <span>通用</span>
+                    <span>{t("home:generalType")}</span>
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => setChatType("team")}>
                     <Users className="size-4" />
-                    <span>团队</span>
+                    <span>{t("home:teamType")}</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -380,13 +382,13 @@ export function HomePage({
                             {activeAgent?.avatar || "⚡"}
                           </span>
                           {breakpoint !== "narrow" ? (
-                            <span className="text-sm">{activeAgent?.name || "默认助手"}</span>
+                            <span className="text-sm">{activeAgent?.name || t("home:defaultAgent")}</span>
                           ) : null}
                           {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
                         </Button>
                       </DropdownMenuTrigger>
                     </TooltipTrigger>
-                    <TooltipContent>{activeAgent?.name || "默认助手"}</TooltipContent>
+                    <TooltipContent>{activeAgent?.name || t("home:defaultAgent")}</TooltipContent>
                   </Tooltip>
                   <DropdownMenuContent align="start" className="w-56">
                     {agents.length > 0 ? (
@@ -410,7 +412,7 @@ export function HomePage({
                         </Tooltip>
                       ))
                     ) : (
-                      <DropdownMenuItem disabled>暂无助手</DropdownMenuItem>
+                      <DropdownMenuItem disabled>{t("home:noAgents")}</DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -430,16 +432,16 @@ export function HomePage({
                           }
                         >
                           <span className={breakpoint === "narrow" ? "text-base leading-none" : "text-sm leading-none"}>
-                            {teams.find((t) => t.id === selectedTeamId)?.avatar || "👥"}
+                            {teams.find((tm) => tm.id === selectedTeamId)?.avatar || "👥"}
                           </span>
                           {breakpoint !== "narrow" ? (
-                            <span className="text-sm">{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</span>
+                            <span className="text-sm">{teams.find((tm) => tm.id === selectedTeamId)?.name || t("home:selectTeam")}</span>
                           ) : null}
                           {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
                         </Button>
                       </DropdownMenuTrigger>
                     </TooltipTrigger>
-                    <TooltipContent>{teams.find((t) => t.id === selectedTeamId)?.name || "选择团队"}</TooltipContent>
+                    <TooltipContent>{teams.find((tm) => tm.id === selectedTeamId)?.name || t("home:selectTeam")}</TooltipContent>
                   </Tooltip>
                   <DropdownMenuContent align="start" className="w-56">
                     {teams.length > 0 ? (
@@ -463,7 +465,7 @@ export function HomePage({
                         </Tooltip>
                       ))
                     ) : (
-                      <DropdownMenuItem disabled>暂无团队</DropdownMenuItem>
+                      <DropdownMenuItem disabled>{t("home:noTeams")}</DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -473,7 +475,7 @@ export function HomePage({
               <VoiceRecordButton onTranscriptionComplete={handleVoiceTranscription} />
               <IconButton
                 className="size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-                label="发送"
+                label={t("common:send")}
                 onClick={() => void handleSend()}
               >
                 <SendHorizontal className="size-4" />
@@ -489,7 +491,7 @@ export function HomePage({
         >
           <FolderOpen className="size-4 shrink-0" />
           <span className="truncate">
-            {workingDir ? workingDir : "选择工作目录"}
+            {workingDir ? workingDir : t("home:selectDirectory")}
           </span>
           <ChevronDown className="size-4 shrink-0" />
         </button>

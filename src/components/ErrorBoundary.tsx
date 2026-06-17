@@ -3,6 +3,7 @@
 
 import React, { Component, ReactNode } from "react";
 import { AlertCircle } from "lucide-react";
+import { withTranslation, type WithTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
 interface Props {
@@ -14,8 +15,8 @@ interface State {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
+class ErrorBoundaryComponent extends Component<Props & WithTranslation<"common">, State> {
+  constructor(props: Props & WithTranslation<"common">) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -34,6 +35,7 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   render() {
+    const { t } = this.props;
     if (this.state.hasError) {
       return (
         <div className="flex h-screen items-center justify-center bg-background p-8">
@@ -44,10 +46,10 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             </div>
 
-            <h1 className="mb-2 text-2xl font-bold">出错了</h1>
-            <p className="mb-6 text-sm text-muted-foreground">
-              应用遇到了一个意外错误。请尝试刷新页面。
-            </p>
+	            <h1 className="mb-2 text-2xl font-bold">{t("errorBoundary.title")}</h1>
+	            <p className="mb-6 text-sm text-muted-foreground">
+	              {t("errorBoundary.description")}
+	            </p>
 
             {this.state.error && (
               <div className="mb-6 rounded-lg bg-muted p-4 text-left">
@@ -57,7 +59,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             )}
 
-            <Button onClick={this.handleReset}>刷新页面</Button>
+	            <Button onClick={this.handleReset}>{t("errorBoundary.reload")}</Button>
           </div>
         </div>
       );
@@ -66,3 +68,5 @@ export class ErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
+
+export const ErrorBoundary = withTranslation("common")(ErrorBoundaryComponent);

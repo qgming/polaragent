@@ -1,0 +1,42 @@
+{
+  "pages": {
+    "chat": { "title": "New Chat", "description": "Create a task, ask a question, or continue a conversation" },
+    "skills": { "title": "Skills", "description": "Manage capabilities and workflows that Agents can invoke" },
+    "tools": { "title": "Tools", "description": "Manage built-in tools and MCP servers" },
+    "agent": { "title": "Agents", "description": "Orchestrate models, tools, memory, and execution strategies" },
+    "team": { "title": "Teams", "description": "Orchestrate multiple agents to collaborate on complex tasks" },
+    "knowledge": { "title": "Knowledge", "description": "Manage documents and materials for AI retrieval" },
+    "settings": { "title": "Settings", "description": "Configure models, window behavior, appearance, and local data" }
+  },
+  "sidebar": {
+    "chat": "New Chat",
+    "tasks": "Chats",
+    "teamTab": "Teams",
+    "newChat": "New Chat",
+    "knowledge": "Knowledge",
+    "extensions": "Extensions",
+    "skills": "Skills",
+    "tools": "Tools",
+    "agent": "Agents",
+    "team": "Teams",
+    "settings": "Settings"
+  },
+  "titleBar": {
+    "menu": "Main Menu",
+    "theme": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "followSystem": "System",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking",
+    "about": "About",
+    "openSidebar": "Open Sidebar",
+    "closeSidebar": "Close Sidebar",
+    "searchSessions": "Search Sessions",
+    "tutorial": "Tutorial",
+    "expandPanel": "Expand Monitor Panel",
+    "collapsePanel": "Collapse Monitor Panel",
+    "expandTeamPanel": "Expand Team Panel",
+    "collapseTeamPanel": "Collapse Team Panel"
+  }
+}

@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronRight,
   CheckCircle2,
@@ -26,6 +27,7 @@ import type { Segment } from "@/lib/chat";
 
 // 工具步骤轨迹：默认折叠，标题显示步骤数
 export function StepTrace({ steps }: { steps: StepItem[] }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   if (steps.length === 0) return null;
 
@@ -37,7 +39,7 @@ export function StepTrace({ steps }: { steps: StepItem[] }) {
         className="group flex items-center gap-1.5 py-0.2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <Wrench className="size-4 shrink-0" />
-        <span>查看 {steps.length} 个步骤</span>
+        <span>{t("trace.stepCount", { count: steps.length })}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
@@ -82,6 +84,7 @@ function StepIcon({ status }: { status: StepItem["status"] }) {
 
 // 深度思考块：折叠的灰色推理文本
 export function ThinkingBlock({ content }: { content: string }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   if (!content.trim()) return null;
 
@@ -93,7 +96,7 @@ export function ThinkingBlock({ content }: { content: string }) {
         className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <Brain className="size-4 shrink-0" />
-        <span>深度思考</span>
+        <span>{t("trace.deepThinking")}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
@@ -112,10 +115,11 @@ export function ThinkingBlock({ content }: { content: string }) {
 
 // 任务完成标记
 export function TaskDoneMark({ summary }: { summary: string }) {
+  const { t } = useTranslation("chat");
   return (
     <div className="flex items-center gap-2 text-sm text-[#5b3a9e]">
       <CircleDot className="size-4" />
-      <span className="font-medium">任务已完成</span>
+      <span className="font-medium">{t("trace.taskCompleted")}</span>
       <span className="text-muted-foreground">{summary}</span>
     </div>
   );
@@ -136,6 +140,7 @@ export type ToolSeg = Extract<Segment, { kind: "tool" }>;
 
 // 单个「深度思考」可折叠行
 export function ThinkingRow({ text }: { text: string }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -145,7 +150,7 @@ export function ThinkingRow({ text }: { text: string }) {
         className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <Brain className="size-4 shrink-0" />
-        <span>深度思考</span>
+        <span>{t("trace.deepThinking")}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
@@ -164,6 +169,7 @@ export function ThinkingRow({ text }: { text: string }) {
 
 // 运行中用户插入的引导已被 agent 当前循环接收。
 export function GuidanceRow({ text }: { text: string }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -173,7 +179,7 @@ export function GuidanceRow({ text }: { text: string }) {
         className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <MessageCircleDashed className="size-4 shrink-0" />
-        <span>对话已引导</span>
+        <span>{t("trace.guided")}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",
@@ -249,6 +255,7 @@ export function ToolStepItem({ tool }: { tool: ToolSeg }) {
 
 // 连续的工具段聚合为「查看 N 个步骤」可折叠行
 export function ToolStepsRow({ tools }: { tools: ToolSeg[] }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -258,7 +265,7 @@ export function ToolStepsRow({ tools }: { tools: ToolSeg[] }) {
         className="group flex items-center gap-1.5 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <Wrench className="size-4 shrink-0" />
-        <span>查看 {tools.length} 个步骤</span>
+        <span>{t("trace.stepCount", { count: tools.length })}</span>
         <ChevronRight
           className={cn(
             "size-4 shrink-0 opacity-0 transition-[transform,opacity] group-hover:opacity-100",

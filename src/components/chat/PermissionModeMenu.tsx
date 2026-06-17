@@ -1,4 +1,5 @@
 import { Bot, Eye, ShieldCheck } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,21 +18,21 @@ import type { ToolPermissionMode } from "@/types/permissions";
 
 const MODE_META: Record<
   ToolPermissionMode,
-  { label: string; description: string; icon: typeof Eye }
+  { labelKey: string; descriptionKey: string; icon: typeof Eye }
 > = {
   readonly: {
-    label: "只读",
-    description: "允许读取、搜索、查看和交互，阻止写入、删除和命令执行。",
+    labelKey: "permission.readonly.label",
+    descriptionKey: "permission.readonly.description",
     icon: Eye,
   },
   full: {
-    label: "完全",
-    description: "不做额外权限拦截，仍保留工具自身的安全校验。",
+    labelKey: "permission.full.label",
+    descriptionKey: "permission.full.description",
     icon: ShieldCheck,
   },
   ai_review: {
-    label: "自动审查",
-    description: "每次工具执行前由 AI 判断是否允许，不确定时拒绝。",
+    labelKey: "permission.aiReview.label",
+    descriptionKey: "permission.aiReview.description",
     icon: Bot,
   },
 };
@@ -45,6 +46,7 @@ export function PermissionModeMenu({
   mode: ToolPermissionMode;
   onChange: (mode: ToolPermissionMode) => void;
 }) {
+  const { t } = useTranslation("chat");
   const meta = MODE_META[mode];
   const Icon = meta.icon;
   const breakpoint = useResponsiveWidth();
@@ -67,11 +69,11 @@ export function PermissionModeMenu({
               }
             >
               <Icon className="size-4" />
-              {showText ? <span>{meta.label}</span> : null}
+              {showText ? <span>{t(meta.labelKey)}</span> : null}
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>{meta.description}</TooltipContent>
+        <TooltipContent>{t(meta.descriptionKey)}</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" className="w-64">
         {MODES.map((item) => {
@@ -81,10 +83,10 @@ export function PermissionModeMenu({
             <DropdownMenuItem key={item} onSelect={() => onChange(item)}>
               <ItemIcon className="size-4 text-muted-foreground" />
               <div className="min-w-0">
-                <div className="text-sm font-medium">{itemMeta.label}</div>
-                <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                  {itemMeta.description}
-                </div>
+	                <div className="text-sm font-medium">{t(itemMeta.labelKey)}</div>
+	                <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
+	                  {t(itemMeta.descriptionKey)}
+	                </div>
               </div>
             </DropdownMenuItem>
           );

@@ -2,6 +2,7 @@
 // src/pages/SkillsPage.tsx
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AlertCircle,
   Check,
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 type SkillTab = "market" | "builtin" | "custom" | "global";
 
 export function SkillsPage() {
+  const { t } = useTranslation("skills");
   const skills = useSkillsStore((state) => state.skills);
   const isLoading = useSkillsStore((state) => state.isLoading);
   const loadSkills = useSkillsStore((state) => state.loadSkills);
@@ -105,10 +107,10 @@ export function SkillsPage() {
 
     const success = await uninstallSkill(deletingSkill.id);
     if (success) {
-      toast.success(`已删除技能：${deletingSkill.name || deletingSkill.id}`);
+      toast.success(t("delete.success", { name: deletingSkill.name || deletingSkill.id }));
       setDeletingSkill(null);
     } else {
-      toast.error(`删除技能失败：${deletingSkill.name || deletingSkill.id}`);
+      toast.error(t("delete.failed", { name: deletingSkill.name || deletingSkill.id }));
     }
   };
 
@@ -125,26 +127,26 @@ export function SkillsPage() {
         />
 
         <PageHero
-          title="技能"
-          bannerTitle="让助手学会更多本事"
-          bannerDescription="装上合适的技能，写作、检索、整理这些事就能放心交给它。"
+          title={t("page.title")}
+          bannerTitle={t("page.bannerTitle")}
+          bannerDescription={t("page.bannerDescription")}
           icon={Zap}
-          kitLabel="Skill Hub"
+          kitLabel={t("page.kitLabel")}
           rotate="left"
         />
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SkillTab)}>
           <TabsList className="mt-3 h-9 bg-transparent p-0">
-            <TabTrigger value="market">广场</TabTrigger>
-            <TabTrigger value="builtin">内置</TabTrigger>
+            <TabTrigger value="market">{t("tabs.market")}</TabTrigger>
+            <TabTrigger value="builtin">{t("tabs.builtin")}</TabTrigger>
             <TabTrigger value="custom">
-              已安装
+              {t("tabs.installed")}
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
                 {customSkills.length}
               </span>
             </TabTrigger>
             <TabTrigger value="global">
-              全局
+              {t("tabs.global")}
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
                 {globalSkills.length}
               </span>
@@ -174,8 +176,8 @@ export function SkillsPage() {
               </section>
             ) : (
               <EmptyCloudState
-                title="没有找到内置技能"
-                description="启动时会自动同步资源目录中的内置技能。"
+                title={t("empty.builtinTitle")}
+                description={t("empty.builtinDesc")}
                 compact
               />
             )}
@@ -199,8 +201,8 @@ export function SkillsPage() {
               </section>
             ) : (
               <EmptyCloudState
-                title="还没有安装自定义技能"
-                description="点击「从 Git 安装」或「从本地安装」添加自定义技能。"
+                title={t("empty.customTitle")}
+                description={t("empty.customDesc")}
                 compact
               />
             )}
@@ -222,8 +224,8 @@ export function SkillsPage() {
               </section>
             ) : (
               <EmptyCloudState
-                title="没有找到全局技能"
-                description="使用 npx skills add 安装全局技能。"
+                title={t("empty.globalTitle")}
+                description={t("empty.globalDesc")}
                 compact
               />
             )}
@@ -244,9 +246,9 @@ export function SkillsPage() {
         <ConfirmDialog
           open={deletingSkill !== null}
           onOpenChange={(open) => !open && setDeletingSkill(null)}
-          title="删除技能"
-          message={`确定删除「${deletingSkill?.name || deletingSkill?.id}」吗？此操作不可撤销。`}
-          confirmLabel="删除"
+          title={t("delete.title")}
+          message={t("delete.message", { name: deletingSkill?.name || deletingSkill?.id || "" })}
+          confirmLabel={t("common:delete")}
           variant="destructive"
           onConfirm={handleDeleteSkill}
         />
@@ -264,6 +266,7 @@ function MarketView({
   installedNames: Set<string>;
   onInstalled: () => void;
 }) {
+  const { t } = useTranslation("skills");
   const byCategory = useSkillsMarketStore((state) => state.byCategory);
   const searchResults = useSkillsMarketStore((state) => state.searchResults);
   const isLoading = useSkillsMarketStore((state) => state.isLoading);
@@ -293,10 +296,10 @@ function MarketView({
   const handleInstall = async (skill: MarketSkill) => {
     const ok = await installSkill(skill);
     if (ok) {
-      toast.success(`已安装技能：${skill.name}`);
+      toast.success(t("market.installSuccess", { name: skill.name }));
       onInstalled();
     } else {
-      toast.error(`安装技能失败：${skill.name}`);
+      toast.error(t("market.installFailed", { name: skill.name }));
     }
   };
 
@@ -323,7 +326,7 @@ function MarketView({
             )}
           >
             <span>{category.icon}</span>
-            {category.label}
+            {t(`market.categories.${category.id}`, { defaultValue: category.label })}
           </button>
         ))}
       </div>
@@ -351,8 +354,8 @@ function MarketView({
         </SkillGrid>
       ) : (
         <EmptyCloudState
-          title="没有匹配的技能"
-          description="换个分类或在上方搜索框输入关键词试试。"
+          title={t("empty.marketTitle")}
+          description={t("empty.marketDesc")}
         />
       )}
     </div>
@@ -378,6 +381,7 @@ function MarketSkillCard({
   installing: boolean;
   onInstall: () => void;
 }) {
+  const { t } = useTranslation("skills");
   return (
     <div className="flex flex-col rounded-xl border border-border bg-card p-4 transition-all hover:border-[#9b6fe0]/30 hover:shadow-sm">
       <div className="flex items-start justify-between gap-2">
@@ -395,7 +399,7 @@ function MarketSkillCard({
             target="_blank"
             rel="noreferrer"
             className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            title="查看仓库"
+            title={t("market.repo")}
           >
             <ExternalLink className="size-4" />
           </a>
@@ -403,7 +407,7 @@ function MarketSkillCard({
       </div>
 
       <p className="mt-3 line-clamp-2 min-h-[40px] text-sm leading-5 text-muted-foreground">
-        {skill.description || "暂无描述"}
+        {skill.description || t("empty.noDescription")}
       </p>
 
       <div className="mt-4 flex items-center justify-between">
@@ -424,7 +428,7 @@ function MarketSkillCard({
         {installed ? (
           <Button variant="outline" size="sm" disabled>
             <Check className="size-4" />
-            已安装
+            {t("market.installed")}
           </Button>
         ) : (
           <Button
@@ -438,7 +442,7 @@ function MarketSkillCard({
             ) : (
               <Download className="size-4" />
             )}
-            安装技能
+            {t("market.install")}
           </Button>
         )}
       </div>
@@ -464,15 +468,16 @@ function SkillCardSkeleton() {
 }
 
 function MarketError({ message }: { message: string }) {
+  const { t } = useTranslation("skills");
   return (
     <div className="mt-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
       <AlertCircle className="size-9 text-destructive" />
-      <h3 className="mt-4 text-base font-semibold">加载技能广场失败</h3>
+      <h3 className="mt-4 text-base font-semibold">{t("market.loadFailed")}</h3>
       <p className="mt-2 max-w-[460px] text-sm leading-6 text-muted-foreground">
         {message}
       </p>
       <p className="mt-3 text-xs text-muted-foreground">
-        若频繁失败，可在「设置」中填写 SkillsMP API Key 以提升配额。
+        {t("market.quotaHint")}
       </p>
     </div>
   );
@@ -501,6 +506,7 @@ function TopToolbar({
   search: string;
   setSearch: (value: string) => void;
 }) {
+  const { t } = useTranslation("skills");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
       <Button variant="ghost" size="icon" onClick={onRefresh} disabled={isLoading}>
@@ -518,12 +524,12 @@ function TopToolbar({
             }
           }}
           className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
-          placeholder="搜索技能（回车搜索广场）"
+          placeholder={t("page.searchPlaceholder")}
         />
       </div>
       <Button onClick={onInstall}>
         <Plus className="size-4" />
-        安装技能
+        {t("page.install")}
       </Button>
     </div>
   );
@@ -559,6 +565,7 @@ function InstalledSkillRow({
   onDelete?: () => void;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation("skills");
   return (
     <div className="grid min-h-[84px] grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border px-5 py-4 last:border-b-0">
       <div className="min-w-0">
@@ -570,12 +577,12 @@ function InstalledSkillRow({
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="size-4" />
-          编辑
+          {t("list.edit")}
         </Button>
         {removable && onDelete ? (
           <Button variant="outline" size="sm" onClick={onDelete}>
             <Trash2 className="size-4" />
-            删除
+            {t("list.delete")}
           </Button>
         ) : null}
         <Switch checked={skill.enabled} onCheckedChange={onToggle} />

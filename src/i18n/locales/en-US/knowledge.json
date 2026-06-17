@@ -1,0 +1,93 @@
+{
+  "page": {
+    "title": "Knowledge",
+    "bannerTitle": "Let agents remember your private materials",
+    "bannerDescription": "Import your documents so agents can answer from your own content.",
+    "kitLabel": "Knowledge Kit",
+    "searchPlaceholder": "Search knowledge bases",
+    "create": "New Knowledge Base"
+  },
+  "empty": {
+    "noMatch": "No matching knowledge bases",
+    "none": "No knowledge bases yet",
+    "noMatchDesc": "Try another keyword, or create a new knowledge base for new materials.",
+    "noneDesc": "Create a knowledge base and import documents so AI can retrieve relevant content.",
+    "createFirst": "Create First Knowledge Base",
+    "noFiles": "No files yet",
+    "noFilesDesc": "Import documents into this knowledge base"
+  },
+  "detail": {
+    "rebuild": "Rebuild Index",
+    "import": "Import Files",
+    "dropTitle": "Drop files into the knowledge base",
+    "dropDesc": "Supports PDF, DOCX, Markdown, TXT, JSON, code files, and more",
+    "chooseFiles": "Choose Files",
+    "noSupportedFiles": "No supported files found",
+    "addFilesFailed": "Failed to add files:",
+    "dropFilesFailed": "Failed to drop files:",
+    "deleteFileFailed": "Failed to delete file:",
+    "rebuildFileFailed": "Failed to rebuild file index:",
+    "rebuildFailed": "Failed to rebuild index:",
+    "incompatibleTitle": "{{count}} file has incompatible vectors",
+    "incompatibleTitle_plural": "{{count}} files have incompatible vectors",
+    "incompatibleDesc": "The embedding model has changed. These files need to regenerate vectors.",
+    "reembed": "Re-embed"
+  },
+  "confirm": {
+    "deleteTitle": "Confirm Delete",
+    "deleteFileMessage": "Delete this file?",
+    "rebuildTitle": "Confirm Index Rebuild",
+    "rebuildMessage": "Rebuild the index? This will reprocess all files.",
+    "rebuild": "Rebuild"
+  },
+  "form": {
+    "createTitle": "New Knowledge Base",
+    "settingsTitle": "Knowledge Base Settings",
+    "name": "Name",
+    "namePlaceholder": "e.g. Project docs, technical manual",
+    "description": "Description",
+    "descriptionPlaceholder": "Briefly describe the content scope of this knowledge base",
+    "chunkSize": "Chunk Size (tokens)",
+    "overlap": "Chunk Overlap (tokens)",
+    "recommended": "{{value}} (recommended)",
+    "create": "Create",
+    "enabled": "Enable this knowledge base",
+    "rebuildNotice": "After changing chunk settings, rebuild the index for changes to take effect",
+    "createFailed": "Failed to create knowledge base:",
+    "updateFailed": "Failed to update knowledge base:"
+  },
+  "card": {
+    "more": "More",
+    "moreActions": "More actions for {{name}}",
+    "edit": "Edit Knowledge Base",
+    "delete": "Delete",
+    "deleteConfirm": "Delete knowledge base \"{{name}}\"? This action cannot be undone.",
+    "deleteFailed": "Failed to delete knowledge base:",
+    "files": "{{count}} files",
+    "chunks": "{{count}} chunks",
+    "updated": "Updated {{time}}"
+  },
+  "file": {
+    "chunks": "{{count}} chunks",
+    "reindex": "Reindex {{name}}",
+    "indexing": "Indexing",
+    "reindexTooltip": "Reindex this file",
+    "status": "Status: {{status}}",
+    "delete": "Delete",
+    "deleteLabel": "Delete {{name}}",
+    "statuses": {
+      "pending": "Pending",
+      "processing": "Indexing",
+      "ready": "Ready",
+      "error": "Error",
+      "incompatible": "Issue"
+    }
+  },
+  "selector": {
+    "title": "Knowledge",
+    "empty": "No available knowledge bases",
+    "itemMeta": "{{chunks}} chunks · {{files}} documents",
+    "disableAll": "Disable All",
+    "selectAll": "Select All"
+  }
+}

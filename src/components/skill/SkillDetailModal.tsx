@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
@@ -81,6 +82,7 @@ function defaultViewMode(kind: PreviewKind): ViewMode {
 }
 
 export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetailModalProps) {
+  const { t } = useTranslation("skills");
   const toast = useToast();
   const rootPath = useMemo(() => (skill?.filePath ? parentDir(skill.filePath) : ""), [skill?.filePath]);
 
@@ -173,7 +175,7 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
     setSaving(false);
     setViewMode("preview");
     if (!rootPath || !skill.filePath) {
-      setTreeError("这个技能缺少 SKILL.md 路径，无法打开详情。");
+      setTreeError(t("detail.missingPath"));
       return;
     }
     void loadDir(rootPath);
@@ -196,8 +198,8 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
     if (path === selectedPath) return;
     if (dirty) {
       const confirmed = await confirm({
-        title: "有未保存的修改",
-        message: "当前文件还有未保存的修改，确定切换文件吗？",
+        title: t("detail.unsavedTitle"),
+        message: t("detail.switchUnsaved"),
         variant: "default",
       });
       if (!confirmed) return;
@@ -212,12 +214,12 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
     try {
       await writeFile(selectedPath, draft);
       setContent(draft);
-      toast.success(`已保存：${selectedName}`);
+      toast.success(t("detail.saved", { name: selectedName }));
       onSaved?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setFileError(message);
-      toast.error(`保存失败：${message}`);
+      toast.error(t("detail.saveFailed", { message }));
     } finally {
       setSaving(false);
     }
@@ -227,8 +229,8 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
     if (open) return;
     if (dirty) {
       const confirmed = await confirm({
-        title: "有未保存的修改",
-        message: "当前文件还有未保存的修改，确定关闭吗？",
+        title: t("detail.unsavedTitle"),
+        message: t("detail.closeUnsaved"),
         variant: "default",
       });
       if (!confirmed) return;
@@ -244,13 +246,13 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
           showCloseButton={false}
           className="h-[min(760px,calc(100vh-4rem))] max-h-[calc(100vh-4rem)] max-w-[min(1180px,calc(100%-2rem))] rounded-lg bg-background"
         >
-          <ModalTitle className="sr-only">编辑技能：{skill?.name || skill?.id || "未选择"}</ModalTitle>
+          <ModalTitle className="sr-only">{t("detail.modalTitle", { name: skill?.name || skill?.id || t("detail.notSelected") })}</ModalTitle>
           <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
             <ViewModeSwitch value={viewMode} onChange={setViewMode} disabled={!selectedPath || selectedKind === "image"} />
 
             <SelectedIcon className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate text-sm font-medium" title={selectedPath || rootPath}>
-              {selectedPath ? selectedName : skill?.name || skill?.id || "未选择"}
+              {selectedPath ? selectedName : skill?.name || skill?.id || t("detail.notSelected")}
               {dirty ? <span className="ml-1 text-muted-foreground">•</span> : null}
             </span>
             <span className="shrink-0 text-xs text-muted-foreground">
@@ -265,7 +267,7 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
             <div className="ml-auto flex h-full items-center gap-0.5">
               {selectedIsText && viewMode === "code" ? (
                 <ToolbarButton
-                  label={saving ? "保存中…" : "保存"}
+                  label={saving ? t("detail.saving") : t("detail.save")}
                   onClick={() => void handleSave()}
                   disabled={!dirty || saving}
                 >
@@ -273,16 +275,16 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
                 </ToolbarButton>
               ) : null}
               <ToolbarButton
-                label="刷新"
+                label={t("detail.refresh")}
                 onClick={() => selectedPath && void loadSelectedFile(selectedPath)}
                 disabled={!selectedPath || loadingFile}
               >
                 <RefreshCw className={cn("size-4", loadingFile && "animate-spin")} />
               </ToolbarButton>
-              <ToolbarButton label="打开技能目录" onClick={() => rootPath && void openPath(rootPath)} disabled={!rootPath}>
+              <ToolbarButton label={t("detail.openDir")} onClick={() => rootPath && void openPath(rootPath)} disabled={!rootPath}>
                 <FolderOpen className="size-4" />
               </ToolbarButton>
-              <ToolbarButton label="关闭" onClick={() => void handleOpenChange(false)} close>
+              <ToolbarButton label={t("detail.close")} onClick={() => void handleOpenChange(false)} close>
                 <X className="size-4" />
               </ToolbarButton>
             </div>
@@ -315,10 +317,10 @@ export function SkillDetailModal({ isOpen, skill, onClose, onSaved }: SkillDetai
                     <span className="min-w-0 truncate font-medium" title={selectedPath}>
                       {relativePath(rootPath, selectedPath)}
                     </span>
-                    {dirty ? <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">未保存</span> : null}
+                    {dirty ? <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">{t("detail.dirty")}</span> : null}
                   </>
                 ) : (
-                  <span className="text-muted-foreground">选择一个文件查看内容</span>
+                  <span className="text-muted-foreground">{t("detail.selectFile")}</span>
                 )}
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -362,6 +364,7 @@ function DirectoryContents({
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
 }) {
+  const { t } = useTranslation("skills");
   const normalizedRoot = normalizePath(rootPath);
   const isLoading = loadingDirs.has(normalizedRoot);
 
@@ -369,13 +372,13 @@ function DirectoryContents({
     return (
       <div className="flex items-center gap-2 px-2 py-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        正在读取…
+        {t("detail.reading")}
       </div>
     );
   }
 
   if (!isLoading && entries.length === 0) {
-    return <div className="px-2 py-2 text-sm text-muted-foreground">空目录</div>;
+    return <div className="px-2 py-2 text-sm text-muted-foreground">{t("detail.emptyDirectory")}</div>;
   }
 
   return (
@@ -416,33 +419,34 @@ function ViewModeSwitch({
   value: ViewMode;
   onChange: (mode: ViewMode) => void;
 }) {
+  const { t } = useTranslation("skills");
   return (
     <div className="flex shrink-0 items-center rounded-md border border-border p-0.5">
       <button
         type="button"
         onClick={() => onChange("code")}
         disabled={disabled}
-        title="源码"
+        title={t("detail.source")}
         className={cn(
           "flex size-6 items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-45",
           value === "code" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
         <Code2 className="size-3.5" />
-        <span className="sr-only">源码</span>
+        <span className="sr-only">{t("detail.source")}</span>
       </button>
       <button
         type="button"
         onClick={() => onChange("preview")}
         disabled={disabled}
-        title="预览"
+        title={t("detail.preview")}
         className={cn(
           "flex size-6 items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-45",
           value === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
         <Eye className="size-3.5" />
-        <span className="sr-only">预览</span>
+        <span className="sr-only">{t("detail.preview")}</span>
       </button>
     </div>
   );
@@ -502,11 +506,12 @@ function DirectoryTree({
   onSelectFile: (path: string) => void;
   level?: number;
 }) {
+  const { t } = useTranslation("skills");
   const normalizedDir = normalizePath(dirPath);
   const entries = entriesByDir[normalizedDir] ?? [];
   const isExpanded = expandedDirs.has(normalizedDir);
   const isLoading = loadingDirs.has(normalizedDir);
-  const label = normalizedDir === normalizePath(rootPath) ? "技能目录" : fileNameOf(normalizedDir);
+  const label = normalizedDir === normalizePath(rootPath) ? t("detail.skillDirectory") : fileNameOf(normalizedDir);
 
   return (
     <div>
@@ -562,7 +567,7 @@ function DirectoryTree({
               className="px-2 py-1.5 text-xs text-muted-foreground"
               style={{ paddingLeft: `${32 + level * 14}px` }}
             >
-              空目录
+              {t("detail.emptyDirectory")}
             </div>
           ) : null}
         </div>
@@ -627,17 +632,18 @@ function FileContentPane({
   viewMode: ViewMode;
   onDraftChange: (value: string) => void;
 }) {
+  const { t } = useTranslation("skills");
   if (!filePath) {
-    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">从左侧选择文件</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{t("detail.chooseFromLeft")}</div>;
   }
 
-  if (error) return <div className="p-5 text-sm text-destructive">读取失败：{error}</div>;
+  if (error) return <div className="p-5 text-sm text-destructive">{t("detail.readFailed", { message: error })}</div>;
 
   if (loading) {
     return (
       <div className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        正在读取…
+        {t("detail.reading")}
       </div>
     );
   }
@@ -656,7 +662,7 @@ function FileContentPane({
   }
 
   if (kind === "html") {
-    return <iframe title="HTML 预览" srcDoc={content} sandbox="allow-same-origin" className="size-full border-0 bg-white" />;
+    return <iframe title={t("detail.htmlPreview")} srcDoc={content} sandbox="allow-same-origin" className="size-full border-0 bg-white" />;
   }
 
   if (kind === "markdown") {
