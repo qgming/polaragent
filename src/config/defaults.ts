@@ -152,6 +152,17 @@ export const defaultSettings: Settings = {
       reranker: "none",
     },
   },
+  memory: {
+    enabled: true,
+    autoWrite: true,
+    projectMemoryEnabled: true,
+    reuseKnowledgeEmbedding: true,
+    sensitiveFilter: true,
+    retrieval: {
+      topK: 5,
+      threshold: 0.62,
+    },
+  },
 };
 
 /**

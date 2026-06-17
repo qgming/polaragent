@@ -121,6 +121,8 @@ function runtimeConfigSignature(agentId: string, teamContext?: TeamContext): str
     modelId: service?.model.id ?? "",
     systemPrompt: agent?.config.systemPrompt ?? "",
     enabledSkills: agent?.config.enabledSkills ?? [],
+    memoryEnabled: state.settings.memory?.enabled ?? false,
+    projectMemoryEnabled: state.settings.memory?.projectMemoryEnabled ?? false,
     teamSystemPrompt: teamContext?.teamSystemPrompt ?? "",
     teamExtraSkills: teamContext?.extraSkillIds ?? [],
     teamVoteCasting: Boolean(teamContext?.voteCasting),
@@ -316,6 +318,9 @@ export class AgentManager {
     ]
       .filter(Boolean)
       .join("\n\n");
+    const memoryBlock = useConfigStore.getState().settings.memory?.enabled
+      ? "你可以使用 search_memory 检索长期记忆。当用户偏好、身份画像、历史纠正、长期目标或当前项目约定可能影响回答时，请主动调用该工具；不要假设记忆会自动出现在提示词中。用户要求记住或忘记信息时，可分别使用 remember_memory 或 forget_memory。"
+      : "";
     // 团队模式：身份前缀 + 成员自身提示词 + 团队整体提示词 + 技能清单，依次拼接。
     const promptParts = teamContext
       ? [
@@ -323,8 +328,9 @@ export class AgentManager {
           basePrompt,
           teamContext.teamSystemPrompt,
           skillsBlock,
+          memoryBlock,
         ]
-      : [basePrompt, skillsBlock];
+      : [basePrompt, skillsBlock, memoryBlock];
     const systemPrompt = promptParts
       .map((part) => part?.trim())
       .filter((part): part is string => !!part)

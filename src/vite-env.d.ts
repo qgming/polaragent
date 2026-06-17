@@ -383,6 +383,44 @@ interface Window {
         chunkCount: number;
       }>>;
     };
+    memory: {
+      list: (
+        request?: import("@/lib/memory").ListMemoryRequest,
+      ) => Promise<import("@/lib/memory").MemoryItem[]>;
+      search: (
+        request: import("@/lib/memory").SearchMemoryRequest,
+      ) => Promise<{
+        success: boolean;
+        results: import("@/lib/memory").MemorySearchResult[];
+      }>;
+      create: (
+        request: import("@/lib/memory").CreateMemoryRequest,
+      ) => Promise<{
+        success: boolean;
+        memory: import("@/lib/memory").MemoryItem;
+        deduped: boolean;
+        score?: number;
+      }>;
+      update: (
+        request: import("@/lib/memory").UpdateMemoryRequest,
+      ) => Promise<{
+        success: boolean;
+        memory: import("@/lib/memory").MemoryItem;
+      }>;
+      archive: (
+        request: import("@/lib/memory").ArchiveMemoryRequest,
+      ) => Promise<{
+        success: boolean;
+        memory: import("@/lib/memory").MemoryItem;
+      }>;
+      delete: (
+        request: import("@/lib/memory").DeleteMemoryRequest,
+      ) => Promise<{ success: boolean }>;
+      stats: () => Promise<import("@/lib/memory").MemoryStats>;
+      rebuild: (
+        request: import("@/lib/memory").RebuildMemoryRequest,
+      ) => Promise<{ success: boolean; rebuilt: number }>;
+    };
     computeruse: {
       configure: (config: Partial<ComputerUseRuntimeConfig>) => Promise<ComputerUseWorkerStatus>;
       workerStatus: () => Promise<ComputerUseWorkerStatus>;

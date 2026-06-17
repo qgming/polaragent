@@ -361,6 +361,7 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
   const defaultImageGeneration = defaultSettings.imageGeneration!;
   const defaultAudio = defaultSettings.audio!;
   const defaultKnowledge = defaultSettings.knowledge!;
+  const defaultMemory = defaultSettings.memory!;
   const defaultAutomation = defaultSettings.automation!;
   return {
     ...defaultSettings,
@@ -423,6 +424,14 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
       retrieval: {
         ...defaultKnowledge.retrieval,
         ...settings.knowledge?.retrieval,
+      },
+    },
+    memory: {
+      ...defaultMemory,
+      ...settings.memory,
+      retrieval: {
+        ...defaultMemory.retrieval,
+        ...settings.memory?.retrieval,
       },
     },
     automation: {

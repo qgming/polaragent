@@ -137,6 +137,16 @@ contextBridge.exposeInMainWorld("polaragent", {
     checkCompatibility: (kbId, config) => invoke("knowledge:checkCompatibility", { kbId, config }),
     reembedIncompatible: (request) => invoke("knowledge:reembedIncompatible", { request }),
   },
+  memory: {
+    list: (request) => invoke("memory:list", { request }),
+    search: (request) => invoke("memory:search", { request }),
+    create: (request) => invoke("memory:create", { request }),
+    update: (request) => invoke("memory:update", { request }),
+    delete: (request) => invoke("memory:delete", { request }),
+    archive: (request) => invoke("memory:archive", { request }),
+    stats: () => invoke("memory:stats"),
+    rebuild: (request) => invoke("memory:rebuild", { request }),
+  },
   computeruse: {
     configure: (config) => invoke("cu:configure", config),
     workerStatus: () => invoke("cu:worker-status"),

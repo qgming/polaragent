@@ -31,6 +31,7 @@ import { createOfficeDocumentTool } from "./office";
 import { runBashTool } from "./bash";
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 import { searchKnowledgeTool } from "./knowledge";
+import { forgetMemoryTool, rememberMemoryTool, searchMemoryTool } from "./memory";
 import { systemInfoTool } from "./system-info";
 import {
   windowsSnapshotTool,
@@ -89,12 +90,13 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 5 },
   office: { name: "办公创作", description: "生成 Word、PPT、PDF 办公文件", order: 6 },
   knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 7 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 8 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 9 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 10 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 11 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 12 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 13 },
+  memory: { name: "长期记忆", description: "检索、写入和遗忘用户偏好与项目上下文", order: 8 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 9 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 10 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 11 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 12 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 13 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 14 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -474,6 +476,27 @@ const TOOL_REGISTRY: ToolEntry[] = [
     description: "在已启用的知识库中检索相关文档片段，获取项目文档、技术规范等上下文信息。",
     factory: searchKnowledgeTool,
     group: "knowledge",
+  },
+  {
+    id: "search_memory",
+    name: "检索记忆",
+    description: "检索长期记忆，获取用户偏好、身份画像、历史纠正和项目上下文。",
+    factory: searchMemoryTool,
+    group: "memory",
+  },
+  {
+    id: "remember_memory",
+    name: "写入记忆",
+    description: "在用户明确要求记住或需要修正长期偏好/项目约定时写入记忆。",
+    factory: rememberMemoryTool,
+    group: "memory",
+  },
+  {
+    id: "forget_memory",
+    name: "忘记记忆",
+    description: "关闭或删除长期记忆，适合用户要求忘记某个偏好、画像或项目约定时使用。",
+    factory: forgetMemoryTool,
+    group: "memory",
   },
 ];
 

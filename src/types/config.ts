@@ -187,6 +187,27 @@ export interface KnowledgeConfig {
 }
 
 /**
+ * 长期记忆配置
+ */
+export interface MemoryConfig {
+  // 全局记忆总开关
+  enabled: boolean;
+  // 自动从完成的对话中提取并写入记忆
+  autoWrite: boolean;
+  // 是否启用与工作目录绑定的项目记忆
+  projectMemoryEnabled: boolean;
+  // v1 默认复用知识库嵌入配置
+  reuseKnowledgeEmbedding: boolean;
+  // 自动跳过密钥、密码、证件号等高敏内容
+  sensitiveFilter: boolean;
+  // 检索配置
+  retrieval: {
+    topK: number;
+    threshold: number;
+  };
+}
+
+/**
  * 内置自动化工具配置
  */
 export interface AutomationConfig {
@@ -248,6 +269,8 @@ export interface Settings {
   audio?: AudioConfig;
   // 知识库配置
   knowledge?: KnowledgeConfig;
+  // 长期记忆配置
+  memory?: MemoryConfig;
   // 内置自动化工具配置
   automation?: AutomationConfig;
 }

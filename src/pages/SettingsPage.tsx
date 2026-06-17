@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, AudioLines, Bot, Database, Globe, Image, Info, Monitor, Search, Settings2 } from "lucide-react";
+import { ArrowLeft, AudioLines, Bot, Brain, Database, Globe, Image, Info, Monitor, Search, Settings2 } from "lucide-react";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { useConfigStore } from "@/stores/config-store";
 import { cn } from "@/lib/utils";
@@ -13,12 +13,13 @@ import { ImageGenerationPanel } from "@/components/settings/ImageGenerationPanel
 import { AudioPanel } from "@/components/settings/AudioPanel";
 import { WebSearchPanel } from "@/components/settings/WebSearchPanel";
 import { KnowledgePanel } from "@/components/settings/KnowledgePanel";
+import { MemoryPanel } from "@/components/settings/MemoryPanel";
 import { AdvancedPanel } from "@/components/settings/AdvancedPanel";
 import { ComputerUsePanel } from "@/components/settings/ComputerUsePanel";
 import { BrowserUsePanel } from "@/components/settings/BrowserUsePanel";
 import { AboutPanel } from "@/components/settings/AboutPanel";
 
-export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "data" | "computerUse" | "browserUse" | "about";
+export type SettingsSection = "preferences" | "models" | "imageGeneration" | "audio" | "webSearch" | "knowledge" | "memory" | "data" | "computerUse" | "browserUse" | "about";
 
 // 设置项定义（标签由 i18n 驱动，此处只放 id + icon）
 const navItems: Array<{ id: SettingsSection; icon: typeof Settings2 }> = [
@@ -28,6 +29,7 @@ const navItems: Array<{ id: SettingsSection; icon: typeof Settings2 }> = [
   { id: "audio", icon: AudioLines },
   { id: "webSearch", icon: Search },
   { id: "knowledge", icon: Database },
+  { id: "memory", icon: Brain },
   { id: "data", icon: Database },
   { id: "computerUse", icon: Monitor },
   { id: "browserUse", icon: Globe },
@@ -42,6 +44,7 @@ const navLabelKey: Record<SettingsSection, string> = {
   audio: "settings:nav.audio",
   webSearch: "settings:nav.webSearch",
   knowledge: "settings:nav.knowledge",
+  memory: "settings:nav.memory",
   data: "settings:nav.data",
   computerUse: "Computer Use",
   browserUse: "Browser Use",
@@ -50,7 +53,7 @@ const navLabelKey: Record<SettingsSection, string> = {
 
 // 导航分组
 const navGroupIds: Array<{ titleKey: string; items: SettingsSection[] }> = [
-  { titleKey: "settings:nav.general", items: ["preferences", "models", "imageGeneration", "audio", "webSearch", "knowledge"] },
+  { titleKey: "settings:nav.general", items: ["preferences", "models", "imageGeneration", "audio", "webSearch", "knowledge", "memory"] },
   { titleKey: "settings:nav.advanced", items: ["data", "computerUse", "browserUse"] },
   { titleKey: "settings:nav.aboutGroup", items: ["about"] },
 ];
@@ -79,37 +82,39 @@ export function SettingsPage({
 
   return (
     <div className="flex h-full min-w-0 bg-background">
-      <aside className="w-[220px] shrink-0 border-r border-border bg-background px-3 py-5">
+      <aside className="flex h-full min-h-0 w-[220px] shrink-0 flex-col border-r border-border bg-background px-3 py-5">
         <button
           type="button"
           onClick={onBack}
-          className="mb-8 flex items-center gap-2 px-2 text-sm text-muted-foreground hover:text-foreground"
+          className="mb-6 flex shrink-0 items-center gap-2 px-2 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
           {t("settings:nav.backToApp")}
         </button>
 
-        {navGroupIds.map((group, index) => (
-          <div key={group.titleKey} className={index > 0 ? "mt-6" : undefined}>
-            <p className="mb-2 px-3 text-xs font-medium text-muted-foreground">
-              {t(group.titleKey)}
-            </p>
-            <nav className="space-y-1">
-              {group.items.map((itemId) => {
-                const item = navItems.find((n) => n.id === itemId)!;
-                const label = navLabelKey[itemId].includes(":") ? t(navLabelKey[itemId]) : navLabelKey[itemId];
-                return (
-                  <NavButton
-                    key={item.id}
-                    item={{ ...item, label }}
-                    active={activeSection === item.id}
-                    onClick={() => setActiveSection(item.id)}
-                  />
-                );
-              })}
-            </nav>
-          </div>
-        ))}
+        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+          {navGroupIds.map((group, index) => (
+            <div key={group.titleKey} className={index > 0 ? "mt-6" : undefined}>
+              <p className="mb-2 px-3 text-xs font-medium text-muted-foreground">
+                {t(group.titleKey)}
+              </p>
+              <nav className="space-y-1">
+                {group.items.map((itemId) => {
+                  const item = navItems.find((n) => n.id === itemId)!;
+                  const label = navLabelKey[itemId].includes(":") ? t(navLabelKey[itemId]) : navLabelKey[itemId];
+                  return (
+                    <NavButton
+                      key={item.id}
+                      item={{ ...item, label }}
+                      active={activeSection === item.id}
+                      onClick={() => setActiveSection(item.id)}
+                    />
+                  );
+                })}
+              </nav>
+            </div>
+          ))}
+        </div>
       </aside>
 
       <main className="app-scrollbar min-w-0 flex-1 overflow-y-auto">
@@ -149,6 +154,9 @@ export function SettingsPage({
           ) : null}
           {activeSection === "knowledge" ? (
             <KnowledgePanel settings={settings} onUpdate={updateSettings} />
+          ) : null}
+          {activeSection === "memory" ? (
+            <MemoryPanel settings={settings} onUpdate={updateSettings} />
           ) : null}
           {activeSection === "data" ? <AdvancedPanel /> : null}
           {activeSection === "computerUse" ? (

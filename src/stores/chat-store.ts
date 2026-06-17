@@ -15,6 +15,7 @@ import {
 } from "@/lib/session/preferences";
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
+import { captureMemoriesFromExchange } from "@/ai/memory-capture";
 import type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
@@ -373,6 +374,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   finishAssistant: (threadId, messageId, finalContent, metadata) => {
+    const sourceThread = get().threads.find((thread) => thread.id === threadId);
+    const lastUserMessage = sourceThread
+      ? [...sourceThread.messages].reverse().find((message) => message.role === "user")
+      : undefined;
+    const workingDir =
+      useTaskMonitorStore.getState().getMonitor(threadId).workingDir ||
+      get().workingDir;
     let completedMessage: ChatMessage | undefined;
     let completedAgentId = "default";
 
@@ -414,6 +422,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 用户与 AI 各回复两次后（累计 4 条完成消息），基于前 4 条历史自动生成标题
     void get().maybeAutoGenerateTitle(threadId);
+
+    if (completedMessage && lastUserMessage) {
+      void captureMemoriesFromExchange({
+        threadId,
+        agentId: completedAgentId,
+        threadTitle: sourceThread?.title,
+        workingDir,
+        userText: lastUserMessage.content,
+        assistantText: completedMessage.content,
+      });
+    }
   },
 
   selectThread: (threadId) => {

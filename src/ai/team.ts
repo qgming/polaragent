@@ -19,6 +19,7 @@
 
 import { promptAgent } from "./agent";
 import { agentManager, type TeamContext } from "./agent-manager";
+import { captureMemoriesFromExchange } from "./memory-capture";
 import {
   clearTeamControlSignal,
   consumeTeamControlSignal,
@@ -151,6 +152,17 @@ async function runMemberTurn(
               tokenCount: usage.totalTokens,
               segments,
             });
+          const thread = useTeamChatStore
+            .getState()
+            .threads.find((item) => item.id === threadId);
+          void captureMemoriesFromExchange({
+            threadId,
+            agentId: speaker.id,
+            threadTitle: thread?.title,
+            workingDir,
+            userText: userTask,
+            assistantText: content,
+          });
           // 累计两条含正文的成员发言后，自动生成会话标题（仅一次）
           void useTeamChatStore.getState().maybeAutoGenerateTeamTitle(threadId);
           resolve();

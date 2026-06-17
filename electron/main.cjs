@@ -20,6 +20,7 @@ const ipcModules = [
   require("./ipc/shell.cjs"),
   require("./ipc/office.cjs"),
   require("./ipc/knowledge.cjs"),
+  require("./ipc/memory.cjs"),
   require("./ipc/cli-detect.cjs"),
   require("./ipc/computeruse.cjs"),
   require("./ipc/browseruse.cjs"),
