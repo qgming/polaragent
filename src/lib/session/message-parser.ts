@@ -2,7 +2,8 @@
 // ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ChatAttachment, ChatMessage, Segment } from "@/lib/chat";
+import { skillLoader } from "@/lib/skill";
+import type { ChatAttachment, ChatMessage, ChatSkillRef, Segment } from "@/lib/chat";
 import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
 import type { TeamMessage } from "@/lib/team";
 import { toolDisplayName } from "@/ai/tools";
@@ -283,6 +284,7 @@ async function loadChatMessagesImpl(
     if (message.role === "user") {
       const text = userMessageText(message);
       const attachments = userMessageAttachments(message);
+      const skillRefs = userMessageSkillRefs(message);
       const guidanceIndex = pendingGuidance.findIndex(
         (guidance) => guidance.text === text.trim(),
       );
@@ -307,7 +309,13 @@ async function loadChatMessagesImpl(
       // 新的用户消息 -> 先落地累积的助手消息，断开合并
       flushPending();
       // 仅当正文与附件都为空时才跳过；纯附件消息（只发图片/文件无文字）需保留
-      if (text.trim().length === 0 && attachments.length === 0) continue;
+      if (
+        text.trim().length === 0 &&
+        attachments.length === 0 &&
+        skillRefs.length === 0
+      ) {
+        continue;
+      }
       messages.push({
         id: entry.id,
         role: "user",
@@ -315,6 +323,7 @@ async function loadChatMessagesImpl(
         createdAt: timestamp,
         status: "complete",
         attachments,
+        skillRefs,
       });
     } else if (message.role === "assistant") {
       const segments = assistantSegments(message, toolResults);
@@ -376,31 +385,41 @@ function parseTeamVoteEntry(data: unknown): TeamChatMessage | null {
 }
 
 // 剥离后台注入的技能块 <skill …>…</skill> 与文件块 <file …>…</file>（方案 C）：
-// 这些块是 "/" 选中技能时拼进发送内容的 SKILL.md 全文、以及 "@" 选中文件的内容，
+// 这些块是 "/" 选中技能时拼进发送内容的 SKILL.md 全文/目录树、以及 "@" 选中文件的内容，
 // 供模型读取，不应在 UI 对话记录里显示。回读时移除所有此类块及其后随空白，仅保留用户问题。
 function stripSkillBlocks(text: string): string {
   return text
     .replace(/<skill\b[^>]*>[\s\S]*?<\/skill>\s*/g, "")
+    .replace(/<skill_files\b[^>]*>[\s\S]*?<\/skill_files>\s*/g, "")
     .replace(/<file\b[^>]*>[\s\S]*?<\/file>\s*/g, "")
     .replace(/<image\b[^>]*>[\s\S]*?<\/image>\s*/g, "")
     .trim();
 }
 
 function attrValue(source: string, name: string): string | undefined {
-  const match = source.match(new RegExp(`${name}="([^"]*)"`));
-  return match?.[1];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = source.match(
+    new RegExp(`\\b${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`),
+  );
+  return match?.[1] ?? match?.[2];
+}
+
+function rawUserText(
+  message: Extract<AgentMessage, { role: "user" }>,
+  separator = "\n",
+): string {
+  return typeof message.content === "string"
+    ? message.content
+    : message.content
+        .map((block) => (block.type === "text" ? block.text : ""))
+        .filter(Boolean)
+        .join(separator);
 }
 
 function userMessageAttachments(
   message: Extract<AgentMessage, { role: "user" }>,
 ): ChatAttachment[] {
-  const rawText =
-    typeof message.content === "string"
-      ? message.content
-      : message.content
-          .map((block) => (block.type === "text" ? block.text : ""))
-          .filter(Boolean)
-          .join("\n");
+  const rawText = rawUserText(message);
   const attachments: ChatAttachment[] = [];
   const seen = new Set<string>();
   for (const match of rawText.matchAll(/<file\b([^>]*)>[\s\S]*?<\/file>/g)) {
@@ -428,15 +447,37 @@ function userMessageAttachments(
   return attachments;
 }
 
+function userMessageSkillRefs(
+  message: Extract<AgentMessage, { role: "user" }>,
+): ChatSkillRef[] {
+  const rawText = rawUserText(message);
+  const refs: ChatSkillRef[] = [];
+  const seen = new Set<string>();
+
+  for (const match of rawText.matchAll(/<skill\b([^>]*)>[\s\S]*?<\/skill>/g)) {
+    const attrs = match[1] ?? "";
+    const id =
+      attrValue(attrs, "name") ??
+      attrValue(attrs, "id") ??
+      attrValue(attrs, "skill") ??
+      attrValue(attrs, "title");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    const displayName =
+      attrValue(attrs, "displayName") ??
+      attrValue(attrs, "label") ??
+      skillLoader.getSkill(id)?.name ??
+      id;
+    refs.push({ id, name: displayName });
+  }
+
+  return refs;
+}
+
 // 取用户消息的纯文本（content 可能是 string 或 (text|image)[]），并剥离技能块
 function userMessageText(message: Extract<AgentMessage, { role: "user" }>): string {
-  const raw =
-    typeof message.content === "string"
-      ? message.content
-      : message.content
-          .map((block) => (block.type === "text" ? block.text : ""))
-          .filter(Boolean)
-          .join("");
+  const raw = rawUserText(message, "");
   return stripSkillBlocks(raw);
 }
 

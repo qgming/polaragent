@@ -8,34 +8,28 @@ import { text, type ToolContext } from "./tool-context";
 
 const askUserParams = Type.Object({
   prompt: Type.String({
-    description: "要问用户的问题。必须具体说明你需要用户补充什么。",
+    description: "要问用户的问题，支持 Markdown。必须具体说明你需要用户补充什么。",
   }),
   mode: Type.Optional(
     Type.Union([
-      Type.Literal("text"),
+      Type.Literal("input"),
       Type.Literal("single"),
       Type.Literal("multiple"),
     ], {
       description:
-        "输入方式：text=纯文本输入，single=单选，multiple=多选。若提供 options 但不填 mode，默认 single。",
+        "输入方式：input=自由输入，single=单选，multiple=多选。若提供 options 但不填 mode，默认 single。",
     }),
   ),
   options: Type.Optional(
     Type.Array(Type.String({ description: "用户可选项标签" }), {
-      description: "单选/多选时展示给用户的选项。建议 2-8 个。",
+      description: "single/multiple 模式展示给用户的普通选项。最后的自定义输入选项会自动追加，不需要放进 options。建议 2-8 个。",
       minItems: 1,
       maxItems: 12,
     }),
   ),
-  allowCustomInput: Type.Optional(
-    Type.Boolean({
-      description:
-        "是否允许用户在选项之外补充自由输入。选项模式默认允许，text 模式始终允许。",
-    }),
-  ),
-  customInputLabel: Type.Optional(
+  customOptionLabel: Type.Optional(
     Type.String({
-      description: "自由输入框的标签，例如：其他 / 补充说明。",
+      description: "自定义输入选项的标签，例如：其他 / 补充说明。",
     }),
   ),
 });
@@ -48,7 +42,7 @@ export function askUserTool(
     label: "询问用户",
     description:
       "暂停当前流程，向用户请求补充信息或选择。" +
-      "支持纯文本、单选、多选；选项模式会在最后提供自由输入框供用户补充。用户提交后工具返回结构化答案，你再继续推理。",
+      "支持 input 自由输入、single 单选、multiple 多选；单选/多选会在最后提供一个自定义输入选项供用户补充。prompt 支持 Markdown。用户提交后工具返回结构化答案，你再继续推理。",
     parameters: askUserParams,
     execute: async (_id, params: Static<typeof askUserParams>) => {
       const prompt = params.prompt.trim();
@@ -60,18 +54,19 @@ export function askUserTool(
         .map((option) => option.trim())
         .filter(Boolean);
       const mode: AskUserMode =
-        params.mode ?? (optionLabels.length > 0 ? "single" : "text");
+        params.mode ?? (optionLabels.length > 0 ? "single" : "input");
 
-      if (mode !== "text" && optionLabels.length === 0) {
+      if (mode !== "input" && optionLabels.length === 0) {
         throw new Error("single/multiple 模式必须提供 options");
+      }
+      if (mode === "input" && optionLabels.length > 0) {
+        throw new Error("input 模式不应提供 options；需要选项时请使用 single 或 multiple");
       }
 
       const options = optionLabels.map((label, index) => ({
         id: `option_${index}`,
         label,
       }));
-      const allowCustomInput =
-        mode === "text" ? true : (params.allowCustomInput ?? true);
 
       const result = await initiateAskUser({
         threadId: ctx.threadId,
@@ -81,8 +76,7 @@ export function askUserTool(
         prompt,
         mode,
         options,
-        allowCustomInput,
-        customInputLabel: params.customInputLabel?.trim() || undefined,
+        customOptionLabel: params.customOptionLabel?.trim() || undefined,
       });
 
       return {

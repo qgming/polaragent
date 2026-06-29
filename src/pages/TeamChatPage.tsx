@@ -26,7 +26,10 @@ import { ComposerToolbar } from "@/components/chat/ComposerToolbar";
 import { PermissionModeMenu } from "@/components/chat/PermissionModeMenu";
 import { KnowledgeBaseSelector } from "@/components/knowledge";
 import { VoiceRecordButton } from "@/components/chat/VoiceRecordButton";
-import { UserAttachments } from "@/components/chat/MessageRenderer";
+import {
+  UserAttachments,
+  UserSkillReferences,
+} from "@/components/chat/MessageRenderer";
 import { IconButton } from "@/components/IconButton";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
 import {
@@ -362,6 +365,7 @@ const TeamMessageView = memo(function TeamMessageView({
       <div className="flex justify-end">
         <div className="max-w-[78%] rounded-lg bg-muted px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
           {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
+          <UserSkillReferences skillRefs={message.skillRefs ?? []} />
           <UserAttachments attachments={message.attachments ?? []} />
         </div>
       </div>

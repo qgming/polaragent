@@ -13,6 +13,7 @@
 import { agentManager, type TeamContext } from "./agent-manager";
 import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
+import { formatSkillInvocationWithFiles } from "./tools/skills";
 import { initializeAiRuntime } from "@/lib/app-init";
 import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
@@ -24,7 +25,6 @@ import type { ChatAttachment, Segment } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 
 export interface AgentResult {
   content: string;
@@ -64,8 +64,9 @@ export interface PromptOptions {
   teamContext?: TeamContext;
 }
 
-// 把「选中技能的全文 + 选中文件的内容 + 用户问题」拼成发给模型的实际输入（方案 C）。
-// 技能块用 pi 的 formatSkillInvocation 生成 <skill>…全文…</skill>；
+// 把「选中技能的全文与目录树 + 选中文件的内容 + 用户问题」拼成发给模型的实际输入（方案 C）。
+// 技能块用 pi 的 formatSkillInvocation 生成 <skill>…全文…</skill>，
+// 并追加 <skill_files> 目录树，方便模型知道 references/examples 等子文件路径。
 // 文件块为 <file path="…">…全文…</file>，二者依次拼接，末尾接用户问题。
 // 文件内容在发送时才读取（reads-on-send），保证拿到最新内容、避免选中即占内存。
 // 无任何注入时原样返回用户输入。
@@ -81,7 +82,7 @@ async function buildModelInput(
   for (const id of skillIds ?? []) {
     const [skill] = skillLoader.toPiSkills([id]);
     if (skill) {
-      blocks.push(formatSkillInvocation(skill));
+      blocks.push(await formatSkillInvocationWithFiles(skill));
     }
   }
 

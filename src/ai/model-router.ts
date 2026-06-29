@@ -35,6 +35,10 @@ function defaultModelService(): RoutedModelService | null {
   return model ? { provider, model } : null;
 }
 
+export function resolveDefaultModelService(): RoutedModelService | null {
+  return defaultModelService();
+}
+
 export function resolveRuntimeModelId(agentId: string): string {
   return resolveModelService(agentId)?.model.id ?? "";
 }

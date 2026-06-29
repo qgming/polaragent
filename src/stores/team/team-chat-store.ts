@@ -24,7 +24,6 @@ import {
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
-import { useTeamsStore } from "@/stores/team/teams-store";
 import type { Segment } from "@/lib/chat";
 import type { TeamMessage, TeamThread } from "@/lib/team";
 import {
@@ -98,6 +97,8 @@ const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `tmsg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const teamTitleGenerationInFlight = new Set<string>();
 
 export const useTeamChatStore = create<TeamChatState>((set, get) => ({
   threads: [],
@@ -182,7 +183,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     const updatedAt = Date.now();
     set((state) => ({
       threads: state.threads.map((t) =>
-        t.id === threadId ? { ...t, title: next, updatedAt } : t,
+        t.id === threadId ? { ...t, title: next, autoTitled: true, updatedAt } : t,
       ),
     }));
     void setTeamSessionTitle(threadId, next);
@@ -418,10 +419,19 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
   },
 
   // 累计两条「含正文的成员发言」后，基于历史自动生成会话标题（仅一次）。
-  // 参考普通对话的 maybeAutoGenerateTitle；用团队领导的 provider/model 生成。
+  // 标题生成统一走模型设置里的默认路由模型，不跟随某个团队成员的锁定模型。
   maybeAutoGenerateTeamTitle: async (threadId) => {
     const thread = get().threads.find((t) => t.id === threadId);
     if (!thread || thread.autoTitled) return;
+    if (thread.title.trim() !== "新会话") {
+      set((state) => ({
+        threads: state.threads.map((t) =>
+          t.id === threadId ? { ...t, autoTitled: true } : t,
+        ),
+      }));
+      return;
+    }
+    if (teamTitleGenerationInFlight.has(threadId)) return;
 
     // 只取已完成、正文非空的消息（跳过纯工具/思考的空正文）
     const completed = thread.messages.filter(
@@ -431,31 +441,23 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
     const assistantWithText = completed.filter((m) => m.role === "assistant");
     if (assistantWithText.length < 2) return;
 
-    // 先抢占标记，避免并发/重入重复生成
-    set((state) => ({
-      threads: state.threads.map((t) =>
-        t.id === threadId ? { ...t, autoTitled: true } : t,
-      ),
-    }));
+    // 用 in-flight 去重，避免并发/重入重复生成；失败时不锁死，后续消息完成可重试。
+    teamTitleGenerationInFlight.add(threadId);
 
     const history = completed.slice(0, 4).map((m) => ({
       role: m.role,
       content: m.content,
     }));
 
-    // 用团队领导的 agentId 调用标题生成；找不到则回退默认
-    const team = useTeamsStore
-      .getState()
-      .teams.find((t) => t.id === thread.teamId);
-    const leaderId = team?.leaderId || "default";
-
     try {
-      const title = await generateConversationTitle(history, leaderId);
+      const title = await generateConversationTitle(history);
       if (title) {
         get().renameTeamThread(threadId, title);
       }
     } catch (error) {
       console.error("团队会话自动生成标题失败:", error);
+    } finally {
+      teamTitleGenerationInFlight.delete(threadId);
     }
   },
 }));

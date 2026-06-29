@@ -273,7 +273,7 @@
       },
       "ask_user": {
         "name": "询问用户",
-        "description": "向用户请求文本输入、单选或多选，并等待用户在模态窗中提交。"
+        "description": "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。"
       },
       "list_skills": {
         "name": "列出技能",

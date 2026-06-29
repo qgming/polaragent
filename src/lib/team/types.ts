@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   ChatMessageStatus,
   ChatRole,
+  ChatSkillRef,
   Segment,
 } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
@@ -15,6 +16,7 @@ export interface TeamMessage {
   model?: string;
   tokenCount?: number;
   attachments?: ChatAttachment[];
+  skillRefs?: ChatSkillRef[];
   segments?: Segment[];
   speakerAgentId?: string;
   vote?: {

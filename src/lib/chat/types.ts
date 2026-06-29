@@ -11,6 +11,11 @@ export interface ChatAttachment {
   duration?: number;
 }
 
+export interface ChatSkillRef {
+  id: string;
+  name: string;
+}
+
 export type Segment =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
@@ -35,6 +40,7 @@ export interface ChatMessage {
   model?: string;
   tokenCount?: number;
   attachments?: ChatAttachment[];
+  skillRefs?: ChatSkillRef[];
   segments?: Segment[];
 }
 

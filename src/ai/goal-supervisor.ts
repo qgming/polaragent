@@ -17,7 +17,7 @@ import {
   type GoalState,
   type GoalStatus,
 } from "@/lib/goal/types";
-import type { ChatAttachment } from "@/lib/chat";
+import type { ChatAttachment, ChatSkillRef } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 const RETRY_DELAY_MS = 3000;
@@ -36,6 +36,7 @@ export interface GoalExchangeParams {
   permissionMode?: ToolPermissionMode;
   knowledgeBaseIds?: string[];
   skillIds?: string[];
+  skillRefs?: ChatSkillRef[];
   filePaths?: string[];
 }
 
@@ -44,6 +45,7 @@ function addUserMessage(
   threadId: string,
   content: string,
   attachments?: ChatAttachment[],
+  skillRefs?: ChatSkillRef[],
 ): string {
   const id = createId();
   const msg = {
@@ -53,6 +55,7 @@ function addUserMessage(
     createdAt: Date.now(),
     status: "complete" as const,
     attachments,
+    skillRefs,
   };
   useChatStore.setState((state) => ({
     threads: state.threads.map((t) =>
@@ -112,7 +115,7 @@ async function runSingleRound(
   prompt: string,
   attachments?: ChatAttachment[],
 ): Promise<{ result: AgentResult | null; error: string | null }> {
-  addUserMessage(params.threadId, prompt, attachments);
+  addUserMessage(params.threadId, prompt, attachments, params.skillRefs);
   const assistantId = addAssistantPlaceholder(params.threadId);
 
   return new Promise((resolve) => {

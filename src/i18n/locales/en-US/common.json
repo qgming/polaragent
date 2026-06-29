@@ -40,9 +40,15 @@
     "title": "Input needed",
     "queuedCount": "{{count}} more request",
     "queuedCount_other": "{{count}} more requests",
+    "inputMode": "Input",
+    "singleMode": "Single choice",
+    "multipleMode": "Multiple choice",
+    "inputLabel": "Your reply",
+    "singleHint": "Choose one option, or fill the final custom option",
+    "multipleHint": "Choose multiple options, or fill the final custom option",
     "replyPlaceholder": "Enter reply",
-    "customInputLabel": "Other / Additional input",
-    "customInputPlaceholder": "You can enter information outside the options",
+    "customOptionLabel": "Other / Additional input",
+    "customOptionPlaceholder": "Enter information outside the listed options",
     "submit": "Submit reply"
   },
   "globalSearch": {

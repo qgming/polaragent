@@ -40,8 +40,10 @@ import {
 } from "@/lib/session/team";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
-import type { ChatAttachment, Segment } from "@/lib/chat";
+import { buildSkillRefs } from "@/lib/chat";
+import type { ChatAttachment, ChatSkillRef, Segment } from "@/lib/chat";
 import { useChatStore } from "@/stores/chat-store";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
@@ -90,7 +92,11 @@ export function HomePage({
   ) => void;
   setActiveAgent: (agentId: string) => void;
   setComposer: (value: string) => void;
-  startExchange: (userText: string, attachments?: ChatAttachment[]) => {
+  startExchange: (
+    userText: string,
+    attachments?: ChatAttachment[],
+    skillRefs?: ChatSkillRef[],
+  ) => {
     assistantId: string;
     threadId: string;
   };
@@ -101,6 +107,7 @@ export function HomePage({
     agents.find((agent) => agent.id === activeAgentId) ?? agents[0];
   const workingDir = useChatStore((state) => state.workingDir);
   const setWorkingDir = useChatStore((state) => state.setWorkingDir);
+  const skills = useSkillsStore((state) => state.skills);
 
   // 团队相关
   const teams = useTeamsStore((state) => state.teams);
@@ -220,6 +227,7 @@ export function HomePage({
     const pendingAttachments = attachments;
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
+    const sendSkillRefs = buildSkillRefs(sendSkillIds, skills);
 
     const threadId = useChatStore.getState().activeThreadId;
 
@@ -235,7 +243,7 @@ export function HomePage({
     const sendFilePaths = sendAttachments
       .filter((attachment) => attachment.kind === "text")
       .map((attachment) => attachment.path);
-    const { assistantId } = startExchange(input, sendAttachments);
+    const { assistantId } = startExchange(input, sendAttachments, sendSkillRefs);
     composerRef.current?.clear();
     setComposer("");
     setSkillIds([]);

@@ -16,7 +16,13 @@ import {
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
 import { captureMemoriesFromExchange } from "@/ai/memory-capture";
-import type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ChatSkillRef,
+  ChatThread,
+  Segment,
+} from "@/lib/chat";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -125,7 +131,11 @@ interface ChatState {
     ids: string[],
     options?: { persist?: boolean },
   ) => void;
-  startExchange: (userText: string, attachments?: ChatAttachment[]) => ExchangeStart;
+  startExchange: (
+    userText: string,
+    attachments?: ChatAttachment[],
+    skillRefs?: ChatSkillRef[],
+  ) => ExchangeStart;
   // 标记某会话为运行中（开始响应时调用）
   markRunning: (threadId: string) => void;
   // 结束某会话的运行态（完成/出错/手动停止时调用）
@@ -141,6 +151,8 @@ const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const titleGenerationInFlight = new Set<string>();
 
 export const useChatStore = create<ChatState>((set, get) => ({
   activeThreadId: "",
@@ -231,6 +243,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               messages: [],
               title: "新对话",
               subtitle: "对话",
+              autoTitled: false,
               updatedAt: Date.now(),
             }
           : thread,
@@ -465,7 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       threads: state.threads.map((thread) =>
         thread.id === threadId
-          ? { ...thread, title: nextTitle, updatedAt: Date.now() }
+          ? { ...thread, title: nextTitle, autoTitled: true, updatedAt: Date.now() }
           : thread,
       ),
     }));
@@ -502,7 +515,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  startExchange: (userText, attachments = []) => {
+  startExchange: (userText, attachments = [], skillRefs = []) => {
     const threadId = get().activeThreadId;
     const assistantId = createId();
     const userMessage: ChatMessage = {
@@ -512,6 +525,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       createdAt: Date.now(),
       status: "complete",
       attachments,
+      skillRefs,
     };
     const assistantMessage: ChatMessage = {
       id: assistantId,
@@ -644,6 +658,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   maybeAutoGenerateTitle: async (threadId: string) => {
     const thread = get().threads.find((t) => t.id === threadId);
     if (!thread || thread.autoTitled) return;
+    if (thread.title.trim() !== "新对话") {
+      set((state) => ({
+        threads: state.threads.map((t) =>
+          t.id === threadId ? { ...t, autoTitled: true } : t,
+        ),
+      }));
+      return;
+    }
+    if (titleGenerationInFlight.has(threadId)) return;
 
     // 只取已完成、且「正文非空」的消息：跳过纯工具调用/思考的空正文 AI 消息
     const completed = thread.messages.filter(
@@ -657,12 +680,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     );
     if (assistantWithText.length < 1) return;
 
-    // 先抢占标记，避免并发/重入导致重复生成
-    set((state) => ({
-      threads: state.threads.map((t) =>
-        t.id === threadId ? { ...t, autoTitled: true } : t,
-      ),
-    }));
+    // 用 in-flight 去重，避免并发/重入重复生成；失败时不锁死，后续消息完成可重试。
+    titleGenerationInFlight.add(threadId);
 
     // 用户问题 + AI 正文一起作为生成依据（取前若干条，控制 token）
     const history = completed.slice(0, 4).map((message) => ({
@@ -671,16 +690,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      const title = await generateConversationTitle(
-        history,
-        thread.agentId || "default",
-      );
+      const title = await generateConversationTitle(history);
       if (title) {
         // renameThread 会同步内存标题并写入磁盘索引
         get().renameThread(threadId, title);
       }
     } catch (error) {
       console.error("自动生成标题失败:", error);
+    } finally {
+      titleGenerationInFlight.delete(threadId);
     }
   },
 }));

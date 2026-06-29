@@ -44,6 +44,7 @@ import { checkProviderConfig } from "@/lib/app-init";
 import { setSessionWorkingDir, getSessionFilesDir, ensureSessionFilesDir } from "@/lib/session/personal";
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
+import { buildSkillRefs } from "@/lib/chat";
 import {
   useChatStore,
   useIsThreadResponding,
@@ -51,7 +52,8 @@ import {
   useThreadPermissionMode,
   useThreadKnowledgeBaseIds,
 } from "@/stores/chat-store";
-import type { ChatAttachment, Segment } from "@/lib/chat";
+import type { ChatAttachment, ChatSkillRef, Segment } from "@/lib/chat";
+import { useSkillsStore } from "@/stores/skills/skills-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useConfigStore } from "@/stores/config-store";
@@ -88,7 +90,11 @@ export function ChatPage({
     metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
   ) => void;
   setComposer: (value: string) => void;
-  startExchange: (userText: string, attachments?: ChatAttachment[]) => {
+  startExchange: (
+    userText: string,
+    attachments?: ChatAttachment[],
+    skillRefs?: ChatSkillRef[],
+  ) => {
     assistantId: string;
     threadId: string;
   };
@@ -97,6 +103,7 @@ export function ChatPage({
   // 本会话的消息直接从 store 按 threadId 订阅——其它后台会话的流式更新
   // 不会换本会话 messages 的引用，因而不会触发本页重渲染。
   const messages = useThreadMessages(threadId);
+  const skills = useSkillsStore((state) => state.skills);
   const permissionMode = useThreadPermissionMode(threadId);
   const knowledgeBaseIds = useThreadKnowledgeBaseIds(threadId);
   const setThreadPermissionMode = useChatStore(
@@ -254,6 +261,7 @@ export function ChatPage({
 
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
+    const sendSkillRefs = buildSkillRefs(sendSkillIds, skills);
     const pendingAttachments = attachments;
 
     // 获取工作目录：优先使用当前会话的工作目录，回退到全局默认；
@@ -299,12 +307,13 @@ export function ChatPage({
         permissionMode,
         knowledgeBaseIds,
         skillIds: sendSkillIds,
+        skillRefs: sendSkillRefs,
         filePaths: sendFilePaths,
       });
       return;
     }
 
-    const { assistantId } = startExchange(input, sendAttachments);
+    const { assistantId } = startExchange(input, sendAttachments, sendSkillRefs);
 
     // 使用 pi AgentHarness 驱动多轮工具调用（历史由 pi Session 原生管理）。
     // 此处不 await 阻塞 UI——promptAgent 会在后台持续运行，

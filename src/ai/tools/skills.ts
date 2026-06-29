@@ -1,7 +1,7 @@
 // 技能读取工具 —— list_skills / read_skill
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, Skill } from "@earendil-works/pi-agent-core";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 
 import { listDirectoryEntries, readFile } from "@/lib/electron/electron-api";
@@ -109,6 +109,19 @@ async function buildSkillTree(root: string): Promise<{ lines: string[]; truncate
   return { lines, truncated };
 }
 
+export async function formatSkillInvocationWithFiles(skill: Skill): Promise<string> {
+  const root = skillRoot(skill.filePath);
+  const tree = await buildSkillTree(root);
+  const treeText = tree.lines.length > 0
+    ? tree.lines.join("\n")
+    : "(没有发现其他文件)";
+  const truncatedHint = tree.truncated
+    ? "\n\n(目录树已截断；可根据已列出的相对路径继续调用 read_skill_file。)"
+    : "";
+
+  return `${formatSkillInvocation(skill)}\n\n<skill_files root="${root}">\n${treeText}${truncatedHint}\n</skill_files>\n\n可调用 read_skill_file({ name: "${skill.name}", path: "相对路径" }) 读取 references 或其他子文件。`;
+}
+
 export function listSkillsTool(
   ctx: ToolContext,
 ): AgentTool<typeof listSkillsParams> {
@@ -168,17 +181,9 @@ export function readSkillTool(
 
       const root = skillRoot(skill.filePath);
       const tree = await buildSkillTree(root);
-      const treeText = tree.lines.length > 0
-        ? tree.lines.join("\n")
-        : "(没有发现其他文件)";
-      const truncatedHint = tree.truncated
-        ? "\n\n(目录树已截断；可根据已列出的相对路径继续调用 read_skill_file。)"
-        : "";
 
       return {
-        content: text(
-          `${formatSkillInvocation(skill)}\n\n<skill_files root="${root}">\n${treeText}${truncatedHint}\n</skill_files>\n\n可调用 read_skill_file({ name: "${skill.name}", path: "相对路径" }) 读取 references 或其他子文件。`,
-        ),
+        content: text(await formatSkillInvocationWithFiles(skill)),
         details: {
           name: skill.name,
           description: skill.description,

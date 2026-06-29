@@ -17,8 +17,7 @@ export interface AskUserRuntimeRequest {
   prompt: string;
   mode: AskUserMode;
   options: AskUserOption[];
-  allowCustomInput: boolean;
-  customInputLabel?: string;
+  customOptionLabel?: string;
 }
 
 interface PendingAskUser {
@@ -49,8 +48,7 @@ export async function initiateAskUser(
     prompt: request.prompt,
     mode: request.mode,
     options: request.options,
-    allowCustomInput: request.allowCustomInput,
-    customInputLabel: request.customInputLabel,
+    customOptionLabel: request.customOptionLabel,
   });
 
   return new Promise<AskUserResponse>((resolve, reject) => {

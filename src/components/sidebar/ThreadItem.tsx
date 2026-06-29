@@ -57,14 +57,19 @@ export function ThreadItem({
     <>
       <div
         className={cn(
-          "group grid h-9 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-3 text-left text-sm transition-colors",
+          "group relative flex h-9 w-full items-center rounded-md px-3 text-left text-sm transition-colors",
           active
             ? "bg-black/[0.06] text-foreground dark:bg-white/[0.08]"
             : "text-sidebar-foreground hover:bg-muted hover:text-foreground",
         )}
       >
         <button
-          className="min-w-0 truncate text-left font-medium"
+          className={cn(
+            "block w-full min-w-0 truncate text-left font-medium transition-[padding] duration-150",
+            running
+              ? "pr-8 group-hover:pr-16 group-focus-within:pr-16"
+              : "pr-0 group-hover:pr-8 group-focus-within:pr-8",
+          )}
           onClick={onClick}
           type="button"
         >
@@ -72,13 +77,18 @@ export function ThreadItem({
         </button>
         {/* 右侧操作区：运行中常驻旋转图标，hover 整行时「更多」按钮从其左侧滑出；
             未运行时仅 hover 才显示「更多」按钮（与原行为一致）。 */}
-        <div className="flex items-center justify-end gap-0.5">
+        <div
+          className={cn(
+            "pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-end gap-0.5",
+            "group-hover:pointer-events-auto group-focus-within:pointer-events-auto",
+          )}
+        >
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 className={cn(
                   "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-background hover:text-foreground data-[state=open]:opacity-100",
-                  "opacity-0 group-hover:opacity-100",
+                  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                 )}
                 type="button"
               >

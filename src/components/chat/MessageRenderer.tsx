@@ -1,6 +1,6 @@
 // 对话消息渲染：单条消息视图 + 按 segment 顺序/按待办分组的内容渲染。
 // 从 ChatPage 抽出——这些属于「消息呈现」逻辑，与页面骨架解耦。
-import { Copy, FileCode, Zap } from "lucide-react";
+import { Copy, FileCode, Hash, Zap } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -20,7 +20,7 @@ import { stripMarkdown } from "@/lib/markdown";
 import { fileUrl } from "@/lib/electron/electron-api";
 import { copyText } from "@/lib/electron/electron-window";
 import { openPreviewWindow } from "@/lib/preview";
-import type { ChatAttachment, ChatMessage, Segment } from "@/lib/chat";
+import type { ChatAttachment, ChatMessage, ChatSkillRef, Segment } from "@/lib/chat";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
@@ -53,6 +53,7 @@ export const ChatMessageView = memo(function ChatMessageView({
       <div className="flex justify-end">
         <div className="max-w-[78%] rounded-lg bg-muted px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
           {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
+          <UserSkillReferences skillRefs={message.skillRefs ?? []} />
           <UserAttachments attachments={message.attachments ?? []} />
         </div>
       </div>
@@ -135,6 +136,25 @@ export const ChatMessageView = memo(function ChatMessageView({
     </article>
   );
 });
+
+export function UserSkillReferences({ skillRefs }: { skillRefs: ChatSkillRef[] }) {
+  if (skillRefs.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+      {skillRefs.map((skill) => (
+        <span
+          key={skill.id}
+          className="inline-flex max-w-full items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-accent-foreground"
+          title={skill.id}
+        >
+          <Hash className="size-3 shrink-0" />
+          <span className="truncate">{skill.name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export function UserAttachments({ attachments }: { attachments: ChatAttachment[] }) {
   const images = attachments.filter((attachment) => attachment.kind === "image");

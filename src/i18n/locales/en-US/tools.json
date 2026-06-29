@@ -273,7 +273,7 @@
       },
       "ask_user": {
         "name": "Ask user",
-        "description": "Request text input, single choice, or multiple choice from the user and wait for modal submission."
+        "description": "Request input, single choice, or multiple choice; prompts support Markdown and choice modes append a custom input option."
       },
       "list_skills": {
         "name": "List skills",

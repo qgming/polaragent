@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type AskUserMode = "text" | "single" | "multiple";
+export type AskUserMode = "input" | "single" | "multiple";
 
 export interface AskUserOption {
   id: string;
@@ -16,8 +16,7 @@ export interface AskUserRequest {
   prompt: string;
   mode: AskUserMode;
   options: AskUserOption[];
-  allowCustomInput: boolean;
-  customInputLabel?: string;
+  customOptionLabel?: string;
 }
 
 export interface AskUserResponse {

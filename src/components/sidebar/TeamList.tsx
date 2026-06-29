@@ -148,7 +148,7 @@ function TeamRow({
       {/* 团队行：点击展开/收起；chevron 指示状态；hover 出「更多」 */}
       <div
         className={cn(
-          "group grid h-9 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 text-left text-sm transition-colors",
+          "group relative flex h-9 w-full items-center rounded-md px-2 text-left text-sm transition-colors",
           active
             ? "bg-black/[0.06] text-foreground dark:bg-white/[0.08]"
             : "text-sidebar-foreground hover:bg-muted hover:text-foreground",
@@ -156,7 +156,12 @@ function TeamRow({
       >
         <button
           type="button"
-          className="flex min-w-0 items-center gap-1.5 text-left font-medium"
+          className={cn(
+            "flex w-full min-w-0 items-center gap-1.5 text-left font-medium transition-[padding] duration-150",
+            running
+              ? "pr-8 group-hover:pr-16 group-focus-within:pr-16"
+              : "pr-0 group-hover:pr-8 group-focus-within:pr-8",
+          )}
           onClick={onToggle}
         >
           <ChevronRight
@@ -170,13 +175,18 @@ function TeamRow({
           </span>
           <span className="truncate">{team.name}</span>
         </button>
-        <div className="flex items-center justify-end gap-0.5">
+        <div
+          className={cn(
+            "pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-end gap-0.5",
+            "group-hover:pointer-events-auto group-focus-within:pointer-events-auto",
+          )}
+        >
           <TeamActionsMenu
             teamName={team.name}
             onEdit={() => onEditTeam(team.id)}
             onClear={() => onClearTeam(team.id)}
             onDelete={() => onDeleteTeam(team.id)}
-            className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           />
           {running ? (
             <span
@@ -251,7 +261,7 @@ function TeamThreadItem({
     <>
       <div
         className={cn(
-          "group grid h-8 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md px-2 text-left text-sm transition-colors",
+          "group relative flex h-8 w-full items-center rounded-md px-2 text-left text-sm transition-colors",
           active
             ? "bg-black/[0.06] text-foreground dark:bg-white/[0.08]"
             : "text-sidebar-foreground hover:bg-muted hover:text-foreground",
@@ -259,17 +269,27 @@ function TeamThreadItem({
       >
         <button
           type="button"
-          className="min-w-0 truncate text-left"
+          className={cn(
+            "block w-full min-w-0 truncate text-left transition-[padding] duration-150",
+            running
+              ? "pr-7 group-hover:pr-14 group-focus-within:pr-14"
+              : "pr-0 group-hover:pr-7 group-focus-within:pr-7",
+          )}
           onClick={onClick}
         >
           {thread.title}
         </button>
-        <div className="flex items-center justify-end gap-0.5">
+        <div
+          className={cn(
+            "pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-end gap-0.5",
+            "group-hover:pointer-events-auto group-focus-within:pointer-events-auto",
+          )}
+        >
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
                 onClick={(event) => event.stopPropagation()}
               >
                 <MoreHorizontal className="size-4" />

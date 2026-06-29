@@ -39,9 +39,15 @@
   "askUser": {
     "title": "需要你的输入",
     "queuedCount": "还有 {{count}} 个请求",
+    "inputMode": "输入",
+    "singleMode": "单选",
+    "multipleMode": "多选",
+    "inputLabel": "输入回复",
+    "singleHint": "选择一个选项，或填写最后的自定义选项",
+    "multipleHint": "可选择多个选项，也可以填写最后的自定义选项",
     "replyPlaceholder": "输入回复",
-    "customInputLabel": "其他 / 补充输入",
-    "customInputPlaceholder": "可以输入选项之外的信息",
+    "customOptionLabel": "其他 / 补充输入",
+    "customOptionPlaceholder": "输入选项之外的信息",
     "submit": "提交回复"
   },
   "globalSearch": {
