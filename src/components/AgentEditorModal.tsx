@@ -24,6 +24,29 @@ import {
 } from "@/lib/skill";
 import { useConfigStore } from "@/stores/config-store";
 import type { AgentConfig } from "@/types/config";
+import type { SkillConfig } from "@/types/config";
+
+// 技能分组排序：已安装 → 内置 → 全局
+type SkillGroup = { key: "custom" | "builtin" | "global"; skills: SkillConfig[] };
+
+function groupAndSortSkills(skills: Array<{ id: string; name: string; description: string; enabled: boolean; type?: string }>): SkillGroup[] {
+  const custom: SkillConfig[] = [];
+  const builtin: SkillConfig[] = [];
+  const global: SkillConfig[] = [];
+
+  for (const skill of skills) {
+    const s = skill as SkillConfig;
+    if (s.type === "custom") custom.push(s);
+    else if (s.type === "global") global.push(s);
+    else builtin.push(s);
+  }
+
+  const groups: SkillGroup[] = [];
+  if (custom.length > 0) groups.push({ key: "custom", skills: custom });
+  if (builtin.length > 0) groups.push({ key: "builtin", skills: builtin });
+  if (global.length > 0) groups.push({ key: "global", skills: global });
+  return groups;
+}
 
 export function AgentEditorModal({
   agent,
@@ -33,7 +56,7 @@ export function AgentEditorModal({
   onStartChat,
 }: {
   agent: AgentConfig;
-  skills: Array<{ id: string; name: string; description: string; enabled: boolean }>;
+  skills: Array<{ id: string; name: string; description: string; enabled: boolean; type: string }>;
   onClose: () => void;
   onSave: (agent: AgentConfig) => void;
   onStartChat: (agentId: string) => void;
@@ -189,7 +212,7 @@ export function AgentEditorModal({
               />
             </Field>
 
-            {/* 技能列表 */}
+            {/* 技能列表（按分组排列：已安装 → 内置 → 全局） */}
             <Field icon={Wrench} label={t("editor.enabledSkills")}>
               <div className="app-scrollbar max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                 {skills.length > 0 ? (
@@ -208,26 +231,41 @@ export function AgentEditorModal({
                         onCheckedChange={toggleAllSkills}
                       />
                     </div>
-                    {skills.map((skill) => (
-                      <div
-                        key={skill.id}
-                        className="flex min-h-[68px] items-center gap-4 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-muted/30"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold">
-                            {skill.name}
+                    {groupAndSortSkills(skills).map((group) => (
+                      <div key={group.key}>
+                        {/* 分组标题 */}
+                        <div className="border-b border-border bg-muted/20 px-5 py-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            {t(`editor.skillGroup.${group.key}`, {
+                              defaultValue:
+                                group.key === "custom" ? t("editor.skillGroupCustom") :
+                                group.key === "builtin" ? t("editor.skillGroupBuiltin") :
+                                t("editor.skillGroupGlobal"),
+                            })}
                           </span>
-                          <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                            {skill.description}
-                          </span>
-                        </span>
-                        <Switch
-                          checked={
-                            allSkillsEnabled || enabledSkills.includes(skill.id)
-                          }
-                          disabled={allSkillsEnabled}
-                          onCheckedChange={() => toggleSkill(skill.id)}
-                        />
+                        </div>
+                        {group.skills.map((skill) => (
+                          <div
+                            key={skill.id}
+                            className="flex min-h-[68px] items-center gap-4 border-b border-border px-5 py-4 transition-colors last:border-b-0 hover:bg-muted/30"
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-semibold">
+                                {skill.name}
+                              </span>
+                              <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                                {skill.description}
+                              </span>
+                            </span>
+                            <Switch
+                              checked={
+                                allSkillsEnabled || enabledSkills.includes(skill.id)
+                              }
+                              disabled={allSkillsEnabled}
+                              onCheckedChange={() => toggleSkill(skill.id)}
+                            />
+                          </div>
+                        ))}
                       </div>
                     ))}
                   </>

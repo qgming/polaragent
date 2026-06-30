@@ -78,6 +78,9 @@
     "allSkills": "全部技能",
     "allSkillsDescription": "开启后运行时自动使用当前所有内置与已安装技能，包括之后新增的技能。",
     "noSkills": "暂无可用技能",
-    "startChat": "开始对话"
+    "startChat": "开始对话",
+    "skillGroupCustom": "已安装",
+    "skillGroupBuiltin": "内置",
+    "skillGroupGlobal": "全局"
   }
 }

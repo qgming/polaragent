@@ -28,7 +28,10 @@
     "textFile": "文本文件",
     "image": "图片",
     "audio": "音频",
-    "document": "文档 (PDF/Word)"
+    "document": "文档 (PDF/Word)",
+    "skillGroupCustom": "已安装",
+    "skillGroupBuiltin": "内置",
+    "skillGroupGlobal": "全局"
   },
   "permission": {
     "readonly": {

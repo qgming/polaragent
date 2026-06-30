@@ -417,7 +417,7 @@ export interface SkillConfig {
   name: string;
   description: string;
   version: string;
-  type: "builtin" | "custom";
+  type: "builtin" | "custom" | "global";
   enabled: boolean;
   tools: SkillTool[];
   permissions: string[];

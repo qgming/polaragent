@@ -83,7 +83,10 @@
     },
     "skills": {
       "label": "Team skills (available to everyone, even if a member has not enabled them)",
-      "empty": "No skills available"
+      "empty": "No skills available",
+      "groupCustom": "Installed",
+      "groupBuiltin": "Built-in",
+      "groupGlobal": "Global"
     },
     "workspace": {
       "label": "Workspace directory",

@@ -20,6 +20,28 @@ import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import type { TeamConfig } from "@/types/config";
+import type { SkillConfig } from "@/types/config";
+
+// 技能分组排序：已安装 → 内置 → 全局
+type SkillGroup = { key: "custom" | "builtin" | "global"; skills: SkillConfig[] };
+
+function groupAndSortSkills(skills: SkillConfig[]): SkillGroup[] {
+  const custom: SkillConfig[] = [];
+  const builtin: SkillConfig[] = [];
+  const global: SkillConfig[] = [];
+
+  for (const skill of skills) {
+    if (skill.type === "custom") custom.push(skill);
+    else if (skill.type === "global") global.push(skill);
+    else builtin.push(skill);
+  }
+
+  const groups: SkillGroup[] = [];
+  if (custom.length > 0) groups.push({ key: "custom", skills: custom });
+  if (builtin.length > 0) groups.push({ key: "builtin", skills: builtin });
+  if (global.length > 0) groups.push({ key: "global", skills: global });
+  return groups;
+}
 
 type TeamMode = TeamConfig["mode"];
 
@@ -250,27 +272,42 @@ export function TeamEditorModal({
               />
             </Field>
 
-            {/* 团队技能 */}
+            {/* 团队技能（按分组排列：已安装 → 内置 → 全局） */}
             <Field icon={Wrench} label={t("editor.skills.label")}>
               <div className="app-scrollbar max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card shadow-sm">
                 {skills.length > 0 ? (
-                  skills.map((skill) => (
-                    <div
-                      key={skill.id}
-                      className="flex min-h-[64px] items-center gap-4 border-b border-border px-5 py-3 transition-colors last:border-b-0 hover:bg-muted/30"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-semibold">
-                          {skill.name}
+                  groupAndSortSkills(skills).map((group) => (
+                    <div key={group.key}>
+                      {/* 分组标题 */}
+                      <div className="border-b border-border bg-muted/20 px-5 py-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {t(`editor.skillGroup.${group.key}`, {
+                            defaultValue:
+                              group.key === "custom" ? t("editor.skills.groupCustom") :
+                              group.key === "builtin" ? t("editor.skills.groupBuiltin") :
+                              t("editor.skills.groupGlobal"),
+                          })}
                         </span>
-                        <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-                          {skill.description}
-                        </span>
-                      </span>
-                      <Switch
-                        checked={enabledSkills.includes(skill.id)}
-                        onCheckedChange={() => toggleSkill(skill.id)}
-                      />
+                      </div>
+                      {group.skills.map((skill) => (
+                        <div
+                          key={skill.id}
+                          className="flex min-h-[64px] items-center gap-4 border-b border-border px-5 py-3 transition-colors last:border-b-0 hover:bg-muted/30"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold">
+                              {skill.name}
+                            </span>
+                            <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                              {skill.description}
+                            </span>
+                          </span>
+                          <Switch
+                            checked={enabledSkills.includes(skill.id)}
+                            onCheckedChange={() => toggleSkill(skill.id)}
+                          />
+                        </div>
+                      ))}
                     </div>
                   ))
                 ) : (

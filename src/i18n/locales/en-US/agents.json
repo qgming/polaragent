@@ -78,6 +78,9 @@
     "allSkills": "All Skills",
     "allSkillsDescription": "When enabled, runtime automatically uses all current built-in and installed skills, including future additions.",
     "noSkills": "No skills available",
-    "startChat": "Start Chat"
+    "startChat": "Start Chat",
+    "skillGroupCustom": "Installed",
+    "skillGroupBuiltin": "Built-in",
+    "skillGroupGlobal": "Global"
   }
 }

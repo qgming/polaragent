@@ -65,7 +65,7 @@ export function SkillsPage() {
     [skills],
   );
   const globalSkills = useMemo(
-    () => skills.filter((skill) => (skill.type as any) === "global"),
+    () => skills.filter((skill) => skill.type === "global"),
     [skills],
   );
   const visibleBuiltin = filterSkills(builtinSkills, search);

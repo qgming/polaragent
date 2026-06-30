@@ -1,6 +1,6 @@
 import type { SkillConfig } from "@/types/config";
 
-export type SkillType = "builtin" | "custom";
+export type SkillType = "builtin" | "custom" | "global";
 
 export interface SkillMdFrontmatter {
   name: string;

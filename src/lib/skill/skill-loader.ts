@@ -116,7 +116,7 @@ export class SkillLoader {
         try {
           const skillMdPath = `${globalSkillsPath}\\${dir}\\SKILL.md`;
           const config = await this.parseSkillMd(skillMdPath, dir, "custom");
-          config.type = "global" as any; // 标记为全局技能
+          config.type = "global";
 
           this.skills.set(config.id, config);
           console.log(`  ✓ 加载全局 Skill: ${config.name} (${config.id})`);

@@ -82,7 +82,10 @@
     },
     "skills": {
       "label": "团队技能（对全员可用，即使成员自身未启用）",
-      "empty": "暂无可用技能"
+      "empty": "暂无可用技能",
+      "groupCustom": "已安装",
+      "groupBuiltin": "内置",
+      "groupGlobal": "全局"
     },
     "workspace": {
       "label": "工作区目录",

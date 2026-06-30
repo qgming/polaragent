@@ -28,7 +28,10 @@
     "textFile": "Text file",
     "image": "Image",
     "audio": "Audio",
-    "document": "Document (PDF/Word)"
+    "document": "Document (PDF/Word)",
+    "skillGroupCustom": "Installed",
+    "skillGroupBuiltin": "Built-in",
+    "skillGroupGlobal": "Global"
   },
   "permission": {
     "readonly": {
