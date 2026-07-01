@@ -7,11 +7,12 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { pMap, REMOTE_CONCURRENCY } from "@/lib/concurrency";
 import { queryKnowledge } from "@/lib/knowledge";
 import { useConfigStore } from "@/stores/config-store";
+import { CACHE_TTL as CACHE_TTL_CONSTANTS } from "@/config/constants";
 import { text, type ToolContext } from "./tool-context";
 
 // 查询缓存：缓存键 -> { 结果, 时间戳 }
 const queryCache = new Map<string, { results: any[]; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+const CACHE_TTL = CACHE_TTL_CONSTANTS.KNOWLEDGE;
 
 const searchKnowledgeParams = Type.Object({
   query: Type.String({ description: "检索关键词或问题" }),

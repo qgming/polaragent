@@ -157,6 +157,52 @@ function selectThinkingLevel(input: string): ModelThinkingLevel {
   return "high";
 }
 
+/** rAF 合批器：流式 token 高频到达时按帧合并更新，避免每 token 一次写 store */
+function createRafBatcher(handler: (update: { appendDelta?: string; segments?: Segment[] }) => void) {
+  let pendingDelta = "";
+  let pendingSegments: Segment[] | null = null;
+  let rafId: number | null = null;
+
+  const flush = () => {
+    rafId = null;
+    if (pendingDelta || pendingSegments) {
+      handler({
+        appendDelta: pendingDelta || undefined,
+        segments: pendingSegments ?? undefined,
+      });
+      pendingDelta = "";
+      pendingSegments = null;
+    }
+  };
+
+  const schedule = () => {
+    if (rafId !== null) return;
+    if (typeof requestAnimationFrame === "function") {
+      rafId = requestAnimationFrame(flush);
+    } else {
+      rafId = setTimeout(flush, 16) as unknown as number;
+    }
+  };
+
+  const cancel = () => {
+    if (rafId === null) return;
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafId);
+    } else {
+      clearTimeout(rafId);
+    }
+    rafId = null;
+  };
+
+  return {
+    pushDelta: (delta: string) => { pendingDelta += delta; schedule(); },
+    pushSegments: (segments: Segment[]) => { pendingSegments = segments; schedule(); },
+    reset: () => { pendingDelta = ""; pendingSegments = null; },
+    cancel,
+    flush,
+  };
+}
+
 /**
  * 用选定的 Agent 发送一条消息（含历史上下文与真实工具）。
  */
@@ -185,44 +231,9 @@ export async function promptAgent(
   >();
 
   // —— rAF 合批：流式 token 高频到达，若每个 token 都写 store 会把主线程打满
-  // （多会话并行时尤甚）。这里按帧合并：缓存待追加的文本与最新 segments，
+  // （多会话并行时尤甚）。这里用 createRafBatcher 按帧合并：缓存待追加的文本与最新 segments，
   // 每帧最多 flush 一次，把「每 token 一次」的更新降到「每帧一次」。
-  // 提到函数级作用域，使 catch 分支也能取消挂起的 flush。
-  let pendingDelta = "";
-  let pendingSegments: Segment[] | null = null;
-  let rafId: number | null = null;
-
-  const flush = () => {
-    rafId = null;
-    if (pendingDelta || pendingSegments) {
-      handlers.onStreamUpdate({
-        appendDelta: pendingDelta || undefined,
-        segments: pendingSegments ?? undefined,
-      });
-      pendingDelta = "";
-      pendingSegments = null;
-    }
-  };
-
-  const scheduleFlush = () => {
-    if (rafId !== null) return;
-    // requestAnimationFrame 不可用时（极少数环境）退化为 setTimeout(16)
-    if (typeof requestAnimationFrame === "function") {
-      rafId = requestAnimationFrame(flush);
-    } else {
-      rafId = setTimeout(flush, 16) as unknown as number;
-    }
-  };
-
-  const cancelFlush = () => {
-    if (rafId === null) return;
-    if (typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(rafId);
-    } else {
-      clearTimeout(rafId);
-    }
-    rafId = null;
-  };
+  const batcher = createRafBatcher(handlers.onStreamUpdate);
 
   try {
     let harness;
@@ -277,8 +288,7 @@ export async function promptAgent(
         segments.push(...extractSegments(livePartial, toolResults));
       }
       if (segments.length > 0) {
-        pendingSegments = segments;
-        scheduleFlush();
+        batcher.pushSegments(segments);
       }
     };
 
@@ -321,8 +331,7 @@ export async function promptAgent(
           if (inner.type === "text_delta") {
             assistantText += inner.delta;
             // 缓存文本增量，按帧合并写入（不再每 token 调一次 onDelta）
-            pendingDelta += inner.delta;
-            scheduleFlush();
+            batcher.pushDelta(inner.delta);
           }
           // 更新当前轮次的 partial，并实时重建 segments（思考/工具/正文有序）。
           // 思考增量(thinking_delta)无需单独累积——partial.content 已含有序 block。
@@ -389,14 +398,10 @@ export async function promptAgent(
 
         case "agent_end": {
           settled = true;
-          // 丢弃尚未 flush 的批量更新：下面 onDone 会用完整 content+segments
-          // 落地，挂起的中间态已过时，若让它晚一帧 flush 会覆盖最终结果。
-          cancelFlush();
-          pendingDelta = "";
-          pendingSegments = null;
+          batcher.cancel();
+          batcher.reset();
 
-          // 优先用本次 run 逐轮收集到的 assistant 消息；兜底从 agent_end.messages
-          // 取最后一条（极少数事件缺失场景）。
+          // 从 runItems 提取最后一条 assistant 用于错误检测
           let assistants = runItems
             .filter(
               (item): item is Extract<(typeof runItems)[number], { type: "assistant" }> =>
@@ -412,58 +417,16 @@ export async function promptAgent(
             }
           }
 
-          if (assistants.length === 0) {
-            handlers.onDone({
-              content: assistantText,
-              model: runtimeModelId,
-              usage: { input: 0, output: 0, totalTokens: 0 },
-              segments: assistantText
-                ? [{ kind: "text", text: assistantText }]
-                : [],
-            });
-            return;
-          }
-
-          // 仅真正的错误才按错误处理；用户手动暂停（aborted）视为正常结束，
-          // 保留已生成的内容，不标红。
           const lastAssistant = assistants[assistants.length - 1];
-          if (lastAssistant.stopReason === "error") {
+          if (lastAssistant?.stopReason === "error") {
             handlers.onError(lastAssistant.errorMessage ?? "响应已中断");
             return;
           }
 
-          // 聚合所有轮次的 segments，保持轮次与块的真实顺序
-          const segments: Segment[] = [];
-          for (const item of runItems) {
-            if (item.type === "assistant") {
-              segments.push(...extractSegments(item.message, toolResults));
-            } else {
-              segments.push({
-                kind: "guidance",
-                text: item.text,
-                createdAt: item.createdAt,
-              });
-            }
-          }
-
-          const content =
-            segments
-              .filter((seg) => seg.kind === "text")
-              .map((seg) => (seg.kind === "text" ? seg.text : ""))
-              .filter(Boolean)
-              .join("\n") || assistantText;
-
-          handlers.onDone({
-            content,
-            model: lastAssistant.model?.trim() || runtimeModelId,
-            usage: {
-              input: lastAssistant.usage?.input ?? 0,
-              output: lastAssistant.usage?.output ?? 0,
-              totalTokens: lastAssistant.usage?.totalTokens ?? 0,
-            },
-            segments,
-            providerCacheHit,
-          });
+          const result = buildAgentEndResult(
+            event, runItems, assistantText, runtimeModelId, toolResults, providerCacheHit,
+          );
+          if (result) handlers.onDone(result);
           break;
         }
 
@@ -507,9 +470,9 @@ export async function promptAgent(
     }
     await harness.waitForIdle();
     unsubscribe();
-    cancelFlush();
+    batcher.cancel();
   } catch (error) {
-    cancelFlush();
+    batcher.cancel();
     if (!settled) {
       // 使用 0.80 结构化错误类型：AgentHarnessError 携带 code 字段
       if (error instanceof AgentHarnessError) {
@@ -528,6 +491,94 @@ async function persistGuidance(options: PromptOptions, text: string): Promise<vo
   } else {
     await appendGuidanceMessage(sessionId, text);
   }
+}
+
+/** agent_end 事件中需要用到的字段 */
+interface AgentEndEvent {
+  messages?: Array<{ role?: string }>;
+  [key: string]: unknown;
+}
+
+/** 构建 agent_end 事件的最终 AgentResult */
+function buildAgentEndResult(
+  event: AgentEndEvent,
+  runItems: Array<
+    | { type: "assistant"; message: AgentMessage & { role: "assistant" } }
+    | { type: "guidance"; text: string; createdAt: number }
+  >,
+  assistantText: string,
+  runtimeModelId: string,
+  toolResults: Map<
+    string,
+    {
+      label: string;
+      isError: boolean;
+      resultText?: string;
+      todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
+      details?: Record<string, unknown>;
+    }
+  >,
+  providerCacheHit: boolean,
+): AgentResult | null {
+  // 从 runItems 中提取 assistant 消息
+  let assistants = runItems
+    .filter(
+      (item): item is Extract<(typeof runItems)[number], { type: "assistant" }> =>
+        item.type === "assistant",
+    )
+    .map((item) => item.message);
+
+  if (assistants.length === 0) {
+    const last = [...(event.messages ?? [])]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (last && last.role === "assistant") {
+      assistants = [last as AgentMessage & { role: "assistant" }];
+    }
+  }
+
+  if (assistants.length === 0) {
+    return {
+      content: assistantText,
+      model: runtimeModelId,
+      usage: { input: 0, output: 0, totalTokens: 0 },
+      segments: assistantText ? [{ kind: "text", text: assistantText }] : [],
+    };
+  }
+
+  // 聚合所有轮次的 segments，保持轮次与块的真实顺序
+  const segments: Segment[] = [];
+  for (const item of runItems) {
+    if (item.type === "assistant") {
+      segments.push(...extractSegments(item.message, toolResults));
+    } else {
+      segments.push({
+        kind: "guidance",
+        text: item.text,
+        createdAt: item.createdAt,
+      });
+    }
+  }
+
+  const lastAssistant = assistants[assistants.length - 1];
+  const content =
+    segments
+      .filter((seg) => seg.kind === "text")
+      .map((seg) => (seg.kind === "text" ? seg.text : ""))
+      .filter(Boolean)
+      .join("\n") || assistantText;
+
+  return {
+    content,
+    model: lastAssistant.model?.trim() || runtimeModelId,
+    usage: {
+      input: lastAssistant.usage?.input ?? 0,
+      output: lastAssistant.usage?.output ?? 0,
+      totalTokens: lastAssistant.usage?.totalTokens ?? 0,
+    },
+    segments,
+    providerCacheHit,
+  };
 }
 
 /**

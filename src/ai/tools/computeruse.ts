@@ -3,7 +3,7 @@
 //
 // 基于 Windows UI Automation 实现桌面应用的观察与操作
 
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { useConfigStore } from "@/stores/config-store";
@@ -16,6 +16,33 @@ function computerUseDefaults() {
 function hasPointOrElement(params: { x?: number; y?: number; elementId?: string }) {
   return params.elementId || (params.x != null && params.y != null);
 }
+
+/** 创建窗口定位参数字段，可选自定义 activate 描述 */
+function createWindowTargetingFields(activateDesc = "操作前激活目标窗口") {
+  return {
+    windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
+    processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
+    nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
+    activate: Type.Optional(Type.Boolean({ description: activateDesc, default: false })),
+  };
+}
+
+/** 创建视图模式字段，可选自定义 viewMode 描述 */
+function createViewModeFields(viewModeDesc = "UIA 树视图模式", includeOffscreenDesc = "是否包含屏幕外元素") {
+  return {
+    viewMode: Type.Optional(
+      Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
+        description: viewModeDesc,
+        default: "control",
+      }),
+    ),
+    includeOffscreen: Type.Optional(Type.Boolean({ description: includeOffscreenDesc, default: false })),
+  };
+}
+
+// 默认实例（用于不需要上下文描述的场景）
+const windowTargetingFields = createWindowTargetingFields();
+const viewModeFields = createViewModeFields();
 
 // Windows Computer Use 快照参数
 const snapshotParams = Type.Object({
@@ -48,23 +75,14 @@ const snapshotParams = Type.Object({
       default: "path",
     }),
   ),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "UIA 树视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "是否包含屏幕外元素", default: false })),
+  ...viewModeFields,
   detailLevel: Type.Optional(
     Type.Union([Type.Literal("compact"), Type.Literal("full")], {
       description: "元素详情级别",
       default: "compact",
     }),
   ),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "操作前激活目标窗口", default: false })),
+  ...windowTargetingFields,
 });
 
 // 点击参数
@@ -78,27 +96,15 @@ const clickParams = Type.Object({
       default: "left",
     }),
   ),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "点击前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("点击前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
 // 输入文本参数
 const typeTextParams = Type.Object({
   text: Type.String({ description: "要输入的文本" }),
   restoreClipboard: Type.Optional(Type.Boolean({ description: "输入后恢复剪贴板内容" })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "输入前激活目标窗口", default: false })),
+  ...createWindowTargetingFields("输入前激活目标窗口"),
 });
 
 // 按键参数
@@ -106,10 +112,7 @@ const keypressParams = Type.Object({
   keys: Type.Array(Type.String(), {
     description: "按键序列，如 ['Ctrl', 'C']",
   }),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "按键前激活目标窗口", default: false })),
+  ...createWindowTargetingFields("按键前激活目标窗口"),
 });
 
 // 查找元素参数
@@ -122,19 +125,10 @@ const findParams = Type.Object({
     }),
   ),
   controlType: Type.Optional(Type.String({ description: "控件类型过滤，如 Button/Edit/Text" })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "UIA 树视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "是否包含屏幕外元素", default: false })),
+  ...createViewModeFields("UIA 树视图模式"),
   maxDepth: Type.Optional(Type.Number({ description: "扫描深度", minimum: 0, maximum: 12 })),
   maxNodes: Type.Optional(Type.Number({ description: "扫描节点上限", minimum: 1, maximum: 3000 })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "查找前激活目标窗口", default: false })),
+  ...createWindowTargetingFields("查找前激活目标窗口"),
   maxResults: Type.Optional(
     Type.Number({
       description: "最大结果数，1-200",
@@ -157,17 +151,8 @@ const scrollParams = Type.Object({
     }),
   ),
   deltaX: Type.Optional(Type.Number({ description: "水平滚动距离", default: 0 })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "滚动前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("滚动前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
 // 双击参数（与点击相同）
@@ -178,17 +163,8 @@ const moveParams = Type.Object({
   x: Type.Optional(Type.Number({ description: "屏幕 X 坐标" })),
   y: Type.Optional(Type.Number({ description: "屏幕 Y 坐标" })),
   elementId: Type.Optional(Type.String({ description: "UI 元素 ID" })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "移动前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("移动前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
 // 列出窗口参数
@@ -227,101 +203,63 @@ const accessibilityTreeParams = Type.Object({
       default: 500,
     }),
   ),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "UIA 树视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "是否包含屏幕外元素", default: false })),
+  ...viewModeFields,
   detailLevel: Type.Optional(
     Type.Union([Type.Literal("compact"), Type.Literal("full")], {
       description: "元素详情级别",
       default: "compact",
     }),
   ),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "读取前激活目标窗口", default: false })),
+  ...windowTargetingFields,
 });
 
+// 元素信息参数
 const elementInfoParams = Type.Object({
   elementId: Type.Optional(Type.String({ description: "UI 元素 ID" })),
   x: Type.Optional(Type.Number({ description: "屏幕 X 坐标" })),
   y: Type.Optional(Type.Number({ description: "屏幕 Y 坐标" })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "查询前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("查询前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
+// 聚焦参数
 const focusParams = Type.Object({
   elementId: Type.String({ description: "UI 元素 ID" }),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "聚焦前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("聚焦前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
+// 调用参数
 const invokeParams = Type.Object({
   elementId: Type.String({ description: "UI 元素 ID" }),
   fallbackClick: Type.Optional(Type.Boolean({ description: "无 UIA Invoke/Toggle 等模式时回退为点击", default: true })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "调用前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("调用前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
+// 设置值参数
 const setValueParams = Type.Object({
   elementId: Type.String({ description: "UI 元素 ID" }),
   value: Type.String({ description: "要设置的值" }),
   fallbackType: Type.Optional(Type.Boolean({ description: "无 ValuePattern 时回退为聚焦后输入", default: true })),
   restoreClipboard: Type.Optional(Type.Boolean({ description: "回退输入后恢复剪贴板" })),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "设置前激活目标窗口", default: false })),
-  viewMode: Type.Optional(
-    Type.Union([Type.Literal("control"), Type.Literal("content"), Type.Literal("raw")], {
-      description: "解析 elementId 时使用的 UIA 视图模式",
-      default: "control",
-    }),
-  ),
-  includeOffscreen: Type.Optional(Type.Boolean({ description: "解析 elementId 时是否包含屏幕外元素", default: false })),
+  ...createWindowTargetingFields("设置前激活目标窗口"),
+  ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
 });
 
+// 激活窗口参数
 const activateWindowParams = Type.Object({
   windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
   processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
   nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
 });
 
+// 等待参数
 const waitParams = Type.Object({
   milliseconds: Type.Optional(Type.Number({ description: "等待毫秒数", default: 500 })),
 });
 
+// 拖拽参数
 const dragParams = Type.Object({
   path: Type.Array(Type.Object({ x: Type.Number(), y: Type.Number() }), {
     description: "拖拽路径，至少两个点",
@@ -332,12 +270,10 @@ const dragParams = Type.Object({
       default: "left",
     }),
   ),
-  windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
-  processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
-  nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
-  activate: Type.Optional(Type.Boolean({ description: "拖拽前激活目标窗口", default: false })),
+  ...createWindowTargetingFields("拖拽前激活目标窗口"),
 });
 
+// 批量操作参数
 const batchParams = Type.Object({
   actions: Type.Array(
     Type.Object({
@@ -369,6 +305,70 @@ const batchParams = Type.Object({
   ),
   stopOnError: Type.Optional(Type.Boolean({ description: "遇到失败时停止后续动作", default: true })),
 });
+
+// ============================================================
+// 通用 Computer Use 工具工厂函数
+// 统一处理 IPC 调用、错误处理、结果校验
+// ============================================================
+
+function createSimpleComputerUseTool<T extends TSchema>(
+  name: string,
+  label: string,
+  description: string,
+  params: T,
+  action: keyof Window["polaragent"]["computeruse"],
+  options?: {
+    /** 前置参数校验 */
+    validate?: (params: Static<T>) => string | null;
+    /** 自定义成功消息 */
+    formatSuccess?: (result: any, params: Static<T>) => string;
+    /** 自定义 IPC 调用参数转换 */
+    transformParams?: (params: Static<T>) => any;
+    /** 自定义错误处理（返回 null 使用默认处理） */
+    handleError?: (error: Error, params: Static<T>) => ReturnType<typeof text> | null;
+  },
+): AgentTool<T> {
+  return {
+    name,
+    label,
+    description,
+    parameters: params,
+    execute: async (_id, rawParams: Static<T>) => {
+      // 前置校验
+      const validationError = options?.validate?.(rawParams);
+      if (validationError) {
+        return { content: text(validationError), details: { error: "缺少参数" } };
+      }
+
+      try {
+        const ipcParams = options?.transformParams?.(rawParams) ?? rawParams;
+        const result = await (window.polaragent.computeruse as any)[action](ipcParams);
+
+        if (!result.ok) {
+          return {
+            content: text(`${label}失败：${result.error || "未知错误"}`),
+            details: { error: result.error },
+          };
+        }
+
+        const message = options?.formatSuccess?.(result, rawParams) ?? `${label}成功`;
+        return { content: text(message), details: result };
+      } catch (error) {
+        const customError = options?.handleError?.(error instanceof Error ? error : new Error(String(error)), rawParams);
+        if (customError) return { content: customError, details: { error: String(error) } };
+
+        return {
+          content: text(`${label}异常：${error instanceof Error ? error.message : String(error)}`),
+          details: { error: String(error) },
+        };
+      }
+    },
+  };
+}
+
+// ============================================================
+// 自定义实现工具（有复杂特殊逻辑）
+// ============================================================
 
 export function windowsSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapshotParams> {
   return {
@@ -698,163 +698,6 @@ export function windowsFindTool(_ctx: ToolContext): AgentTool<typeof findParams>
   };
 }
 
-export function windowsScrollTool(_ctx: ToolContext): AgentTool<typeof scrollParams> {
-  return {
-    name: "windows_scroll",
-    label: "Windows 滚动",
-    description:
-      "在 Windows 应用中滚动内容。可以在指定坐标或元素上执行滚动操作，正数向下滚动，负数向上滚动。",
-    parameters: scrollParams,
-    execute: async (_id, params: Static<typeof scrollParams>) => {
-      if (!hasPointOrElement(params)) {
-        return {
-          content: text("必须提供坐标 (x, y) 或元素 ID (elementId)"),
-          details: { error: "缺少参数" },
-        };
-      }
-
-      try {
-        const result = await window.polaragent.computeruse.scroll({
-          x: params.x,
-          y: params.y,
-          elementId: params.elementId,
-          deltaY: params.deltaY || 480,
-          deltaX: params.deltaX || 0,
-          windowTitle: params.windowTitle,
-          processId: params.processId,
-          nativeWindowHandle: params.nativeWindowHandle,
-          activate: params.activate,
-          viewMode: params.viewMode,
-          includeOffscreen: params.includeOffscreen,
-        });
-
-        if (!result.ok) {
-          return {
-            content: text(`滚动失败：${result.error || "未知错误"}`),
-            details: { error: result.error },
-          };
-        }
-
-        const direction = (params.deltaY || 480) > 0 ? "向下" : "向上";
-        return {
-          content: text(`滚动成功：${direction} ${Math.abs(params.deltaY || 480)} 像素`),
-          details: result,
-        };
-      } catch (error) {
-        return {
-          content: text(`滚动异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
-    },
-  };
-}
-
-export function windowsDoubleClickTool(_ctx: ToolContext): AgentTool<typeof doubleClickParams> {
-  return {
-    name: "windows_double_click",
-    label: "Windows 双击",
-    description: "在 Windows 应用中双击指定坐标或 UI 元素。用于打开文件、展开树节点等需要双击的操作。",
-    parameters: doubleClickParams,
-    execute: async (_id, params: Static<typeof doubleClickParams>) => {
-      if (!hasPointOrElement(params)) {
-        return {
-          content: text("必须提供坐标 (x, y) 或元素 ID (elementId)"),
-          details: { error: "缺少参数" },
-        };
-      }
-
-      try {
-        const result = await window.polaragent.computeruse.doubleClick({
-          x: params.x,
-          y: params.y,
-          elementId: params.elementId,
-          button: params.button || "left",
-          windowTitle: params.windowTitle,
-          processId: params.processId,
-          nativeWindowHandle: params.nativeWindowHandle,
-          activate: params.activate,
-          viewMode: params.viewMode,
-          includeOffscreen: params.includeOffscreen,
-        });
-
-        if (!result.ok) {
-          return {
-            content: text(`双击失败：${result.error || "未知错误"}`),
-            details: { error: result.error },
-          };
-        }
-
-        const target = params.elementId
-          ? `元素 ${params.elementId}`
-          : `坐标 (${params.x}, ${params.y})`;
-
-        return {
-          content: text(`双击成功：${target}`),
-          details: result,
-        };
-      } catch (error) {
-        return {
-          content: text(`双击异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
-    },
-  };
-}
-
-export function windowsMoveTool(_ctx: ToolContext): AgentTool<typeof moveParams> {
-  return {
-    name: "windows_move",
-    label: "Windows 移动鼠标",
-    description: "移动鼠标指针到指定坐标或 UI 元素中心。用于悬停触发提示或准备点击操作。",
-    parameters: moveParams,
-    execute: async (_id, params: Static<typeof moveParams>) => {
-      if (!hasPointOrElement(params)) {
-        return {
-          content: text("必须提供坐标 (x, y) 或元素 ID (elementId)"),
-          details: { error: "缺少参数" },
-        };
-      }
-
-      try {
-        const result = await window.polaragent.computeruse.move({
-          x: params.x,
-          y: params.y,
-          elementId: params.elementId,
-          windowTitle: params.windowTitle,
-          processId: params.processId,
-          nativeWindowHandle: params.nativeWindowHandle,
-          activate: params.activate,
-          viewMode: params.viewMode,
-          includeOffscreen: params.includeOffscreen,
-        });
-
-        if (!result.ok) {
-          return {
-            content: text(`移动鼠标失败：${result.error || "未知错误"}`),
-            details: { error: result.error },
-          };
-        }
-
-        const target = params.elementId
-          ? `元素 ${params.elementId}`
-          : `坐标 (${params.x}, ${params.y})`;
-
-        return {
-          content: text(`移动鼠标成功：${target}`),
-          details: result,
-        };
-      } catch (error) {
-        return {
-          content: text(`移动鼠标异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
-    },
-  };
-}
-
 export function windowsListWindowsTool(_ctx: ToolContext): AgentTool<typeof listWindowsParams> {
   return {
     name: "windows_list_windows",
@@ -957,180 +800,170 @@ export function windowsAccessibilityTreeTool(
   };
 }
 
-export function windowsElementInfoTool(_ctx: ToolContext): AgentTool<typeof elementInfoParams> {
-  return {
-    name: "windows_element_info",
-    label: "元素信息",
-    description: "获取指定 UI 元素或屏幕坐标处元素的详细信息，用于校验元素是否仍然有效。",
-    parameters: elementInfoParams,
-    execute: async (_id, params: Static<typeof elementInfoParams>) => {
-      if (!hasPointOrElement(params)) {
-        return {
-          content: text("必须提供坐标 (x, y) 或元素 ID (elementId)"),
-          details: { error: "缺少参数" },
-        };
-      }
-      try {
-        const result = await window.polaragent.computeruse.elementInfo(params);
-        if (!result.ok) {
-          return { content: text(`获取元素信息失败：${result.error || "未知错误"}`), details: result };
-        }
-        return {
-          content: text(`元素信息：\n${JSON.stringify(result.element, null, 2)}`),
-          details: result,
-        };
-      } catch (error) {
-        return {
-          content: text(`获取元素信息异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
-    },
-  };
-}
+// ============================================================
+// 使用工厂函数简化的工具
+// ============================================================
 
 export function windowsFocusTool(_ctx: ToolContext): AgentTool<typeof focusParams> {
-  return {
-    name: "windows_focus",
-    label: "聚焦元素",
-    description: "使用 UI Automation 将焦点移动到指定元素。适合输入前准备焦点。",
-    parameters: focusParams,
-    execute: async (_id, params: Static<typeof focusParams>) => {
-      try {
-        const result = await window.polaragent.computeruse.focus(params);
-        if (!result.ok) return { content: text(`聚焦失败：${result.error || "未知错误"}`), details: result };
-        return { content: text(`已聚焦元素：${params.elementId}`), details: result };
-      } catch (error) {
-        return {
-          content: text(`聚焦异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
-    },
-  };
+  return createSimpleComputerUseTool(
+    "windows_focus",
+    "聚焦元素",
+    "使用 UI Automation 将焦点移动到指定元素。适合输入前准备焦点。",
+    focusParams,
+    "focus",
+  );
 }
 
 export function windowsInvokeTool(_ctx: ToolContext): AgentTool<typeof invokeParams> {
-  return {
-    name: "windows_invoke",
-    label: "调用元素",
-    description: "优先使用 UIA Invoke/Toggle/SelectionItem/ExpandCollapse 模式操作元素，必要时可回退点击。",
-    parameters: invokeParams,
-    execute: async (_id, params: Static<typeof invokeParams>) => {
-      try {
-        const result = await window.polaragent.computeruse.invoke({
-          fallbackClick: true,
-          ...params,
-        });
-        if (!result.ok) return { content: text(`调用失败：${result.error || "未知错误"}`), details: result };
-        return { content: text(`调用成功：${params.elementId} (${result.method || "Pattern"})`), details: result };
-      } catch (error) {
-        return {
-          content: text(`调用异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
+  return createSimpleComputerUseTool(
+    "windows_invoke",
+    "调用元素",
+    "优先使用 UIA Invoke/Toggle/SelectionItem/ExpandCollapse 模式操作元素，必要时可回退点击。",
+    invokeParams,
+    "invoke",
+    {
+      transformParams: (params) => ({ fallbackClick: true, ...params }),
+      formatSuccess: (result, params) => `调用成功：${params.elementId} (${result.method || "Pattern"})`,
     },
-  };
+  );
 }
 
 export function windowsSetValueTool(_ctx: ToolContext): AgentTool<typeof setValueParams> {
-  return {
-    name: "windows_set_value",
-    label: "设置元素值",
-    description: "优先使用 UIA ValuePattern 设置输入框值，无 ValuePattern 时可回退为聚焦后输入。",
-    parameters: setValueParams,
-    execute: async (_id, params: Static<typeof setValueParams>) => {
-      try {
-        const result = await window.polaragent.computeruse.setValue({
-          fallbackType: true,
-          restoreClipboard: params.restoreClipboard ?? computerUseDefaults()?.restoreClipboard ?? true,
-          ...params,
-        });
-        if (!result.ok) return { content: text(`设置值失败：${result.error || "未知错误"}`), details: result };
-        return { content: text(`设置值成功：${params.elementId} (${params.value.length} 个字符)`), details: result };
-      } catch (error) {
-        return {
-          content: text(`设置值异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
+  return createSimpleComputerUseTool(
+    "windows_set_value",
+    "设置元素值",
+    "优先使用 UIA ValuePattern 设置输入框值，无 ValuePattern 时可回退为聚焦后输入。",
+    setValueParams,
+    "setValue",
+    {
+      transformParams: (params) => ({
+        fallbackType: true,
+        restoreClipboard: params.restoreClipboard ?? computerUseDefaults()?.restoreClipboard ?? true,
+        ...params,
+      }),
+      formatSuccess: (_, params) => `设置值成功：${params.elementId} (${params.value.length} 个字符)`,
     },
-  };
+  );
 }
 
 export function windowsActivateWindowTool(_ctx: ToolContext): AgentTool<typeof activateWindowParams> {
-  return {
-    name: "windows_activate_window",
-    label: "激活窗口",
-    description: "按窗口标题、进程 ID 或 HWND 激活目标窗口，便于后续桌面操作。",
-    parameters: activateWindowParams,
-    execute: async (_id, params: Static<typeof activateWindowParams>) => {
-      if (!params.windowTitle && params.processId == null && params.nativeWindowHandle == null) {
-        return { content: text("必须提供 windowTitle、processId 或 nativeWindowHandle"), details: { error: "缺少参数" } };
-      }
-      try {
-        const result = await window.polaragent.computeruse.activateWindow(params);
-        if (!result.ok) return { content: text(`激活窗口失败：${result.error || "未知错误"}`), details: result };
-        return { content: text("窗口已激活"), details: result };
-      } catch (error) {
-        return {
-          content: text(`激活窗口异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
+  return createSimpleComputerUseTool(
+    "windows_activate_window",
+    "激活窗口",
+    "按窗口标题、进程 ID 或 HWND 激活目标窗口，便于后续桌面操作。",
+    activateWindowParams,
+    "activateWindow",
+    {
+      validate: (params) => {
+        if (!params.windowTitle && params.processId == null && params.nativeWindowHandle == null) {
+          return "必须提供 windowTitle、processId 或 nativeWindowHandle";
+        }
+        return null;
+      },
+      formatSuccess: () => "窗口已激活",
     },
-  };
+  );
 }
 
 export function windowsWaitTool(_ctx: ToolContext): AgentTool<typeof waitParams> {
-  return {
-    name: "windows_wait",
-    label: "等待",
-    description: "等待指定毫秒数，用于窗口动画、加载或焦点切换后再继续观察。",
-    parameters: waitParams,
-    execute: async (_id, params: Static<typeof waitParams>) => {
-      try {
-        const result = await window.polaragent.computeruse.wait({
-          milliseconds: params.milliseconds ?? 500,
-        });
-        if (!result.ok) return { content: text(`等待失败：${result.error || "未知错误"}`), details: result };
-        return { content: text(`已等待 ${(result as any).milliseconds ?? params.milliseconds ?? 500}ms`), details: result };
-      } catch (error) {
-        return {
-          content: text(`等待异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
+  return createSimpleComputerUseTool(
+    "windows_wait",
+    "等待",
+    "等待指定毫秒数，用于窗口动画、加载或焦点切换后再继续观察。",
+    waitParams,
+    "wait",
+    {
+      transformParams: (params) => ({ milliseconds: params.milliseconds ?? 500 }),
+      formatSuccess: (result, params) => `已等待 ${(result as any).milliseconds ?? params.milliseconds ?? 500}ms`,
     },
-  };
+  );
 }
 
 export function windowsDragTool(_ctx: ToolContext): AgentTool<typeof dragParams> {
-  return {
-    name: "windows_drag",
-    label: "Windows 拖拽",
-    description: "按路径执行鼠标拖拽，适合拖动文件、滑块或调整窗口大小。",
-    parameters: dragParams,
-    execute: async (_id, params: Static<typeof dragParams>) => {
-      if (params.path.length < 2) {
-        return { content: text("拖拽路径至少需要两个点"), details: { error: "路径过短" } };
-      }
-      try {
-        const result = await window.polaragent.computeruse.drag({
-          ...params,
-          button: params.button || "left",
-        });
-        if (!result.ok) return { content: text(`拖拽失败：${result.error || "未知错误"}`), details: result };
-        return { content: text(`拖拽成功：${params.path.length} 个路径点`), details: result };
-      } catch (error) {
-        return {
-          content: text(`拖拽异常：${error instanceof Error ? error.message : String(error)}`),
-          details: { error: String(error) },
-        };
-      }
+  return createSimpleComputerUseTool(
+    "windows_drag",
+    "Windows 拖拽",
+    "按路径执行鼠标拖拽，适合拖动文件、滑块或调整窗口大小。",
+    dragParams,
+    "drag",
+    {
+      validate: (params) => params.path.length < 2 ? "拖拽路径至少需要两个点" : null,
+      transformParams: (params) => ({ ...params, button: params.button || "left" }),
+      formatSuccess: (_, params) => `拖拽成功：${params.path.length} 个路径点`,
     },
-  };
+  );
+}
+
+export function windowsElementInfoTool(_ctx: ToolContext): AgentTool<typeof elementInfoParams> {
+  return createSimpleComputerUseTool(
+    "windows_element_info",
+    "元素信息",
+    "获取指定 UI 元素或屏幕坐标处元素的详细信息，用于校验元素是否仍然有效。",
+    elementInfoParams,
+    "elementInfo",
+    {
+      validate: (params) => !hasPointOrElement(params) ? "必须提供坐标 (x, y) 或元素 ID (elementId)" : null,
+      formatSuccess: (result) => `元素信息：\n${JSON.stringify(result.element, null, 2)}`,
+    },
+  );
+}
+
+export function windowsMoveTool(_ctx: ToolContext): AgentTool<typeof moveParams> {
+  return createSimpleComputerUseTool(
+    "windows_move",
+    "Windows 移动鼠标",
+    "移动鼠标指针到指定坐标或 UI 元素中心。用于悬停触发提示或准备点击操作。",
+    moveParams,
+    "move",
+    {
+      validate: (params) => !hasPointOrElement(params) ? "必须提供坐标 (x, y) 或元素 ID (elementId)" : null,
+      formatSuccess: (_, params) => {
+        const target = params.elementId ? `元素 ${params.elementId}` : `坐标 (${params.x}, ${params.y})`;
+        return `移动鼠标成功：${target}`;
+      },
+    },
+  );
+}
+
+export function windowsDoubleClickTool(_ctx: ToolContext): AgentTool<typeof doubleClickParams> {
+  return createSimpleComputerUseTool(
+    "windows_double_click",
+    "Windows 双击",
+    "在 Windows 应用中双击指定坐标或 UI 元素。用于打开文件、展开树节点等需要双击的操作。",
+    doubleClickParams,
+    "doubleClick",
+    {
+      validate: (params) => !hasPointOrElement(params) ? "必须提供坐标 (x, y) 或元素 ID (elementId)" : null,
+      transformParams: (params) => ({ ...params, button: params.button || "left" }),
+      formatSuccess: (_, params) => {
+        const target = params.elementId ? `元素 ${params.elementId}` : `坐标 (${params.x}, ${params.y})`;
+        return `双击成功：${target}`;
+      },
+    },
+  );
+}
+
+export function windowsScrollTool(_ctx: ToolContext): AgentTool<typeof scrollParams> {
+  return createSimpleComputerUseTool(
+    "windows_scroll",
+    "Windows 滚动",
+    "在 Windows 应用中滚动内容。可以在指定坐标或元素上执行滚动操作，正数向下滚动，负数向上滚动。",
+    scrollParams,
+    "scroll",
+    {
+      validate: (params) => !hasPointOrElement(params) ? "必须提供坐标 (x, y) 或元素 ID (elementId)" : null,
+      transformParams: (params) => ({
+        ...params,
+        deltaY: params.deltaY || 480,
+        deltaX: params.deltaX || 0,
+      }),
+      formatSuccess: (_, params) => {
+        const deltaY = params.deltaY || 480;
+        const direction = deltaY > 0 ? "向下" : "向上";
+        return `滚动成功：${direction} ${Math.abs(deltaY)} 像素`;
+      },
+    },
+  );
 }
 
 export function windowsBatchTool(_ctx: ToolContext): AgentTool<typeof batchParams> {

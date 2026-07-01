@@ -121,7 +121,7 @@ export function parseGoalEvaluation(raw: string): GoalEvaluation | null {
       try {
         const parsed = JSON.parse(match[0]) as Record<string, unknown>;
         if (typeof parsed.complete === "boolean") return normalizeEval(parsed);
-      } catch { /* ignore */ }
+      } catch (error) { console.debug("目标评估截断失败", error); }
     }
     return null;
   }

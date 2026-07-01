@@ -26,12 +26,13 @@ import {
   IMAGE_ASPECT_RATIOS,
   IMAGE_RESOLUTIONS,
 } from "@/lib/image-params";
+import { TIMEOUTS } from "@/config/constants";
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
-const IMAGE_REQUEST_TIMEOUT_MS = 1800000; // 30 分钟
+const IMAGE_REQUEST_TIMEOUT_MS = TIMEOUTS.IMAGE_GENERATION;
 const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 // ===== 动态参数 schema =====

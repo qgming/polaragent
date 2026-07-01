@@ -5,6 +5,181 @@ const { app, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
+// 共享的浏览器端 DOM 辅助函数（注入到 CDP Runtime.evaluate 中执行）
+const BROWSER_RUNTIME_HELPERS = `
+  function interactiveSelector() {
+    return [
+      "a[href]", "button", "input", "textarea", "select", "summary",
+      "[contenteditable='true']", "[role='button']", "[role='link']",
+      "[role='textbox']", "[role='checkbox']", "[role='radio']",
+      "[role='combobox']", "[role='menuitem']", "[onclick]",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+  }
+  function queryAll(root, selector) {
+    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
+  }
+  function queryOne(root, selector) {
+    try { return root.querySelector(selector); } catch (_) { return null; }
+  }
+  function queryPiercePath(root, path) {
+    if (!Array.isArray(path) || path.length === 0) return null;
+    let currentRoot = root;
+    let current = null;
+    for (let i = 0; i < path.length; i++) {
+      current = queryOne(currentRoot, path[i]);
+      if (!current) return null;
+      if (i < path.length - 1) {
+        currentRoot = current.shadowRoot;
+        if (!currentRoot) return null;
+      }
+    }
+    return current;
+  }
+  function walkRoots(root, visitor) {
+    if (!root) return;
+    visitor(root);
+    for (const host of queryAll(root, "*")) {
+      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
+    }
+  }
+  function deepQuerySelector(root, selector) {
+    let found = null;
+    walkRoots(root, (nextRoot) => {
+      if (found) return;
+      found = queryOne(nextRoot, selector);
+    });
+    if (found) return found;
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
+        if (child) return child;
+      } catch (_) {}
+    }
+    return null;
+  }
+  function deepQuerySelectorAll(root, selector) {
+    const results = [];
+    walkRoots(root, (nextRoot) => results.push(...queryAll(nextRoot, selector)));
+    for (const frame of queryAll(root, "iframe,frame")) {
+      try {
+        if (frame.contentDocument) results.push(...deepQuerySelectorAll(frame.contentDocument, selector));
+      } catch (_) {}
+    }
+    return results;
+  }
+  function resolveFrameDocument(framePath) {
+    let doc = document;
+    for (const step of Array.isArray(framePath) ? framePath : []) {
+      let frame = queryPiercePath(doc, step?.piercePath);
+      if (!frame && Number.isInteger(Number(step?.index))) {
+        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
+      }
+      if (!frame) return null;
+      try { doc = frame.contentDocument; } catch (_) { return null; }
+      if (!doc) return null;
+    }
+    return doc;
+  }
+  function textFor(el) {
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("alt") ||
+      el.innerText ||
+      el.textContent ||
+      el.value ||
+      ""
+    ).trim().replace(/\\s+/g, " ").toLowerCase();
+  }
+  function deepElementFromPoint(x, y, rootDoc) {
+    let doc = rootDoc || document;
+    let px = x;
+    let py = y;
+    let el = null;
+    for (let guard = 0; guard < 8; guard++) {
+      try { el = doc.elementFromPoint(px, py); } catch (_) { return null; }
+      if (!el) return null;
+      if (el.shadowRoot) {
+        const inner = el.shadowRoot.elementFromPoint(px, py);
+        if (inner && inner !== el) { el = inner; continue; }
+      }
+      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
+        const rect = el.getBoundingClientRect();
+        px -= rect.x; py -= rect.y;
+        doc = el.contentDocument;
+        continue;
+      }
+      return el;
+    }
+    return el;
+  }
+  function findActionElement(target, element) {
+    const doc = resolveFrameDocument(element?.framePath) || document;
+    if (Array.isArray(element?.piercePath)) {
+      const exact = queryPiercePath(doc, element.piercePath);
+      if (exact) return { el: exact, selector: "piercePath" };
+    }
+    const selectors = [];
+    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
+    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
+    for (const selector of selectors.filter(Boolean)) {
+      const el = deepQuerySelector(doc, selector);
+      if (el) return { el, selector };
+    }
+    const needle = String(element?.text || "").trim().replace(/\\s+/g, " ").toLowerCase();
+    if (needle) {
+      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
+        const t = textFor(el);
+        return t === needle || (needle.length > 4 && t.includes(needle));
+      });
+      if (byText) return { el: byText, selector: "text" };
+    }
+    if (element?.bbox) {
+      const x = Number(element.bbox.centerX);
+      const y = Number(element.bbox.centerY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        let el = deepElementFromPoint(x, y);
+        if (el && !el.matches(interactiveSelector())) el = el.closest(interactiveSelector());
+        if (el) return { el, selector: "bbox" };
+      }
+    }
+    return null;
+  }
+  function nextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }
+  function waitForDomSettled(waitMs, rootDoc) {
+    const quietMs = Math.max(80, Number(waitMs || 0));
+    const maxMs = Math.max(quietMs + 50, Math.min(3000, quietMs + 1200));
+    return new Promise((resolve) => {
+      let done = false;
+      let quietTimer = null;
+      let observer = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try { observer && observer.disconnect(); } catch (_) {}
+        clearTimeout(quietTimer);
+        resolve();
+      };
+      const bump = () => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, quietMs);
+      };
+      observer = new MutationObserver(bump);
+      try {
+        observer.observe((rootDoc || document).documentElement, { childList: true, subtree: true, attributes: true });
+      } catch (_) {
+        return setTimeout(resolve, quietMs);
+      }
+      bump();
+      setTimeout(finish, maxMs);
+    });
+  }
+`;
+
 const DEFAULT_CONFIG = {
   wsPort: 18765,
   apiPort: 18767,
@@ -622,11 +797,11 @@ function resolveCachedTarget(tabId, target, snapshotId) {
 async function click(args) {
   const tabId = await getActiveTabId(args.tabId);
   const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
-  const expression = `(${buildClickScript.toString()})(${JSON.stringify({
+  const expression = buildClickScript({
     target: resolved.target,
     element: resolved.element,
     waitMs: config.waitAfterActionMs,
-  })})`;
+  });
   let result;
   try {
     const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
@@ -641,212 +816,25 @@ async function click(args) {
 }
 
 function buildClickScript(payload) {
-  function interactiveSelector() {
-    return [
-      "a[href]", "button", "input", "textarea", "select", "summary",
-      "[contenteditable='true']", "[role='button']", "[role='link']",
-      "[role='textbox']", "[role='checkbox']", "[role='radio']",
-      "[role='combobox']", "[role='menuitem']", "[onclick]",
-      "[tabindex]:not([tabindex='-1'])",
-    ].join(",");
-  }
-
-  function queryAll(root, selector) {
-    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
-  }
-
-  function queryOne(root, selector) {
-    try { return root.querySelector(selector); } catch (_) { return null; }
-  }
-
-  function queryPiercePath(root, path) {
-    if (!Array.isArray(path) || path.length === 0) return null;
-    let currentRoot = root;
-    let current = null;
-    for (let i = 0; i < path.length; i++) {
-      current = queryOne(currentRoot, path[i]);
-      if (!current) return null;
-      if (i < path.length - 1) {
-        currentRoot = current.shadowRoot;
-        if (!currentRoot) return null;
-      }
-    }
-    return current;
-  }
-
-  function walkRoots(root, visitor) {
-    if (!root) return;
-    visitor(root);
-    for (const host of queryAll(root, "*")) {
-      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
-    }
-  }
-
-  function deepQuerySelector(root, selector) {
-    let found = null;
-    walkRoots(root, (nextRoot) => {
-      if (found) return;
-      found = queryOne(nextRoot, selector);
-    });
-    if (found) return found;
-    for (const frame of queryAll(root, "iframe,frame")) {
-      try {
-        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
-        if (child) return child;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function deepQuerySelectorAll(root, selector) {
-    const results = [];
-    walkRoots(root, (nextRoot) => results.push(...queryAll(nextRoot, selector)));
-    for (const frame of queryAll(root, "iframe,frame")) {
-      try {
-        if (frame.contentDocument) results.push(...deepQuerySelectorAll(frame.contentDocument, selector));
-      } catch (_) {}
-    }
-    return results;
-  }
-
-  function resolveFrameDocument(framePath) {
-    let doc = document;
-    for (const step of Array.isArray(framePath) ? framePath : []) {
-      let frame = queryPiercePath(doc, step?.piercePath);
-      if (!frame && Number.isInteger(Number(step?.index))) {
-        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
-      }
-      if (!frame) return null;
-      try { doc = frame.contentDocument; } catch (_) { return null; }
-      if (!doc) return null;
-    }
-    return doc;
-  }
-
-  function textFor(el) {
-    return (
-      el.getAttribute("aria-label") ||
-      el.getAttribute("title") ||
-      el.getAttribute("placeholder") ||
-      el.getAttribute("alt") ||
-      el.innerText ||
-      el.textContent ||
-      el.value ||
-      ""
-    ).trim().replace(/\s+/g, " ").toLowerCase();
-  }
-
-  function deepElementFromPoint(x, y, rootDoc = document) {
-    let doc = rootDoc;
-    let px = x;
-    let py = y;
-    let el = null;
-    for (let guard = 0; guard < 8; guard++) {
-      try { el = doc.elementFromPoint(px, py); } catch (_) { return null; }
-      if (!el) return null;
-      if (el.shadowRoot) {
-        const inner = el.shadowRoot.elementFromPoint(px, py);
-        if (inner && inner !== el) {
-          el = inner;
-          continue;
-        }
-      }
-      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
-        const rect = el.getBoundingClientRect();
-        px -= rect.x;
-        py -= rect.y;
-        doc = el.contentDocument;
-        continue;
-      }
-      return el;
-    }
-    return el;
-  }
-
-  function findActionElement(target, element) {
-    const doc = resolveFrameDocument(element?.framePath) || document;
-    if (Array.isArray(element?.piercePath)) {
-      const exact = queryPiercePath(doc, element.piercePath);
-      if (exact) return { el: exact, selector: "piercePath" };
-    }
-
-    const selectors = [];
-    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
-    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
-    for (const selector of selectors.filter(Boolean)) {
-      const el = deepQuerySelector(doc, selector);
-      if (el) return { el, selector };
-    }
-
-    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
-    if (needle) {
-      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
-        const text = textFor(el);
-        return text === needle || (needle.length > 4 && text.includes(needle));
-      });
-      if (byText) return { el: byText, selector: "text" };
-    }
-
-    if (element?.bbox) {
-      const x = Number(element.bbox.centerX);
-      const y = Number(element.bbox.centerY);
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        let el = deepElementFromPoint(x, y);
-        if (el && !el.matches(interactiveSelector())) el = el.closest(interactiveSelector());
-        if (el) return { el, selector: "bbox" };
-      }
-    }
-    return null;
-  }
-
-  function nextFrame() {
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }
-
-  function waitForDomSettled(waitMs, rootDoc) {
-    const quietMs = Math.max(80, Number(waitMs || 0));
-    const maxMs = Math.max(quietMs + 50, Math.min(3000, quietMs + 1200));
-    return new Promise((resolve) => {
-      let done = false;
-      let quietTimer = null;
-      let observer = null;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        try { observer && observer.disconnect(); } catch (_) {}
-        clearTimeout(quietTimer);
-        resolve();
-      };
-      const bump = () => {
-        clearTimeout(quietTimer);
-        quietTimer = setTimeout(finish, quietMs);
-      };
-      observer = new MutationObserver(bump);
-      try {
-        observer.observe((rootDoc || document).documentElement, { childList: true, subtree: true, attributes: true });
-      } catch (_) {
-        return setTimeout(resolve, quietMs);
-      }
-      bump();
-      setTimeout(finish, maxMs);
-    });
-  }
-
-  return new Promise(async (resolve) => {
+  return `(async function() {
+  ${BROWSER_RUNTIME_HELPERS}
+  const result = await (async function(payload) {
     const { target, element, waitMs } = payload || {};
     const found = findActionElement(target, element);
     const el = found && found.el;
-    if (!el) return resolve({ ok: false, error: `未找到元素: ${target || element?.ref || ""}` });
+    if (!el) return { ok: false, error: "未找到元素: " + (target || element?.ref || "") };
     const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return resolve({ ok: false, error: `元素不可见: ${target}` });
-    if (el.disabled || el.getAttribute("aria-disabled") === "true") return resolve({ ok: false, error: `元素已禁用: ${target}` });
+    if (rect.width <= 0 || rect.height <= 0) return { ok: false, error: "元素不可见: " + target };
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") return { ok: false, error: "元素已禁用: " + target };
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     await nextFrame();
     if (typeof el.focus === "function") el.focus({ preventScroll: true });
     el.click();
     await waitForDomSettled(waitMs, el.ownerDocument);
-    resolve({ ok: true, selector: found.selector });
-  });
+    return { ok: true, selector: found.selector };
+  })(${JSON.stringify(payload)});
+  return result;
+})()`;
 }
 
 async function fill(args) {
@@ -860,7 +848,7 @@ async function fill(args) {
     append: Boolean(args.append),
     waitMs: config.waitAfterActionMs,
   };
-  const expression = `(${buildFillScript.toString()})(${JSON.stringify(payload)})`;
+  const expression = buildFillScript(payload);
   let result;
   try {
     const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
@@ -874,165 +862,9 @@ async function fill(args) {
   return { filled: true, target: args.target, selector: resolved.target, element: resolved.element };
 }
 
-function buildFillScript({ target, element, value, clear, append, waitMs }) {
-  function interactiveSelector() {
-    return [
-      "a[href]", "button", "input", "textarea", "select", "summary",
-      "[contenteditable='true']", "[role='button']", "[role='link']",
-      "[role='textbox']", "[role='checkbox']", "[role='radio']",
-      "[role='combobox']", "[role='menuitem']", "[onclick]",
-      "[tabindex]:not([tabindex='-1'])",
-    ].join(",");
-  }
-
-  function queryAll(root, selector) {
-    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
-  }
-
-  function queryOne(root, selector) {
-    try { return root.querySelector(selector); } catch (_) { return null; }
-  }
-
-  function queryPiercePath(root, path) {
-    if (!Array.isArray(path) || path.length === 0) return null;
-    let currentRoot = root;
-    let current = null;
-    for (let i = 0; i < path.length; i++) {
-      current = queryOne(currentRoot, path[i]);
-      if (!current) return null;
-      if (i < path.length - 1) {
-        currentRoot = current.shadowRoot;
-        if (!currentRoot) return null;
-      }
-    }
-    return current;
-  }
-
-  function walkRoots(root, visitor) {
-    if (!root) return;
-    visitor(root);
-    for (const host of queryAll(root, "*")) {
-      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
-    }
-  }
-
-  function deepQuerySelector(root, selector) {
-    let found = null;
-    walkRoots(root, (nextRoot) => {
-      if (found) return;
-      found = queryOne(nextRoot, selector);
-    });
-    if (found) return found;
-    for (const frame of queryAll(root, "iframe,frame")) {
-      try {
-        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
-        if (child) return child;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function deepQuerySelectorAll(root, selector) {
-    const results = [];
-    walkRoots(root, (nextRoot) => results.push(...queryAll(nextRoot, selector)));
-    for (const frame of queryAll(root, "iframe,frame")) {
-      try {
-        if (frame.contentDocument) results.push(...deepQuerySelectorAll(frame.contentDocument, selector));
-      } catch (_) {}
-    }
-    return results;
-  }
-
-  function resolveFrameDocument(framePath) {
-    let doc = document;
-    for (const step of Array.isArray(framePath) ? framePath : []) {
-      let frame = queryPiercePath(doc, step?.piercePath);
-      if (!frame && Number.isInteger(Number(step?.index))) {
-        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
-      }
-      if (!frame) return null;
-      try { doc = frame.contentDocument; } catch (_) { return null; }
-      if (!doc) return null;
-    }
-    return doc;
-  }
-
-  function textFor(el) {
-    return (
-      el.getAttribute("aria-label") ||
-      el.getAttribute("title") ||
-      el.getAttribute("placeholder") ||
-      el.getAttribute("alt") ||
-      el.innerText ||
-      el.textContent ||
-      el.value ||
-      ""
-    ).trim().replace(/\s+/g, " ").toLowerCase();
-  }
-
-  function deepElementFromPoint(x, y, rootDoc = document) {
-    let doc = rootDoc;
-    let px = x;
-    let py = y;
-    let el = null;
-    for (let guard = 0; guard < 8; guard++) {
-      try { el = doc.elementFromPoint(px, py); } catch (_) { return null; }
-      if (!el) return null;
-      if (el.shadowRoot) {
-        const inner = el.shadowRoot.elementFromPoint(px, py);
-        if (inner && inner !== el) {
-          el = inner;
-          continue;
-        }
-      }
-      if ((el.tagName === "IFRAME" || el.tagName === "FRAME") && el.contentDocument) {
-        const rect = el.getBoundingClientRect();
-        px -= rect.x;
-        py -= rect.y;
-        doc = el.contentDocument;
-        continue;
-      }
-      return el;
-    }
-    return el;
-  }
-
-  function findActionElement(target, element) {
-    const doc = resolveFrameDocument(element?.framePath) || document;
-    if (Array.isArray(element?.piercePath)) {
-      const exact = queryPiercePath(doc, element.piercePath);
-      if (exact) return { el: exact, selector: "piercePath" };
-    }
-
-    const selectors = [];
-    if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
-    if (target && !String(target).startsWith("@e")) selectors.unshift(target);
-    for (const selector of selectors.filter(Boolean)) {
-      const el = deepQuerySelector(doc, selector);
-      if (el) return { el, selector };
-    }
-
-    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
-    if (needle) {
-      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
-        const text = textFor(el);
-        return text === needle || (needle.length > 4 && text.includes(needle));
-      });
-      if (byText) return { el: byText, selector: "text" };
-    }
-
-    if (element?.bbox) {
-      const x = Number(element.bbox.centerX);
-      const y = Number(element.bbox.centerY);
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        let el = deepElementFromPoint(x, y);
-        if (el && !el.matches(interactiveSelector())) el = el.closest(interactiveSelector());
-        if (el) return { el, selector: "bbox" };
-      }
-    }
-    return null;
-  }
-
+function buildFillScript(payload) {
+  return `(async function() {
+  ${BROWSER_RUNTIME_HELPERS}
   function setNativeValue(el, nextValue) {
     const proto =
       el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype :
@@ -1042,44 +874,11 @@ function buildFillScript({ target, element, value, clear, append, waitMs }) {
     if (setter) setter.call(el, nextValue);
     else el.value = nextValue;
   }
-
-  function nextFrame() {
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }
-
-  function waitForDomSettled(waitMs, rootDoc) {
-    const quietMs = Math.max(80, Number(waitMs || 0));
-    const maxMs = Math.max(quietMs + 50, Math.min(3000, quietMs + 1200));
-    return new Promise((resolve) => {
-      let done = false;
-      let quietTimer = null;
-      let observer = null;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        try { observer && observer.disconnect(); } catch (_) {}
-        clearTimeout(quietTimer);
-        resolve();
-      };
-      const bump = () => {
-        clearTimeout(quietTimer);
-        quietTimer = setTimeout(finish, quietMs);
-      };
-      observer = new MutationObserver(bump);
-      try {
-        observer.observe((rootDoc || document).documentElement, { childList: true, subtree: true, attributes: true });
-      } catch (_) {
-        return setTimeout(resolve, quietMs);
-      }
-      bump();
-      setTimeout(finish, maxMs);
-    });
-  }
-
-  return new Promise(async (resolve) => {
+  const result = await (async function(payload) {
+    const { target, element, value, clear, append, waitMs } = payload || {};
     const found = findActionElement(target, element);
     const el = found && found.el;
-    if (!el) return resolve({ ok: false, error: `未找到元素: ${target}` });
+    if (!el) return { ok: false, error: "未找到元素: " + target };
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     await nextFrame();
     if (typeof el.focus === "function") el.focus({ preventScroll: true });
@@ -1087,18 +886,20 @@ function buildFillScript({ target, element, value, clear, append, waitMs }) {
       el.value = value;
     } else if ("value" in el) {
       if (clear) setNativeValue(el, "");
-      setNativeValue(el, append ? `${el.value || ""}${value}` : value);
+      setNativeValue(el, append ? (el.value || "") + value : value);
     } else if (el.isContentEditable) {
       if (!append) el.textContent = "";
-      el.textContent = `${el.textContent || ""}${value}`;
+      el.textContent = (el.textContent || "") + value;
     } else {
-      return resolve({ ok: false, error: `元素不可输入: ${target}` });
+      return { ok: false, error: "元素不可输入: " + target };
     }
     el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     await waitForDomSettled(waitMs, el.ownerDocument);
-    resolve({ ok: true, selector: found.selector });
-  });
+    return { ok: true, selector: found.selector };
+  })(${JSON.stringify(payload)});
+  return result;
+})()`;
 }
 
 async function executeScript(args) {
@@ -1120,7 +921,7 @@ async function screenshot(args) {
 
   if (args.target) {
     const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
-    const expression = `(${buildElementRectScript.toString()})(${JSON.stringify({ target: resolved.target, element: resolved.element })})`;
+    const expression = buildElementRectScript({ target: resolved.target, element: resolved.element });
     const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
     const rect = resp.result?.value || resp.value;
     if (!rect) throw new Error(`未找到截图元素: ${args.target}`);
@@ -1152,83 +953,8 @@ async function screenshot(args) {
 }
 
 function buildElementRectScript(payload) {
-  const target = payload && payload.target;
-  const element = payload && payload.element;
-
-  function queryAll(root, selector) {
-    try { return Array.from(root.querySelectorAll(selector)); } catch (_) { return []; }
-  }
-
-  function queryOne(root, selector) {
-    try { return root.querySelector(selector); } catch (_) { return null; }
-  }
-
-  function queryPiercePath(root, path) {
-    if (!Array.isArray(path) || path.length === 0) return null;
-    let currentRoot = root;
-    let current = null;
-    for (let i = 0; i < path.length; i++) {
-      current = queryOne(currentRoot, path[i]);
-      if (!current) return null;
-      if (i < path.length - 1) {
-        currentRoot = current.shadowRoot;
-        if (!currentRoot) return null;
-      }
-    }
-    return current;
-  }
-
-  function walkRoots(root, visitor) {
-    if (!root) return;
-    visitor(root);
-    for (const host of queryAll(root, "*")) {
-      if (host.shadowRoot) walkRoots(host.shadowRoot, visitor);
-    }
-  }
-
-  function deepQuerySelector(root, selector) {
-    let found = null;
-    walkRoots(root, (nextRoot) => {
-      if (found) return;
-      found = queryOne(nextRoot, selector);
-    });
-    if (found) return found;
-    for (const frame of queryAll(root, "iframe,frame")) {
-      try {
-        const child = frame.contentDocument && deepQuerySelector(frame.contentDocument, selector);
-        if (child) return child;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function resolveFrameDocument(framePath) {
-    let doc = document;
-    for (const step of Array.isArray(framePath) ? framePath : []) {
-      let frame = queryPiercePath(doc, step?.piercePath);
-      if (!frame && Number.isInteger(Number(step?.index))) {
-        frame = queryAll(doc, "iframe,frame")[Number(step.index)];
-      }
-      if (!frame) return null;
-      try { doc = frame.contentDocument; } catch (_) { return null; }
-      if (!doc) return null;
-    }
-    return doc;
-  }
-
-  function textFor(el) {
-    return (
-      el.getAttribute("aria-label") ||
-      el.getAttribute("title") ||
-      el.getAttribute("placeholder") ||
-      el.getAttribute("alt") ||
-      el.innerText ||
-      el.textContent ||
-      el.value ||
-      ""
-    ).trim().replace(/\s+/g, " ").toLowerCase();
-  }
-
+  return `(async function() {
+  ${BROWSER_RUNTIME_HELPERS}
   function absoluteRect(el) {
     const rect = el.getBoundingClientRect();
     let x = rect.x;
@@ -1244,43 +970,37 @@ function buildElementRectScript(payload) {
     }
     return { x, y, width: rect.width, height: rect.height };
   }
-
-  function findElement() {
+  const target = ${JSON.stringify(payload?.target ?? null)};
+  const element = ${JSON.stringify(payload?.element ?? null)};
+  const el = findActionElement(target, element)?.el || (function() {
     const doc = resolveFrameDocument(element?.framePath) || document;
-    if (Array.isArray(element?.piercePath)) {
-      const exact = queryPiercePath(doc, element.piercePath);
-      if (exact) return exact;
-    }
-
     const selectors = [];
     if (Array.isArray(element?.selectors)) selectors.push(...element.selectors);
     if (target && !String(target).startsWith("@e")) selectors.unshift(target);
     for (const selector of selectors.filter(Boolean)) {
-      const el = deepQuerySelector(doc, selector);
-      if (el) return el;
+      const found = deepQuerySelector(doc, selector);
+      if (found) return found;
     }
-
-    const needle = String(element?.text || "").trim().replace(/\s+/g, " ").toLowerCase();
+    // 文本匹配回退
+    const needle = String(element?.text || "").trim().replace(/\\s+/g, " ").toLowerCase();
     if (needle) {
-      const candidates = [
-        "a[href]", "button", "input", "textarea", "select", "summary",
-        "[contenteditable='true']", "[role='button']", "[role='link']",
-        "[role='textbox']", "[role='checkbox']", "[role='radio']",
-        "[role='combobox']", "[role='menuitem']", "[onclick]",
-        "[tabindex]:not([tabindex='-1'])",
-      ].join(",");
-      const found = [];
-      walkRoots(doc, (root) => found.push(...queryAll(root, candidates)));
-      return found.find((el) => {
-        const text = textFor(el);
-        return text === needle || (needle.length > 4 && text.includes(needle));
-      }) || null;
+      const byText = deepQuerySelectorAll(doc, interactiveSelector()).find((el) => {
+        const t = textFor(el);
+        return t === needle || (needle.length > 4 && t.includes(needle));
+      });
+      if (byText) return byText;
     }
-
+    // bbox 坐标回退
+    if (element?.bbox) {
+      const x = Number(element.bbox.centerX);
+      const y = Number(element.bbox.centerY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        let el = deepElementFromPoint(x, y);
+        if (el) return el;
+      }
+    }
     return null;
-  }
-
-  const el = findElement();
+  })();
   if (!el) return null;
   el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   const rect = absoluteRect(el);
@@ -1292,6 +1012,7 @@ function buildElementRectScript(payload) {
     width: Math.max(1, rect.width),
     height: Math.max(1, rect.height),
   };
+})()`;
 }
 
 async function networkMonitor(args) {

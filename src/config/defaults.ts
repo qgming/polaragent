@@ -1,6 +1,7 @@
 // 默认配置
 // src/config/defaults.ts
 
+import { TIMEOUTS } from "./constants";
 import type { Settings, ProvidersConfig } from "@/types/config";
 
 /**
@@ -125,7 +126,7 @@ export const defaultSettings: Settings = {
       wsPort: 18765,
       apiPort: 18767,
       enableHttpApi: false,
-      actionTimeoutMs: 30000,
+      actionTimeoutMs: TIMEOUTS.TOOL_DEFAULT,
       waitAfterActionMs: 300,
       verboseLogs: false,
     },

@@ -113,7 +113,7 @@ export function openAiSizeFromDisplay(
   return gptImage2SizeFromDisplay(aspectRatio, resolution);
 }
 
-export function gptImage2SizeFromDisplay(
+function gptImage2SizeFromDisplay(
   aspectRatio: string = "1:1",
   resolution: ImageResolution = "1K",
 ) {

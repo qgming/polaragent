@@ -1,12 +1,12 @@
-// 对话输入工具栏 —— "/" 技能选择 + "@" 上下文（占位）
+// 对话输入工具栏 —— "/" 技能选择 + "📎" 附件选择
 //
 // "/" 按钮：纯图标按钮，点击弹出技能选择下拉。
 //   技能按分组排列：已安装最上方 → 内置第二 → 全局最下。
 //   每个分组有分类标题，每个技能名下方默认显示一行描述。
 //   选中后通过 onPickSkill 通知上层插入 chip。
-// "@" 按钮：选择文本文件、图片、音频或文档，选中后通过 onPickFile 通知上层插入附件 chip。
+// "📎" 按钮：选择文本文件、图片、音频或文档，选中后通过 onPickFile 通知上层插入附件 chip。
 
-import { AtSign, FileText, Image, Music, FileCheck, Slash } from "lucide-react";
+import { Paperclip, FileText, Image, Music, FileCheck, Slash } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -180,13 +180,13 @@ export function ComposerToolbar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* "@"：选择文本或图片附件 */}
+      {/* 📎：选择文本或图片附件 */}
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <button type="button" className={toolBtnClass}>
-                <AtSign className="size-4" />
+                <Paperclip className="size-4" />
               </button>
             </DropdownMenuTrigger>
           </TooltipTrigger>

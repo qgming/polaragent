@@ -11,6 +11,7 @@ import {
   type MarketSkill,
 } from "@/lib/electron/electron-api";
 import { skillLoader } from "@/lib/skill";
+import { CACHE_TTL as CACHE_TTL_CONSTANTS } from "@/config/constants";
 import { useConfigStore } from "@/stores/config-store";
 
 // 预置分类：label 展示，query 作搜索词（q 必填），category 作 API 过滤 slug
@@ -40,7 +41,7 @@ export const MARKET_CATEGORIES: MarketCategory[] = [
 
 // 本地缓存文件名（存于配置目录）与有效期
 const CACHE_FILE = "skills-market-cache.json";
-const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 小时
+const MAX_AGE_MS = CACHE_TTL_CONSTANTS.SKILLS_MARKET;
 
 interface MarketCache {
   updatedAt: number;

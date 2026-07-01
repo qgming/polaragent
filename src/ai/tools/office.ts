@@ -433,118 +433,125 @@ function pdfDocumentFromBody(
 </html>`;
 }
 
+// PDF 风格 → 显示标签
+const PDF_STYLE_LABELS: Record<string, string> = {
+  executive: "Executive Brief",
+  data: "Data Report",
+  proposal: "Proposal",
+  whitepaper: "Whitepaper",
+  academic: "Academic Paper",
+  minimal: "Minimal",
+  classic: "Classic",
+  modern: "Modern",
+  magazine: "Magazine",
+  report: "Report",
+  bento: "Bento",
+  letter: "Letter",
+  tech: "Tech",
+  notebook: "Notebook",
+};
+
 function pdfStyleLabel(
   style: NonNullable<Static<typeof createOfficeDocumentParams>["pdfStyle"]>,
 ): string {
-  if (style === "data") return "Data Report";
-  if (style === "proposal") return "Proposal";
-  if (style === "whitepaper") return "Whitepaper";
-  if (style === "academic") return "Academic Paper";
-  if (style === "minimal") return "Minimal";
-  if (style === "classic") return "Classic";
-  if (style === "modern") return "Modern";
-  if (style === "magazine") return "Magazine";
-  if (style === "report") return "Report";
-  if (style === "bento") return "Bento";
-  if (style === "letter") return "Letter";
-  if (style === "tech") return "Tech";
-  if (style === "notebook") return "Notebook";
-  return "Executive Brief";
+  return PDF_STYLE_LABELS[style] ?? "Executive Brief";
 }
+
+// PDF 配色方案：14 种预设主题
+const PDF_PALETTES: Record<string, {
+  paper: string; surface: string; ink: string; muted: string; line: string; accent: string;
+  heading: string; body: string; pageMargin: string; pageHeader: string;
+}> = {
+  executive: {
+    paper: "#f8f7f3", surface: "#ffffff", ink: "#20242c", muted: "#667085", line: "#d7d9dd", accent: "#0f766e",
+    heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+    pageMargin: "18mm 16mm 20mm", pageHeader: "Executive Brief",
+  },
+  data: {
+    paper: "#fbfcfd", surface: "#ffffff", ink: "#1f2937", muted: "#667085", line: "#d8dee8", accent: "#256d85",
+    heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
+    body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+    pageMargin: "14mm 13mm 17mm", pageHeader: "Data Report",
+  },
+  proposal: {
+    paper: "#f7f8fa", surface: "#ffffff", ink: "#22252b", muted: "#697386", line: "#d9dde5", accent: "#8a1538",
+    heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
+    body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+    pageMargin: "16mm 15mm 18mm", pageHeader: "Proposal",
+  },
+  whitepaper: {
+    paper: "#fcfcfb", surface: "#ffffff", ink: "#1f2328", muted: "#687076", line: "#dadde1", accent: "#315c48",
+    heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    pageMargin: "20mm 18mm 22mm", pageHeader: "Whitepaper",
+  },
+  academic: {
+    paper: "#fefcf5", surface: "#ffffff", ink: "#1a1a1a", muted: "#555555", line: "#d0d0d0", accent: "#8b0000",
+    heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    pageMargin: "24mm 22mm 22mm", pageHeader: "Academic Paper",
+  },
+  minimal: {
+    paper: "#ffffff", surface: "#ffffff", ink: "#111111", muted: "#999999", line: "#e8e8e8", accent: "#222222",
+    heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    pageMargin: "26mm 28mm 26mm", pageHeader: "",
+  },
+  classic: {
+    paper: "#f5f0e8", surface: "#faf6ee", ink: "#2c2416", muted: "#7a6e5e", line: "#d4c9b8", accent: "#8a6e45",
+    heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    pageMargin: "22mm 20mm 22mm", pageHeader: "Classic",
+  },
+  modern: {
+    paper: "#fbfcfd", surface: "#ffffff", ink: "#1e293b", muted: "#64748b", line: "#cbd5e1", accent: "#2563eb",
+    heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    pageMargin: "18mm 18mm 20mm", pageHeader: "Modern",
+  },
+  magazine: {
+    paper: "#f4efe7", surface: "#fffaf2", ink: "#191816", muted: "#75695b", line: "#d8cab8", accent: "#b23b2e",
+    heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    pageMargin: "18mm 16mm 20mm", pageHeader: "Magazine",
+  },
+  report: {
+    paper: "#f8f9fb", surface: "#ffffff", ink: "#1f2937", muted: "#6b7280", line: "#d1d5db", accent: "#1e40af",
+    heading: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+    body: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
+    pageMargin: "16mm 16mm 20mm", pageHeader: "Report",
+  },
+  bento: {
+    paper: "#f5f3f0", surface: "#ffffff", ink: "#1c1917", muted: "#78716c", line: "#d6d3d1", accent: "#d97706",
+    heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    pageMargin: "16mm 14mm 18mm", pageHeader: "Bento",
+  },
+  letter: {
+    paper: "#faf7f2", surface: "#fffdf7", ink: "#26221c", muted: "#7a7265", line: "#d8d1c5", accent: "#5d4e37",
+    heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
+    pageMargin: "28mm 26mm 24mm", pageHeader: "",
+  },
+  tech: {
+    paper: "#0f172a", surface: "#1e293b", ink: "#f1f5f9", muted: "#94a3b8", line: "#334155", accent: "#06b6d4",
+    heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    pageMargin: "18mm 16mm 20mm", pageHeader: "Tech Report",
+  },
+  notebook: {
+    paper: "#f9f6ee", surface: "#fffcf5", ink: "#252015", muted: "#8a7e6e", line: "#d9d0c0", accent: "#b8860b",
+    heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
+    body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
+    pageMargin: "20mm 20mm 20mm", pageHeader: "Notebook",
+  },
+};
 
 function pdfTemplateCss(
   style: NonNullable<Static<typeof createOfficeDocumentParams>["pdfStyle"]>,
 ): string {
-  const palettes: Record<string, {
-    paper: string; surface: string; ink: string; muted: string; line: string; accent: string;
-    heading: string; body: string; pageMargin: string; pageHeader: string;
-  }> = {
-    executive: {
-      paper: "#f8f7f3", surface: "#ffffff", ink: "#20242c", muted: "#667085", line: "#d7d9dd", accent: "#0f766e",
-      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
-      pageMargin: "18mm 16mm 20mm", pageHeader: "Executive Brief",
-    },
-    data: {
-      paper: "#fbfcfd", surface: "#ffffff", ink: "#1f2937", muted: "#667085", line: "#d8dee8", accent: "#256d85",
-      heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
-      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
-      pageMargin: "14mm 13mm 17mm", pageHeader: "Data Report",
-    },
-    proposal: {
-      paper: "#f7f8fa", surface: "#ffffff", ink: "#22252b", muted: "#697386", line: "#d9dde5", accent: "#8a1538",
-      heading: '"Aptos Display", "Segoe UI", "Microsoft YaHei UI", sans-serif',
-      body: '"Aptos", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
-      pageMargin: "16mm 15mm 18mm", pageHeader: "Proposal",
-    },
-    whitepaper: {
-      paper: "#fcfcfb", surface: "#ffffff", ink: "#1f2328", muted: "#687076", line: "#dadde1", accent: "#315c48",
-      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      pageMargin: "20mm 18mm 22mm", pageHeader: "Whitepaper",
-    },
-    academic: {
-      paper: "#fefcf5", surface: "#ffffff", ink: "#1a1a1a", muted: "#555555", line: "#d0d0d0", accent: "#8b0000",
-      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      pageMargin: "24mm 22mm 22mm", pageHeader: "Academic Paper",
-    },
-    minimal: {
-      paper: "#ffffff", surface: "#ffffff", ink: "#111111", muted: "#999999", line: "#e8e8e8", accent: "#222222",
-      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      pageMargin: "26mm 28mm 26mm", pageHeader: "",
-    },
-    classic: {
-      paper: "#f5f0e8", surface: "#faf6ee", ink: "#2c2416", muted: "#7a6e5e", line: "#d4c9b8", accent: "#8a6e45",
-      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      pageMargin: "22mm 20mm 22mm", pageHeader: "Classic",
-    },
-    modern: {
-      paper: "#fbfcfd", surface: "#ffffff", ink: "#1e293b", muted: "#64748b", line: "#cbd5e1", accent: "#2563eb",
-      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      pageMargin: "18mm 18mm 20mm", pageHeader: "Modern",
-    },
-    magazine: {
-      paper: "#f4efe7", surface: "#fffaf2", ink: "#191816", muted: "#75695b", line: "#d8cab8", accent: "#b23b2e",
-      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      body: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      pageMargin: "18mm 16mm 20mm", pageHeader: "Magazine",
-    },
-    report: {
-      paper: "#f8f9fb", surface: "#ffffff", ink: "#1f2937", muted: "#6b7280", line: "#d1d5db", accent: "#1e40af",
-      heading: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
-      body: '"Aptos", "Inter", "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif',
-      pageMargin: "16mm 16mm 20mm", pageHeader: "Report",
-    },
-    bento: {
-      paper: "#f5f3f0", surface: "#ffffff", ink: "#1c1917", muted: "#78716c", line: "#d6d3d1", accent: "#d97706",
-      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      pageMargin: "16mm 14mm 18mm", pageHeader: "Bento",
-    },
-    letter: {
-      paper: "#faf7f2", surface: "#fffdf7", ink: "#26221c", muted: "#7a7265", line: "#d8d1c5", accent: "#5d4e37",
-      heading: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      body: '"Georgia", "Times New Roman", "STSong", "Noto Serif CJK SC", serif',
-      pageMargin: "28mm 26mm 24mm", pageHeader: "",
-    },
-    tech: {
-      paper: "#0f172a", surface: "#1e293b", ink: "#f1f5f9", muted: "#94a3b8", line: "#334155", accent: "#06b6d4",
-      heading: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      pageMargin: "18mm 16mm 20mm", pageHeader: "Tech Report",
-    },
-    notebook: {
-      paper: "#f9f6ee", surface: "#fffcf5", ink: "#252015", muted: "#8a7e6e", line: "#d9d0c0", accent: "#b8860b",
-      heading: '"Georgia", "Times New Roman", "Microsoft YaHei", serif',
-      body: '"Inter", "Helvetica Neue", "Arial", sans-serif',
-      pageMargin: "20mm 20mm 20mm", pageHeader: "Notebook",
-    },
-  };
-  const p = palettes[style] || palettes.executive;
+  const p = PDF_PALETTES[style] || PDF_PALETTES.executive;
 
   const headerContent = p.pageHeader
     ? `content: "${p.pageHeader}";`
@@ -961,21 +968,34 @@ function fallbackPptSections(
   return [cover, body, closing].filter(Boolean).join("\n\n");
 }
 
+// PPT 风格 → 显示标签
+const PPT_STYLE_LABELS: Record<string, string> = {
+  board: "Board",
+  studio: "Studio",
+  data: "Data Report",
+  pitch: "Pitch",
+  magazine: "Magazine",
+  ink: "Ink",
+  kraft: "Kraft",
+  porcelain: "Porcelain",
+  forest: "Forest",
+  "swiss-blue": "Swiss Blue",
+  "lemon-grid": "Lemon Grid",
+  "safety-orange": "Safety Orange",
+  executive: "Executive",
+  academic: "Academic",
+  minimal: "Minimal",
+  modern: "Modern",
+  classic: "Classic",
+  tech: "Tech",
+  vintage: "Vintage",
+  bold: "Bold",
+};
+
 function pptStyleLabel(
   style: NonNullable<Static<typeof createOfficeDocumentParams>["pptStyle"]>,
 ): string {
-  if (style === "studio") return "Studio";
-  if (style === "data") return "Data Report";
-  if (style === "pitch") return "Pitch";
-  if (style === "executive") return "Executive";
-  if (style === "academic") return "Academic";
-  if (style === "minimal") return "Minimal";
-  if (style === "modern") return "Modern";
-  if (style === "classic") return "Classic";
-  if (style === "tech") return "Tech";
-  if (style === "vintage") return "Vintage";
-  if (style === "bold") return "Bold";
-  return "Board Brief";
+  return PPT_STYLE_LABELS[style] ?? "Board Brief";
 }
 
 function shortenText(value: string, maxLength: number): string {
@@ -1000,17 +1020,14 @@ function slidesToMarkdown(
   return `${head}\n\n${body}`;
 }
 
+/** 确保路径以指定扩展名结尾，已有正确扩展名时不重复追加 */
 function ensureOfficeExtension(path: string, extension: string): string {
   const normalizedExtension = extension.toLowerCase();
   if (path.toLowerCase().endsWith(`.${normalizedExtension}`)) return path;
-  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  const dotIndex = path.lastIndexOf(".");
-  if (dotIndex > separatorIndex) {
-    return `${path.slice(0, dotIndex)}.${normalizedExtension}`;
-  }
-  return `${path}.${normalizedExtension}`;
+  return replaceExtension(path, extension);
 }
 
+/** 替换路径扩展名，无扩展名时追加 */
 function replaceExtension(path: string, extension: string): string {
   const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   const dotIndex = path.lastIndexOf(".");
