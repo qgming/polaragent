@@ -368,6 +368,21 @@ export interface TeamConfig {
 }
 
 /**
+ * 项目配置（对话分组 + 专属提示词 + 共享工作目录）
+ * 项目配置存于 {dataDir}/projects/<id>.json，项目内的对话仍走普通对话仓库。
+ */
+export interface ProjectConfig {
+  id: string;
+  name: string;
+  // 项目专属提示词：该项目下的所有对话都会注入此提示词
+  systemPrompt: string;
+  // 项目共享工作目录：项目内所有会话共享同一目录，切换目录时同步更新
+  workingDir?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
  * 会话元数据
  */
 export interface ConversationMeta {

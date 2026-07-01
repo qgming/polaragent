@@ -2,10 +2,15 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { useConversationStore } from "./conversation-store";
 import { useTaskMonitorStore } from "./task-monitor-store";
+import { useProjectsStore } from "./project/projects-store";
 import {
   getSessionWorkingDir,
   getSessionToolPermissionMode,
+  setSessionProjectId,
   setSessionToolPermissionMode,
+  setSessionWorkingDir,
+  setSessionAgentId,
+  getSessionAgentId,
 } from "@/lib/session/personal";
 import { readGoalState } from "@/lib/session/goal";
 import { useGoalStore } from "@/stores/goal-store";
@@ -31,12 +36,22 @@ import {
 // 切到某对话时从会话 jsonl 恢复右侧任务监控（工作目录 + 待办 + 产物），
 // 使重启/切回后侧边栏与上次保持一致。仅在运行期尚无对应数据时回填，不覆盖。
 async function restoreThreadMonitor(threadId: string): Promise<void> {
+  // 在任何 await 之前捕获线程对象，避免快速切换线程后读到 store 中已变更的 threads
+  const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
   // 工作目录：仅当任务监控里尚无该线程的工作目录时回填
   const existing = useTaskMonitorStore.getState().getMonitor(threadId).workingDir;
   if (!existing) {
     const dir = await getSessionWorkingDir(threadId);
     if (dir) {
       useTaskMonitorStore.getState().setWorkingDir(threadId, dir);
+    } else {
+      // 会话自身无工作目录时，回退到项目共享目录
+      if (thread?.projectId) {
+        const projectConfig = useProjectsStore.getState().projects.find((p) => p.id === thread.projectId);
+        if (projectConfig?.workingDir) {
+          useTaskMonitorStore.getState().setWorkingDir(threadId, projectConfig.workingDir);
+        }
+      }
     }
   }
   // 待办 + 产物：从 jsonl 回读重建后灌入（hydrateThread 内部会跳过已有数据的会话）
@@ -66,6 +81,15 @@ async function restoreThreadKnowledgeBaseIds(threadId: string): Promise<void> {
   useChatStore.getState().setThreadKnowledgeBaseIds(threadId, ids, {
     persist: false,
   });
+}
+
+async function restoreThreadAgentId(threadId: string): Promise<void> {
+  const agentId = await getSessionAgentId(threadId);
+  if (agentId) {
+    useChatStore.getState().setThreadAgentId(threadId, agentId, {
+      persist: false,
+    });
+  }
 }
 
 export type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
@@ -108,6 +132,7 @@ interface ChatState {
     agentId?: string,
     initialText?: string,
     permissionMode?: ToolPermissionMode,
+    projectId?: string,
   ) => string;
   deleteThread: (threadId: string) => void;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
@@ -129,6 +154,11 @@ interface ChatState {
   setThreadKnowledgeBaseIds: (
     threadId: string,
     ids: string[],
+    options?: { persist?: boolean },
+  ) => void;
+  setThreadAgentId: (
+    threadId: string,
+    agentId: string,
     options?: { persist?: boolean },
   ) => void;
   startExchange: (
@@ -279,6 +309,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     agentId?: string,
     initialText?: string,
     permissionMode = DEFAULT_TOOL_PERMISSION_MODE,
+    projectId?: string,
   ) => {
     const id = `thread-${createId()}`;
     const trimmedInitialText = initialText?.trim();
@@ -302,6 +333,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       permissionMode,
       knowledgeBaseIds: [], // 初始化知识库 ID 列表
       loaded: true, // 新建会话，内存即权威，无需从磁盘回读
+      projectId, // 归属项目
     };
     set((state) => ({
       activeThreadId: id,
@@ -312,8 +344,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 创建会话文件
     void useConversationStore
       .getState()
-      .createNewConversation(id, thread.title, agentId || get().activeAgentId);
+      .createNewConversation(id, thread.title, projectId);
     void setSessionToolPermissionMode(id, thread.permissionMode);
+    // 写入项目归属
+    if (projectId) {
+      void setSessionProjectId(id, projectId);
+      // 项目会话：从项目配置读取共享工作目录，初始化到 task-monitor-store
+      const projectConfig = useProjectsStore.getState().projects.find((p) => p.id === projectId);
+      if (projectConfig?.workingDir) {
+        useTaskMonitorStore.getState().setWorkingDir(id, projectConfig.workingDir);
+        void setSessionWorkingDir(id, projectConfig.workingDir);
+      }
+    }
+    // 持久化会话级助手 ID，使重启后不回退到全局默认
+    void setSessionAgentId(id, agentId || get().activeAgentId);
 
     if (userMessage) {
       void useConversationStore
@@ -464,6 +508,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void restoreThreadMonitor(threadId);
     void restoreThreadPermissionMode(threadId);
     void restoreThreadKnowledgeBaseIds(threadId);
+    void restoreThreadAgentId(threadId);
     void restoreGoalState(threadId);
   },
 
@@ -512,6 +557,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     if (options?.persist !== false) {
       void setSessionKnowledgeBaseIds(threadId, ids);
+    }
+  },
+
+  setThreadAgentId: (threadId, agentId, options) => {
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, agentId } : thread,
+      ),
+    }));
+    if (options?.persist !== false) {
+      void setSessionAgentId(threadId, agentId);
     }
   },
 
@@ -622,6 +678,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
           loaded: false,
           autoTitled: true, // 已持久化的会话沿用其标题，不再自动改名
+          projectId: meta.projectId, // 恢复项目归属
         }));
 
       // 合并后按更新时间倒序，确保侧边栏顺序稳定
@@ -715,18 +772,19 @@ export interface ThreadSummary {
   id: string;
   title: string;
   updatedAt: number;
+  projectId?: string;
 }
-// 用 JSON 签名做按值比较：仅当 id/title/updatedAt 真正变化时才返回新引用。
+// 用 JSON 签名做按值比较：仅当 id/title/updatedAt/projectId 真正变化时才返回新引用。
 // 不能直接用 useShallow——它对数组逐元素做 Object.is，每次 .map() 都产生全新对象，
 // 永远判不等，会让 useSyncExternalStore 无限循环导致白屏。
 export function useThreadSummaries(): ThreadSummary[] {
   const signature = useChatStore((state) =>
-    JSON.stringify(state.threads.map((t) => [t.id, t.title, t.updatedAt])),
+    JSON.stringify(state.threads.map((t) => [t.id, t.title, t.updatedAt, t.projectId ?? ""])),
   );
   return useMemo(() => {
-    const rows = JSON.parse(signature) as Array<[string, string, number]>;
+    const rows = JSON.parse(signature) as Array<[string, string, number, string?]>;
     return rows
-      .map(([id, title, updatedAt]) => ({ id, title, updatedAt }))
+      .map(([id, title, updatedAt, projectId]) => ({ id, title, updatedAt, projectId: projectId || undefined }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [signature]);
 }

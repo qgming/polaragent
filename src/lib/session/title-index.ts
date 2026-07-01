@@ -21,6 +21,7 @@ export interface TitleIndexEntry {
   title: string;
   updatedAt: number;
   teamId?: string;
+  projectId?: string;
 }
 
 // 索引文件结构：id -> 索引项
@@ -78,7 +79,7 @@ export async function upsertTitleIndex(
   title: string,
   updatedAt: number,
   kind: TitleIndexKind = "normal",
-  extra?: { teamId?: string },
+  extra?: { teamId?: string; projectId?: string },
 ): Promise<void> {
   const index = { ...(await readTitleIndex(kind)) };
   const prev = index[id];
@@ -86,6 +87,7 @@ export async function upsertTitleIndex(
     title: title || "新对话",
     updatedAt,
     teamId: extra?.teamId ?? prev?.teamId,
+    projectId: extra?.projectId ?? prev?.projectId,
   };
   await writeTitleIndex(kind, index);
 }
@@ -103,7 +105,7 @@ export async function removeTitleIndex(
 
 // 用「重建出的全量条目」整体覆盖索引（首次缺失时由 list* 调用）。
 export async function rebuildTitleIndex(
-  entries: Array<{ id: string; title: string; updatedAt: number; teamId?: string }>,
+  entries: Array<{ id: string; title: string; updatedAt: number; teamId?: string; projectId?: string }>,
   kind: TitleIndexKind = "normal",
 ): Promise<void> {
   const index: TitleIndex = {};
@@ -112,6 +114,7 @@ export async function rebuildTitleIndex(
       title: entry.title || "新对话",
       updatedAt: entry.updatedAt,
       teamId: entry.teamId,
+      projectId: entry.projectId,
     };
   }
   await writeTitleIndex(kind, index);
@@ -131,6 +134,7 @@ function isValidIndex(value: unknown): value is TitleIndex {
     const e = entry as Record<string, unknown>;
     if (typeof e.title !== "string" || typeof e.updatedAt !== "number") return false;
     if (e.teamId !== undefined && typeof e.teamId !== "string") return false;
+    if (e.projectId !== undefined && typeof e.projectId !== "string") return false;
   }
   return true;
 }

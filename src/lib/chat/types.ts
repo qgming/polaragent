@@ -56,5 +56,7 @@ export interface ChatThread {
   permissionMode: ToolPermissionMode;
   knowledgeBaseIds?: string[]; // 当前会话选中的知识库 ID 列表
   loaded?: boolean;
+  // 归属的项目 ID（空=普通对话，不属于任何项目）
+  projectId?: string;
   autoTitled?: boolean;
 }

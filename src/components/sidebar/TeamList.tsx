@@ -1,5 +1,6 @@
 // 团队 tab 内容：团队列表 + 每个团队可展开的会话子列表
 import { ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -181,6 +182,17 @@ function TeamRow({
             "group-hover:pointer-events-auto group-focus-within:pointer-events-auto",
           )}
         >
+          <button
+            type="button"
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onNewTeamThread(team.id);
+            }}
+            title={t("sidebar.newSession")}
+          >
+            <Plus className="size-4" />
+          </button>
           <TeamActionsMenu
             teamName={team.name}
             onEdit={() => onEditTeam(team.id)}
@@ -199,30 +211,32 @@ function TeamRow({
         </div>
       </div>
 
-      {/* 会话子列表：缩进 + 左侧竖直引导线 */}
-      {open ? (
-        <div className="ml-[15px] border-l border-border pl-2">
-          <button
-            type="button"
-            onClick={() => onNewTeamThread(team.id)}
-            className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      {/* 会话子列表：缩进 + 左侧竖直引导线，展开/收起带高度动画 */}
+      <AnimatePresence initial={false}>
+        {open ? (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
           >
-            <Plus className="size-3.5 shrink-0" />
-	            <span className="truncate">{t("sidebar.newSession")}</span>
-          </button>
-          {threads.map((thread) => (
-            <TeamThreadItem
-              key={thread.id}
-              thread={thread}
-              active={thread.id === activeTeamThreadId}
-              running={runningTeamThreadIds.includes(thread.id)}
-              onClick={() => onSelectTeamThread(team.id, thread.id)}
-              onRename={(title) => onRenameTeamThread(thread.id, title)}
-              onDelete={() => onDeleteTeamThread(thread.id)}
-            />
-          ))}
-        </div>
-      ) : null}
+            <div className="ml-[15px] border-l border-border pl-2">
+              {threads.map((thread) => (
+                <TeamThreadItem
+                  key={thread.id}
+                  thread={thread}
+                  active={thread.id === activeTeamThreadId}
+                  running={runningTeamThreadIds.includes(thread.id)}
+                  onClick={() => onSelectTeamThread(team.id, thread.id)}
+                  onRename={(title) => onRenameTeamThread(thread.id, title)}
+                  onDelete={() => onDeleteTeamThread(thread.id)}
+                />
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

@@ -7,6 +7,8 @@ import {
   TOOL_PERMISSION_MODE_ENTRY,
   WORKING_DIR_ENTRY,
   KNOWLEDGE_BASE_IDS_ENTRY,
+  PROJECT_REF_ENTRY,
+  AGENT_ID_ENTRY,
 } from "./entries";
 import { openOrCreateSession, openOrCreateTeamSession } from "./lifecycle";
 
@@ -162,6 +164,49 @@ export async function setSessionKnowledgeBaseIds(
   }
 }
 
+// --- 会话级助手 ID 持久化 ---
+
+function readAgentIdFromEntries(
+  entries: Awaited<ReturnType<Session["getEntries"]>>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type === "custom" && entry.customType === AGENT_ID_ENTRY) {
+      const data = entry.data as { agentId?: unknown } | undefined;
+      if (data && typeof data.agentId === "string" && data.agentId.trim()) {
+        return data.agentId;
+      }
+      // 当前条目数据无效，继续向前查找更早的有效条目
+      continue;
+    }
+  }
+  return undefined;
+}
+
+export async function getSessionAgentId(
+  sessionId: string,
+): Promise<string | undefined> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    return readAgentIdFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取会话助手 ID 失败 ${sessionId}:`, error);
+    return undefined;
+  }
+}
+
+export async function setSessionAgentId(
+  sessionId: string,
+  agentId: string,
+): Promise<void> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    await session.appendCustomEntry(AGENT_ID_ENTRY, { agentId });
+  } catch (error) {
+    console.error(`写入会话助手 ID 失败 ${sessionId}:`, error);
+  }
+}
+
 export async function getTeamSessionKnowledgeBaseIds(
   sessionId: string,
 ): Promise<string[]> {
@@ -200,4 +245,46 @@ function readKnowledgeBaseIdsFromEntries(
     }
   }
   return [];
+}
+
+export async function getSessionProjectId(
+  sessionId: string,
+): Promise<string | undefined> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    return readProjectIdFromEntries(await session.getEntries());
+  } catch (error) {
+    console.error(`读取会话项目归属失败 ${sessionId}:`, error);
+    return undefined;
+  }
+}
+
+export async function setSessionProjectId(
+  sessionId: string,
+  projectId: string,
+): Promise<void> {
+  try {
+    const session = await openOrCreateSession(sessionId);
+    await session.appendCustomEntry(PROJECT_REF_ENTRY, { projectId });
+  } catch (error) {
+    console.error(`写入会话项目归属失败 ${sessionId}:`, error);
+  }
+}
+
+function readProjectIdFromEntries(
+  entries: Awaited<ReturnType<Session["getEntries"]>>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.type !== "custom" || entry.customType !== PROJECT_REF_ENTRY) {
+      continue;
+    }
+    const data = entry.data as { projectId?: unknown } | undefined;
+    if (data && typeof data.projectId === "string" && data.projectId.trim()) {
+      return data.projectId;
+    }
+    // 当前条目数据无效，继续向前查找更早的有效条目
+    continue;
+  }
+  return undefined;
 }

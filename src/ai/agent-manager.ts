@@ -191,6 +191,7 @@ export class AgentManager {
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
+      projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
     const key = harnessKey(options?.teamContext?.sessionId ?? threadId, agentId);
@@ -200,6 +201,7 @@ export class AgentManager {
       dir: normalizeWorkingDir(options?.workingDir),
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
       knowledgeBaseIds: [...(options?.knowledgeBaseIds ?? [])].sort(),
+      projectSystemPrompt: options?.projectSystemPrompt ?? "",
     });
     const cached = this.harnesses.get(key);
     if (cached) {
@@ -241,6 +243,7 @@ export class AgentManager {
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
+      projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
     // 解析 Agent 配置（优先用户配置）
@@ -329,15 +332,18 @@ export class AgentManager {
       ? "你可以使用 search_memory 检索长期记忆。当用户偏好、身份画像、历史纠正、长期目标或当前项目约定可能影响回答时，请主动调用该工具；不要假设记忆会自动出现在提示词中。用户要求记住或忘记信息时，可分别使用 remember_memory 或 forget_memory。"
       : "";
     // 团队模式：身份前缀 + 成员自身提示词 + 团队整体提示词 + 技能清单，依次拼接。
+    // 项目提示词：在 basePrompt 之后、技能清单之前注入
+    const projectPrompt = options?.projectSystemPrompt?.trim() || "";
     const promptParts = teamContext
       ? [
           teamContext.identityPrefix,
           basePrompt,
+          projectPrompt,
           teamContext.teamSystemPrompt,
           skillsBlock,
           memoryBlock,
         ]
-      : [basePrompt, skillsBlock, memoryBlock];
+      : [basePrompt, projectPrompt, skillsBlock, memoryBlock];
     const systemPrompt = promptParts
       .map((part) => part?.trim())
       .filter((part): part is string => !!part)

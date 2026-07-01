@@ -15,6 +15,7 @@ import {
   listSessions,
   openOrCreateSession,
   setSessionTitle,
+  setSessionProjectId,
   ensureSessionFilesDir,
   deleteSessionFilesDir,
 } from "@/lib/session/personal";
@@ -29,6 +30,7 @@ export interface ConversationMetaLite {
   id: string;
   title: string;
   updatedAt: number;
+  projectId?: string;
 }
 
 interface ConversationState {
@@ -47,7 +49,7 @@ interface ConversationState {
   createNewConversation: (
     id: string,
     title: string,
-    agentId: string,
+    projectId?: string,
   ) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
@@ -55,7 +57,7 @@ interface ConversationState {
   clearError: () => void;
 }
 
-export const useConversationStore = create<ConversationState>((set) => ({
+export const useConversationStore = create<ConversationState>((set, get) => ({
   conversations: [],
   isLoading: false,
   error: null,
@@ -70,6 +72,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
         title: session.title || "新对话",
         // 优先用索引里的 updatedAt（反映重命名/清空等活动），缺失则回退创建时间
         updatedAt: session.updatedAt ?? (Date.parse(session.createdAt) || 0),
+        projectId: session.projectId,
       }));
       set({ conversations });
     } catch (error) {
@@ -97,7 +100,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
   },
 
   // 创建新会话：确保对应 pi Session 文件存在，并写入标题
-  createNewConversation: async (id: string, title: string) => {
+  createNewConversation: async (id: string, title: string, projectId?: string) => {
     try {
       await openOrCreateSession(id);
       if (title && title !== "新对话") {
@@ -107,10 +110,10 @@ export const useConversationStore = create<ConversationState>((set) => ({
       await ensureSessionFilesDir(id);
       const updatedAt = Date.now();
       // 同步标题索引，使侧边栏下次启动走快路径（只读 titles.json）
-      await upsertTitleIndex(id, title || "新对话", updatedAt);
+      await upsertTitleIndex(id, title || "新对话", updatedAt, "normal", { projectId });
       set((state) => ({
         conversations: [
-          { id, title: title || "新对话", updatedAt },
+          { id, title: title || "新对话", updatedAt, projectId },
           ...state.conversations.filter((c) => c.id !== id),
         ],
       }));
@@ -125,8 +128,9 @@ export const useConversationStore = create<ConversationState>((set) => ({
     try {
       await setSessionTitle(id, title);
       const updatedAt = Date.now();
-      // 同步标题索引
-      await upsertTitleIndex(id, title, updatedAt);
+      // 同步标题索引（保留 projectId，避免索引缺失重建时丢失项目归属）
+      const projectId = get().conversations.find((c) => c.id === id)?.projectId;
+      await upsertTitleIndex(id, title, updatedAt, "normal", { projectId });
       set((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === id ? { ...c, title, updatedAt } : c,
@@ -158,19 +162,23 @@ export const useConversationStore = create<ConversationState>((set) => ({
   // 清空会话内容：删除旧 session 后重建一个同 id 的空 session
   clearConversation: async (id: string) => {
     try {
+      // 先记录项目归属，重建后写入
+      const target = get().conversations.find((c) => c.id === id);
+      const projectId = target?.projectId;
       await deleteSession(id);
       await openOrCreateSession(id);
+      // 保留项目归属：重建后重新写入 PROJECT_REF_ENTRY
+      if (projectId) {
+        await setSessionProjectId(id, projectId);
+      }
       const updatedAt = Date.now();
       // 清空后标题保持不变，仅刷新更新时间
-      set((state) => {
-        const target = state.conversations.find((c) => c.id === id);
-        void upsertTitleIndex(id, target?.title || "新对话", updatedAt);
-        return {
-          conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, updatedAt } : c,
-          ),
-        };
-      });
+      void upsertTitleIndex(id, target?.title || "新对话", updatedAt, "normal", { projectId });
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === id ? { ...c, updatedAt } : c,
+        ),
+      }));
     } catch (error) {
       console.error("清空会话失败:", error);
       throw error;

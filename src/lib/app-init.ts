@@ -8,6 +8,7 @@ import { useSkillsMarketStore } from "@/stores/skills/skills-market-store";
 import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
+import { useProjectsStore } from "@/stores/project/projects-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { useKnowledgeStore } from "@/stores/knowledge-store";
 import { providerManager } from "@/ai/providers";
@@ -40,6 +41,11 @@ export async function initializeApp() {
         await useTeamChatStore.getState().hydrateTeamThreads();
         console.log("✓ 团队及团队会话加载完成");
       })(),
+      // 项目配置：与团队同级并行预加载，供侧边栏项目列表和对话提示词注入
+      useProjectsStore
+        .getState()
+        .loadProjects()
+        .then(() => console.log("✓ 项目列表加载完成")),
       // 知识库列表：仅依赖数据目录，与会话/团队同级并行预加载，
       // 启动后即就绪，避免进入知识库页或对话引用知识库时才加载。
       useKnowledgeStore

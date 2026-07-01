@@ -1,9 +1,9 @@
-// 左侧栏：主导航、对话/团队切换与会话列表项
+// 左侧栏：主导航、会话/项目/团队三 tab 切换与会话列表项
 // src/components/sidebar/AppSidebar.tsx
 //
-// 列表项子组件拆分至同目录：SidebarButton / ThreadItem / TeamList。
+// 列表项子组件拆分至同目录：SidebarButton / ThreadItem / TeamList / ProjectList。
 
-import { MessageCircle, Settings, Users } from "lucide-react";
+import { FolderOpen, MessageCircle, Settings, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,6 +18,10 @@ import { SidebarButton } from "./SidebarButton";
 import { ExtensionNavGroup } from "./ExtensionNavGroup";
 import { ThreadItem } from "./ThreadItem";
 import { TeamList } from "./TeamList";
+import { ProjectList } from "./ProjectList";
+
+// 三 tab 类型：会话 / 项目 / 团队
+export type SidebarTab = "tasks" | "project" | "team";
 
 export function AppSidebar({
   activePage,
@@ -36,6 +40,12 @@ export function AppSidebar({
   onNewTeamThread,
   onRenameTeamThread,
   onDeleteTeamThread,
+  // 项目相关回调
+  onNewProjectThread,
+  onEditProject,
+  onDeleteProject,
+  onClearProjectChats,
+  onNewProject,
   runningThreadIds,
   runningTeamThreadIds,
   sidebarTab,
@@ -62,15 +72,22 @@ export function AppSidebar({
   onNewTeamThread: (teamId: string) => void;
   onRenameTeamThread: (threadId: string, title: string) => void;
   onDeleteTeamThread: (threadId: string) => void;
+  // 项目相关回调
+  onNewProjectThread: (projectId: string) => void;
+  onEditProject: (projectId: string) => void;
+  onDeleteProject: (projectId: string) => void;
+  onClearProjectChats: (projectId: string) => void;
+  onNewProject: () => void;
   runningThreadIds: string[];
   runningTeamThreadIds: string[];
-  sidebarTab: "tasks" | "team";
-  setSidebarTab: (tab: "tasks" | "team") => void;
+  sidebarTab: SidebarTab;
+  setSidebarTab: (tab: SidebarTab) => void;
+  // 普通对话列表（非项目对话）
   threads: Array<{ id: string; title: string; updatedAt: number }>;
 }) {
   const { t } = useTranslation("nav");
   // 记录上一个 tab，用于推导内容横滑方向：切到右侧 tab → 内容从右进(+1)，反之 -1
-  const tabOrder: Array<"tasks" | "team"> = ["tasks", "team"];
+  const tabOrder: SidebarTab[] = ["tasks", "project", "team"];
   const prevTabRef = useRef(sidebarTab);
   const direction =
     tabOrder.indexOf(sidebarTab) >= tabOrder.indexOf(prevTabRef.current)
@@ -80,17 +97,24 @@ export function AppSidebar({
     prevTabRef.current = sidebarTab;
   }, [sidebarTab]);
 
+  // tab 图标与标签映射
+  const tabMeta: Record<SidebarTab, { Icon: typeof MessageCircle; label: string }> = {
+    tasks: { Icon: MessageCircle, label: t("sidebar.tasks") },
+    project: { Icon: FolderOpen, label: t("sidebar.projectTab") },
+    team: { Icon: Users, label: t("sidebar.teamTab") },
+  };
+
   return (
     // 外层负责宽度开合动画（220 ⇄ 0），overflow-hidden 在收窄时裁掉内容；
     // 内层固定 220px 宽，避免内容被挤压换行。
     <motion.aside
       initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 220, opacity: 1 }}
+      animate={{ width: 240, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 36 }}
       className="flex shrink-0 flex-col overflow-hidden border-r border-border bg-background text-sidebar-foreground"
     >
-      <div className="flex h-full w-[220px] flex-col">
+      <div className="flex h-full w-[240px] flex-col">
         <div className="flex flex-col gap-3 p-3 pb-2">
         <nav className="space-y-1">
           {primaryNav.map((item) => (
@@ -125,19 +149,18 @@ export function AppSidebar({
           ))}
         </nav>
 
-        {/* 分段控件：选中高亮块用 layoutId 在两 tab 间平滑滑动 */}
-        <div className="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5">
+        {/* 三段 tab：会话 / 项目 / 团队 */}
+        <div className="grid grid-cols-3 gap-0.5 rounded-md bg-muted p-0.5">
           {tabOrder.map((tab) => {
             const active = sidebarTab === tab;
-            const Icon = tab === "tasks" ? MessageCircle : Users;
-            const label = tab === "tasks" ? t("sidebar.tasks") : t("sidebar.teamTab");
+            const { Icon, label } = tabMeta[tab];
             return (
               <button
                 key={tab}
                 type="button"
                 onClick={() => setSidebarTab(tab)}
                 className={cn(
-                  "relative flex h-6 items-center justify-center gap-1 rounded-[5px] px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                  "relative flex h-6 items-center justify-center gap-1 rounded-[5px] px-2 text-xs font-medium whitespace-nowrap transition-colors",
                   active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -190,6 +213,19 @@ export function AppSidebar({
                   />
                 ))}
               </div>
+            ) : sidebarTab === "project" ? (
+              <ProjectList
+                activeThreadId={activeThreadId}
+                onNewProjectThread={onNewProjectThread}
+                onSelectThread={onSelectThread}
+                onDeleteThread={onDeleteThread}
+                onRenameThread={onRenameThread}
+                onEditProject={onEditProject}
+                onDeleteProject={onDeleteProject}
+                onClearProjectChats={onClearProjectChats}
+                runningThreadIds={runningThreadIds}
+                onNewProject={onNewProject}
+              />
             ) : (
               <TeamList
                 activeTeamId={activeTeamId}

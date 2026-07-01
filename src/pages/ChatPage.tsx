@@ -36,6 +36,12 @@ import {
 import { TaskMonitorPanel } from "@/components/TaskMonitorPanel";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -51,12 +57,14 @@ import {
   useThreadMessages,
   useThreadPermissionMode,
   useThreadKnowledgeBaseIds,
+  useThreadAgentId,
 } from "@/stores/chat-store";
 import type { ChatAttachment, ChatSkillRef, Segment } from "@/lib/chat";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { useConfigStore } from "@/stores/config-store";
+import { useProjectsStore } from "@/stores/project/projects-store";
 import { useAlert } from "@/hooks/useAlert";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
@@ -73,6 +81,8 @@ export function ChatPage({
   setComposer,
   startExchange,
   threadId,
+  subtitle,
+  hideWorkingDirPicker = false,
 }: {
   activeThreadTitle: string;
   agentId: string;
@@ -99,6 +109,10 @@ export function ChatPage({
     threadId: string;
   };
   threadId: string;
+  // 副标题：项目名 · 会话名（项目聊天页专用）
+  subtitle?: string;
+  // 隐藏工作目录选择按钮（项目聊天页专用，目录由项目绑定）
+  hideWorkingDirPicker?: boolean;
 }) {
   // 本会话的消息直接从 store 按 threadId 订阅——其它后台会话的流式更新
   // 不会换本会话 messages 的引用，因而不会触发本页重渲染。
@@ -106,6 +120,17 @@ export function ChatPage({
   const skills = useSkillsStore((state) => state.skills);
   const permissionMode = useThreadPermissionMode(threadId);
   const knowledgeBaseIds = useThreadKnowledgeBaseIds(threadId);
+  // 助手列表和当前会话的助手 ID
+  const agents = useConfigStore((state) => state.agents);
+  const threadAgentId = useThreadAgentId(threadId) || agentId;
+  // 当前对话所属项目的系统提示词
+  const projects = useProjectsStore((state) => state.projects);
+  const currentProjectId = useChatStore(
+    (state) => state.threads.find((t) => t.id === threadId)?.projectId,
+  );
+  const projectSystemPrompt = currentProjectId
+    ? projects.find((p) => p.id === currentProjectId)?.systemPrompt
+    : undefined;
   const setThreadPermissionMode = useChatStore(
     (state) => state.setThreadPermissionMode,
   );
@@ -148,11 +173,15 @@ export function ChatPage({
     resetOverride();
   }, [threadId, resetOverride]);
 
-  // 显示用的工作目录：只取该对话自身的（task-monitor，按 threadId）。
-  // 不回退全局默认——否则未选目录的对话会误显示别的对话刚选的路径。
-  const workingDir = useTaskMonitorStore(
+  // 显示用的工作目录：优先取该对话自身的（task-monitor，按 threadId），
+  // 其次回退到项目共享目录，最后不回退全局默认——否则未选目录的对话会误显示别的对话刚选的路径。
+  const threadWorkingDir = useTaskMonitorStore(
     (state) => state.byThread[threadId]?.workingDir ?? "",
   );
+  const projectWorkingDir = currentProjectId
+    ? projects.find((p) => p.id === currentProjectId)?.workingDir ?? ""
+    : "";
+  const workingDir = threadWorkingDir || projectWorkingDir;
 
   // 会话文件目录路径（用于右侧面板显示）
   const [sessionFilesDir, setSessionFilesDir] = useState<string>("");
@@ -172,7 +201,16 @@ export function ChatPage({
       // 不动全局默认（全局默认仅由首页选目录更新，作为新会话初始值）。
       useTaskMonitorStore.getState().setWorkingDir(threadId, dir);
       void setSessionWorkingDir(threadId, dir);
+      // 项目会话：同步更新项目共享工作目录，使项目内所有会话共享同一目录
+      if (currentProjectId) {
+        void useProjectsStore.getState().updateProject(currentProjectId, { workingDir: dir })
+          .catch((err) => console.error("更新项目工作目录失败:", err));
+      }
     }
+  };
+
+  const handleAgentChange = (newAgentId: string) => {
+    useChatStore.getState().setThreadAgentId(threadId, newAgentId);
   };
 
   const handleKnowledgeChange = (ids: string[]) => {
@@ -264,11 +302,15 @@ export function ChatPage({
     const sendSkillRefs = buildSkillRefs(sendSkillIds, skills);
     const pendingAttachments = attachments;
 
-    // 获取工作目录：优先使用当前会话的工作目录，回退到全局默认；
+    // 获取工作目录：优先使用当前会话的工作目录，回退到项目共享目录或全局默认；
     // 若仍无，则自动使用会话临时目录（自动创建并绑定）
     const exchangeThreadId = threadId;
+    const projectConfig = currentProjectId
+      ? useProjectsStore.getState().projects.find((p) => p.id === currentProjectId)
+      : undefined;
     let workingDir =
       useTaskMonitorStore.getState().getMonitor(exchangeThreadId).workingDir ||
+      projectConfig?.workingDir ||
       useChatStore.getState().workingDir ||
       undefined;
 
@@ -342,6 +384,7 @@ export function ChatPage({
         attachments: sendAttachments,
         permissionMode,
         knowledgeBaseIds,
+        projectSystemPrompt,
       },
     );
   };
@@ -365,7 +408,7 @@ export function ChatPage({
     <>
       <div className="flex h-full min-w-0">
         <section className="relative flex h-full min-w-0 flex-1 flex-col">
-          <PageHeader title={activeThreadTitle || t("chat:newChat")} />
+          <PageHeader title={subtitle || activeThreadTitle || t("chat:newChat")} />
 
           <div
             ref={scrollAreaRef}
@@ -404,6 +447,10 @@ export function ChatPage({
             attachmentCount={attachments.length}
             knowledgeBaseIds={knowledgeBaseIds}
             onKnowledgeChange={handleKnowledgeChange}
+            hideWorkingDirPicker={hideWorkingDirPicker}
+            agents={agents}
+            currentAgentId={threadAgentId}
+            onAgentChange={handleAgentChange}
           />
         </section>
 
@@ -452,6 +499,10 @@ function Composer({
   attachmentCount,
   knowledgeBaseIds,
   onKnowledgeChange,
+  hideWorkingDirPicker = false,
+  agents,
+  currentAgentId,
+  onAgentChange,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -472,11 +523,19 @@ function Composer({
   attachmentCount: number;
   knowledgeBaseIds: string[];
   onKnowledgeChange: (ids: string[]) => void;
+  // 隐藏工作目录选择按钮（项目对话页专用，目录由项目绑定）
+  hideWorkingDirPicker?: boolean;
+  // 助手列表和切换（会话级，不影响其他会话）
+  agents: { id: string; name: string; avatar?: string }[];
+  currentAgentId: string;
+  onAgentChange: (agentId: string) => void;
 }) {
   const { t } = useTranslation();
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  // 追踪助手下拉菜单开关，打开时隐藏 Tooltip 避免重叠
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   // 响应式宽度断点
   const breakpoint = useResponsiveWidth();
 
@@ -637,6 +696,49 @@ function Composer({
               mode={permissionMode}
               onChange={onPermissionModeChange}
             />
+            {/* 会话级助手切换：切换仅影响当前会话，不影响其他会话 */}
+            <DropdownMenu onOpenChange={setAgentMenuOpen}>
+              <Tooltip open={agentMenuOpen ? false : undefined}>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      className={
+                        breakpoint === "narrow"
+                          ? "size-7 justify-center rounded-md p-0 bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                          : "h-7 min-w-0 gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                      }
+                      type="button"
+                      variant="ghost"
+                    >
+                      <span className="text-sm leading-none">
+                        {agents.find((a) => a.id === currentAgentId)?.avatar || "⚡"}
+                      </span>
+                      {breakpoint !== "narrow" ? (
+                        <span className="truncate">
+                          {agents.find((a) => a.id === currentAgentId)?.name || ""}
+                        </span>
+                      ) : null}
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {agents.find((a) => a.id === currentAgentId)?.name || currentAgentId}
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="start" className="w-56">
+                {agents.map((agent) => (
+                  <DropdownMenuItem
+                    key={agent.id}
+                    onSelect={() => onAgentChange(agent.id)}
+                    className={agent.id === currentAgentId ? "font-medium" : ""}
+                  >
+                    <span className="mr-1.5 text-sm leading-none">{agent.avatar || "⚡"}</span>
+                    <span className="truncate">{agent.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {!hideWorkingDirPicker && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -655,6 +757,7 @@ function Composer({
               </TooltipTrigger>
               <TooltipContent>{workingDir || t("chat:selectDirectory")}</TooltipContent>
             </Tooltip>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

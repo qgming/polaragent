@@ -18,3 +18,11 @@ export {
 export {
   appendGuidanceMessage,
 } from "./messages";
+export {
+  getSessionProjectId,
+  setSessionProjectId,
+} from "./preferences";
+export {
+  getSessionAgentId,
+  setSessionAgentId,
+} from "./preferences";

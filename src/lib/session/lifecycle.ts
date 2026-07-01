@@ -11,6 +11,7 @@ import {
 } from "./meta-selection";
 import { TEAM_REF_ENTRY } from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
+import { getSessionProjectId } from "./preferences";
 import { deleteTeamSessionFilesDir } from "./files";
 import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
@@ -57,7 +58,7 @@ async function openOrCreateSessionImpl(
 }
 
 export async function listSessions(): Promise<
-  Array<{ id: string; createdAt: string; path: string; title?: string; updatedAt?: number }>
+  Array<{ id: string; createdAt: string; path: string; title?: string; updatedAt?: number; projectId?: string }>
 > {
   const repo = await getRepo();
   const metas = await repo.list().catch(() => []);
@@ -77,14 +78,17 @@ export async function listSessions(): Promise<
       const cached = index[best.id];
       let title: string | undefined;
       let updatedAt: number | undefined;
+      let projectId: string | undefined;
       if (cached) {
         title = cached.title;
         updatedAt = cached.updatedAt;
+        projectId = cached.projectId;
       } else {
         indexMissing = true;
         title = await readTitleFromSessions(repo, group);
+        projectId = await getSessionProjectId(best.id);
       }
-      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt };
+      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt, projectId };
     },
     { concurrency: LOCAL_IO_CONCURRENCY },
   );
@@ -95,6 +99,7 @@ export async function listSessions(): Promise<
         id: item.id,
         title: item.title || "新对话",
         updatedAt: Date.parse(item.createdAt) || 0,
+        projectId: item.projectId,
       })),
     );
   }

@@ -1,7 +1,7 @@
 // 应用根组件：布局与全局状态编排
 // src/App.tsx
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence } from "motion/react";
 
 import { abortAgentThread, resetAgent } from "@/ai/agent";
@@ -19,7 +19,9 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
 import { TeamEditorModal } from "@/components/team/TeamEditorModal";
+import { ProjectEditorModal } from "@/components/project/ProjectEditorModal";
 import type { TeamConfig } from "@/types/config";
+import type { ProjectConfig } from "@/types/config";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { HomePage } from "@/pages/HomePage";
@@ -36,9 +38,11 @@ import {
   useThreadSummaries,
   useThreadTitle,
 } from "@/stores/chat-store";
+import { useConversationStore } from "@/stores/conversation-store";
 import { useConfigStore } from "@/stores/config-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
+import { useProjectsStore } from "@/stores/project/projects-store";
 import { clearTeamSessions } from "@/lib/session/team";
 import type { SettingsSection } from "@/pages/SettingsPage";
 
@@ -49,10 +53,15 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"tasks" | "team">("tasks");
+  const [sidebarTab, setSidebarTab] = useState<"tasks" | "project" | "team">("tasks");
   // 团队聊天视图：非空时主区域渲染 TeamChatPage（覆盖普通页面内容）。
   const [teamChatView, setTeamChatView] = useState<{
     teamId: string;
+    threadId: string;
+  } | null>(null);
+  // 项目聊天视图：非空时主区域用 ChatPage 渲染（传入 subtitle + hideWorkingDirPicker）。
+  const [projectChatView, setProjectChatView] = useState<{
+    projectId: string;
     threadId: string;
   } | null>(null);
   // 侧边栏只订阅轻量摘要；当前会话的 title/agentId 单独按标量订阅。
@@ -103,6 +112,15 @@ function App() {
   );
   // 侧边栏「编辑团队」用的弹窗状态
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+
+  // 项目相关：列表 + 编辑弹窗状态
+  const projects = useProjectsStore((state) => state.projects);
+  const addProject = useProjectsStore((state) => state.addProject);
+  const updateProject = useProjectsStore((state) => state.updateProject);
+  const removeProject = useProjectsStore((state) => state.removeProject);
+  // 新建/编辑项目弹窗：null 关闭；project 字段非空时为编辑模式
+  const [projectEditorOpen, setProjectEditorOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectConfig | null>(null);
   const toasts = useToast((state) => state.toasts);
   const removeToast = useToast((state) => state.remove);
 
@@ -141,21 +159,30 @@ function App() {
     if (page === "chat") {
       showHome();
     }
-    // 切到任意主导航页面时退出团队聊天视图
+    // 切到任意主导航页面时退出团队/项目聊天视图
     setTeamChatView(null);
+    setProjectChatView(null);
     setActivePage(page);
   };
 
   const openSettingsSection = (section: SettingsSection) => {
     setSettingsSection(section);
     setTeamChatView(null);
+    setProjectChatView(null);
     setActivePage("settings");
   };
 
   const handleSelectThread = (threadId: string) => {
     selectThread(threadId);
     setTeamChatView(null);
-    setActivePage("chat");
+    // 项目会话走 projectChatView 独立视图
+    const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
+    if (thread?.projectId) {
+      setProjectChatView({ projectId: thread.projectId, threadId });
+    } else {
+      setProjectChatView(null);
+      setActivePage("chat");
+    }
   };
 
   // 清空指定会话：该会话的消息会被清空，需先中止其正在运行的线程并重置 agent 上下文
@@ -232,6 +259,103 @@ function App() {
     setEditingTeamId(null);
   };
 
+  // ===== 项目相关 =====
+
+  // 在项目内新建对话：传入 projectId 关联项目，切换到项目聊天视图
+  const handleNewProjectThread = (projectId: string) => {
+    const threadId = createThread(undefined, undefined, undefined, projectId);
+    setTeamChatView(null);
+    setProjectChatView({ projectId, threadId });
+  };
+
+  // 清空某项目内的全部会话
+  const handleClearProjectChats = (projectId: string) => {
+    const projectThreads = useChatStore
+      .getState()
+      .threads.filter((thread) => thread.projectId === projectId);
+    projectThreads.forEach((thread) => {
+      abortAgentThread(thread.id);
+      resetAgent(thread.id);
+      clearThread(thread.id);
+    });
+    // 等待所有磁盘写入完成，失败时记录日志避免内存/磁盘不一致
+    void Promise.allSettled(
+      projectThreads.map((thread) =>
+        useConversationStore.getState().clearConversation(thread.id),
+      ),
+    ).then((results) => {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          console.error(`清空项目会话磁盘失败 ${projectThreads[i].id}:`, r.reason);
+        }
+      });
+    });
+    // 若正处于该项目聊天页，退出
+    setProjectChatView((view) => (view?.projectId === projectId ? null : view));
+  };
+
+  // 删除项目（清空该项目的全部会话后删除项目本身）
+  const handleDeleteProject = (projectId: string) => {
+    // 先中止并销毁该项目的全部会话
+    const projectThreads = useChatStore
+      .getState()
+      .threads.filter((thread) => thread.projectId === projectId);
+    projectThreads.forEach((thread) => {
+      abortAgentThread(thread.id);
+      resetAgent(thread.id);
+      deleteThread(thread.id);
+    });
+    // 等待所有磁盘删除完成，失败时记录日志避免重启后旧会话"复活"
+    void Promise.allSettled(
+      projectThreads.map((thread) =>
+        useConversationStore.getState().deleteConversation(thread.id),
+      ),
+    ).then((results) => {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          console.error(`删除项目会话磁盘失败 ${projectThreads[i].id}:`, r.reason);
+        }
+      });
+    });
+    void removeProject(projectId);
+    // 若正处于该项目聊天页，退出
+    setProjectChatView((view) => (view?.projectId === projectId ? null : view));
+  };
+
+  // 新建项目弹窗
+  const handleNewProject = () => {
+    setEditingProject(null);
+    setProjectEditorOpen(true);
+  };
+
+  // 编辑项目弹窗
+  const handleEditProject = (projectId: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (project) {
+      setEditingProject(project);
+      setProjectEditorOpen(true);
+    }
+  };
+
+  // 保存项目（新建或编辑）
+  const handleSaveProject = async (project: ProjectConfig) => {
+    if (editingProject) {
+      // 编辑模式
+      await updateProject(project.id, project);
+    } else {
+      // 新建模式
+      await addProject(project);
+    }
+    setProjectEditorOpen(false);
+    setEditingProject(null);
+  };
+
+  // 非项目对话：侧边栏「会话」tab 显示的对话（过滤掉属于项目的）
+  const orphanThreads = useMemo(
+    () => threadSummaries.filter((thread) => !thread.projectId),
+    [threadSummaries],
+  );
+
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
@@ -282,11 +406,17 @@ function App() {
                   onNewTeamThread={handleNewTeamThread}
 	                  onRenameTeamThread={handleRenameTeamThread}
 	                  onDeleteTeamThread={handleDeleteTeamThread}
+	                  // 项目相关
+	                  onNewProjectThread={handleNewProjectThread}
+	                  onEditProject={handleEditProject}
+	                  onDeleteProject={handleDeleteProject}
+	                  onClearProjectChats={handleClearProjectChats}
+	                  onNewProject={handleNewProject}
 	                  runningThreadIds={runningThreadIds}
 	                  runningTeamThreadIds={runningTeamThreadIds}
 	                  sidebarTab={sidebarTab}
                   setSidebarTab={setSidebarTab}
-                  threads={threadSummaries}
+                  threads={orphanThreads}
                 />
               ) : null}
             </AnimatePresence>
@@ -296,6 +426,27 @@ function App() {
                 <TeamChatPage
                   teamId={teamChatView.teamId}
                   threadId={teamChatView.threadId}
+                />
+              ) : projectChatView ? (
+                <ChatPage
+                  activeThreadTitle={activeThreadTitle}
+                  agentId={activeThreadAgentId || activeAgentId}
+                  applyStreamingUpdate={applyStreamingUpdate}
+                  composer={composer}
+                  failAssistant={failAssistant}
+                  finishAssistant={finishAssistant}
+                  setComposer={setComposer}
+                  startExchange={startExchange}
+                  threadId={projectChatView.threadId}
+                  subtitle={
+                    (() => {
+                      const projectName = projects.find((p) => p.id === projectChatView.projectId)?.name;
+                      return projectName && activeThreadTitle
+                        ? `${projectName} · ${activeThreadTitle}`
+                        : projectName || activeThreadTitle;
+                    })()
+                  }
+                  hideWorkingDirPicker
                 />
               ) : (
                 <>
@@ -354,6 +505,17 @@ function App() {
             team={editingTeam}
             onClose={() => setEditingTeamId(null)}
             onSave={handleSaveEditingTeam}
+          />
+        ) : null}
+        {/* 新建/编辑项目弹窗 */}
+        {projectEditorOpen ? (
+          <ProjectEditorModal
+            project={editingProject}
+            onClose={() => {
+              setProjectEditorOpen(false);
+              setEditingProject(null);
+            }}
+            onSave={handleSaveProject}
           />
         ) : null}
         <GlobalSessionSearch

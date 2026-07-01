@@ -11,6 +11,7 @@
 // 历史上下文由 pi Session 原生管理，无需手动注入。
 
 import { agentManager, type TeamContext } from "./agent-manager";
+import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
 import { formatSkillInvocationWithFiles } from "./tools/skills";
@@ -67,6 +68,8 @@ export interface PromptOptions {
   knowledgeBaseIds?: string[];
   // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
   teamContext?: TeamContext;
+  // 项目级别的系统提示词（当对话属于某项目时注入）
+  projectSystemPrompt?: string;
 }
 
 // 把「选中技能的全文与目录树 + 选中文件的内容 + 用户问题」拼成发给模型的实际输入（方案 C）。
@@ -236,13 +239,14 @@ export async function promptAgent(
   const batcher = createRafBatcher(handlers.onStreamUpdate);
 
   try {
-    let harness;
+    let harness: AgentHarness;
     try {
       harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
+        projectSystemPrompt: options.projectSystemPrompt,
       });
     } catch (error) {
       // 运行时未初始化时兜底重建一次
@@ -252,6 +256,7 @@ export async function promptAgent(
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
+        projectSystemPrompt: options.projectSystemPrompt,
       });
     }
 

@@ -21,3 +21,7 @@ export const TEAM_VOTE_ENTRY = "team_vote";
 export const GOAL_CONFIG_ENTRY = "goal_config";
 // 目标模式事件（状态变更、检测结果、续跑 prompt、错误）
 export const GOAL_EVENT_ENTRY = "goal_event";
+// 项目会话归属：把会话所属的 projectId 落为一条会话条目
+export const PROJECT_REF_ENTRY = "project_ref";
+// 会话级助手 ID：把会话当前使用的 agentId 落为一条会话条目
+export const AGENT_ID_ENTRY = "agent_id";
