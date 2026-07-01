@@ -67,7 +67,18 @@ export class ElectronExecutionEnv implements ExecutionEnv {
   }
 
   async readBinaryFile(path: string): Promise<Result<Uint8Array, FileError>> {
-    return err(new FileError("not_supported", "readBinaryFile 未实现", path));
+    try {
+      const base64 = await window.polaragent.fs.readBinaryFile(path);
+      // base64 → Uint8Array
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return ok(bytes);
+    } catch (error) {
+      return err(toFileError(error, path));
+    }
   }
 
   async writeFile(path: string, content: string | Uint8Array): Promise<Result<void, FileError>> {
@@ -163,16 +174,51 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async createTempDir(): Promise<Result<string, FileError>> {
-    return err(new FileError("not_supported", "createTempDir 未实现"));
+  async createTempDir(prefix?: string): Promise<Result<string, FileError>> {
+    try {
+      const dir = await window.polaragent.fs.createTempDir(prefix ?? "polaragent-");
+      return ok(dir);
+    } catch (error) {
+      return err(toFileError(error));
+    }
   }
 
-  async createTempFile(): Promise<Result<string, FileError>> {
-    return err(new FileError("not_supported", "createTempFile 未实现"));
+  async createTempFile(options?: {
+    prefix?: string;
+    suffix?: string;
+  }): Promise<Result<string, FileError>> {
+    try {
+      const filePath = await window.polaragent.fs.createTempFile({
+        prefix: options?.prefix ?? "",
+        suffix: options?.suffix ?? "",
+      });
+      return ok(filePath);
+    } catch (error) {
+      return err(toFileError(error));
+    }
   }
 
-  async exec(): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
-    return err(new ExecutionError("shell_unavailable", "当前环境不支持 shell 执行"));
+  async exec(
+    command: string,
+    options?: { cwd?: string; timeout?: number },
+  ): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
+    try {
+      const result = await window.polaragent.shell.exec({
+        command,
+        cwd: options?.cwd ?? this.cwd,
+        timeoutMs: options?.timeout ? options.timeout * 1000 : undefined,
+      });
+      if (result.blocked) {
+        return err(new ExecutionError("unknown", `命令被安全策略拦截：${result.error ?? ""}`));
+      }
+      return ok({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode ?? -1,
+      });
+    } catch (error) {
+      return err(new ExecutionError("unknown", error instanceof Error ? error.message : String(error)));
+    }
   }
 
   async cleanup(): Promise<void> {}

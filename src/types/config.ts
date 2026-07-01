@@ -429,6 +429,8 @@ export interface SkillConfig {
     metadata?: Record<string, string>;
     allowedTools?: string;
     instructions?: string;
+    // 0.80 新增：对模型隐藏技能（仅应用显式调用，不出现在模型可见技能清单）
+    disableModelInvocation?: boolean;
   };
   supportedLanguages?: string[];
 }

@@ -63,7 +63,7 @@ export function runBashTool(ctx: ToolContext): AgentTool<typeof runBashParams> {
       "高危命令（rm -rf /、shutdown、mkfs、format 等）会被拦截。" +
       "长输出会被截断，请用具体命令避免无意义的大量输出。",
     parameters: runBashParams,
-    execute: async (_id, params: Static<typeof runBashParams>) => {
+    execute: async (_id, params: Static<typeof runBashParams>, _signal, onUpdate) => {
       const command = params.command.trim();
       if (!command) {
         return {
@@ -99,6 +99,12 @@ export function runBashTool(ctx: ToolContext): AgentTool<typeof runBashParams> {
         typeof params.timeout === "number" && Number.isFinite(params.timeout)
           ? Math.trunc(params.timeout)
           : DEFAULT_TIMEOUT_MS;
+
+      // 推送执行中状态（onUpdate 回调让任务面板实时显示）
+      onUpdate?.({
+        content: text(`$ ${command}\n(执行中...)`),
+        details: { command, phase: "executing" },
+      });
 
       try {
         const result = await runShell({

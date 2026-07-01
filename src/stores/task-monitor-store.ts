@@ -76,6 +76,12 @@ interface TaskMonitorState {
     stepId: string,
     update: { label: string; status: StepStatus },
   ) => void;
+  // 工具执行中间进度更新（不改 status，仅更新 label）
+  updateStep: (
+    threadId: string,
+    stepId: string,
+    update: { label: string },
+  ) => void;
   // 工作目录
   setWorkingDir: (threadId: string, dir: string) => void;
   // 从持久化（jsonl 回读）恢复某会话的监控快照（待办 + 产物）
@@ -188,6 +194,25 @@ export const useTaskMonitorStore = create<TaskMonitorState>((set, get) => ({
       const steps = monitor.steps.map((step) =>
         step.id === stepId
           ? { ...step, label: update.label, status: update.status }
+          : step,
+      );
+      return {
+        byThread: {
+          ...state.byThread,
+          [threadId]: { ...monitor, steps },
+        },
+      };
+    });
+  },
+
+  updateStep: (threadId, stepId, update) => {
+    set((state) => {
+      const monitor = state.byThread[threadId] ?? emptyMonitor();
+      const found = monitor.steps.some((step) => step.id === stepId);
+      if (!found) return {};
+      const steps = monitor.steps.map((step) =>
+        step.id === stepId
+          ? { ...step, label: update.label }
           : step,
       );
       return {

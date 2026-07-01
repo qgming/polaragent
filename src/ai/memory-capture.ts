@@ -1,5 +1,5 @@
 import { firstModelService, resolveModelService } from "./model-router";
-import { chatCompletion, isElectronRuntime } from "@/lib/electron/electron-api";
+import { callLlm } from "./llm-call";
 import {
   createMemory,
   hasSensitiveMemoryContent,
@@ -58,7 +58,6 @@ export async function captureMemoriesFromExchange(
   const settings = useConfigStore.getState().settings;
   const memorySettings = settings.memory;
   if (!memorySettings?.enabled || !memorySettings.autoWrite) return;
-  if (!isElectronRuntime()) return;
 
   const config = memoryApiConfigFromSettings(settings);
   if (!config) return;
@@ -69,22 +68,14 @@ export async function captureMemoriesFromExchange(
   const projectKey = projectKeyFromWorkingDir(params.workingDir);
 
   try {
-    const result = await chatCompletion({
-      baseUrl: service.provider.baseURL,
-      apiKey: service.provider.apiKey,
-      model: service.model.id,
+    const result = await callLlm(service, {
       systemPrompt: buildCaptureSystemPrompt(Boolean(projectKey && memorySettings.projectMemoryEnabled)),
-      messages: [
-        {
-          role: "user",
-          content: buildCaptureUserPrompt(params),
-        },
-      ],
+      userPrompt: buildCaptureUserPrompt(params),
       temperature: 0.1,
       maxTokens: 700,
     });
 
-    const candidates = parseMemoryCandidates(result.content)
+    const candidates = parseMemoryCandidates(result)
       .map((candidate) =>
         normalizeCandidate(candidate, {
           allowProject: Boolean(projectKey && memorySettings.projectMemoryEnabled),

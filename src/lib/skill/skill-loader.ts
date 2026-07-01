@@ -188,6 +188,8 @@ export class SkillLoader {
         description: skill.description,
         content: skill.settings.instructions ?? "",
         filePath: skill.filePath,
+        // 0.80 新增：支持对模型隐藏技能（仅应用显式调用）
+        disableModelInvocation: skill.settings.disableModelInvocation ?? false,
       });
     }
     return result;

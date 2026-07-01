@@ -1,6 +1,7 @@
-// IPC：文件系统读写、目录列举、stat
+// IPC：文件系统读写、目录列举、stat、临时文件
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 
 const { ensureDir, readText } = require("../lib/fs-utils.cjs");
@@ -8,6 +9,11 @@ const { ensureDir, readText } = require("../lib/fs-utils.cjs");
 function register(ipcMain) {
   ipcMain.handle("fs:read-file", (_event, { path: target }) => readText(target));
   ipcMain.handle("fs:read-base64-file", async (_event, { path: target }) => {
+    const buffer = await fsp.readFile(target);
+    return buffer.toString("base64");
+  });
+  // 读取二进制文件，返回 base64 编码（渲染层再 atob 转 Uint8Array）
+  ipcMain.handle("fs:read-binary-file", async (_event, { path: target }) => {
     const buffer = await fsp.readFile(target);
     return buffer.toString("base64");
   });
@@ -43,6 +49,20 @@ function register(ipcMain) {
   ipcMain.handle("fs:stat", async (_event, { path: target }) => {
     const stat = await fsp.stat(target);
     return { isDirectory: stat.isDirectory(), isFile: stat.isFile(), isSymlink: stat.isSymbolicLink(), size: stat.size, mtimeMs: stat.mtimeMs };
+  });
+  // 创建临时目录，返回绝对路径
+  ipcMain.handle("fs:create-temp-dir", async (_event, { prefix }) => {
+    const tmpBase = os.tmpdir();
+    const dir = await fsp.mkdtemp(path.join(tmpBase, prefix || "polaragent-"));
+    return dir;
+  });
+  // 创建临时文件，返回绝对路径
+  ipcMain.handle("fs:create-temp-file", async (_event, { prefix, suffix }) => {
+    const tmpBase = os.tmpdir();
+    const fileName = `${prefix || ""}${Date.now()}-${Math.random().toString(36).slice(2)}${suffix || ""}`;
+    const filePath = path.join(tmpBase, fileName);
+    await fsp.writeFile(filePath, "", "utf8");
+    return filePath;
   });
 }
 

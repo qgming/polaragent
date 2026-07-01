@@ -19,12 +19,15 @@ import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import { appendGuidanceMessage } from "@/lib/session/personal";
 import { appendTeamGuidanceMessage } from "@/lib/session/team";
-import { autoCompactIfNeeded } from "@/lib/session/compaction";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { ChatAttachment, Segment } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
-import type { ImageContent } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ImageContent, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { clampThinkingLevel } from "@earendil-works/pi-ai";
+import {
+  AgentHarnessError,
+  type AgentMessage,
+} from "@earendil-works/pi-agent-core";
 
 export interface AgentResult {
   content: string;
@@ -36,6 +39,8 @@ export interface AgentResult {
   };
   // 助手消息的有序过程结构（思考/工具/正文），用于渲染与持久化
   segments: Segment[];
+  // Provider 缓存命中标记（0.80 after_provider_response 事件提取）
+  providerCacheHit?: boolean;
 }
 
 export interface AgentHandlers {
@@ -135,14 +140,20 @@ async function buildImageInputs(attachments?: ChatAttachment[]): Promise<ImageCo
   return images;
 }
 
-function selectThinkingLevel(input: string): "minimal" | "low" | "medium" | "high" {
+// 思考级别：支持 0.80 新增的 xhigh 档位（部分模型支持）
+// 钳位由 clampThinkingLevel 在调用处完成，确保不向模型发送不支持的级别
+function selectThinkingLevel(input: string): ModelThinkingLevel {
   const wordCount = input.split(/\s+/).length;
   const hasCode = /```|`\w+`/.test(input);
   const hasComplexQuery = /如何|怎么|为什么|设计|实现|优化|架构/.test(input);
+  const hasMultiStepReasoning = /步骤|流程|方案|对比|分析|评估|排查|调试|重构|迁移/.test(input);
+  const hasLongOutput = /文档|报告|总结|生成.*完整|写.*全部/.test(input);
 
   if (wordCount < 10 && !hasCode && !hasComplexQuery) return "minimal";
   if (wordCount < 30 && !hasComplexQuery) return "low";
   if (wordCount < 100 || hasCode) return "medium";
+  // 超长输入 + 多步推理/架构设计/复杂对比 → xhigh（部分模型支持，clampThinkingLevel 会自动降级）
+  if (wordCount > 300 && (hasMultiStepReasoning || hasLongOutput)) return "xhigh";
   return "high";
 }
 
@@ -156,6 +167,8 @@ export async function promptAgent(
   options: PromptOptions,
 ) {
   let settled = false;
+  // Provider 响应缓存命中标记（由 after_provider_response 事件填充）
+  let providerCacheHit = false;
   // 收集本轮工具结果摘要：toolCallId -> { label, isError, resultText, todos?, details? }
   const toolResults = new Map<
     string,
@@ -343,6 +356,18 @@ export async function promptAgent(
           break;
         }
 
+        case "tool_execution_update": {
+          // 工具执行中间进度：partialResult 含中间结果，更新步骤面板的 label
+          const partial = event.partialResult;
+          const partialLabel = summarizePartialResult(event.toolName, partial);
+          if (partialLabel) {
+            monitor.updateStep(options.threadId, event.toolCallId, {
+              label: partialLabel,
+            });
+          }
+          break;
+        }
+
         case "tool_execution_end": {
           const label = summarizeToolResult(event.toolName, event.result);
           const resultDetails = extractToolDetails(event.result);
@@ -437,7 +462,21 @@ export async function promptAgent(
               totalTokens: lastAssistant.usage?.totalTokens ?? 0,
             },
             segments,
+            providerCacheHit,
           });
+          break;
+        }
+
+        case "after_provider_response": {
+          // 提取缓存命中与延迟信息（0.80 新增事件）
+          // 响应头中可能含缓存相关字段，记录供 agent_end 时附加到消息元信息
+          const cacheHeader =
+            event.headers["x-cache"] ??
+            event.headers["cf-cache-status"] ??
+            event.headers["anthropic-cache-hit"];
+          if (cacheHeader) {
+            providerCacheHit = String(cacheHeader).toLowerCase().includes("hit");
+          }
           break;
         }
       }
@@ -452,12 +491,11 @@ export async function promptAgent(
       options.attachments?.filter((attachment) => attachment.kind === "image"),
     );
 
-    // 动态调整 thinking level
-    const thinkingLevel = selectThinkingLevel(modelInput);
+    // 动态调整 thinking level：先按输入复杂度选档，再用 clampThinkingLevel 钳位到模型实际支持的范围
+    const rawThinkingLevel = selectThinkingLevel(modelInput);
+    const model = harness.getModel();
+    const thinkingLevel = clampThinkingLevel(model, rawThinkingLevel);
     await harness.setThinkingLevel(thinkingLevel);
-
-    // 智能压缩：基于 token 数自动触发
-    await autoCompactIfNeeded(harness);
 
     const imageInputs = await buildImageInputs(options.attachments);
     if (imageInputs.length > 0) {
@@ -473,7 +511,12 @@ export async function promptAgent(
   } catch (error) {
     cancelFlush();
     if (!settled) {
-      handlers.onError(error instanceof Error ? error.message : String(error));
+      // 使用 0.80 结构化错误类型：AgentHarnessError 携带 code 字段
+      if (error instanceof AgentHarnessError) {
+        handlers.onError(`[AgentHarness:${error.code}] ${error.message}`);
+      } else {
+        handlers.onError(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 }
@@ -590,6 +633,31 @@ function extractToolDetails(result: unknown): Record<string, unknown> | undefine
   if (!result || typeof result !== "object") return undefined;
   const details = (result as { details?: Record<string, unknown> }).details;
   return details && typeof details === "object" ? details : undefined;
+}
+
+// 工具中间进度 -> 步骤面板里的单行摘要（tool_execution_update 事件用）
+function summarizePartialResult(toolName: string, partial: unknown): string | undefined {
+  if (!partial || typeof partial !== "object") return undefined;
+  const details = (partial as { details?: Record<string, unknown> }).details;
+  if (details) {
+    // bash 执行中：显示 phase
+    if (toolName === "run_bash" && typeof details.phase === "string") {
+      return details.phase === "executing" ? "正在执行命令..." : undefined;
+    }
+    // 其他工具的中间进度：如果有 content 文本，取前 60 字符
+    const content = (partial as { content?: unknown[] }).content;
+    if (Array.isArray(content)) {
+      const firstText = content.find(
+        (c): c is { type: "text"; text: string } =>
+          c != null && typeof c === "object" && (c as { type?: string }).type === "text",
+      );
+      if (firstText) {
+        const snippet = firstText.text.slice(0, 60);
+        return snippet.length < firstText.text.length ? `${snippet}...` : snippet;
+      }
+    }
+  }
+  return undefined;
 }
 
 // 工具结果 -> 步骤面板里的单行摘要

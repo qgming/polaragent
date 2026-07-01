@@ -42,6 +42,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[];
   skillRefs?: ChatSkillRef[];
   segments?: Segment[];
+  // Provider 缓存命中标记（0.80 after_provider_response 事件提取）
+  providerCacheHit?: boolean;
 }
 
 export interface ChatThread {

@@ -32,6 +32,11 @@ import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
 } from "@/types/permissions";
+import { buildModelsFromConfigs, resetModelsCache } from "./pi-models";
+import {
+  registerSessionResourceCleanup,
+  cleanupSessionResources,
+} from "@earendil-works/pi-ai";
 
 // 团队上下文：成员发言时叠加到该成员自身配置之上。
 export interface TeamContext {
@@ -136,6 +141,7 @@ export class AgentManager {
   // 按 threadId::agentId 缓存 harness（异步创建，先存 Promise 防并发重复构造）
   private harnesses = new Map<string, CachedHarness>();
   private configs = new Map<string, RuntimeAgentConfig>();
+  private registeredCleanupSessions = new Set<string>();
 
   /** 清空所有缓存的 harness 与配置（重新初始化运行时时调用）。 */
   clear() {
@@ -144,6 +150,7 @@ export class AgentManager {
     }
     this.harnesses.clear();
     this.configs.clear();
+    resetModelsCache();
   }
 
   getRuntimeModelId(agentId: string): string {
@@ -242,7 +249,6 @@ export class AgentManager {
       .agents.find((item) => item.id === agentId);
 
     const service = requireModelService(agentId);
-    const provider = service.provider;
     const model = service.model;
 
     const teamContext = options?.teamContext;
@@ -300,14 +306,15 @@ export class AgentManager {
     const tools = buildAgentTools(toolCtx);
 
     const teamSessionId = teamContext?.sessionId ?? threadId;
-    const [session, env] = await Promise.all([
+    const [session, env, models] = await Promise.all([
       teamContext
         ? openOrCreateTeamSession(teamSessionId)
         : openOrCreateSession(threadId),
       getExecutionEnv(),
+      Promise.resolve(
+        buildModelsFromConfigs(useConfigStore.getState().providers.providers),
+      ),
     ]);
-
-    const apiKey = provider.apiKey;
 
     const basePrompt = agentConfig?.config.systemPrompt ?? "";
     const skillsBlock = [
@@ -339,14 +346,11 @@ export class AgentManager {
     const harness = new AgentHarness({
       env,
       session,
+      models,
       model: model as Model<any>,
       tools,
       resources: { skills },
       systemPrompt,
-      getApiKeyAndHeaders: async (m) => ({
-        apiKey,
-        headers: m.headers,
-      }),
     });
 
     // 启用 Prompt Caching
@@ -376,6 +380,26 @@ export class AgentManager {
           };
     });
 
+    // 监听压缩事件：压缩完成时记录日志（0.79.10+ 新增 fromHook 标识）
+    harness.on("session_compact", (event) => {
+      const tokensBefore = event.compactionEntry.tokensBefore;
+      const source = event.fromHook ? "hook" : "auto";
+      console.log(
+        `[压缩] 会话 ${teamSessionId} 压缩完成: ${tokensBefore} tokens → summary (来源: ${source})`,
+      );
+      return undefined;
+    });
+
+    // 注册会话级资源清理回调（0.80 新增：session-resources 模块）
+    // disposeThread / abortThread 时调 cleanupSessionResources 触发清理
+    const sessionId = teamSessionId;
+    if (!this.registeredCleanupSessions.has(sessionId)) {
+      this.registeredCleanupSessions.add(sessionId);
+      registerSessionResourceCleanup(() => {
+        console.log(`[资源清理] 会话 ${sessionId} 资源已释放`);
+      });
+    }
+
     return harness;
   }
 
@@ -385,6 +409,9 @@ export class AgentManager {
       if (harnessBelongsToThread(key, threadId)) {
         void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
         this.harnesses.delete(key);
+        // 触发会话级资源清理（0.80 session-resources）
+        cleanupSessionResources(key.split("::")[0]);
+        this.registeredCleanupSessions.delete(key.split("::")[0]);
       }
     }
   }

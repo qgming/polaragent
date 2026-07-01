@@ -1,6 +1,7 @@
 // 工具权限审查：接入 pi-agent 的 tool_call 钩子，在真实执行前决定 allow/deny。
+// 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
 
-import { chatCompletion } from "@/lib/electron/electron-api";
+import { callLlm } from "./llm-call";
 import { toolDisplayName } from "./tools";
 import { resolveModelService } from "./model-router";
 import type { ToolPermissionMode } from "@/types/permissions";
@@ -126,17 +127,13 @@ async function reviewWithAi(
   );
 
   try {
-    const response = await chatCompletion({
-      baseUrl: service.provider.baseURL,
-      apiKey: service.provider.apiKey,
-      model: service.model.id,
+    const result = await callLlm(service, {
       systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+      userPrompt,
       temperature: 0,
       maxTokens: 300,
-      responseFormat: "json_object",
     });
-    return parseAiDecision(response.content);
+    return parseAiDecision(result);
   } catch (error) {
     return {
       allow: false,

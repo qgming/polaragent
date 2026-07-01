@@ -2,9 +2,9 @@
 // src/ai/goal-evaluator.ts
 //
 // 调用 LLM 判断当前任务是否完成目标，并生成续跑 prompt。
-// 复用现有 chatCompletion 和 model-router，与 title-generator 同模式。
+// 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
 
-import { chatCompletion, isElectronRuntime } from "@/lib/electron/electron-api";
+import { callLlm } from "./llm-call";
 import { resolveModelService, firstModelService } from "./model-router";
 import type { GoalEvaluation } from "@/lib/goal/types";
 
@@ -90,22 +90,17 @@ export async function evaluateGoal(
   ctx: EvaluationContext,
   agentId = "default",
 ): Promise<GoalEvaluation | null> {
-  if (!isElectronRuntime()) return null;
   const service = resolveModelService(agentId) ?? firstModelService();
   if (!service) return null;
   const userPrompt = buildUserPrompt(ctx);
   try {
-    const result = await chatCompletion({
-      baseUrl: service.provider.baseURL,
-      apiKey: service.provider.apiKey,
-      model: service.model.id,
+    const result = await callLlm(service, {
       systemPrompt: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      userPrompt,
       temperature: 0.2,
       maxTokens: 1024,
-      responseFormat: "json_object",
     });
-    return parseGoalEvaluation(result.content);
+    return parseGoalEvaluation(result);
   } catch (error) {
     console.error("目标检测失败:", error);
     return null;

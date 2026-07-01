@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld("polaragent", {
   fs: {
     readFile: (path) => invoke("fs:read-file", { path }),
     readBase64File: (path) => invoke("fs:read-base64-file", { path }),
+    readBinaryFile: (path) => invoke("fs:read-binary-file", { path }),
     writeFile: (path, content) => invoke("fs:write-file", { path, content }),
     writeBase64File: (path, content) => invoke("fs:write-base64-file", { path, content }),
     appendFile: (path, content) => invoke("fs:append-file", { path, content }),
@@ -59,6 +60,8 @@ contextBridge.exposeInMainWorld("polaragent", {
     listDirectoryEntries: (path) => invoke("fs:list-directory-entries", { path }),
     exists: (path) => invoke("fs:exists", { path }),
     stat: (path) => invoke("fs:stat", { path }),
+    createTempDir: (prefix) => invoke("fs:create-temp-dir", { prefix }),
+    createTempFile: (opts) => invoke("fs:create-temp-file", opts || {}),
   },
   config: {
     read: (fileName) => invoke("config:read", { fileName }),

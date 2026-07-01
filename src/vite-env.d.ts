@@ -43,6 +43,7 @@ interface Window {
     fs: {
       readFile: (path: string) => Promise<string>;
       readBase64File: (path: string) => Promise<string>;
+      readBinaryFile: (path: string) => Promise<string>;
       writeFile: (path: string, content: string) => Promise<void>;
       writeBase64File: (path: string, content: string) => Promise<void>;
       appendFile: (path: string, content: string) => Promise<void>;
@@ -58,6 +59,8 @@ interface Window {
         size: number;
         mtimeMs: number;
       }>;
+      createTempDir: (prefix?: string) => Promise<string>;
+      createTempFile: (options?: { prefix?: string; suffix?: string }) => Promise<string>;
     };
     config: {
       read: (fileName: string) => Promise<string>;

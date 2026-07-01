@@ -67,9 +67,11 @@ export async function appendTeamUserMessage(
 ): Promise<void> {
   try {
     const session = await openOrCreateTeamSession(sessionId);
+    // 构造完整的 UserMessage（包含 timestamp 必填字段）
     await session.appendMessage({
       role: "user",
       content: text,
+      timestamp: Date.now(),
     } as AgentMessage);
   } catch (error) {
     console.error(`写入团队用户消息失败 ${sessionId}:`, error);
@@ -84,9 +86,16 @@ export async function appendTeamAssistantMessage(
   try {
     const session = await openOrCreateTeamSession(sessionId);
     await session.appendCustomEntry(TEAM_SPEAKER_ENTRY, { agentId });
+    // 构造完整的 AssistantMessage（包含所有必填字段）
     await session.appendMessage({
       role: "assistant",
       content: [{ type: "text", text }],
+      api: "openai-completions",
+      provider: "polaragent",
+      model: "team-mirror",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: Date.now(),
     } as AgentMessage);
   } catch (error) {
     console.error(`写入团队成员发言失败 ${sessionId}:`, error);

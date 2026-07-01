@@ -1,9 +1,7 @@
 import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import {
-  getExecutionEnv,
   getRepo,
   getTeamRepo,
-  getTeamSessionsRoot,
   sessionPromises,
 } from "./session-repo";
 import {
@@ -27,14 +25,13 @@ export async function openOrCreateSession(
 export async function openOrCreateTeamSession(
   sessionId: string,
 ): Promise<Session> {
-  return openOrCreateSessionImpl(sessionId, getTeamRepo, "team::", true);
+  return openOrCreateSessionImpl(sessionId, getTeamRepo, "team::");
 }
 
 async function openOrCreateSessionImpl(
   sessionId: string,
   repoGetter: () => Promise<JsonlSessionRepo>,
   cachePrefix = "",
-  isTeam = false,
 ): Promise<Session> {
   const cacheKey = `${cachePrefix}${sessionId}`;
   const cached = sessionPromises.get(cacheKey);
@@ -42,7 +39,8 @@ async function openOrCreateSessionImpl(
 
   const promise = (async () => {
     const repo = await repoGetter();
-    const cwd = isTeam ? await getTeamSessionsRoot() : (await getExecutionEnv()).cwd;
+    // cwd 会被 JsonlSessionRepo 编码为子目录名，使用 "." 避免绝对路径被编码成冗长目录名
+    const cwd = ".";
     const existing = await repo.list().catch(() => []);
     const hits = existing.filter((meta) => meta.id === sessionId);
     if (hits.length > 0) {
