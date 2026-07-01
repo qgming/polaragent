@@ -1,5 +1,5 @@
 ---
-name: emotion-driven-cinematic-colossal-prompt
+name: gptimage2-prompt
 version: 3.0
 summary: 面向 GPT Image 2 的短剧、短片、电影图片提示词技能。把极简概念扩展为电影截帧、角色设定图、三视图、首帧图、关键帧图、分镜参考图、场景板、道具板、群像阵容图，以及巨物神话类电影画面。
 description: 为 GPT Image 2 创建或优化中文图片提示词，适用于短剧、短片、电影、预告片、角色设定图、三视图、角色参考图、首帧图、关键帧图、分镜参考图、场景设定图、道具设定图、群像阵容图、电影截帧、神话巨物、古神、中国龙、山海经巨兽、灾难目击和真实电影摄影质感。用户只给一个词或一句短句时也要主动补齐主体、场景、镜头、光线、材质、情绪和负面约束。优先输出可直接复制到 GPT Image 2 的中文提示词。
@@ -13,18 +13,18 @@ description: 为 GPT Image 2 创建或优化中文图片提示词，适用于短
 
 先判断用户要的是哪种图片资产，再决定读取哪些参考文件：
 
-| 用户需求 | 读取文件 | 输出目标 |
-|:---|:---|:---|
-| 电影感图片、短剧剧照、电影截帧、某一秒画面 | [`cinematic-frame.md`](references/cinematic-frame.md) + [`camera-light-composition.md`](references/camera-light-composition.md) | 一张有叙事瞬间、空间层次和真实摄影质感的画面 |
-| 中国龙、古神、山海经巨兽、海底神明、诡异佛像、黑色太阳 | [`mythic-colossal-subjects.md`](references/mythic-colossal-subjects.md) + [`cinematic-frame.md`](references/cinematic-frame.md) | 神话现实主义、巨大尺度、现实目击感 |
-| 角色设定图、人物三视图、角色卡、服装设定图 | [`design-sheets.md`](references/design-sheets.md) + [`image-generation.md`](references/image-generation.md) | 左侧三视图、右侧特写的可复用角色设定板 |
-| 物品设定图、道具设定图、武器设定图、关键物件参考图 | [`design-sheets.md`](references/design-sheets.md) + [`image-generation.md`](references/image-generation.md) | 展示多视图、结构、材质、磨损和局部特写 |
-| 双人关系图、群像阵容图 | [`image-generation.md`](references/image-generation.md) + [`templates.md`](references/templates.md) | 可用于短剧/短片前期的一致性素材 |
-| 首帧图、关键帧图、分镜参考图 | [`image-generation.md`](references/image-generation.md) + [`camera-light-composition.md`](references/camera-light-composition.md) | 能接视频、能延展动作、保留运镜空间 |
-| 场景板、道具板、氛围色调板 | [`image-generation.md`](references/image-generation.md) + [`camera-light-composition.md`](references/camera-light-composition.md) | 锁定空间、光位、动线、材质和世界观 |
-| 要交给 Seedance/即梦做图生视频的图片 | [`video-handoff.md`](references/video-handoff.md) + [`image-generation.md`](references/image-generation.md) | 为视频延展保留动作前摇、视线方向和构图余量 |
-| 用户要固定模板或字段 | [`templates.md`](references/templates.md) | 保留用户字段，只优化字段内部内容 |
-| 用户要示例或一词演示 | [`examples.md`](references/examples.md) | 参考示例质量，但不要机械照抄 |
+| 用户需求                                               | 读取文件                                                                                                                          | 输出目标                                     |
+| :----------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------- |
+| 电影感图片、短剧剧照、电影截帧、某一秒画面             | [`cinematic-frame.md`](references/cinematic-frame.md) + [`camera-light-composition.md`](references/camera-light-composition.md)   | 一张有叙事瞬间、空间层次和真实摄影质感的画面 |
+| 中国龙、古神、山海经巨兽、海底神明、诡异佛像、黑色太阳 | [`mythic-colossal-subjects.md`](references/mythic-colossal-subjects.md) + [`cinematic-frame.md`](references/cinematic-frame.md)   | 神话现实主义、巨大尺度、现实目击感           |
+| 角色设定图、人物三视图、角色卡、服装设定图             | [`design-sheets.md`](references/design-sheets.md) + [`image-generation.md`](references/image-generation.md)                       | 左侧三视图、右侧特写的可复用角色设定板       |
+| 物品设定图、道具设定图、武器设定图、关键物件参考图     | [`design-sheets.md`](references/design-sheets.md) + [`image-generation.md`](references/image-generation.md)                       | 展示多视图、结构、材质、磨损和局部特写       |
+| 双人关系图、群像阵容图                                 | [`image-generation.md`](references/image-generation.md) + [`templates.md`](references/templates.md)                               | 可用于短剧/短片前期的一致性素材              |
+| 首帧图、关键帧图、分镜参考图                           | [`image-generation.md`](references/image-generation.md) + [`camera-light-composition.md`](references/camera-light-composition.md) | 能接视频、能延展动作、保留运镜空间           |
+| 场景板、道具板、氛围色调板                             | [`image-generation.md`](references/image-generation.md) + [`camera-light-composition.md`](references/camera-light-composition.md) | 锁定空间、光位、动线、材质和世界观           |
+| 要交给 Seedance/即梦做图生视频的图片                   | [`video-handoff.md`](references/video-handoff.md) + [`image-generation.md`](references/image-generation.md)                       | 为视频延展保留动作前摇、视线方向和构图余量   |
+| 用户要固定模板或字段                                   | [`templates.md`](references/templates.md)                                                                                         | 保留用户字段，只优化字段内部内容             |
+| 用户要示例或一词演示                                   | [`examples.md`](references/examples.md)                                                                                           | 参考示例质量，但不要机械照抄                 |
 
 ## 调研结论
 

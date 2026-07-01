@@ -5,7 +5,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 
 const { dataDir } = require("../lib/app-paths.cjs");
-const { ensureDir, readText, listJsonIds } = require("../lib/fs-utils.cjs");
+const { ensureDir, readText } = require("../lib/fs-utils.cjs");
 
 // 检查是否安装了 jszip 模块
 let JSZip;
@@ -195,13 +195,14 @@ async function installSkillFromZip(zipPath) {
   }
 }
 
-// 列举 builtin/custom 下的 Skill（优先按 JSON id，回退按子目录名）
+// 列举 builtin/custom 下的 Agent Skill 目录
 async function listSkills(skillType) {
   const dir = path.join(dataDir(), "skills", skillType === "builtin" ? "builtin" : "custom");
-  return listJsonIds(dir).catch(async () => {
-    const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
-  });
+  const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 }
 
 // 读取指定 Skill 的 SKILL.md 元数据

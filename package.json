@@ -21,6 +21,7 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "start": "node electron/launch.cjs .",
+    "sync:builtin": "node scripts/sync-builtin-resources.cjs",
     "preview": "vite preview"
   },
   "build": {

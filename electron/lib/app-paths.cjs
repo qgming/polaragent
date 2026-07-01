@@ -2,6 +2,7 @@
 // 集中处理 userData 目录、内置资源同步、数据目录初始化。
 const { app } = require("electron");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const path = require("node:path");
 
 const { ensureDir, copyDirContents } = require("./fs-utils.cjs");
@@ -33,13 +34,32 @@ function appIconPath() {
 }
 
 // 把内置资源（skills/agents/mcp）同步到 userData
+async function mirrorBuiltinResource(source, target) {
+  if (!fs.existsSync(source)) return;
+
+  const baseDir = path.resolve(dataDir());
+  const resolvedTarget = path.resolve(target);
+  if (resolvedTarget !== baseDir && !resolvedTarget.startsWith(`${baseDir}${path.sep}`)) {
+    throw new Error(`Refusing to replace directory outside userData: ${resolvedTarget}`);
+  }
+
+  await fsp.rm(resolvedTarget, { recursive: true, force: true });
+  await copyDirContents(source, resolvedTarget, true);
+}
+
 async function syncBuiltinResources() {
   const root = projectResourcePath("resources");
   if (!root) return;
   const dir = dataDir();
-  await copyDirContents(path.join(root, "builtin", "skills"), path.join(dir, "skills", "builtin"), true).catch(() => {});
-  await copyDirContents(path.join(root, "builtin", "agents"), path.join(dir, "agents", "builtin"), false).catch(() => {});
-  await copyDirContents(path.join(root, "builtin", "mcp"), path.join(dir, "mcp", "builtin"), true).catch(() => {});
+  await mirrorBuiltinResource(path.join(root, "builtin", "skills"), path.join(dir, "skills", "builtin")).catch((error) => {
+    console.warn("同步内置 Skills 失败:", error);
+  });
+  await mirrorBuiltinResource(path.join(root, "builtin", "agents"), path.join(dir, "agents", "builtin")).catch((error) => {
+    console.warn("同步内置 Agents 失败:", error);
+  });
+  await mirrorBuiltinResource(path.join(root, "builtin", "mcp"), path.join(dir, "mcp", "builtin")).catch((error) => {
+    console.warn("同步内置 MCP 失败:", error);
+  });
 }
 
 // 确保数据目录及全部子目录存在，并同步内置资源

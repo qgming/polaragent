@@ -4,18 +4,18 @@
     "bannerTitle": "Teach agents more useful abilities",
     "bannerDescription": "Install the right skills so writing, research, and organizing work can be safely delegated.",
     "kitLabel": "Skill Hub",
-    "searchPlaceholder": "Search skills (press Enter to search market)",
+    "searchPlaceholder": "Search skills (press Enter to search cloud market)",
     "install": "Install Skill"
   },
   "tabs": {
-    "market": "Market",
-    "builtin": "Built-in",
+    "market": "Cloud Market",
+    "builtin": "Local Built-in",
     "installed": "Installed",
     "global": "Global"
   },
   "empty": {
     "builtinTitle": "No built-in skills found",
-    "builtinDesc": "Built-in skills from the resources directory are synced automatically at startup.",
+    "builtinDesc": "Built-in skills from the resources directory are synced automatically at startup and on refresh.",
     "customTitle": "No custom skills installed yet",
     "customDesc": "Click \"Install Skill\" to add a custom skill from Git or a local archive.",
     "globalTitle": "No global skills found",

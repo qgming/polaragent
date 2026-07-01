@@ -100,7 +100,7 @@ Agent 会读取 [`SKILL.md`](SKILL.md) 头部的 `description`，在你提到「
 ## 📁 项目结构
 
 ```
-seedance-prompt-skill/
+seedance-prompt/
 ├── SKILL.md          # Skill 主文件（Agent 读取执行的入口）
 ├── README.md         # 本文件
 │

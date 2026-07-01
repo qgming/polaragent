@@ -4,7 +4,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 
 const { APP_ID, APP_NAME } = require("./lib/constants.cjs");
 const { ensureDataDir, readSettingCloseToTray, readSettingStartInSystemTray } = require("./lib/app-paths.cjs");
-const { createMainWindow } = require("./lib/windows.cjs");
+const { getMainWindow, createMainWindow } = require("./lib/windows.cjs");
 const { createTray, destroyTray, setIsQuitting } = require("./lib/tray.cjs");
 const updates = require("./ipc/updates.cjs");
 
@@ -34,20 +34,35 @@ function registerHandlers() {
 
 app.setAppUserModelId(APP_ID);
 app.setName(APP_NAME);
-registerHandlers();
-app.whenReady().then(async () => {
-  await ensureDataDir();
-  const closeToTray = readSettingCloseToTray();
-  const startInTray = readSettingStartInSystemTray();
-  createMainWindow({ closeToTray, startInTray });
-  createTray();
-  updates.initializeAutoUpdates();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow({ closeToTray: readSettingCloseToTray(), startInTray: false });
-    }
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const win = getMainWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
   });
-});
+
+  registerHandlers();
+  app.whenReady().then(async () => {
+    await ensureDataDir();
+    const closeToTray = readSettingCloseToTray();
+    const startInTray = readSettingStartInSystemTray();
+    createMainWindow({ closeToTray, startInTray });
+    createTray();
+    updates.initializeAutoUpdates();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow({ closeToTray: readSettingCloseToTray(), startInTray: false });
+      }
+    });
+  });
+}
 
 // window-all-closed：hide 的窗口不会触发此事件，仅真正销毁后才触发
 app.on("window-all-closed", () => {

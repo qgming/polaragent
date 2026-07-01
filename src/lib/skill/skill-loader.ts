@@ -10,7 +10,7 @@ import {
   installSkillFromZip,
   uninstallSkill as uninstallSkillApi,
   readFile,
-  listDirectory,
+  listDirectoryEntries,
 } from "@/lib/electron/electron-api";
 import { parseSkillMdContent, validateSkillMdContent } from "./skill-parser";
 
@@ -134,9 +134,8 @@ export class SkillLoader {
    */
   private async listSkillDirectories(basePath: string): Promise<string[]> {
     try {
-      const entries = await listDirectory(basePath);
-      // 过滤出目录（不包含扩展名的条目）
-      return entries.filter((entry) => !entry.includes("."));
+      const entries = await listDirectoryEntries(basePath);
+      return entries.filter((entry) => entry.isDir).map((entry) => entry.name);
     } catch (error) {
       console.error(`列出目录失败: ${basePath}`, error);
       return [];

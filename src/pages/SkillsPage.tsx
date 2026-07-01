@@ -32,7 +32,7 @@ import { SkillDetailModal } from "@/components/skill/SkillDetailModal";
 import { PageHero } from "@/components/PageHero";
 import { SkillInstallDialog } from "@/components/skill/SkillInstallDialog";
 import type { SkillConfig } from "@/types/config";
-import type { MarketSkill } from "@/lib/electron/electron-api";
+import { ensureDataDir, type MarketSkill } from "@/lib/electron/electron-api";
 import { cn } from "@/lib/utils";
 
 type SkillTab = "market" | "builtin" | "custom" | "global";
@@ -97,7 +97,7 @@ export function SkillsPage() {
     if (activeTab === "market") {
       void refreshMarket(true);
     } else {
-      void loadSkills();
+      void ensureDataDir().then(() => loadSkills());
     }
   };
 
