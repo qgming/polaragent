@@ -53,6 +53,16 @@ export interface ChatMessage {
   status: ChatMessageStatus;
   model?: string;
   tokenCount?: number;
+  // 输入 token 数（累加所有轮次）
+  inputTokens?: number;
+  // 输出 token 数（累加所有轮次）
+  outputTokens?: number;
+  // 缓存写入 token 数（累加所有轮次）
+  cacheWriteTokens?: number;
+  // 缓存读取 token 数（累加所有轮次）
+  cacheReadTokens?: number;
+  // 当前上下文 token 数（官方口径：最后一轮 usage 的 totalTokens || 四字段和）
+  contextTokens?: number;
   attachments?: ChatAttachment[];
   skillRefs?: ChatSkillRef[];
   segments?: Segment[];
@@ -62,6 +72,23 @@ export interface ChatMessage {
   error?: string;
   // 当前重试次数（0 = 未重试，1-5 = 正在重试）
   retryAttempt?: number;
+}
+
+/**
+ * 助手消息完成时由完成回调传入的用量元数据。
+ * 个人聊天（chat-store / ChatPage / HomePage / goal-supervisor）与
+ * 团队聊天（team-chat-store / team.ts）共用；新增字段必须在此统一添加，
+ * 避免各调用点的内联类型漂移导致字段被静默丢弃。
+ */
+export interface MessageFinishMetadata {
+  model?: string;
+  tokenCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  contextTokens?: number;
+  segments?: Segment[];
 }
 
 export interface ChatThread {

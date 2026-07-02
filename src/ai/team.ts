@@ -143,18 +143,27 @@ async function runMemberTurn(
           useTeamChatStore
             .getState()
             .applyStreamingUpdate(threadId, assistantId, update),
-        onDone: ({ content, model, usage, segments }) => {
+        onDone: ({ content, model, usage, contextTokens, segments }) => {
           finalContent = content;
           useTeamChatStore
             .getState()
             .finishMessage(threadId, assistantId, content, {
               model,
               tokenCount: usage.totalTokens,
+              inputTokens: usage.input,
+              outputTokens: usage.output,
+              cacheReadTokens: usage.cacheRead,
+              cacheWriteTokens: usage.cacheWrite,
+              contextTokens,
               segments,
             });
           const thread = useTeamChatStore
             .getState()
             .threads.find((item) => item.id === threadId);
+          // 计算当前线程的累计 token 数，用于 token 阈值判断
+          const cumulativeTokens = thread?.messages.reduce(
+            (sum, msg) => sum + (msg.tokenCount ?? 0), 0
+          ) ?? 0;
           void captureMemoriesFromExchange({
             threadId,
             agentId: speaker.id,
@@ -162,6 +171,7 @@ async function runMemberTurn(
             workingDir,
             userText: userTask,
             assistantText: content,
+            cumulativeTokens,
           });
           // 累计两条含正文的成员发言后，自动生成会话标题（仅一次）
           void useTeamChatStore.getState().maybeAutoGenerateTeamTitle(threadId);

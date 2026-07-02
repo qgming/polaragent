@@ -25,6 +25,42 @@ const MEMORY_TYPES = new Set([
 const MEMORY_SCOPES = new Set(["global", "project"]);
 const DEFAULT_DEDUPE_THRESHOLD = 0.92;
 
+// 查询向量缓存（LRU）
+const embeddingCache = new Map();
+const MAX_CACHE_SIZE = 500;
+
+function getCachedEmbedding(model, text) {
+  const key = `${model}:${text}`;
+  const cached = embeddingCache.get(key);
+  if (cached) {
+    // LRU：移到末尾
+    embeddingCache.delete(key);
+    embeddingCache.set(key, cached);
+    return cached;
+  }
+  return null;
+}
+
+function setCachedEmbedding(model, text, vector) {
+  const key = `${model}:${text}`;
+  if (embeddingCache.size >= MAX_CACHE_SIZE) {
+    // 删除最旧的（第一个）
+    const firstKey = embeddingCache.keys().next().value;
+    embeddingCache.delete(firstKey);
+  }
+  embeddingCache.set(key, vector);
+}
+
+// 按作用域的写入锁队列
+const scopeLocks = new Map();
+
+function withScopeLock(scope, fn) {
+  const prev = scopeLocks.get(scope) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  scopeLocks.set(scope, next.catch(() => {}));
+  return next;
+}
+
 function baseMemoryDir() {
   return path.resolve(dataDir(), "memory");
 }
@@ -74,20 +110,32 @@ async function ensureAllScopes() {
   await Promise.all(["global", "project"].map((scope) => ensureScope(scope)));
 }
 
+// JSONL 读缓存：本模块是这些文件的唯一写入方（全部经 writeJsonl），
+// 写入时同步更新缓存即可保证一致。记录对象按不可变约定使用，调用方不得原地修改。
+const jsonlCache = new Map();
+
 async function readJsonl(file) {
+  if (jsonlCache.has(file)) return jsonlCache.get(file);
   if (!fs.existsSync(file)) return [];
   const content = await fsp.readFile(file, "utf8");
-  return content
+  const records = content
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+  jsonlCache.set(file, records);
+  return records;
 }
 
 async function writeJsonl(file, records) {
   await ensureDir(path.dirname(file));
   const lines = records.map((record) => JSON.stringify(record)).join("\n");
-  await fsp.writeFile(file, lines ? `${lines}\n` : "", "utf8");
+  const content = lines ? `${lines}\n` : "";
+  // 先写临时文件，再 rename，保证原子性
+  const tmpFile = `${file}.tmp`;
+  await fsp.writeFile(tmpFile, content, "utf8");
+  await fsp.rename(tmpFile, file);
+  jsonlCache.set(file, records);
 }
 
 async function loadMemories(scope) {
@@ -174,24 +222,29 @@ function normalizeMemoryInput(memory) {
   };
 }
 
-function hasSensitiveContent(text) {
-  const value = String(text || "");
-  const patterns = [
-    /(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*["']?[\w./+=-]{8,}/i,
-    /\bsk-[A-Za-z0-9_-]{16,}\b/,
-    /\b[A-Za-z0-9_]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/,
-    /\b\d{6}(?:19|20)?\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b/,
-    /\b(?:\d[ -]?){13,19}\b/,
-    /验证码|verification code|one[- ]?time code|otp/i,
-  ];
-  return patterns.some((pattern) => pattern.test(value));
-}
-
 async function embedTexts(texts, config) {
   const { apiKey, baseURL, model, dimension } = config || {};
   if (!apiKey || !baseURL || !model) throw new Error("嵌入配置不完整");
+  const modelName = String(model).trim();
 
-  const body = { model: String(model).trim(), input: texts };
+  // 先检查缓存
+  const results = new Array(texts.length);
+  const missingIndexes = [];
+  const missingTexts = [];
+  for (let i = 0; i < texts.length; i++) {
+    const cached = getCachedEmbedding(modelName, texts[i]);
+    if (cached) {
+      results[i] = cached;
+    } else {
+      missingIndexes.push(i);
+      missingTexts.push(texts[i]);
+    }
+  }
+  if (missingTexts.length === 0) {
+    return results;
+  }
+
+  const body = { model: modelName, input: missingTexts };
   if (dimension != null && dimension !== "" && dimension !== 0) {
     const dimensions = Number(dimension);
     if (Number.isFinite(dimensions) && dimensions > 0) {
@@ -199,20 +252,55 @@ async function embedTexts(texts, config) {
     }
   }
 
-  const response = await net.fetch(`${normalizeBaseUrl(baseURL)}/embeddings`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${String(apiKey).trim()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120000),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(`嵌入 API 失败 (${response.status}): ${errorMessage(payload)}`);
+  const MAX_RETRIES = 3;
+  let lastError;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await net.fetch(`${normalizeBaseUrl(baseURL)}/embeddings`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${String(apiKey).trim()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120000),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        const error = new Error(`嵌入 API 失败 (${response.status}): ${errorMessage(payload)}`);
+        error.status = response.status;
+        throw error;
+      }
+      const embeddings = (payload.data || []).map((item) => item.embedding);
+      // 验证每个向量
+      for (const emb of embeddings) {
+        if (!Array.isArray(emb) || emb.length === 0) {
+          throw new Error("嵌入 API 返回了无效的空向量");
+        }
+      }
+      if (embeddings.length !== missingTexts.length) {
+        throw new Error(
+          `嵌入 API 返回数量不匹配：请求 ${missingTexts.length} 条，返回 ${embeddings.length} 条`,
+        );
+      }
+      for (let i = 0; i < missingTexts.length; i++) {
+        const vector = embeddings[i];
+        setCachedEmbedding(modelName, missingTexts[i], vector);
+        results[missingIndexes[i]] = vector;
+      }
+      return results;
+    } catch (error) {
+      lastError = error;
+      // 4xx（除 429 限流）是确定性失败，重试只会白等，直接抛出
+      const status = error?.status;
+      const retryable = status == null || status === 429 || status >= 500;
+      if (!retryable || attempt === MAX_RETRIES - 1) throw error;
+      const delay = 500 * Math.pow(2, attempt);
+      console.warn(`嵌入 API 第 ${attempt + 1} 次失败，${delay}ms 后重试: ${error.message}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
   }
-  return (payload.data || []).map((item) => item.embedding);
+  throw lastError;
 }
 
 function projectMatches(memory, projectKey) {
@@ -273,60 +361,63 @@ async function createMemory(request) {
   if (memory.scope === "project" && !memory.projectKey) {
     throw new Error("项目记忆缺少 projectKey");
   }
-  if (request?.sensitiveFilter !== false && hasSensitiveContent(memory.content)) {
-    throw new Error("记忆内容包含敏感信息，已跳过");
-  }
 
+  // 向量只依赖记忆内容，在锁外计算：避免嵌入网络调用（120s 超时 + 重试）
+  // 把同作用域的全部写操作串行卡死
   const config = request?.config?.embedding ? request.config.embedding : request?.config;
   const [vector] = await embedTexts([memory.content], config);
-  await verifyEmbeddingConfig(memory.scope, config, vector);
 
-  const memories = await loadMemories(memory.scope);
-  const vectors = await loadVectors(memory.scope);
-  const dedupeThreshold = clampNumber(
-    request?.dedupeThreshold,
-    0.75,
-    0.99,
-    DEFAULT_DEDUPE_THRESHOLD,
-  );
+  return withScopeLock(memory.scope, async () => {
+    await verifyEmbeddingConfig(memory.scope, config, vector);
 
-  let bestMatch = null;
-  for (const existing of memories) {
-    if (existing.archived) continue;
-    if (existing.type !== memory.type) continue;
-    if (existing.scope !== memory.scope) continue;
-    if (existing.scope === "project" && existing.projectKey !== memory.projectKey) continue;
-    const existingVector = vectors.find((record) => record.id === existing.id)?.vector;
-    const score = cosineSimilarity(vector, existingVector);
-    if (!bestMatch || score > bestMatch.score) {
-      bestMatch = { memory: existing, score };
+    const memories = await loadMemories(memory.scope);
+    const vectors = await loadVectors(memory.scope);
+    const dedupeThreshold = clampNumber(
+      request?.dedupeThreshold,
+      0.75,
+      0.99,
+      DEFAULT_DEDUPE_THRESHOLD,
+    );
+
+    let bestMatch = null;
+    for (const existing of memories) {
+      if (existing.archived) continue;
+      if (existing.type !== memory.type) continue;
+      if (existing.scope !== memory.scope) continue;
+      if (existing.scope === "project" && existing.projectKey !== memory.projectKey) continue;
+      const existingVector = vectors.find((record) => record.id === existing.id)?.vector;
+      const score = cosineSimilarity(vector, existingVector);
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { memory: existing, score };
+      }
     }
-  }
 
-  if (bestMatch && bestMatch.score >= dedupeThreshold) {
-    const updated = {
-      ...bestMatch.memory,
-      content: memory.content,
-      confidence: Math.max(bestMatch.memory.confidence ?? 0, memory.confidence ?? 0),
-      sourceThreadId: memory.sourceThreadId ?? bestMatch.memory.sourceThreadId,
-      tags: Array.from(new Set([...(bestMatch.memory.tags || []), ...memory.tags])),
-      updatedAt: Date.now(),
-      archived: false,
-    };
-    await saveMemories(
-      memory.scope,
-      memories.map((item) => (item.id === updated.id ? updated : item)),
-    );
-    await saveVectors(
-      memory.scope,
-      vectors.map((item) => (item.id === updated.id ? { id: updated.id, vector } : item)),
-    );
-    return { success: true, memory: updated, deduped: true, score: bestMatch.score };
-  }
+    if (bestMatch && bestMatch.score >= dedupeThreshold) {
+      const updated = {
+        ...bestMatch.memory,
+        content: memory.content,
+        confidence: Math.max(bestMatch.memory.confidence ?? 0, memory.confidence ?? 0),
+        sourceThreadId: memory.sourceThreadId ?? bestMatch.memory.sourceThreadId,
+        tags: Array.from(new Set([...(bestMatch.memory.tags || []), ...memory.tags])),
+        updatedAt: Date.now(),
+        archived: false,
+      };
+      await saveMemories(
+        memory.scope,
+        memories.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      await saveVectors(
+        memory.scope,
+        vectors.map((item) => (item.id === updated.id ? { id: updated.id, vector } : item)),
+      );
+      return { success: true, memory: updated, deduped: true, score: bestMatch.score };
+    }
 
-  await saveMemories(memory.scope, [...memories, memory]);
-  await saveVectors(memory.scope, [...vectors, { id: memory.id, vector }]);
-  return { success: true, memory, deduped: false };
+    await saveMemories(memory.scope, [...memories, memory]);
+    await saveVectors(memory.scope, [...vectors, { id: memory.id, vector }]);
+
+    return { success: true, memory, deduped: false };
+  });
 }
 
 async function verifyEmbeddingConfig(scope, config, vector) {
@@ -354,50 +445,151 @@ async function verifyEmbeddingConfig(scope, config, vector) {
   });
 }
 
+function tokenize(text) {
+  const normalized = String(text || "").toLowerCase();
+  const tokens = new Set();
+
+  // 英文、数字单词
+  const wordRegex = /[a-z0-9]+/g;
+  let match;
+  while ((match = wordRegex.exec(normalized)) !== null) {
+    tokens.add(match[0]);
+  }
+
+  // 中文字符与相邻 bigram
+  const cjkRegex = /[\u4e00-\u9fff]/g;
+  const cjkChars = [];
+  while ((match = cjkRegex.exec(normalized)) !== null) {
+    cjkChars.push(match[0]);
+    tokens.add(match[0]);
+  }
+  for (let i = 0; i < cjkChars.length - 1; i++) {
+    tokens.add(cjkChars[i] + cjkChars[i + 1]);
+  }
+
+  return Array.from(tokens);
+}
+
+function keywordSearch(memories, queryTokens) {
+  if (!queryTokens || queryTokens.length === 0) return [];
+  const results = [];
+  for (const memory of memories) {
+    const text = `${memory.content || ""} ${(memory.tags || []).join(" ")}`;
+    const memoryTokens = new Set(tokenize(text));
+    let matched = 0;
+    for (const token of queryTokens) {
+      if (memoryTokens.has(token)) matched++;
+    }
+    const score = matched / queryTokens.length;
+    if (score > 0) {
+      results.push({ ...memory, score });
+    }
+  }
+  return results;
+}
+
+function mergeSearchResults(keywordResults, vectorResults, topK) {
+  const map = new Map();
+  const keywordRanked = [...keywordResults].sort((a, b) => b.score - a.score);
+  const vectorRanked = [...vectorResults].sort((a, b) => b.score - a.score);
+
+  // RRF 融合分数只用于排序；对外返回的 score 保持 0~1 相似度口径
+  //（取关键词命中率与向量余弦相似度中的较高者），
+  // 下游（矛盾检测阈值、工具展示的"相似度"）都按 0~1 语义消费该字段。
+  const add = (item, rank) => {
+    const entry = map.get(item.id);
+    if (entry) {
+      entry.rrfScore += 1 / (60 + rank + 1);
+      entry.bestScore = Math.max(entry.bestScore, item.score);
+      // 向量命中的记录带 indexed 标记，优先保留
+      if (item.indexed) entry.memory = item;
+    } else {
+      map.set(item.id, {
+        memory: item,
+        rrfScore: 1 / (60 + rank + 1),
+        bestScore: item.score,
+      });
+    }
+  };
+  keywordRanked.forEach((item, index) => add(item, index));
+  vectorRanked.forEach((item, index) => add(item, index));
+
+  return Array.from(map.values())
+    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .slice(0, topK)
+    .map(({ memory, bestScore }) => ({ ...memory, score: bestScore }));
+}
+
 async function searchMemory(request) {
   const query = String(request?.query || "").trim();
   if (!query) throw new Error("检索关键词不能为空");
   const config = request?.config?.embedding ? request.config.embedding : request?.config;
-  const [queryVector] = await embedTexts([query], config);
   const scopes = Array.isArray(request?.scopes)
     ? request.scopes.map(normalizeScope)
     : ["global", "project"];
   const topK = clampNumber(request?.topK, 1, 20, 5);
-  const threshold = clampNumber(request?.threshold, 0, 0.99, 0.62);
+  const threshold = clampNumber(request?.threshold, 0, 0.99, 0.4);
 
-  const allResults = [];
+  // 2. 尝试向量检索（失败时降级为空结果）
+  let queryVector = null;
+  try {
+    [queryVector] = await embedTexts([query], config);
+  } catch (err) {
+    console.warn("向量检索失败，降级为关键词检索:", err.message);
+  }
+
+  // 3. 始终执行关键词检索
+  const queryTokens = tokenize(query);
+  const keywordResults = [];
+  const vectorResults = [];
+  const allFilteredMemories = [];
+
   for (const scope of scopes) {
-    const meta = await loadMetadata(scope);
-    if (
-      meta?.embeddingConfig?.dimension &&
-      meta.embeddingConfig.dimension !== queryVector.length
-    ) {
-      throw new Error(
-        `向量维度不匹配：${scope} 记忆索引使用 ${meta.embeddingConfig.dimension} 维，当前查询向量为 ${queryVector.length} 维。请重建记忆索引。`,
-      );
-    }
-    const [memories, vectors] = await Promise.all([
-      loadMemories(scope),
-      loadVectors(scope),
-    ]);
-    const vectorMap = new Map(vectors.map((record) => [record.id, record.vector]));
-    for (const memory of filterMemories(memories, {
+    const memories = await loadMemories(scope);
+    const filtered = filterMemories(memories, {
       scopes: [scope],
       projectKey: request?.projectKey,
       includeArchived: request?.includeArchived,
-    })) {
-      const score = cosineSimilarity(queryVector, vectorMap.get(memory.id));
-      if (score >= threshold) {
-        allResults.push({
-          ...memory,
-          indexed: vectorMap.has(memory.id),
-          score,
-        });
+    });
+    allFilteredMemories.push(...filtered);
+
+    keywordResults.push(...keywordSearch(filtered, queryTokens));
+
+    if (queryVector) {
+      const meta = await loadMetadata(scope);
+      if (
+        meta?.embeddingConfig?.dimension &&
+        meta.embeddingConfig.dimension !== queryVector.length
+      ) {
+        console.warn(`${scope} 向量维度不匹配，跳过该作用域的向量检索`);
+        continue;
+      }
+      const vectors = await loadVectors(scope);
+      const vectorMap = new Map(vectors.map((record) => [record.id, record.vector]));
+      for (const memory of filtered) {
+        const vector = vectorMap.get(memory.id);
+        if (!vector) continue; // 没有向量则跳过，避免传入空数组
+        const score = cosineSimilarity(queryVector, vector);
+        if (score >= threshold) {
+          vectorResults.push({ ...memory, indexed: true, score });
+        }
       }
     }
   }
 
-  const results = allResults.sort((a, b) => b.score - a.score).slice(0, topK);
+  // 4. 融合两种检索结果
+  let results = mergeSearchResults(keywordResults, vectorResults, topK);
+
+  // 5. 降级策略：两者都为空且调用方显式允许时，返回最近更新的记忆。
+  // 结果带 fallback 标记且 score 为 0，调用方（如 search_memory 工具）需按
+  // "非直接匹配"呈现；forget_memory 等破坏性路径不允许降级，避免误删无关记忆。
+  if (results.length === 0 && request?.allowFallback) {
+    results = allFilteredMemories
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, topK)
+      .map((memory) => ({ ...memory, score: 0, fallback: true }));
+  }
+
   if (results.length > 0) {
     await touchMemories(results.map((memory) => memory.id));
   }
@@ -407,18 +599,22 @@ async function searchMemory(request) {
 async function touchMemories(ids) {
   const idSet = new Set(ids);
   for (const scope of ["global", "project"]) {
-    const memories = await loadMemories(scope);
-    let changed = false;
-    const updated = memories.map((memory) => {
-      if (!idSet.has(memory.id)) return memory;
-      changed = true;
-      return {
-        ...memory,
-        lastUsedAt: Date.now(),
-        useCount: Number(memory.useCount || 0) + 1,
-      };
+    // 整表读改写必须与 create/update/archive/delete 共用作用域锁，
+    // 否则锁外覆写会把并发写入的新记忆静默回滚
+    await withScopeLock(scope, async () => {
+      const memories = await loadMemories(scope);
+      let changed = false;
+      const updated = memories.map((memory) => {
+        if (!idSet.has(memory.id)) return memory;
+        changed = true;
+        return {
+          ...memory,
+          lastUsedAt: Date.now(),
+          useCount: Number(memory.useCount || 0) + 1,
+        };
+      });
+      if (changed) await saveMemories(scope, updated);
     });
-    if (changed) await saveMemories(scope, updated);
   }
 }
 
@@ -439,46 +635,60 @@ async function updateMemory(request) {
   const target = await findMemoryById(id);
   if (!target) throw new Error(`记忆不存在: ${id}`);
   const updates = request?.updates || {};
-  const next = {
-    ...target.memory,
-    ...updates,
-    id: target.memory.id,
-    scope: target.memory.scope,
-    type: normalizeType(updates.type ?? target.memory.type, target.memory.scope),
-    tags: updates.tags ? normalizeTags(updates.tags) : target.memory.tags,
-    content:
-      typeof updates.content === "string"
-        ? updates.content.replace(/\s+/g, " ").trim()
-        : target.memory.content,
-    confidence:
-      updates.confidence == null
-        ? target.memory.confidence
-        : clampNumber(updates.confidence, 0, 1, target.memory.confidence),
-    updatedAt: Date.now(),
-  };
-  if (!next.content) throw new Error("记忆内容不能为空");
-  if (request?.sensitiveFilter !== false && hasSensitiveContent(next.content)) {
-    throw new Error("记忆内容包含敏感信息，已跳过");
+
+  // 内容变更时的新向量只依赖新内容本身，在锁外预先计算，避免网络调用占锁
+  const embedConfig = request?.config
+    ? request.config.embedding
+      ? request.config.embedding
+      : request.config
+    : null;
+  const normalizedContent =
+    typeof updates.content === "string"
+      ? updates.content.replace(/\s+/g, " ").trim()
+      : null;
+  let newVector = null;
+  if (updates.content && normalizedContent && embedConfig) {
+    [newVector] = await embedTexts([normalizedContent], embedConfig);
   }
 
-  const memories = target.memories.map((memory) => (memory.id === id ? next : memory));
-  await saveMemories(target.scope, memories);
+  return withScopeLock(target.scope, async () => {
+    const memories = await loadMemories(target.scope);
+    const memory = memories.find((m) => m.id === id);
+    if (!memory) throw new Error(`记忆不存在: ${id}`);
 
-  if (updates.content && request?.config) {
-    const config = request.config.embedding ? request.config.embedding : request.config;
-    const [vector] = await embedTexts([next.content], config);
-    await verifyEmbeddingConfig(target.scope, config, vector);
-    const vectors = await loadVectors(target.scope);
-    const hasVector = vectors.some((record) => record.id === id);
-    await saveVectors(
-      target.scope,
-      hasVector
-        ? vectors.map((record) => (record.id === id ? { id, vector } : record))
-        : [...vectors, { id, vector }],
-    );
-  }
+    const next = {
+      ...memory,
+      ...updates,
+      id: memory.id,
+      scope: memory.scope,
+      type: normalizeType(updates.type ?? memory.type, memory.scope),
+      tags: updates.tags ? normalizeTags(updates.tags) : memory.tags,
+      content: normalizedContent != null ? normalizedContent : memory.content,
+      confidence:
+        updates.confidence == null
+          ? memory.confidence
+          : clampNumber(updates.confidence, 0, 1, memory.confidence),
+      updatedAt: Date.now(),
+    };
+    if (!next.content) throw new Error("记忆内容不能为空");
 
-  return { success: true, memory: next };
+    const updatedMemories = memories.map((m) => (m.id === id ? next : m));
+    await saveMemories(target.scope, updatedMemories);
+
+    if (newVector && embedConfig) {
+      await verifyEmbeddingConfig(target.scope, embedConfig, newVector);
+      const vectors = await loadVectors(target.scope);
+      const hasVector = vectors.some((record) => record.id === id);
+      await saveVectors(
+        target.scope,
+        hasVector
+          ? vectors.map((record) => (record.id === id ? { id, vector: newVector } : record))
+          : [...vectors, { id, vector: newVector }],
+      );
+    }
+
+    return { success: true, memory: next };
+  });
 }
 
 async function archiveMemory(request) {
@@ -487,16 +697,18 @@ async function archiveMemory(request) {
   const archived = request?.archived !== false;
   const target = await findMemoryById(id);
   if (!target) throw new Error(`记忆不存在: ${id}`);
-  const next = {
-    ...target.memory,
-    archived,
-    updatedAt: Date.now(),
-  };
-  await saveMemories(
-    target.scope,
-    target.memories.map((memory) => (memory.id === id ? next : memory)),
-  );
-  return { success: true, memory: next };
+
+  return withScopeLock(target.scope, async () => {
+    const memories = await loadMemories(target.scope);
+    const memory = memories.find((m) => m.id === id);
+    if (!memory) throw new Error(`记忆不存在: ${id}`);
+    const next = { ...memory, archived, updatedAt: Date.now() };
+    await saveMemories(
+      target.scope,
+      memories.map((m) => (m.id === id ? next : m)),
+    );
+    return { success: true, memory: next };
+  });
 }
 
 async function deleteMemory(request) {
@@ -504,15 +716,20 @@ async function deleteMemory(request) {
   if (!id) throw new Error("记忆 ID 不能为空");
   const target = await findMemoryById(id);
   if (!target) throw new Error(`记忆不存在: ${id}`);
-  await saveMemories(
-    target.scope,
-    target.memories.filter((memory) => memory.id !== id),
-  );
-  await saveVectors(
-    target.scope,
-    (await loadVectors(target.scope)).filter((record) => record.id !== id),
-  );
-  return { success: true };
+
+  return withScopeLock(target.scope, async () => {
+    const memories = await loadMemories(target.scope);
+    if (!memories.some((m) => m.id === id)) {
+      throw new Error(`记忆不存在: ${id}`);
+    }
+    await saveMemories(
+      target.scope,
+      memories.filter((m) => m.id !== id),
+    );
+    const vectors = await loadVectors(target.scope);
+    await saveVectors(target.scope, vectors.filter((record) => record.id !== id));
+    return { success: true };
+  });
 }
 
 async function memoryStats() {
@@ -573,6 +790,4 @@ function register(ipcMain) {
 
 module.exports = {
   register,
-  hasSensitiveContent,
-  normalizeMemoryInput,
 };

@@ -138,9 +138,30 @@ export const ChatMessageView = memo(function ChatMessageView({
             <FileCode className="size-3.5" />
           </IconButton>
           {message.model ? (
-            <span className="ml-2 text-[11px] text-muted-foreground">
-              {message.model}
-              {message.tokenCount ? ` · ${message.tokenCount} tokens` : ""}
+            <span className="ml-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span>{message.model}</span>
+              {message.inputTokens != null || message.outputTokens != null ? (
+                <>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="tabular-nums" title={t("stats.inputTokens")}>
+                    ↑{formatTokenCount(message.inputTokens ?? 0)}
+                  </span>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="tabular-nums" title={t("stats.outputTokens")}>
+                    ↓{formatTokenCount(message.outputTokens ?? 0)}
+                  </span>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="tabular-nums text-blue-600 dark:text-blue-400" title={t("stats.cacheWriteTokens")}>
+                    ⇩{formatTokenCount(message.cacheWriteTokens ?? 0)}
+                  </span>
+                  <span className="text-muted-foreground/40">·</span>
+                  <span className="tabular-nums text-emerald-600 dark:text-emerald-400" title={t("stats.cacheReadTokens")}>
+                    ⇧{formatTokenCount(message.cacheReadTokens ?? 0)}
+                  </span>
+                </>
+              ) : message.tokenCount ? (
+                <span className="tabular-nums">{message.tokenCount} tokens</span>
+              ) : null}
             </span>
           ) : null}
           </div>
@@ -555,6 +576,13 @@ function GeneratedImageItem({ imagePath, imageUrl }: { imagePath: string; imageU
       />
     </button>
   );
+}
+
+// 格式化 token 数量：超过 1000 时显示为 "1.2k"
+function formatTokenCount(count: number): string {
+  if (count >= 10000) return `${Math.round(count / 1000)}k`;
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+  return String(count);
 }
 
 // 提取并显示语音合成的音频条

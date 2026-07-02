@@ -194,12 +194,10 @@ export interface MemoryConfig {
   enabled: boolean;
   // 自动从完成的对话中提取并写入记忆
   autoWrite: boolean;
+  // 自动记忆写入的 token 累计阈值，每积累这么多 token 才触发一次记忆提取
+  autoWriteTokenThreshold: number;
   // 是否启用与工作目录绑定的项目记忆
   projectMemoryEnabled: boolean;
-  // v1 默认复用知识库嵌入配置
-  reuseKnowledgeEmbedding: boolean;
-  // 自动跳过密钥、密码、证件号等高敏内容
-  sensitiveFilter: boolean;
   // 检索配置
   retrieval: {
     topK: number;

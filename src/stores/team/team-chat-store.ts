@@ -24,7 +24,8 @@ import {
 import { loadTeamChatMessages } from "@/lib/session/message-parser";
 import { removeTitleIndex, upsertTitleIndex } from "@/lib/session/title-index";
 import { generateConversationTitle } from "@/ai/title-generator";
-import type { Segment } from "@/lib/chat";
+import { clearThreadCaptureTokens } from "@/ai/memory-capture";
+import type { MessageFinishMetadata, Segment } from "@/lib/chat";
 import type { TeamMessage, TeamThread } from "@/lib/team";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
@@ -71,7 +72,7 @@ interface TeamChatState {
     threadId: string,
     messageId: string,
     finalContent: string,
-    metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
+    metadata?: MessageFinishMetadata,
   ) => void;
   failMessage: (threadId: string, messageId: string, error: string) => void;
   setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
@@ -156,6 +157,8 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       runningThreadIds: state.runningThreadIds.filter((id) => id !== threadId),
       threads: state.threads.filter((t) => t.id !== threadId),
     }));
+    // 清理该线程的自动记忆捕获 token 标记
+    clearThreadCaptureTokens(threadId);
     void deleteTeamSession(threadId);
     // 删除团队会话专属的文件存储目录
     void deleteTeamSessionFilesDir(threadId);
@@ -308,6 +311,11 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
                       content: finalContent || m.content,
                       model: metadata?.model ?? m.model,
                       tokenCount: metadata?.tokenCount ?? m.tokenCount,
+                      inputTokens: metadata?.inputTokens ?? m.inputTokens,
+                      outputTokens: metadata?.outputTokens ?? m.outputTokens,
+                      cacheReadTokens: metadata?.cacheReadTokens ?? m.cacheReadTokens,
+                      cacheWriteTokens: metadata?.cacheWriteTokens ?? m.cacheWriteTokens,
+                      contextTokens: metadata?.contextTokens ?? m.contextTokens,
                       segments: metadata?.segments ?? m.segments,
                       status: "complete" as const,
                     }

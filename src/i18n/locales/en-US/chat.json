@@ -92,5 +92,25 @@
     "readFailed": "Failed to read directory: {{message}}",
     "reading": "Reading...",
     "empty": "This directory is empty"
+  },
+  "stats": {
+    "title": "Session Usage",
+    "empty": "No session data yet",
+    "totalTokens": "Total Tokens",
+    "totalInput": "Input Tokens",
+    "totalOutput": "Output Tokens",
+    "inputTokens": "Input tokens",
+    "outputTokens": "Output tokens",
+    "cacheWriteTokens": "Cache write tokens",
+    "cacheReadTokens": "Cache read tokens",
+    "cacheHitRate": "Cache Hit Rate",
+    "compaction": "Context Compaction",
+    "turns": "Turns",
+    "toolCalls": "Tool Calls",
+    "avgPerReply": "Avg per Reply",
+    "duration": "Duration",
+    "byModel": "By Model",
+    "lessThanMinute": "<1 min",
+    "minutes": "min"
   }
 }

@@ -11,6 +11,7 @@ import {
   setSessionWorkingDir,
   setSessionAgentId,
   getSessionAgentId,
+  openOrCreateSession,
 } from "@/lib/session/personal";
 import { readGoalState } from "@/lib/session/goal";
 import { useGoalStore } from "@/stores/goal-store";
@@ -20,12 +21,24 @@ import {
 } from "@/lib/session/preferences";
 import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
-import { captureMemoriesFromExchange } from "@/ai/memory-capture";
+import {
+  captureMemoriesFromExchange,
+  clearThreadCaptureTokens,
+} from "@/ai/memory-capture";
+import {
+  DEFAULT_COMPACTION_SETTINGS,
+  estimateContextTokens,
+  getLastAssistantUsage,
+  shouldCompact,
+} from "@/lib/session/compaction";
+import { agentManager } from "@/ai/agent-manager";
+import { useConfigStore } from "@/stores/config-store";
 import type {
   ChatAttachment,
   ChatMessage,
   ChatSkillRef,
   ChatThread,
+  MessageFinishMetadata,
   Segment,
 } from "@/lib/chat";
 import {
@@ -92,6 +105,82 @@ async function restoreThreadAgentId(threadId: string): Promise<void> {
   }
 }
 
+// 应用运行期内已做过"打开时压缩检查"的会话，防止压缩后强制重载造成重入
+const compactCheckedThreads = new Set<string>();
+
+// 打开会话时检查是否需要自动压缩上下文
+async function checkAndCompactOnOpen(threadId: string): Promise<void> {
+  if (compactCheckedThreads.has(threadId)) return;
+  compactCheckedThreads.add(threadId);
+  // 正在流式响应的会话交给回合末检查（src/ai/agent.ts）处理，
+  // 避免压缩与强制重载打断进行中的回复
+  if (useChatStore.getState().runningThreadIds.includes(threadId)) return;
+
+  try {
+    const session = await openOrCreateSession(threadId);
+    const branch = await session.getBranch();
+
+    // 最后一个 compaction 条目之后若没有新的有效 assistant usage，
+    // 说明会话刚被压缩过：旧 usage 反映的是压缩前的上下文，无法可靠估算，
+    // 跳过本次检查（下一轮回复产生新 usage 后由回合末检查接管）。
+    let lastCompactionIndex = -1;
+    for (let i = branch.length - 1; i >= 0; i--) {
+      if (branch[i].type === "compaction") {
+        lastCompactionIndex = i;
+        break;
+      }
+    }
+    if (!getLastAssistantUsage(branch.slice(lastCompactionIndex + 1))) return;
+
+    // buildContext 按 compaction 条目截断历史，得到当前真实有效上下文
+    const context = await session.buildContext();
+    if (context.messages.length === 0) return;
+    const contextTokens = estimateContextTokens(context.messages).tokens;
+
+    const agentId = await getSessionAgentId(threadId);
+    if (!agentId) return;
+
+    // 上下文窗口取该会话所用模型的配置，未配置时保守回退 128k
+    const modelId = agentManager.getRuntimeModelId(agentId);
+    const contextWindow =
+      useConfigStore
+        .getState()
+        .providers?.providers?.flatMap((provider) => provider.models)
+        .find((model) => model.id === modelId)?.contextWindow ?? 128000;
+
+    if (!shouldCompact(contextTokens, contextWindow, DEFAULT_COMPACTION_SETTINGS)) return;
+
+    console.log(
+      `[压缩] 会话 ${threadId} 打开时触发自动压缩: ${contextTokens} tokens (窗口 ${contextWindow})`,
+    );
+
+    try {
+      const harness = await agentManager.getOrCreateHarness(threadId, agentId);
+      await harness.compact();
+
+      // loadThreadMessages 对已加载会话是 no-op，必须先重置 loaded 再重载
+      useChatStore.setState((state) => ({
+        threads: state.threads.map((t) =>
+          t.id === threadId ? { ...t, loaded: false } : t,
+        ),
+      }));
+      await useChatStore.getState().loadThreadMessages(threadId);
+      console.log(`[压缩] 会话 ${threadId} 压缩完成`);
+    } catch (compactError) {
+      // "Nothing to compact"：末尾已是压缩条目，属正常情况
+      if (
+        compactError instanceof Error &&
+        compactError.message.includes("Nothing to compact")
+      ) {
+        return;
+      }
+      console.warn("[压缩] 执行压缩失败:", compactError);
+    }
+  } catch (error) {
+    console.warn("[压缩] 打开会话时自动压缩失败:", error);
+  }
+}
+
 export type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
 
 interface ExchangeStart {
@@ -141,7 +230,7 @@ interface ChatState {
     threadId: string,
     messageId: string,
     finalContent: string,
-    metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
+    metadata?: MessageFinishMetadata,
   ) => void;
   selectThread: (threadId: string) => void;
   showHome: () => void;
@@ -385,6 +474,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     });
 
+    // 清理该线程的自动记忆捕获 token 标记，避免 Map 随会话删除只增不减
+    clearThreadCaptureTokens(threadId);
     // 同步删除磁盘上的 JSONL 文件与索引条目，避免重启后重新出现
     void useConversationStore.getState().deleteConversation(threadId);
   },
@@ -483,6 +574,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                           model: metadata?.model ?? message.model,
                           status: "complete",
                           tokenCount: metadata?.tokenCount,
+                          inputTokens: metadata?.inputTokens,
+                          outputTokens: metadata?.outputTokens,
+                          cacheReadTokens: metadata?.cacheReadTokens,
+                          cacheWriteTokens: metadata?.cacheWriteTokens,
+                          contextTokens: metadata?.contextTokens,
                           segments: metadata?.segments ?? message.segments,
                         };
                         return completedMessage;
@@ -506,6 +602,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void get().maybeAutoGenerateTitle(threadId);
 
     if (completedMessage && lastUserMessage) {
+      // 计算当前线程的累计 token 数
+      const updatedThread = get().threads.find((t) => t.id === threadId);
+      const cumulativeTokens = updatedThread?.messages.reduce(
+        (sum, msg) => sum + (msg.tokenCount ?? 0), 0
+      ) ?? 0;
+
       void captureMemoriesFromExchange({
         threadId,
         agentId: completedAgentId,
@@ -513,6 +615,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         workingDir,
         userText: lastUserMessage.content,
         assistantText: completedMessage.content,
+        cumulativeTokens,
       });
     }
   },
@@ -736,6 +839,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : t,
       ),
     }));
+
+    // 异步检查是否需要自动压缩（不阻塞 UI）
+    void checkAndCompactOnOpen(threadId);
   },
 
   // AI 首次产出正文后，基于「用户问题 + AI 正文」生成真实对话标题（仅一次）

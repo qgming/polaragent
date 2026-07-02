@@ -34,6 +34,7 @@
     "openSidebar": "打开侧边栏",
     "closeSidebar": "关闭侧边栏",
     "searchSessions": "搜索会话",
+    "sessionStats": "会话用量统计",
     "tutorial": "使用教程",
     "expandPanel": "展开监控面板",
     "collapsePanel": "收起监控面板",

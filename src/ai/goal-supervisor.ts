@@ -98,6 +98,11 @@ function finalizeAssistant(
   useChatStore.getState().finishAssistant(threadId, assistantId, result.content, {
     model: result.model,
     tokenCount: result.usage.totalTokens,
+    inputTokens: result.usage.input,
+    outputTokens: result.usage.output,
+    cacheReadTokens: result.usage.cacheRead,
+    cacheWriteTokens: result.usage.cacheWrite,
+    contextTokens: result.contextTokens,
     segments: result.segments,
   });
 }

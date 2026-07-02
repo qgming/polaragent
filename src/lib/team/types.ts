@@ -15,6 +15,16 @@ export interface TeamMessage {
   status: ChatMessageStatus;
   model?: string;
   tokenCount?: number;
+  // 输入 token 数
+  inputTokens?: number;
+  // 输出 token 数
+  outputTokens?: number;
+  // 缓存写入 token 数
+  cacheWriteTokens?: number;
+  // 缓存读取 token 数
+  cacheReadTokens?: number;
+  // 当前上下文 token 数（官方口径：最后一轮 usage 的 totalTokens || 四字段和）
+  contextTokens?: number;
   attachments?: ChatAttachment[];
   skillRefs?: ChatSkillRef[];
   segments?: Segment[];

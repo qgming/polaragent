@@ -114,38 +114,131 @@ function formatScope(scope: MemoryScope): string {
 
 /**
  * 检测新记忆与相似记忆之间是否存在潜在语义冲突。
- * 采用轻量级否定词检测：高相似度下，一方含否定词而另一方不含，则视为潜在矛盾。
- * 阈值设得较高，宁可漏报也不要误报。
+ * 三层检测机制：
+ *   Layer 1: 否定词检测 — 一方含否定词而另一方不含
+ *   Layer 2: 反义关键词对检测 — 双方包含同一维度的相反词汇
+ *   Layer 3: 结构化字段对比 — 同 key 不同 value
+ * 阈值较低（0.3），宁可多报也不漏报。
  */
 function detectContradictions(
   newContent: string,
   similarMemories: any[],
-): Array<{ id: string; content: string; score: number }> {
-  const CONTRADICTION_THRESHOLD = 0.75;
+): Array<{ id: string; content: string; score: number; reason: string }> {
+  const CONTRADICTION_THRESHOLD = 0.3;
 
-  // 中英文常见否定词（仅用于判断语气是否相反）
+  // Layer 1: 中英文否定词模式
   const negationPatterns = [
-    /不|没|非|无|否|别|未|休|莫|勿/,
-    /not|no|never|don't|doesn't|won't|can't|isn't|aren't|didn't|couldn't|shouldn't|wouldn't/i,
+    /不|没|非|无|否|别|未|休|莫|勿|讨厌|拒绝|反对|避免|禁止/,
+    /not|no|never|don't|doesn't|won't|can't|isn't|aren't|didn't|couldn't|shouldn't|wouldn't|dislike|hate|avoid|refuse|reject|never/i,
   ];
 
-  const newHasNegation = negationPatterns.some((p) => p.test(newContent));
+  // Layer 2: 反义关键词对（同一维度上的相反表达）
+  const antonymPairs: Array<[RegExp, RegExp]> = [
+    [/喜欢|偏好|爱好|爱用|常用/, /讨厌|厌恶|不喜欢|反感|弃用/],
+    [/亮色|浅色|light|bright/, /暗色|深色|dark|dim/],
+    [/大|large|big/, /小|small|little|mini/],
+    [/快|fast|quick|speed/, /慢|slow|gradual/],
+    [/简单|simple|easy|minimal/, /复杂|complex|detailed|elaborate/],
+    [/中文|chinese|zh/, /英文|english|en/],
+    [/自动|auto|automatic/, /手动|manual|hand/],
+    [/开启|启用|打开|enable|on|active/, /关闭|禁用|停用|disable|off|inactive/],
+    [/前端|frontend|client/, /后端|backend|server/],
+    [/自动部署|auto.?deploy|ci/, /手动部署|manual.?deploy/],
+  ];
 
-  return similarMemories
-    .filter((mem) => {
-      if (typeof mem.score !== "number" || mem.score < CONTRADICTION_THRESHOLD) return false;
-      if (!mem.content || typeof mem.content !== "string") return false;
+  // Layer 3: 结构化字段提取（从 [k=v; ...] 格式或自然语言中提取键值对）
+  function extractStructuredFields(text: string): Map<string, string> {
+    const fields = new Map<string, string>();
+    // 匹配 [k=v; k=v] 格式
+    const bracketMatch = text.match(/\[(.+?)]$/);
+    if (bracketMatch) {
+      bracketMatch[1].split(";").forEach((pair) => {
+        const [k, v] = pair.split("=").map((s) => s.trim());
+        if (k && v) fields.set(k.toLowerCase(), v.toLowerCase());
+      });
+    }
+    // 匹配 "使用X" / "偏好X" / "选择X" 模式
+    const preferMatch = text.match(/(?:使用|偏好|选择|prefer|use|choose)\s*[:：]?\s*(\S+)/i);
+    if (preferMatch) fields.set("_prefer", preferMatch[1].toLowerCase());
+    return fields;
+  }
 
-      const memHasNegation = negationPatterns.some((p) => p.test(mem.content));
+  function hasNegation(text: string): boolean {
+    return negationPatterns.some((p) => p.test(text));
+  }
 
-      // 高相似度下，仅当肯定/否定语气相反时才认为可能冲突
-      return newHasNegation !== memHasNegation;
-    })
-    .map((mem) => ({
-      id: String(mem.id ?? ""),
-      content: mem.content,
-      score: mem.score,
-    }));
+  function findAntonymConflict(textA: string, textB: string): string | null {
+    const aLower = textA.toLowerCase();
+    const bLower = textB.toLowerCase();
+    for (const [patternA, patternB] of antonymPairs) {
+      const aMatchA = patternA.test(aLower);
+      const aMatchB = patternB.test(aLower);
+      const bMatchA = patternA.test(bLower);
+      const bMatchB = patternB.test(bLower);
+      // A 侧为正面、B 侧为反面，或反过来
+      if ((aMatchA && bMatchB) || (aMatchB && bMatchA)) {
+        return `反义冲突: "${textA}" vs "${textB}"`;
+      }
+    }
+    return null;
+  }
+
+  function findStructuredConflict(textA: string, textB: string): string | null {
+    const fieldsA = extractStructuredFields(textA);
+    const fieldsB = extractStructuredFields(textB);
+    for (const [key, valA] of fieldsA) {
+      const valB = fieldsB.get(key);
+      if (valB && valA !== valB) {
+        return `结构化字段冲突: ${key}="${valA}" vs ${key}="${valB}"`;
+      }
+    }
+    return null;
+  }
+
+  const results: Array<{ id: string; content: string; score: number; reason: string }> = [];
+
+  for (const mem of similarMemories) {
+    if (typeof mem.score !== "number" || mem.score < CONTRADICTION_THRESHOLD) continue;
+    if (!mem.content || typeof mem.content !== "string") continue;
+
+    // Layer 1: 否定词检测
+    const newHasNeg = hasNegation(newContent);
+    const memHasNeg = hasNegation(mem.content);
+    if (newHasNeg !== memHasNeg) {
+      results.push({
+        id: String(mem.id ?? ""),
+        content: mem.content,
+        score: mem.score,
+        reason: "否定词冲突：一方为肯定表达，另一方为否定表达",
+      });
+      continue;
+    }
+
+    // Layer 2: 反义关键词对检测
+    const antonymReason = findAntonymConflict(newContent, mem.content);
+    if (antonymReason) {
+      results.push({
+        id: String(mem.id ?? ""),
+        content: mem.content,
+        score: mem.score,
+        reason: antonymReason,
+      });
+      continue;
+    }
+
+    // Layer 3: 结构化字段对比
+    const structReason = findStructuredConflict(newContent, mem.content);
+    if (structReason) {
+      results.push({
+        id: String(mem.id ?? ""),
+        content: mem.content,
+        score: mem.score,
+        reason: structReason,
+      });
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -215,6 +308,8 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
           topK,
           threshold,
           config: runtime.config,
+          // 只有只读检索允许降级返回最近记忆；结果会带 fallback 标记按"非直接匹配"呈现
+          allowFallback: true,
         });
 
         if (result.results.length === 0) {
@@ -224,15 +319,21 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
           };
         }
 
+        const isFallback = result.results.every((memory) => memory.fallback);
         const markdown = result.results
           .map((memory, index) => {
             const tags = memory.tags.length > 0 ? ` 标签: ${memory.tags.join(", ")}` : "";
-            return `### ${index + 1}. ${formatScope(memory.scope)} / ${formatMemoryType(memory.type)} / ${memory.score.toFixed(3)}\nID: ${memory.id}${tags}\n\n${formatMemoryContent(memory.content)}`;
+            const scoreLabel = memory.fallback ? "非直接匹配" : memory.score.toFixed(3);
+            return `### ${index + 1}. ${formatScope(memory.scope)} / ${formatMemoryType(memory.type)} / ${scoreLabel}\nID: ${memory.id}${tags}\n\n${formatMemoryContent(memory.content)}`;
           })
           .join("\n\n---\n\n");
 
         return {
-          content: text(`找到 ${result.results.length} 条相关记忆：\n\n${markdown}`),
+          content: text(
+            isFallback
+              ? `未找到与「${params.query}」直接相关的记忆，以下是最近更新的 ${result.results.length} 条记忆，仅供参考：\n\n${markdown}`
+              : `找到 ${result.results.length} 条相关记忆：\n\n${markdown}`,
+          ),
           details: { results: result.results },
         };
       } catch (error) {
@@ -277,25 +378,25 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
 
       const type = (params.type ?? (scope === "project" ? "project" : "preference")) as MemoryType;
 
-      // 写入前先检测语义冲突（轻量级否定词检测，阈值较高，宁可漏报也不误报）
+      // 写入前先检测语义冲突（多层检测：否定词 + 反义词 + 结构化字段）
       try {
         const similarResults = await searchMemories({
           query: params.content,
           scopes: [scope],
           projectKey: runtime.projectKey,
-          topK: 5,
-          threshold: 0.5, // 降低阈值以捕获更多潜在矛盾候选，最终过滤仍由 detectContradictions 负责
+          topK: 10,
+          threshold: 0.3, // 低阈值以捕获更多潜在矛盾候选，最终过滤由 detectContradictions 负责
           config: runtime.config,
         });
 
         const contradictions = detectContradictions(params.content, similarResults.results);
         if (contradictions.length > 0) {
           const conflictList = contradictions
-            .map((c) => `- 已有记忆 [${c.id}]: "${c.content}" (相似度: ${c.score.toFixed(2)})`)
+            .map((c) => `- 已有记忆 [${c.id}]: "${c.content}" (相似度: ${c.score.toFixed(2)}, 原因: ${c.reason})`)
             .join("\n");
           return {
             content: text(
-              `⚠️ 检测到潜在矛盾记忆：\n${conflictList}\n\n新记忆: "${params.content}"\n\n请确认是否仍要写入。如果这是有意的更新（用户改变了偏好），请直接重新调用并确认。`,
+              `⚠️ 检测到潜在矛盾记忆：\n${conflictList}\n\n新记忆: "${params.content}"\n\n请确认是否仍要写入。如果这是有意的更新（用户改变了偏好），请重新调用并明确确认。`,
             ),
             details: { contradictions },
           };
@@ -320,7 +421,6 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
           config: runtime.config,
           // 提高去重阈值，减少因内容相似而意外覆盖已有记忆
           dedupeThreshold: 0.95,
-          sensitiveFilter: runtime.settings.memory?.sensitiveFilter ?? true,
         });
 
         return {

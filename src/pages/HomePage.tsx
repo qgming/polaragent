@@ -41,7 +41,7 @@ import {
 import { materializeAttachments } from "@/lib/session/attachment-files";
 import { pickWorkingDirectory } from "@/lib/electron/electron-api";
 import { buildSkillRefs } from "@/lib/chat";
-import type { ChatAttachment, ChatSkillRef, Segment } from "@/lib/chat";
+import type { ChatAttachment, ChatSkillRef, MessageFinishMetadata, Segment } from "@/lib/chat";
 import { useChatStore } from "@/stores/chat-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
@@ -89,7 +89,7 @@ export function HomePage({
     threadId: string,
     messageId: string,
     finalContent: string,
-    metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
+    metadata?: MessageFinishMetadata,
   ) => void;
   setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
   setActiveAgent: (agentId: string) => void;
@@ -261,10 +261,15 @@ export function HomePage({
       {
         onStreamUpdate: (update) =>
           applyStreamingUpdate(threadId, assistantId, update),
-        onDone: ({ content, model, usage, segments }) =>
+        onDone: ({ content, model, usage, contextTokens, segments }) =>
           finishAssistant(threadId, assistantId, content, {
             model,
             tokenCount: usage.totalTokens,
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cacheReadTokens: usage.cacheRead,
+            cacheWriteTokens: usage.cacheWrite,
+            contextTokens,
             segments,
           }),
         onError: (message) => failAssistant(threadId, assistantId, message),

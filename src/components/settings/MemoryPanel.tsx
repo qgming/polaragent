@@ -139,32 +139,7 @@ export function MemoryPanel({
             />
           }
         />
-        <SettingRow
-          title={t("memory.reuseKnowledgeEmbedding")}
-          description={t("memory.reuseKnowledgeEmbeddingDesc")}
-          control={
-            <Switch
-              checked={memory.reuseKnowledgeEmbedding}
-              disabled={!memory.enabled}
-              onCheckedChange={(checked) =>
-                void setMemory({ reuseKnowledgeEmbedding: checked })
-              }
-            />
-          }
-        />
-        <SettingRow
-          title={t("memory.sensitiveFilter")}
-          description={t("memory.sensitiveFilterDesc")}
-          control={
-            <Switch
-              checked={memory.sensitiveFilter}
-              disabled={!memory.enabled}
-              onCheckedChange={(checked) =>
-                void setMemory({ sensitiveFilter: checked })
-              }
-            />
-          }
-        />
+
       </div>
 
       <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
@@ -201,6 +176,27 @@ export function MemoryPanel({
                   label: String(value),
                 }),
               )}
+            />
+          }
+        />
+        <SettingRow
+          title={t("memory.autoWriteTokenThreshold")}
+          description={t("memory.autoWriteTokenThresholdDesc")}
+          control={
+            <SettingDropdown
+              value={String(memory.autoWriteTokenThreshold)}
+              disabled={!memory.enabled || !memory.autoWrite}
+              onChange={(value) =>
+                void setMemory({ autoWriteTokenThreshold: Number(value) })
+              }
+              options={[0, 4000, 10000, 20000, 40000, 60000, 80000, 100000].map((value) => ({
+                value: String(value),
+                // 选项必须覆盖默认值 4000 与文案承诺的 0，否则默认状态下拉显示裸值且无法回选
+                label:
+                  value === 0
+                    ? t("memory.autoWriteTokenThresholdEvery")
+                    : `${value.toLocaleString("en-US")} tokens`,
+              }))}
             />
           }
         />

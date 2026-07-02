@@ -2,7 +2,6 @@ import { firstModelService, resolveModelService } from "./model-router";
 import { callLlm } from "./llm-call";
 import {
   createMemory,
-  hasSensitiveMemoryContent,
   memoryApiConfigFromSettings,
   normalizeMemoryJsonText,
   projectKeyFromWorkingDir,
@@ -14,6 +13,9 @@ import { useMemoryStore } from "@/stores/memory-store";
 const MIN_CONFIDENCE = 0.6;
 const MAX_CAPTURE_TEXT = 1800;
 
+// 每个线程上次触发自动记忆捕获时的累计 token 数
+const threadLastCaptureTokens = new Map<string, number>();
+
 interface CaptureParams {
   threadId: string;
   agentId: string;
@@ -21,6 +23,7 @@ interface CaptureParams {
   workingDir?: string;
   userText: string;
   assistantText: string;
+  cumulativeTokens?: number;
 }
 
 interface RawMemoryCandidate {
@@ -59,6 +62,15 @@ export async function captureMemoriesFromExchange(
   const memorySettings = settings.memory;
   if (!memorySettings?.enabled || !memorySettings.autoWrite) return;
 
+  // token 阈值判断：累计 token 未达到阈值时跳过
+  const threshold = memorySettings.autoWriteTokenThreshold ?? 4000;
+  if (threshold > 0) {
+    const currentTokens = params.cumulativeTokens ?? 0;
+    const lastTokens = threadLastCaptureTokens.get(params.threadId) ?? 0;
+    const delta = currentTokens - lastTokens;
+    if (delta < threshold) return;
+  }
+
   const config = memoryApiConfigFromSettings(settings);
   if (!config) return;
 
@@ -83,12 +95,9 @@ export async function captureMemoriesFromExchange(
         }),
       )
       .filter((candidate): candidate is NormalizedMemoryCandidate => Boolean(candidate))
-      .filter((candidate) => candidate.confidence >= MIN_CONFIDENCE)
-      .filter((candidate) =>
-        memorySettings.sensitiveFilter
-          ? !hasSensitiveMemoryContent(candidate.content)
-          : true,
-      );
+      .filter((candidate) => candidate.confidence >= MIN_CONFIDENCE);
+
+    console.log(`[记忆] LLM 返回 ${candidates.length} 条候选记忆`);
 
     for (const candidate of candidates) {
       await createMemory({
@@ -99,18 +108,26 @@ export async function captureMemoriesFromExchange(
         },
         config,
         dedupeThreshold: 0.92,
-        sensitiveFilter: memorySettings.sensitiveFilter,
       }).catch((error) => {
-        console.warn("自动写入记忆失败，已跳过单条候选:", error);
+        console.warn("[记忆] 写入失败，已跳过:", candidate.content.slice(0, 50), error);
       });
+    }
+
+    // 更新该线程的已捕获 token 标记
+    if (params.cumulativeTokens != null) {
+      threadLastCaptureTokens.set(params.threadId, params.cumulativeTokens);
     }
 
     useMemoryStore.getState().setLastAutoWriteError(null);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn("自动记忆捕获失败:", error);
+    console.warn("[记忆] 自动记忆捕获失败:", error);
     useMemoryStore.getState().setLastAutoWriteError(message);
   }
+}
+
+export function clearThreadCaptureTokens(threadId: string): void {
+  threadLastCaptureTokens.delete(threadId);
 }
 
 function buildCaptureSystemPrompt(allowProject: boolean): string {

@@ -5,6 +5,7 @@ export type {
   ChatRole,
   ChatSkillRef,
   ChatThread,
+  MessageFinishMetadata,
   Segment,
 } from "./types";
 

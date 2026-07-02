@@ -424,10 +424,17 @@ export class AgentManager {
 
     // 监听压缩事件：压缩完成时记录日志（0.79.10+ 新增 fromHook 标识）
     harness.on("session_compact", (event) => {
-      const tokensBefore = event.compactionEntry.tokensBefore;
+      const entry = event.compactionEntry;
       const source = event.fromHook ? "hook" : "auto";
       console.log(
-        `[压缩] 会话 ${teamSessionId} 压缩完成: ${tokensBefore} tokens → summary (来源: ${source})`,
+        `[压缩] 会话 ${teamSessionId} 压缩完成`,
+        {
+          source,
+          tokensBefore: entry.tokensBefore,
+          summaryLength: entry.summary?.length ?? 0,
+          firstKeptEntryId: entry.firstKeptEntryId,
+          timestamp: new Date(entry.timestamp).toISOString(),
+        },
       );
       return undefined;
     });

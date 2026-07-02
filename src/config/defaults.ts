@@ -168,9 +168,8 @@ export const defaultSettings: Settings = {
   memory: {
     enabled: true,
     autoWrite: true,
+    autoWriteTokenThreshold: 4000,
     projectMemoryEnabled: true,
-    reuseKnowledgeEmbedding: true,
-    sensitiveFilter: true,
     retrieval: {
       topK: 5,
       threshold: 0.62,

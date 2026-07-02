@@ -31,6 +31,8 @@ export interface MemoryItem {
 
 export interface MemorySearchResult extends MemoryItem {
   score: number;
+  // 降级结果标记：非直接匹配，仅为"最近更新"兜底（score 恒为 0）
+  fallback?: boolean;
 }
 
 export interface MemoryEmbeddingConfig {
@@ -60,14 +62,12 @@ export interface CreateMemoryRequest {
   };
   config: MemoryApiConfig;
   dedupeThreshold?: number;
-  sensitiveFilter?: boolean;
 }
 
 export interface UpdateMemoryRequest {
   id: string;
   updates: Partial<Pick<MemoryItem, "content" | "type" | "confidence" | "tags" | "archived">>;
   config?: MemoryApiConfig;
-  sensitiveFilter?: boolean;
 }
 
 export interface SearchMemoryRequest {
@@ -78,6 +78,9 @@ export interface SearchMemoryRequest {
   topK?: number;
   threshold?: number;
   includeArchived?: boolean;
+  // 无任何命中时是否允许降级返回最近更新的记忆（带 fallback 标记）。
+  // 默认关闭；破坏性调用方（如 forget_memory）绝不能开启。
+  allowFallback?: boolean;
 }
 
 export interface ArchiveMemoryRequest {

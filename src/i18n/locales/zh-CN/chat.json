@@ -91,5 +91,25 @@
     "readFailed": "读取目录失败：{{message}}",
     "reading": "正在读取…",
     "empty": "该目录为空"
+  },
+  "stats": {
+    "title": "本次会话用量",
+    "empty": "暂无会话数据",
+    "totalTokens": "总 Token",
+    "totalInput": "输入 Token",
+    "totalOutput": "输出 Token",
+    "inputTokens": "输入 token",
+    "outputTokens": "输出 token",
+    "cacheWriteTokens": "缓存写入 token",
+    "cacheReadTokens": "缓存读取 token",
+    "cacheHitRate": "缓存命中率",
+    "compaction": "上下文压缩",
+    "turns": "对话轮次",
+    "toolCalls": "工具调用",
+    "avgPerReply": "平均每条回复",
+    "duration": "会话时长",
+    "byModel": "按模型",
+    "lessThanMinute": "<1 分钟",
+    "minutes": "分钟"
   }
 }

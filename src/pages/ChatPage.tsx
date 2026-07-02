@@ -59,7 +59,7 @@ import {
   useThreadKnowledgeBaseIds,
   useThreadAgentId,
 } from "@/stores/chat-store";
-import type { ChatAttachment, ChatSkillRef, Segment } from "@/lib/chat";
+import type { ChatAttachment, ChatSkillRef, MessageFinishMetadata, Segment } from "@/lib/chat";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
@@ -97,7 +97,7 @@ export function ChatPage({
     threadId: string,
     messageId: string,
     finalContent: string,
-    metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
+    metadata?: MessageFinishMetadata,
   ) => void;
   setComposer: (value: string) => void;
   startExchange: (
@@ -367,10 +367,15 @@ export function ChatPage({
         // 流式合批：每帧一次写入（追加文本 + 替换有序段），思考/工具/正文按真实顺序显示
         onStreamUpdate: (update) =>
           applyStreamingUpdate(exchangeThreadId, assistantId, update),
-        onDone: ({ content, model, usage, segments }) =>
+        onDone: ({ content, model, usage, contextTokens, segments }) =>
           finishAssistant(exchangeThreadId, assistantId, content, {
             model,
             tokenCount: usage.totalTokens,
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cacheReadTokens: usage.cacheRead,
+            cacheWriteTokens: usage.cacheWrite,
+            contextTokens,
             segments,
           }),
         onError: (message) => failAssistant(exchangeThreadId, assistantId, message),

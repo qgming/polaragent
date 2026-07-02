@@ -1,21 +1,6 @@
-// 最大扫描文本长度，防止超长输入导致 ReDoS 攻击
-const MAX_SCAN_LENGTH = 10000;
-
-const SENSITIVE_PATTERNS = [
-  /(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*["']?[\w./+=-]{8,}/i,
-  /\bsk-[A-Za-z0-9_-]{16,}\b/,
-  /\b[A-Za-z0-9_]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/,
-  /\b\d{6}(?:19|20)?\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b/,
-  /\b(?:\d[ -]?){13,19}\b/,
-  /验证码|verification code|one[- ]?time code|otp/i,
-];
-
-export function hasSensitiveMemoryContent(text: string): boolean {
-  // 截断超长文本，防止正则回溯导致的 ReDoS 风险
-  const truncated =
-    text.length > MAX_SCAN_LENGTH ? text.slice(0, MAX_SCAN_LENGTH) : text;
-  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(truncated));
-}
+// 记忆模块的文本处理助手
+// 说明：敏感内容过滤功能已下线（v0.4.4 起由提取端提示词约束），
+// 这里只保留模型输出的 JSON 规范化助手。
 
 export function normalizeMemoryJsonText(raw: string): string {
   const trimmed = raw.trim();

@@ -12,6 +12,12 @@
 
 import { agentManager, type TeamContext } from "./agent-manager";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
+import {
+  DEFAULT_COMPACTION_SETTINGS,
+  calculateContextTokens,
+  estimateContextTokens,
+  shouldCompact,
+} from "@/lib/session/compaction";
 import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
 import { formatSkillInvocationWithFiles } from "./tools/skills";
@@ -38,10 +44,12 @@ export interface AgentResult {
     input: number;
     output: number;
     totalTokens: number;
+    cacheRead: number;
+    cacheWrite: number;
   };
-  // 助手消息的有序过程结构（思考/工具/正文），用于渲染与持久化
+  // 当前上下文大小（最后一轮的 input，用于上下文压缩判断）
+  contextTokens: number;
   segments: Segment[];
-  // Provider 缓存命中标记（0.80 after_provider_response 事件提取）
   providerCacheHit?: boolean;
 }
 
@@ -355,6 +363,23 @@ export async function promptAgent(
       options.attachments?.filter((attachment) => attachment.kind === "image"),
     );
 
+    // 记录发送给 AI 的内容组成
+    const skillCount = options.skillIds?.length ?? 0;
+    const fileCount = options.filePaths?.length ?? 0;
+    const imageCount = options.attachments?.filter((a) => a.kind === "image").length ?? 0;
+    console.log(
+      `[AI输入] 会话 ${options.threadId} 内容组成:`,
+      {
+        用户输入: input.length,
+        技能数: skillCount,
+        技能: options.skillIds,
+        文件数: fileCount,
+        文件: options.filePaths,
+        图片数: imageCount,
+        总长度: modelInput.length,
+      },
+    );
+
     // 动态调整 thinking level：先按输入复杂度选档，再用 clampThinkingLevel 钳位到模型实际支持的范围
     const rawThinkingLevel = selectThinkingLevel(modelInput);
     const model = harness.getModel();
@@ -380,6 +405,24 @@ export async function promptAgent(
 
       const unsubscribe = harness.subscribe(async (event) => {
         switch (event.type) {
+          case "before_provider_payload": {
+            // 只记录请求的元信息计数。不要打印 payload 本体：
+            // 它包含全部历史消息与工具定义，console 会长期持有引用阻碍 GC，
+            // 且会把用户会话内容与系统提示词泄漏进控制台日志。
+            const payload = event.payload as {
+              messages?: Array<{ role: string; content?: unknown }>;
+              system?: string;
+              tools?: unknown[];
+            };
+            const messageCount = payload.messages?.length ?? 0;
+            const toolCount = payload.tools?.length ?? 0;
+            const systemLength = typeof payload.system === "string" ? payload.system.length : 0;
+            console.log(
+              `[AI请求] 会话 ${options.threadId} LLM 请求: 消息数=${messageCount} 工具数=${toolCount} 系统提示词长度=${systemLength}`,
+            );
+            break;
+          }
+
           case "queue_update": {
             const nextQueued = event.steer.map((message) =>
               agentUserMessageText(message),
@@ -532,6 +575,33 @@ export async function promptAgent(
           await harness.prompt(modelInput);
         }
         await harness.waitForIdle();
+
+        // 检查是否需要自动压缩上下文
+        try {
+          // 通过最后一次 assistant 消息的 usage 估算当前上下文
+          const lastAssistant = runItems
+            .filter((item): item is Extract<(typeof runItems)[number], { type: "assistant" }> => item.type === "assistant")
+            .map((item) => item.message)
+            .pop();
+
+          if (lastAssistant?.usage) {
+            const contextWindow = harness.getModel().contextWindow ?? 128000;
+            // 官方口径 calculateContextTokens = totalTokens || input+output+cacheRead+cacheWrite。
+            // 必须包含 cacheWrite：prompt caching 首写/过期轮的上下文几乎全部计入 cacheWrite，
+            // 漏算会导致该压缩时不压缩，下一轮请求直接超出模型窗口。
+            const estimatedContext = calculateContextTokens(lastAssistant.usage);
+
+            if (shouldCompact(estimatedContext, contextWindow, DEFAULT_COMPACTION_SETTINGS)) {
+              console.log(
+                `[压缩] 会话 ${options.threadId} 触发自动压缩: ${estimatedContext} tokens (窗口 ${contextWindow})`,
+              );
+              await harness.compact();
+            }
+          }
+        } catch (error) {
+          console.warn("[压缩] 自动压缩检查失败:", error);
+        }
+
         attemptController.abort(); // 取消旧回调中可能残留的异步操作
         unsubscribe();
         batcher.cancel();
@@ -635,7 +705,8 @@ function buildAgentEndResult(
     return {
       content: assistantText,
       model: runtimeModelId,
-      usage: { input: 0, output: 0, totalTokens: 0 },
+      usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0 },
+      contextTokens: 0,
       segments: assistantText ? [{ kind: "text", text: assistantText }] : [],
     };
   }
@@ -662,14 +733,38 @@ function buildAgentEndResult(
       .filter(Boolean)
       .join("\n") || assistantText;
 
+  // 累加所有 assistant 轮次的 usage（input/output/cacheRead/cacheWrite）
+  // 多轮工具调用中，每轮都有独立的 usage
+  // Anthropic API: input = 新增输入, cacheRead = 缓存读取, 两者独立
+  let totalInput = 0;
+  let totalOutput = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
+  let finalTotalTokens = 0;
+  for (const assistant of assistants) {
+    totalInput += assistant.usage?.input ?? 0;
+    totalOutput += assistant.usage?.output ?? 0;
+    totalCacheRead += assistant.usage?.cacheRead ?? 0;
+    totalCacheWrite += assistant.usage?.cacheWrite ?? 0;
+    // 每轮总量用官方口径（totalTokens || 四字段和），与会话重载路径（message-parser）保持一致
+    finalTotalTokens += assistant.usage ? calculateContextTokens(assistant.usage) : 0;
+  }
+  // 使用 estimateContextTokens 计算真实的当前上下文大小
+  // 这个函数会考虑所有消息（包括 compaction 条目），返回真实的当前上下文大小
+  const allMessages = [...(event.messages ?? [])] as AgentMessage[];
+  const contextTokens = estimateContextTokens(allMessages).tokens;
+
   return {
     content,
     model: lastAssistant.model?.trim() || runtimeModelId,
     usage: {
-      input: lastAssistant.usage?.input ?? 0,
-      output: lastAssistant.usage?.output ?? 0,
-      totalTokens: lastAssistant.usage?.totalTokens ?? 0,
+      input: totalInput,
+      output: totalOutput,
+      totalTokens: finalTotalTokens,
+      cacheRead: totalCacheRead,
+      cacheWrite: totalCacheWrite,
     },
+    contextTokens,
     segments,
     providerCacheHit,
   };

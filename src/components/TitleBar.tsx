@@ -3,6 +3,7 @@
 
 import {
   BadgeHelp,
+  BarChart3,
   CopyMinus,
   Info,
   Menu,
@@ -21,6 +22,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { IconButton } from "@/components/IconButton";
+import { SessionStatsPopover } from "@/components/chat/SessionStatsPopover";
 import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
 import {
   DropdownMenu,
@@ -33,6 +35,11 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useToast } from "@/hooks/useToast";
 import {
   checkForUpdates,
@@ -104,6 +111,7 @@ export function TitleBar({
       <div className="flex h-full items-center">
         {showPanelToggle ? (
           <>
+            <SessionStatsButton />
             <PanelToggleButton teamThreadId={teamPanelThreadId} />
             {/* 与窗口控制按钮之间的小竖分割线 */}
             <div className="mx-1 h-5 w-px bg-border" />
@@ -232,6 +240,28 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
         checkOnOpenKey={0}
       />
     </>
+  );
+}
+
+// 顶部栏右侧：会话用量统计按钮
+function SessionStatsButton() {
+  const { t } = useTranslation();
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          className="flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/35"
+          title={t("nav:titleBar.sessionStats")}
+          type="button"
+        >
+          <BarChart3 className="size-4" />
+          <span className="sr-only">{t("nav:titleBar.sessionStats")}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" side="bottom" sideOffset={6} className="w-80 p-0">
+        <SessionStatsPopover />
+      </PopoverContent>
+    </Popover>
   );
 }
 

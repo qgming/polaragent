@@ -55,7 +55,6 @@ function requireMemoryConfig() {
   }
   return {
     config,
-    sensitiveFilter: settings.memory?.sensitiveFilter ?? true,
   };
 }
 
@@ -98,7 +97,7 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   },
 
   createManualMemory: async (params) => {
-    const { config, sensitiveFilter } = requireMemoryConfig();
+    const { config } = requireMemoryConfig();
     set({ isLoading: true, error: null });
     try {
       await createMemory({
@@ -112,7 +111,6 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
           tags: params.tags ?? [],
         },
         config,
-        sensitiveFilter,
       });
       await Promise.all([get().loadMemories({ includeArchived: true }), get().loadStats()]);
       set({ isLoading: false });
@@ -126,10 +124,10 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   },
 
   updateMemoryItem: async (id, updates) => {
-    const { config, sensitiveFilter } = requireMemoryConfig();
+    const { config } = requireMemoryConfig();
     set({ isLoading: true, error: null });
     try {
-      await updateMemory({ id, updates, config, sensitiveFilter });
+      await updateMemory({ id, updates, config });
       await Promise.all([get().loadMemories({ includeArchived: true }), get().loadStats()]);
       set({ isLoading: false });
     } catch (error) {

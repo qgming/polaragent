@@ -2,6 +2,7 @@
 // ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
 import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { calculateContextTokens } from "@/lib/session/compaction";
 import { skillLoader } from "@/lib/skill";
 import type { ChatAttachment, ChatMessage, ChatSkillRef, Segment } from "@/lib/chat";
 import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
@@ -201,6 +202,11 @@ async function loadChatMessagesImpl(
     segments: Segment[];
     model?: string;
     tokenCount?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheWriteTokens?: number;
+    cacheReadTokens?: number;
+    contextTokens?: number;
     speakerAgentId?: string;
   } | null = null;
   const pendingGuidance: Array<{ text: string; createdAt: number }> = [];
@@ -224,6 +230,11 @@ async function loadChatMessagesImpl(
       status: "complete",
       model: pending.model,
       tokenCount: pending.tokenCount,
+      inputTokens: pending.inputTokens,
+      outputTokens: pending.outputTokens,
+      cacheWriteTokens: pending.cacheWriteTokens,
+      cacheReadTokens: pending.cacheReadTokens,
+      contextTokens: pending.contextTokens,
       segments: pending.segments,
       speakerAgentId: pending.speakerAgentId,
     });
@@ -336,7 +347,15 @@ async function loadChatMessagesImpl(
           createdAt: timestamp,
           segments: [...segments],
           model: message.model,
-          tokenCount: message.usage?.totalTokens,
+          // 每轮总量与上下文都用官方口径 calculateContextTokens
+          // （= totalTokens || input+output+cacheRead+cacheWrite），
+          // 与实时路径（src/ai/agent.ts buildAgentEndResult）保持一致
+          tokenCount: message.usage ? calculateContextTokens(message.usage) : undefined,
+          inputTokens: message.usage?.input,
+          outputTokens: message.usage?.output,
+          cacheWriteTokens: message.usage?.cacheWrite,
+          cacheReadTokens: message.usage?.cacheRead,
+          contextTokens: message.usage ? calculateContextTokens(message.usage) : undefined,
           speakerAgentId: currentSpeaker,
         };
       } else {
@@ -344,7 +363,17 @@ async function loadChatMessagesImpl(
         pending.createdAt = timestamp;
         pending.segments.push(...segments);
         pending.model = message.model ?? pending.model;
-        pending.tokenCount = message.usage?.totalTokens ?? pending.tokenCount;
+        // 累加所有轮次的 token（口径同上）
+        pending.tokenCount =
+          (pending.tokenCount ?? 0) + (message.usage ? calculateContextTokens(message.usage) : 0);
+        pending.inputTokens = (pending.inputTokens ?? 0) + (message.usage?.input ?? 0);
+        pending.outputTokens = (pending.outputTokens ?? 0) + (message.usage?.output ?? 0);
+        pending.cacheWriteTokens = (pending.cacheWriteTokens ?? 0) + (message.usage?.cacheWrite ?? 0);
+        pending.cacheReadTokens = (pending.cacheReadTokens ?? 0) + (message.usage?.cacheRead ?? 0);
+        // 当前上下文大小取最后一轮的官方口径总量
+        pending.contextTokens = message.usage
+          ? calculateContextTokens(message.usage)
+          : pending.contextTokens;
       }
     }
     // toolResult 已在上面收集，不单独成条

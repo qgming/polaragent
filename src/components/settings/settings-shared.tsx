@@ -78,12 +78,14 @@ export function SettingDropdown({
   options,
   placeholder,
   className,
+  disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: Array<{ value: string; label: React.ReactNode }>;
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const current = options.find((option) => option.value === value);
 
@@ -92,8 +94,9 @@ export function SettingDropdown({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          disabled={disabled}
           className={cn(
-            "flex h-9 min-w-[96px] items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors hover:bg-muted focus-visible:border-ring",
+            "flex h-9 min-w-[96px] items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors hover:bg-muted focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50",
             className,
           )}
         >
