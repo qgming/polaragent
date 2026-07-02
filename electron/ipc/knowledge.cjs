@@ -8,6 +8,7 @@ const { net } = require("electron");
 const { ensureDir, readText } = require("../lib/fs-utils.cjs");
 const { normalizeBaseUrl, errorMessage } = require("../lib/http-utils.cjs");
 const { dataDir } = require("../lib/app-paths.cjs");
+const { cosineSimilarity } = require("../lib/utils.cjs");
 
 const TEXT_EXTENSIONS = new Set([
   ".md",
@@ -245,22 +246,6 @@ async function loadFilesList(kbId) {
 // ─────────────────────────────────────────────────────────────────────────
 // 余弦相似度检索
 // ─────────────────────────────────────────────────────────────────────────
-
-function cosineSimilarity(a, b) {
-  if (!a || !b || a.length !== b.length) {
-    console.warn(`向量维度不匹配: ${a?.length} vs ${b?.length}`);
-    return 0;
-  }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
 
 async function searchVectors(kbId, queryVector, topK = 5, threshold = 0.6) {
   const records = await loadVectors(kbId);

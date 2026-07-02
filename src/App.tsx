@@ -84,6 +84,7 @@ function App() {
   const deleteThread = useChatStore((state) => state.deleteThread);
   const failAssistant = useChatStore((state) => state.failAssistant);
   const finishAssistant = useChatStore((state) => state.finishAssistant);
+  const setRetryAttempt = useChatStore((state) => state.setRetryAttempt);
   const selectThread = useChatStore((state) => state.selectThread);
   const renameThread = useChatStore((state) => state.renameThread);
   const setComposer = useChatStore((state) => state.setComposer);
@@ -192,10 +193,14 @@ function App() {
     clearThread(threadId);
   };
 
-  // 删除会话：先中止其后台运行，再删除
+  // 删除会话：先中止其后台运行，再删除；若删的是当前打开的会话，退出项目聊天视图
   const handleDeleteThread = (threadId: string) => {
     abortAgentThread(threadId);
     deleteThread(threadId);
+    // 清理项目聊天视图：如果删除的正是当前项目聊天视图中的会话
+    setProjectChatView((view) =>
+      view?.threadId === threadId ? null : view,
+    );
   };
 
   // ===== 团队相关 =====
@@ -472,6 +477,7 @@ function App() {
                   createThread={createThread}
                   failAssistant={failAssistant}
                   finishAssistant={finishAssistant}
+                  setRetryAttempt={setRetryAttempt}
                   setActiveAgent={setActiveAgent}
                   setComposer={setComposer}
                   startExchange={startExchange}

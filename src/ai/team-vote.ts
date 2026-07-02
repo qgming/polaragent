@@ -93,12 +93,11 @@ export async function initiateVote(
   await appendTeamVoteMessage(threadId, voteMessage);
   updateVoteProgress(threadId, voteMessageId, voteMessage, initialStatuses, votes);
 
-  for (const member of members) {
-    setMemberVoteStatus(statuses, member.id, "voting");
-    updateVoteProgress(threadId, voteMessageId, voteMessage, statuses, votes);
-
-    try {
-      const optionId = await collectMemberVoteByTool({
+  // 并行发起所有成员投票，并为每个投票添加 30 秒超时控制
+  const VOTE_TIMEOUT_MS = 30000;
+  const votePromises = members.map((member) =>
+    Promise.race([
+      collectMemberVoteByTool({
         threadId,
         team,
         voteId: voteMessageId,
@@ -106,32 +105,67 @@ export async function initiateVote(
         members,
         topic,
         options,
-      });
-      votes.push({ agentId: member.id, optionId, timestamp: Date.now() });
-      setMemberVoteStatus(statuses, member.id, "voted");
-      updateVoteProgress(threadId, voteMessageId, voteMessage, statuses, votes);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`成员 ${member.name} 投票失败:`, error);
-      setMemberVoteStatus(statuses, member.id, "failed", message);
+      }),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error("投票超时")), VOTE_TIMEOUT_MS),
+      ),
+    ])
+      .then((optionId) => ({ member, optionId, error: null as null }))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`成员 ${member.name} 投票失败:`, message);
+        return { member, optionId: null as string | null, error };
+        // 允许部分成员投票失败，后续统计有效票
+      }),
+  );
 
-      const cancelledMessage: TeamMessage = {
-        ...voteMessage,
-        content: formatVoteCancelled(topic, statuses, members),
-        vote: {
-          ...initialVote,
-          votes: [...votes],
-          memberStatuses: [...statuses],
-          status: "cancelled",
-        },
-      };
-      useTeamChatStore.getState().updateMessage(threadId, voteMessageId, {
-        content: cancelledMessage.content,
-        vote: cancelledMessage.vote,
+  // 先统一标记所有成员为 voting 状态
+  members.forEach((member) => {
+    setMemberVoteStatus(statuses, member.id, "voting");
+  });
+  updateVoteProgress(threadId, voteMessageId, voteMessage, statuses, votes);
+
+  // 等待所有投票完成（并行执行）
+  const voteResults = await Promise.all(votePromises);
+
+  // 收集有效投票结果
+  for (const result of voteResults) {
+    if (result.optionId && result.error === null) {
+      votes.push({
+        agentId: result.member.id,
+        optionId: result.optionId,
+        timestamp: Date.now(),
       });
-      await appendTeamVoteMessage(threadId, cancelledMessage);
-      return null;
+      setMemberVoteStatus(statuses, result.member.id, "voted");
+    } else {
+      setMemberVoteStatus(
+        statuses,
+        result.member.id,
+        "failed",
+        result.error instanceof Error ? result.error.message : String(result.error),
+      );
     }
+    updateVoteProgress(threadId, voteMessageId, voteMessage, statuses, votes);
+  }
+
+  // 如果没有任何有效投票，则视为全部失败，抛出异常
+  if (votes.length === 0) {
+    const allFailedMessage: TeamMessage = {
+      ...voteMessage,
+      content: formatVoteCancelled(topic, statuses, members),
+      vote: {
+        ...initialVote,
+        votes: [...votes],
+        memberStatuses: [...statuses],
+        status: "cancelled",
+      },
+    };
+    useTeamChatStore.getState().updateMessage(threadId, voteMessageId, {
+      content: allFailedMessage.content,
+      vote: allFailedMessage.vote,
+    });
+    await appendTeamVoteMessage(threadId, allFailedMessage);
+    throw new Error("所有成员投票失败，投票已取消");
   }
 
   const result = calculateVoteResult(topic, votes, options, members);

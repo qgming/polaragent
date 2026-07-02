@@ -2,6 +2,7 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { app } = require("electron");
+const { clampNumber } = require("../lib/utils.cjs");
 
 const DEFAULT_CONFIG = {
   persistentWorker: true,
@@ -55,12 +56,6 @@ function normalizeConfig(next = {}) {
     actionTimeoutMs: clampNumber(next.actionTimeoutMs, config.actionTimeoutMs, 1000, 180000),
     workerIdleTimeoutMs: clampNumber(next.workerIdleTimeoutMs, config.workerIdleTimeoutMs, 30000, 30 * 60 * 1000),
   };
-}
-
-function clampNumber(value, fallback, min, max) {
-  const number = Number(value ?? fallback);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(number)));
 }
 
 function spawnPowerShell(action) {

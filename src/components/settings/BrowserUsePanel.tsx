@@ -7,6 +7,7 @@ import { Activity, Bug, Globe, Loader2, Save, Server, FolderDown } from "lucide-
 import { Button } from "@/components/ui/button";
 import type { AutomationConfig, Settings } from "@/types/config";
 import { PageTitle, SettingRow } from "./settings-shared";
+import { clampNumber } from "@/lib/utils";
 
 type BrowserStatus = Awaited<ReturnType<typeof window.polaragent.browseruse.status>>;
 
@@ -310,9 +311,4 @@ function NumberInput({
 
 function clampPort(value: number, fallback: number) {
   return clampNumber(value, fallback, 1, 65535);
-}
-
-function clampNumber(value: number, fallback: number, min: number, max: number) {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(value)));
 }

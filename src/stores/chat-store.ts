@@ -136,6 +136,7 @@ interface ChatState {
   ) => string;
   deleteThread: (threadId: string) => void;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
+  setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
   finishAssistant: (
     threadId: string,
     messageId: string,
@@ -403,12 +404,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 messages: thread.messages.map((message) =>
                   message.id === messageId
                     ? (() => {
+                        // content 为空时把完整提示写入 error；有内容时只保留原始错误，不覆盖 content
+                        const errorText =
+                          message.content.trim().length === 0
+                            ? `这次响应没有完成：${error || "请求已中断"}`
+                            : error || "请求已中断";
                         failedMessage = {
                           ...message,
-                          content:
-                            message.content ||
-                            `这次响应没有完成：${error || "请求已中断"}`,
+                          error: errorText,
                           status: "error" as const,
+                          retryAttempt: undefined, // 清除重试状态
                         };
                         return failedMessage;
                       })()
@@ -422,12 +427,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     // 不再删除整个会话（之前会连用户消息一起丢失）。
-    // 若助手已产出部分内容，则持久化为出错消息，保证用户消息与上下文不丢。
-    if (failedMessage && failedMessage.content.trim().length > 0) {
+    // 只要有 content 或 error 就持久化，保证用户消息与上下文不丢。
+    if (
+      failedMessage &&
+      (failedMessage.content.trim().length > 0 || failedMessage.error)
+    ) {
       void useConversationStore
         .getState()
         .saveMessage(threadId, failedMessage, failedAgentId);
     }
+  },
+
+  setRetryAttempt: (threadId, messageId, attempt) => {
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId
+          ? {
+              ...thread,
+              messages: thread.messages.map((message) =>
+                message.id === messageId
+                  ? { ...message, retryAttempt: attempt, error: undefined }
+                  : message,
+              ),
+            }
+          : thread,
+      ),
+    }));
   },
 
   finishAssistant: (threadId, messageId, finalContent, metadata) => {
@@ -547,6 +572,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (options?.persist !== false) {
       void setSessionToolPermissionMode(threadId, mode);
     }
+    // 同步权限模式到主进程安全中间件（第二道防线）
+    window.polaragent.security?.setMode?.(mode);
   },
 
   setThreadKnowledgeBaseIds: (threadId, ids, options) => {

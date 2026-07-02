@@ -1,5 +1,5 @@
 // 项目列表：在侧边栏「会话」tab 中显示项目列表，每个项目可展开/收起其对话子列表
-import { Folder, FolderOpen, MoreHorizontal, Plus } from "lucide-react";
+import { Folder, FolderOpen, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -232,6 +232,14 @@ function ProjectRow({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {running ? (
+            <span
+              className="flex size-6 shrink-0 items-center justify-center text-[#9b6fe0]"
+              title={t("sidebar.running")}
+            >
+              <Loader2 className="size-3.5 animate-spin" />
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -403,6 +411,14 @@ function ProjectThreadItem({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {running ? (
+            <span
+              className="flex size-6 shrink-0 items-center justify-center text-[#9b6fe0]"
+              title={t("sidebar.running")}
+            >
+              <Loader2 className="size-3.5 animate-spin" />
+            </span>
+          ) : null}
         </div>
       </div>
 

@@ -62,6 +62,9 @@ interface Window {
       createTempDir: (prefix?: string) => Promise<string>;
       createTempFile: (options?: { prefix?: string; suffix?: string }) => Promise<string>;
     };
+    security: {
+      setMode: (mode: import("@/types/permissions").ToolPermissionMode) => Promise<void>;
+    };
     config: {
       read: (fileName: string) => Promise<string>;
       write: (fileName: string, content: string) => Promise<void>;

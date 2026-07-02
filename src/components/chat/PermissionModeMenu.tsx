@@ -1,4 +1,4 @@
-import { Bot, Eye, ShieldCheck } from "lucide-react";
+import { Bot, Eye, Shield, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -25,19 +25,24 @@ const MODE_META: Record<
     descriptionKey: "permission.readonly.description",
     icon: Eye,
   },
-  full: {
-    labelKey: "permission.full.label",
-    descriptionKey: "permission.full.description",
-    icon: ShieldCheck,
+  safe: {
+    labelKey: "permission.safe.label",
+    descriptionKey: "permission.safe.description",
+    icon: Shield,
   },
   ai_review: {
     labelKey: "permission.aiReview.label",
     descriptionKey: "permission.aiReview.description",
     icon: Bot,
   },
+  full: {
+    labelKey: "permission.full.label",
+    descriptionKey: "permission.full.description",
+    icon: ShieldCheck,
+  },
 };
 
-const MODES: ToolPermissionMode[] = ["readonly", "ai_review", "full"];
+const MODES: ToolPermissionMode[] = ["readonly", "safe", "ai_review", "full"];
 
 export function PermissionModeMenu({
   mode,

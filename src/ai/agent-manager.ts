@@ -140,6 +140,8 @@ function runtimeConfigSignature(agentId: string, teamContext?: TeamContext): str
 export class AgentManager {
   // 按 threadId::agentId 缓存 harness（异步创建，先存 Promise 防并发重复构造）
   private harnesses = new Map<string, CachedHarness>();
+  // 缓存正在创建中的 harness Promise，防止并发重复创建（竞态保护）
+  private pendingCreations = new Map<string, Promise<AgentHarness>>();
   private configs = new Map<string, RuntimeAgentConfig>();
   private registeredCleanupSessions = new Set<string>();
 
@@ -149,6 +151,7 @@ export class AgentManager {
       void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
     }
     this.harnesses.clear();
+    this.pendingCreations.clear(); // 清理正在创建中的Promise，防止泄漏
     this.configs.clear();
     resetModelsCache();
   }
@@ -203,6 +206,8 @@ export class AgentManager {
       knowledgeBaseIds: [...(options?.knowledgeBaseIds ?? [])].sort(),
       projectSystemPrompt: options?.projectSystemPrompt ?? "",
     });
+
+    // 1. 已创建完成：检查缓存并校验签名
     const cached = this.harnesses.get(key);
     if (cached) {
       if (
@@ -223,16 +228,31 @@ export class AgentManager {
       this.harnesses.delete(key);
     }
 
-    const promise = this.createHarness(threadId, agentId, options);
-    this.harnesses.set(key, {
-      promise,
-      configSignature,
-      toolsRuntimeSignature,
-      workingDirSignature,
-    });
-    // 创建失败则移除缓存，避免后续一直拿到 rejected Promise
-    promise.catch(() => this.harnesses.delete(key));
-    return promise;
+    // 2. 正在创建中：复用Pending Promise
+    const pending = this.pendingCreations.get(key);
+    if (pending) {
+      return pending;
+    }
+
+    // 3. 开始创建：包装Promise并缓存到pendingCreations
+    const createPromise = this.createHarness(threadId, agentId, options)
+      .then((harness) => {
+        this.harnesses.set(key, {
+          promise: Promise.resolve(harness),
+          configSignature,
+          toolsRuntimeSignature,
+          workingDirSignature,
+        });
+        this.pendingCreations.delete(key);
+        return harness;
+      })
+      .catch((err) => {
+        this.pendingCreations.delete(key); // 错误时清理避免死锁
+        throw err;
+      });
+
+    this.pendingCreations.set(key, createPromise);
+    return createPromise;
   }
 
   private async createHarness(
@@ -415,6 +435,8 @@ export class AgentManager {
       if (harnessBelongsToThread(key, threadId)) {
         void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
         this.harnesses.delete(key);
+        // 同时清理可能正在创建中的Promise
+        this.pendingCreations.delete(key);
         // 触发会话级资源清理（0.80 session-resources）
         cleanupSessionResources(key.split("::")[0]);
         this.registeredCleanupSessions.delete(key.split("::")[0]);

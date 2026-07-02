@@ -45,6 +45,10 @@
     "aiReview": {
       "label": "AI review",
       "description": "Let AI decide before each tool execution. Deny when uncertain."
+    },
+    "safe": {
+      "label": "Safe",
+      "description": "Allow most operations. Block dangerous commands and system-critical paths."
     }
   },
   "trace": {

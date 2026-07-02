@@ -29,6 +29,7 @@ import {
   AgentHarnessError,
   type AgentMessage,
 } from "@earendil-works/pi-agent-core";
+import { RETRY_DELAYS, MAX_RETRIES, sleep } from "./retry";
 
 export interface AgentResult {
   content: string;
@@ -49,6 +50,8 @@ export interface AgentHandlers {
   onStreamUpdate: (update: { appendDelta?: string; segments?: Segment[] }) => void;
   onDone: (result: AgentResult) => void;
   onError: (message: string) => void;
+  // 重试回调：attempt 从 1 开始
+  onRetry?: (attempt: number) => void;
 }
 
 export interface PromptOptions {
@@ -78,6 +81,52 @@ export interface PromptOptions {
 // 文件块为 <file path="…">…全文…</file>，二者依次拼接，末尾接用户问题。
 // 文件内容在发送时才读取（reads-on-send），保证拿到最新内容、避免选中即占内存。
 // 无任何注入时原样返回用户输入。
+/**
+ * Guidance 文本队列管理器
+ * 封装 guidance 文本状态，避免 queue_update 与 message_start 并发操作数组导致竞态条件。
+ */
+class GuidanceQueue {
+  // 已确定的 guidance 文本（按生效顺序）
+  private consumed: string[] = [];
+  // 待生效的 guidance 文本
+  private queued: string[] = [];
+
+  /** 设置最新队列状态；超出的旧队列文本视为已生效 */
+  syncQueued(nextQueued: string[]) {
+    if (nextQueued.length < this.queued.length) {
+      this.consumed.push(
+        ...this.queued.slice(0, this.queued.length - nextQueued.length),
+      );
+    }
+    this.queued = nextQueued;
+  }
+
+  /** 消费下一个已生效的 guidance 文本 */
+  consumeNext(): string | undefined {
+    if (this.consumed.length === 0) return undefined;
+    return this.consumed.shift();
+  }
+
+  /** 强制将当前全部待生效文本转为已生效 */
+  flushQueuedToConsumed() {
+    if (this.queued.length > 0) {
+      this.consumed.push(...this.queued);
+      this.queued = [];
+    }
+  }
+
+  /** 判断当前是否有已生效的 guidance 待消费 */
+  hasConsumed(): boolean {
+    return this.consumed.length > 0;
+  }
+
+  /** 重置队列 */
+  reset() {
+    this.consumed = [];
+    this.queued = [];
+  }
+}
+
 async function buildModelInput(
   input: string,
   skillIds?: string[],
@@ -271,8 +320,8 @@ export async function promptAgent(
     > = [];
     // 当前正在进行的轮次的 partial assistant 消息（尚未 turn_end）。
     let livePartial: (AgentMessage & { role: "assistant" }) | null = null;
-    let queuedGuidanceTexts: string[] = [];
-    const consumedGuidanceTexts: string[] = [];
+    // Guidance 队列管理器：封装 guidance 文本状态，避免并发操作竞态。
+    const guidanceQueue = new GuidanceQueue();
 
     // 把「已完成轮次 + 当前 partial」聚合为有序 segments，缓存等待按帧 flush。
     // partial 与已完成轮次不重叠：turn_end 时把 partial 落入 runMessages 并清空。
@@ -297,159 +346,6 @@ export async function promptAgent(
       }
     };
 
-    const unsubscribe = harness.subscribe(async (event) => {
-      switch (event.type) {
-        case "queue_update": {
-          const nextQueued = event.steer.map((message) =>
-            agentUserMessageText(message),
-          );
-          if (nextQueued.length < queuedGuidanceTexts.length) {
-            consumedGuidanceTexts.push(
-              ...queuedGuidanceTexts.slice(
-                0,
-                queuedGuidanceTexts.length - nextQueued.length,
-              ),
-            );
-          }
-          queuedGuidanceTexts = nextQueued;
-          break;
-        }
-
-        case "message_start": {
-          if (event.message.role === "user" && consumedGuidanceTexts.length > 0) {
-            const text = consumedGuidanceTexts.shift() ?? agentUserMessageText(event.message);
-            if (text.trim()) {
-              await persistGuidance(options, text);
-            }
-            runItems.push({
-              type: "guidance",
-              text,
-              createdAt: Date.now(),
-            });
-            emitSegments();
-          }
-          break;
-        }
-
-        case "message_update": {
-          const inner = event.assistantMessageEvent;
-          if (inner.type === "text_delta") {
-            assistantText += inner.delta;
-            // 缓存文本增量，按帧合并写入（不再每 token 调一次 onDelta）
-            batcher.pushDelta(inner.delta);
-          }
-          // 更新当前轮次的 partial，并实时重建 segments（思考/工具/正文有序）。
-          // 思考增量(thinking_delta)无需单独累积——partial.content 已含有序 block。
-          if (event.message.role === "assistant") {
-            livePartial = event.message as AgentMessage & { role: "assistant" };
-            emitSegments();
-          }
-          break;
-        }
-
-        case "turn_end": {
-          // 每轮结束收集该轮的 assistant 消息（仅本次 run 新增，不含历史）
-          if (event.message.role === "assistant") {
-            runItems.push({
-              type: "assistant",
-              message: event.message as AgentMessage & { role: "assistant" },
-            });
-          }
-          // 该轮已落地，清空 partial，避免与 runMessages 重复计入
-          livePartial = null;
-          emitSegments();
-          break;
-        }
-
-        case "tool_execution_start": {
-          monitor.startStep(options.threadId, {
-            id: event.toolCallId,
-            toolName: event.toolName,
-            messageId: options.messageId,
-          });
-          break;
-        }
-
-        case "tool_execution_update": {
-          // 工具执行中间进度：partialResult 含中间结果，更新步骤面板的 label
-          const partial = event.partialResult;
-          const partialLabel = summarizePartialResult(event.toolName, partial);
-          if (partialLabel) {
-            monitor.updateStep(options.threadId, event.toolCallId, {
-              label: partialLabel,
-            });
-          }
-          break;
-        }
-
-        case "tool_execution_end": {
-          const label = summarizeToolResult(event.toolName, event.result);
-          const resultDetails = extractToolDetails(event.result);
-          toolResults.set(event.toolCallId, {
-            label,
-            isError: event.isError,
-            resultText: toolResultText(event.result),
-            todos: extractTodos(event.toolName, event.result),
-            details: resultDetails,
-          });
-          monitor.finishStep(options.threadId, event.toolCallId, {
-            label,
-            status: event.isError ? "error" : "done",
-          });
-          // 工具结果到位后，已渲染的工具段标签/状态需要刷新
-          emitSegments();
-          break;
-        }
-
-        case "agent_end": {
-          settled = true;
-          batcher.cancel();
-          batcher.reset();
-
-          // 从 runItems 提取最后一条 assistant 用于错误检测
-          let assistants = runItems
-            .filter(
-              (item): item is Extract<(typeof runItems)[number], { type: "assistant" }> =>
-                item.type === "assistant",
-            )
-            .map((item) => item.message);
-          if (assistants.length === 0) {
-            const last = [...event.messages]
-              .reverse()
-              .find((message) => message.role === "assistant");
-            if (last && last.role === "assistant") {
-              assistants = [last as AgentMessage & { role: "assistant" }];
-            }
-          }
-
-          const lastAssistant = assistants[assistants.length - 1];
-          if (lastAssistant?.stopReason === "error") {
-            handlers.onError(lastAssistant.errorMessage ?? "响应已中断");
-            return;
-          }
-
-          const result = buildAgentEndResult(
-            event, runItems, assistantText, runtimeModelId, toolResults, providerCacheHit,
-          );
-          if (result) handlers.onDone(result);
-          break;
-        }
-
-        case "after_provider_response": {
-          // 提取缓存命中与延迟信息（0.80 新增事件）
-          // 响应头中可能含缓存相关字段，记录供 agent_end 时附加到消息元信息
-          const cacheHeader =
-            event.headers["x-cache"] ??
-            event.headers["cf-cache-status"] ??
-            event.headers["anthropic-cache-hit"];
-          if (cacheHeader) {
-            providerCacheHit = String(cacheHeader).toLowerCase().includes("hit");
-          }
-          break;
-        }
-      }
-    });
-
     // 方案 C：把选中技能的 SKILL.md 全文 + 选中文件的内容拼到用户问题前一起发给模型
     // （后台注入），UI 显示的仍是用户原始问题（startExchange 时已用纯文本建消息）。
     const modelInput = await buildModelInput(
@@ -466,16 +362,209 @@ export async function promptAgent(
     await harness.setThinkingLevel(thinkingLevel);
 
     const imageInputs = await buildImageInputs(options.attachments);
-    if (imageInputs.length > 0) {
-      await harness.prompt(modelInput || "请查看这些图片。", {
-        images: imageInputs,
+
+    // --- 重试循环 ---
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // 每次重试前清空累积状态
+      assistantText = "";
+      runItems.length = 0;
+      livePartial = null;
+      toolResults.clear();
+      batcher.reset();
+      settled = false;
+      providerCacheHit = false;
+      guidanceQueue.reset();
+
+      // 每次 attempt 独立的 AbortController，用于取消旧 subscribe 回调中的异步操作
+      const attemptController = new AbortController();
+
+      const unsubscribe = harness.subscribe(async (event) => {
+        switch (event.type) {
+          case "queue_update": {
+            const nextQueued = event.steer.map((message) =>
+              agentUserMessageText(message),
+            );
+            guidanceQueue.syncQueued(nextQueued);
+            break;
+          }
+
+          case "message_start": {
+            if (event.message.role === "user" && guidanceQueue.hasConsumed()) {
+              const text = guidanceQueue.consumeNext() ?? agentUserMessageText(event.message);
+              if (text.trim() && !attemptController.signal.aborted) {
+                await persistGuidance(options, text);
+              }
+              runItems.push({
+                type: "guidance",
+                text,
+                createdAt: Date.now(),
+              });
+              emitSegments();
+            }
+            break;
+          }
+
+          case "message_update": {
+            const inner = event.assistantMessageEvent;
+            if (inner.type === "text_delta") {
+              assistantText += inner.delta;
+              // 缓存文本增量，按帧合并写入（不再每 token 调一次 onDelta）
+              batcher.pushDelta(inner.delta);
+            }
+            // 更新当前轮次的 partial，并实时重建 segments（思考/工具/正文有序）。
+            // 思考增量(thinking_delta)无需单独累积——partial.content 已含有序 block。
+            if (event.message.role === "assistant") {
+              livePartial = event.message as AgentMessage & { role: "assistant" };
+              emitSegments();
+            }
+            break;
+          }
+
+          case "turn_end": {
+            // 每轮结束收集该轮的 assistant 消息（仅本次 run 新增，不含历史）
+            if (event.message.role === "assistant") {
+              runItems.push({
+                type: "assistant",
+                message: event.message as AgentMessage & { role: "assistant" },
+              });
+            }
+            // 该轮已落地，清空 partial，避免与 runMessages 重复计入
+            livePartial = null;
+            emitSegments();
+            break;
+          }
+
+          case "tool_execution_start": {
+            monitor.startStep(options.threadId, {
+              id: event.toolCallId,
+              toolName: event.toolName,
+              messageId: options.messageId,
+            });
+            break;
+          }
+
+          case "tool_execution_update": {
+            // 工具执行中间进度：partialResult 含中间结果，更新步骤面板的 label
+            const partial = event.partialResult;
+            const partialLabel = summarizePartialResult(event.toolName, partial);
+            if (partialLabel) {
+              monitor.updateStep(options.threadId, event.toolCallId, {
+                label: partialLabel,
+              });
+            }
+            break;
+          }
+
+          case "tool_execution_end": {
+            const label = summarizeToolResult(event.toolName, event.result);
+            const resultDetails = extractToolDetails(event.result);
+            toolResults.set(event.toolCallId, {
+              label,
+              isError: event.isError,
+              resultText: toolResultText(event.result),
+              todos: extractTodos(event.toolName, event.result),
+              details: resultDetails,
+            });
+            monitor.finishStep(options.threadId, event.toolCallId, {
+              label,
+              status: event.isError ? "error" : "done",
+            });
+            // 工具结果到位后，已渲染的工具段标签/状态需要刷新
+            emitSegments();
+            break;
+          }
+
+          case "agent_end": {
+            settled = true;
+            batcher.cancel();
+            batcher.reset();
+
+            // 从 runItems 提取最后一条 assistant 用于错误检测
+            let assistants = runItems
+              .filter(
+                (item): item is Extract<(typeof runItems)[number], { type: "assistant" }> =>
+                  item.type === "assistant",
+              )
+              .map((item) => item.message);
+            if (assistants.length === 0) {
+              const last = [...event.messages]
+                .reverse()
+                .find((message) => message.role === "assistant");
+              if (last && last.role === "assistant") {
+                assistants = [last as AgentMessage & { role: "assistant" }];
+              }
+            }
+
+            const lastAssistant = assistants[assistants.length - 1];
+            if (lastAssistant?.stopReason === "error") {
+              handlers.onError(lastAssistant.errorMessage ?? "响应已中断");
+              return;
+            }
+
+            const result = buildAgentEndResult(
+              event, runItems, assistantText, runtimeModelId, toolResults, providerCacheHit,
+            );
+            if (result) handlers.onDone(result);
+            break;
+          }
+
+          case "after_provider_response": {
+            // 提取缓存命中与延迟信息（0.80 新增事件）
+            // 响应头中可能含缓存相关字段，记录供 agent_end 时附加到消息元信息
+            const cacheHeader =
+              event.headers["x-cache"] ??
+              event.headers["cf-cache-status"] ??
+              event.headers["anthropic-cache-hit"];
+            if (cacheHeader) {
+              providerCacheHit = String(cacheHeader).toLowerCase().includes("hit");
+            }
+            break;
+          }
+        }
       });
-    } else {
-      await harness.prompt(modelInput);
+
+      try {
+        if (imageInputs.length > 0) {
+          await harness.prompt(modelInput || "请查看这些图片。", {
+            images: imageInputs,
+          });
+        } else {
+          await harness.prompt(modelInput);
+        }
+        await harness.waitForIdle();
+        attemptController.abort(); // 取消旧回调中可能残留的异步操作
+        unsubscribe();
+        batcher.cancel();
+        break; // 成功，退出重试循环
+      } catch (error) {
+        attemptController.abort(); // 取消旧回调中可能残留的异步操作
+        unsubscribe();
+        batcher.cancel();
+
+        if (attempt < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[attempt];
+          console.warn(
+            `Agent调用失败，${delay}ms 后重试 (${attempt + 1}/${MAX_RETRIES}):`,
+            error instanceof Error ? error.message : String(error),
+          );
+          await sleep(delay);
+          // 通知 UI 更新重试状态
+          handlers.onRetry?.(attempt + 1);
+          continue;
+        }
+
+        // 已耗尽重试次数
+        if (!settled) {
+          // 使用 0.80 结构化错误类型：AgentHarnessError 携带 code 字段
+          if (error instanceof AgentHarnessError) {
+            handlers.onError(`[AgentHarness:${error.code}] ${error.message}`);
+          } else {
+            handlers.onError(error instanceof Error ? error.message : String(error));
+          }
+        }
+        break;
+      }
     }
-    await harness.waitForIdle();
-    unsubscribe();
-    batcher.cancel();
   } catch (error) {
     batcher.cancel();
     if (!settled) {

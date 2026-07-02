@@ -173,6 +173,11 @@ async function runMemberTurn(
             .failMessage(threadId, assistantId, message);
           resolve();
         },
+        onRetry: (attempt) => {
+          useTeamChatStore
+            .getState()
+            .setRetryAttempt(threadId, assistantId, attempt);
+        },
       },
       speaker.id,
       {

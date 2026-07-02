@@ -134,6 +134,7 @@ export function ChatPage({
   const setThreadPermissionMode = useChatStore(
     (state) => state.setThreadPermissionMode,
   );
+  const setRetryAttempt = useChatStore((state) => state.setRetryAttempt);
   // 当前会话是否正在运行（响应中）——per-thread，切换会话各自独立
   const isResponding = useIsThreadResponding(threadId);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -373,6 +374,7 @@ export function ChatPage({
             segments,
           }),
         onError: (message) => failAssistant(exchangeThreadId, assistantId, message),
+        onRetry: (attempt) => setRetryAttempt(exchangeThreadId, assistantId, attempt),
       },
       agentId,
       {

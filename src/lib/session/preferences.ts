@@ -133,7 +133,7 @@ function readToolPermissionModeFromEntries(
       continue;
     }
     const data = entry.data as { mode?: unknown } | undefined;
-    if (data?.mode === "readonly" || data?.mode === "full" || data?.mode === "ai_review") {
+    if (data?.mode === "readonly" || data?.mode === "safe" || data?.mode === "ai_review" || data?.mode === "full") {
       return data.mode;
     }
   }

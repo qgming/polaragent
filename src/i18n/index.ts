@@ -67,13 +67,20 @@ const resources = {
  * 不使用 i18next-browser-languagedetector——Electron 环境下 localStorage 跨 window origin 冲突。
  */
 function getInitialLanguage(): string {
-  const cached = localStorage.getItem("polaragent-lang");
-  if (cached) return cached;
+  try {
+    const cached = localStorage.getItem("polaragent-lang");
+    if (cached) return cached;
+  } catch (e) {
+    console.warn("无法读取 localStorage:", e);
+  }
+  
   const nav = navigator.language.toLowerCase();
   if (nav.startsWith("zh")) return "zh-CN";
   return "en-US";
 }
 
+// 立即同步初始化 i18next
+// 所有资源已静态导入，无异步依赖，init() 会立即返回
 i18n.use(initReactI18next).init({
   resources,
   lng: getInitialLanguage(),
@@ -81,12 +88,20 @@ i18n.use(initReactI18next).init({
   ns: namespaceList,
   defaultNS: "common",
   interpolation: { escapeValue: false },
+  // React 19 兼容配置
+  react: {
+    useSuspense: false, // 禁用 Suspense，避免异步加载问题
+  },
 });
 
 export default i18n;
 
 /** 供 useLanguage hook 调用：切换语言并同步 localStorage */
 export function changeLanguage(lang: string) {
-  localStorage.setItem("polaragent-lang", lang);
+  try {
+    localStorage.setItem("polaragent-lang", lang);
+  } catch (e) {
+    console.warn("无法写入 localStorage:", e);
+  }
   return i18n.changeLanguage(lang);
 }

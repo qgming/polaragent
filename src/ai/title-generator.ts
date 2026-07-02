@@ -1,7 +1,7 @@
 // 对话标题自动生成
 // src/ai/title-generator.ts
 //
-// 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
+// 使用 pi-ai 的 completeSimple 非流式 API，跟随设置中的 provider 配置。
 // 不再依赖 Electron IPC 的 /chat/completions 端点，支持所有 provider 类型。
 
 import { resolveDefaultModelService } from "./model-router";
@@ -65,24 +65,26 @@ function truncateAtWordBoundary(title: string, limit: number): string {
 
 /**
  * 根据对话历史（用户问题 + AI 正文）生成一个简短标题。
- * 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
+ * 使用 pi-ai 的 completeSimple 非流式 API，跟随设置中的 provider 配置。
  * 失败返回 null（调用方保留原标题）。
  */
 export async function generateConversationTitle(
   history: TitleHistoryMessage[],
 ): Promise<string | null> {
   const service = resolveDefaultModelService();
-  if (!service) {
-    return null;
-  }
+  if (!service) return null;
 
   const transcript = buildTitleTranscript(history);
   if (!transcript) return null;
 
   const systemPrompt =
-    "你是一个对话标题生成器。根据给定的早期对话内容，生成一个能概括核心任务或结论的中文标题。" +
-    `要求：标题长度控制在 ${MIN_TITLE_LENGTH}-${MAX_TITLE_LENGTH} 个字，优先使用具体名词和动作，避免"问题解答""方案讨论"等空泛标题；标题中不要包含引号、句号、序号或多余标点。` +
-    '只输出一个 JSON 对象，格式为 {"title": "标题内容"}，不要包含任何额外解释或代码块标记。';
+    "你是一个对话标题生成器。根据给定的早期对话内容，生成一个能概括核心任务或结论的中文标题。\n\n" +
+    "要求：\n" +
+    `- 标题长度控制在 ${MIN_TITLE_LENGTH}-${MAX_TITLE_LENGTH} 个字\n` +
+    '- 优先使用具体名词和动作，避免"问题解答""方案讨论"等空泛标题\n' +
+    "- 标题中不要包含引号、句号、序号或多余标点\n" +
+    "- 必须输出纯 JSON 格式，不要包含任何解释、代码块标记或其他内容\n\n" +
+    '输出格式示例：{"title": "实现用户登录功能"}';
 
   const userPrompt = `请为以下对话生成标题：\n\n${transcript}`;
 
@@ -92,6 +94,7 @@ export async function generateConversationTitle(
       userPrompt,
       temperature: 0.15,
       maxTokens: 48,
+      jsonMode: true,
     });
     const title = extractTitle(result);
     return title && title.length > 0 ? title : null;

@@ -1,41 +1,41 @@
 // LLM 轻量调用工具
 // src/ai/llm-call.ts
 //
-// 提供统一的 LLM 调用接口，使用 pi-ai 的 streamSimple API。
+// 提供统一的 LLM 调用接口，使用 pi-ai 的非流式 completeSimple API。
 // 跟随设置中的 provider 配置，支持所有 provider 类型（OpenAI、Anthropic 等）。
 // 供标题生成、目标评估、记忆捕获、工具权限审查等轻量场景使用。
 
 import type { RoutedModelService } from "./model-router";
-import { getProviderStreams } from "./providers";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type {
   Api,
   Model,
   Context,
-  AssistantMessageEvent,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { RETRY_DELAYS, MAX_RETRIES, sleep } from "./retry";
 
 export interface LlmCallOptions {
   systemPrompt: string;
   userPrompt: string;
   temperature?: number;
   maxTokens?: number;
+  /** 强制 JSON 输出（通过 response_format 参数） */
+  jsonMode?: boolean;
 }
 
 /**
- * 使用 pi-ai 统一的 streamSimple API 进行轻量级 LLM 调用。
+ * 使用 pi-ai 的非流式 completeSimple API 进行轻量级 LLM 调用。
  * 跟随设置中的 provider 配置，支持所有 provider 类型。
  *
  * @param service 模型服务（provider + model）
- * @param options 调用选项（systemPrompt、userPrompt、temperature、maxTokens）
+ * @param options 调用选项（systemPrompt、userPrompt、temperature、maxTokens、jsonMode）
  * @returns 模型返回的文本内容
  */
 export async function callLlm(
   service: RoutedModelService,
   options: LlmCallOptions,
 ): Promise<string> {
-  const providerType = service.provider.type;
-  const streams = getProviderStreams(providerType);
   const model = service.model as Model<Api>;
 
   const context: Context = {
@@ -59,36 +59,53 @@ export async function callLlm(
   if (options.maxTokens !== undefined) {
     streamOptions.maxTokens = options.maxTokens;
   }
+  
+  // 如果启用 JSON 模式，通过 onPayload 回调注入 response_format 参数
+  if (options.jsonMode) {
+    streamOptions.onPayload = (payload: unknown) => {
+      const params = payload as Record<string, unknown>;
+      params.response_format = { type: "json_object" };
+      return params;
+    };
+  }
 
-  const eventStream = streams.streamSimple(model, context, streamOptions);
-  return await collectTextFromStream(eventStream);
-}
+  // 重试循环：固定 5 次，间隔递增
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-/**
- * 从 AssistantMessageEventStream 收集完整的文本内容。
- */
-async function collectTextFromStream(
-  stream: AsyncIterable<AssistantMessageEvent>,
-): Promise<string> {
-  let textContent = "";
-  let finalText: string | null = null;
-
-  for await (const event of stream) {
-    if (event.type === "text_delta") {
-      textContent += event.delta;
-    } else if (event.type === "done") {
-      const textBlock = event.message.content.find(
+    try {
+      const response = await completeSimple(model, context, {
+        ...streamOptions,
+        signal: controller.signal,
+      });
+      
+      // 从 AssistantMessage 中提取文本内容
+      const textBlock = response.content.find(
         (block): block is { type: "text"; text: string } =>
           block.type === "text",
       );
-      if (textBlock) {
-        finalText = textBlock.text;
+      const result = textBlock ? textBlock.text : "";
+      
+      clearTimeout(timeoutId);
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[attempt];
+        console.warn(
+          `LLM调用失败，${delay}ms 后重试 (${attempt + 1}/${MAX_RETRIES}):`,
+          error instanceof Error ? error.message : String(error),
+        );
+        await sleep(delay);
+        continue;
       }
-    } else if (event.type === "error") {
-      const errorMessage = event.error.errorMessage || "未知错误";
-      throw new Error(`LLM 调用失败: ${errorMessage}`);
+
+      throw error;
     }
   }
 
-  return finalText ?? textContent;
+  // 理论上不会执行到这里，因为循环内要么 return 要么 throw
+  throw new Error("LLM 调用失败：已耗尽重试次数");
 }

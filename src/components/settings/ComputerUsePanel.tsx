@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { AutomationConfig, Settings } from "@/types/config";
 import { PageTitle, SettingRow } from "./settings-shared";
+import { clampNumber } from "@/lib/utils";
 
 type ComputerHealth = Awaited<ReturnType<typeof window.polaragent.computeruse.health>>;
 
@@ -257,9 +258,4 @@ function NumberInput({
       {suffix ? <span className="ml-1 text-xs text-muted-foreground">{suffix}</span> : null}
     </div>
   );
-}
-
-function clampNumber(value: number, fallback: number, min: number, max: number) {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(value)));
 }

@@ -74,6 +74,7 @@ interface TeamChatState {
     metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
   ) => void;
   failMessage: (threadId: string, messageId: string, error: string) => void;
+  setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
 
   // 消息更新（用于投票实时更新）
   updateMessage: (
@@ -222,6 +223,8 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       ),
     }));
     void setTeamSessionToolPermissionMode(threadId, mode);
+    // 同步权限模式到主进程安全中间件
+    window.polaragent.security?.setMode?.(mode);
   },
 
   loadTeamThreadPermissionMode: async (threadId) => {
@@ -328,10 +331,32 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
                 m.id === messageId
                   ? {
                       ...m,
-                      content:
-                        m.content || `这次响应没有完成：${error || "请求已中断"}`,
+                      // content 为空时把完整提示写入 error；有内容时只保留原始错误，不覆盖 content
+                      error:
+                        m.content.trim().length === 0
+                          ? `这次响应没有完成：${error || "请求已中断"}`
+                          : error || "请求已中断",
                       status: "error" as const,
+                      retryAttempt: undefined, // 清除重试状态
                     }
+                  : m,
+              ),
+              updatedAt: Date.now(),
+            }
+          : t,
+      ),
+    }));
+  },
+
+  setRetryAttempt: (threadId, messageId, attempt) => {
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              messages: t.messages.map((m) =>
+                m.id === messageId
+                  ? { ...m, retryAttempt: attempt, error: undefined }
                   : m,
               ),
               updatedAt: Date.now(),

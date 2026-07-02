@@ -1,3 +1,6 @@
+// 最大扫描文本长度，防止超长输入导致 ReDoS 攻击
+const MAX_SCAN_LENGTH = 10000;
+
 const SENSITIVE_PATTERNS = [
   /(?:api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*["']?[\w./+=-]{8,}/i,
   /\bsk-[A-Za-z0-9_-]{16,}\b/,
@@ -8,7 +11,10 @@ const SENSITIVE_PATTERNS = [
 ];
 
 export function hasSensitiveMemoryContent(text: string): boolean {
-  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+  // 截断超长文本，防止正则回溯导致的 ReDoS 风险
+  const truncated =
+    text.length > MAX_SCAN_LENGTH ? text.slice(0, MAX_SCAN_LENGTH) : text;
+  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(truncated));
 }
 
 export function normalizeMemoryJsonText(raw: string): string {

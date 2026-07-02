@@ -73,6 +73,7 @@ export async function captureMemoriesFromExchange(
       userPrompt: buildCaptureUserPrompt(params),
       temperature: 0.1,
       maxTokens: 700,
+      jsonMode: true,
     });
 
     const candidates = parseMemoryCandidates(result)
@@ -122,7 +123,19 @@ function buildCaptureSystemPrompt(allowProject: boolean): string {
     "不要保存密码、API Key、token、验证码、银行卡、身份证号等敏感信息。",
     `scope 只能是 ${scopes}。`,
     'type 只能是 "preference"、"profile"、"project"、"instruction"、"correction"、"communication"、"workflow"、"tool"、"goal"、"constraint"。',
-    '只输出 JSON 数组，不要解释。每项格式为 {"scope":"global","type":"preference","content":"...","confidence":0.8,"tags":["..."]}。没有可记忆内容时输出 []。',
+    "",
+    "你必须只输出纯 JSON 数组（不要包含代码块标记），格式如下：",
+    "[",
+    '  {',
+    '    "scope": "global",',
+    '    "type": "preference",',
+    '    "content": "用户偏好使用 TypeScript 进行开发",',
+    '    "confidence": 0.9,',
+    '    "tags": ["typescript", "开发偏好"]',
+    '  }',
+    "]",
+    "",
+    "没有可记忆内容时输出空数组：[]",
   ].join("\n");
 }
 

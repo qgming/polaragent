@@ -8,6 +8,7 @@ const { net } = require("electron");
 const { ensureDir } = require("../lib/fs-utils.cjs");
 const { normalizeBaseUrl, errorMessage } = require("../lib/http-utils.cjs");
 const { dataDir } = require("../lib/app-paths.cjs");
+const { clampNumber, cosineSimilarity } = require("../lib/utils.cjs");
 
 const MEMORY_TYPES = new Set([
   "preference",
@@ -173,12 +174,6 @@ function normalizeMemoryInput(memory) {
   };
 }
 
-function clampNumber(value, min, max, fallback) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.min(max, Math.max(min, number));
-}
-
 function hasSensitiveContent(text) {
   const value = String(text || "");
   const patterns = [
@@ -218,20 +213,6 @@ async function embedTexts(texts, config) {
     throw new Error(`嵌入 API 失败 (${response.status}): ${errorMessage(payload)}`);
   }
   return (payload.data || []).map((item) => item.embedding);
-}
-
-function cosineSimilarity(a, b) {
-  if (!a || !b || a.length !== b.length) return 0;
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (!normA || !normB) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 function projectMatches(memory, projectKey) {

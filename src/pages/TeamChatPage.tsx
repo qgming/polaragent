@@ -3,9 +3,11 @@
 // src/pages/TeamChatPage.tsx
 
 import {
+  AlertCircle,
   ChevronRight,
   FolderOpen,
   ListTree,
+  Loader2,
   SendHorizontal,
   Square as SquareIcon,
   Users,
@@ -387,11 +389,7 @@ const TeamMessageView = memo(function TeamMessageView({
           <span className="ml-1 text-xs text-accent-foreground">{t("chat.speaking")}</span>
         ) : null}
       </div>
-      {message.status === "error" ? (
-        <div className="whitespace-pre-wrap text-destructive">
-          {message.content || " "}
-        </div>
-      ) : message.segments && message.segments.length > 0 ? (
+      {message.segments && message.segments.length > 0 ? (
         <FlatSegments
           segments={message.segments}
           streaming={message.status === "streaming"}
@@ -402,6 +400,22 @@ const TeamMessageView = memo(function TeamMessageView({
           streaming={message.status === "streaming"}
         />
       )}
+
+      {/* 重试状态显示 */}
+      {message.retryAttempt ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+          <Loader2 className="size-3.5 animate-spin" />
+          <span>正在重试 {message.retryAttempt}/5</span>
+        </div>
+      ) : null}
+
+      {/* 错误信息单独显示 */}
+      {message.error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
+          <span className="whitespace-pre-wrap">{message.error}</span>
+        </div>
+      ) : null}
     </article>
   );
 });

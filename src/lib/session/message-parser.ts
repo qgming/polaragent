@@ -285,37 +285,37 @@ async function loadChatMessagesImpl(
       const text = userMessageText(message);
       const attachments = userMessageAttachments(message);
       const skillRefs = userMessageSkillRefs(message);
+
+      // 新的用户消息 -> 先落地累积的助手消息，断开合并
+      flushPending();
+
+      // 从待处理 guidance 队列中查找与当前用户消息文本匹配的 guidance。
+      // guidance 条目在用户消息之前写入，回读时应归属到对应的用户消息中。
+      const guidanceSegments: Segment[] = [];
       const guidanceIndex = pendingGuidance.findIndex(
         (guidance) => guidance.text === text.trim(),
       );
       if (guidanceIndex >= 0) {
         const [guidance] = pendingGuidance.splice(guidanceIndex, 1);
-        if (!pending) {
-          pending = {
-            id: entry.id,
-            createdAt: timestamp,
-            segments: [],
-            speakerAgentId: currentSpeaker,
-          };
-        }
-        pending.segments.push({
+        guidanceSegments.push({
           kind: "guidance",
           text: guidance.text,
           createdAt: guidance.createdAt,
         });
-        continue;
       }
 
-      // 新的用户消息 -> 先落地累积的助手消息，断开合并
-      flushPending();
       // 仅当正文与附件都为空时才跳过；纯附件消息（只发图片/文件无文字）需保留
       if (
         text.trim().length === 0 &&
         attachments.length === 0 &&
-        skillRefs.length === 0
+        skillRefs.length === 0 &&
+        guidanceSegments.length === 0
       ) {
         continue;
       }
+
+      // 构建用户消息，guidance 段作为 segments 的一部分（附件、技能引用之后）
+      const userSegments: Segment[] = [...guidanceSegments];
       messages.push({
         id: entry.id,
         role: "user",
@@ -324,6 +324,7 @@ async function loadChatMessagesImpl(
         status: "complete",
         attachments,
         skillRefs,
+        segments: userSegments.length > 0 ? userSegments : undefined,
       });
     } else if (message.role === "assistant") {
       const segments = assistantSegments(message, toolResults);

@@ -1,10 +1,14 @@
 // IPC：shell 命令执行（供 run_bash 工具使用）
 // electron/ipc/shell.cjs
 //
-// 安全最后防线：渲染进程不可信，命令的黑名单校验在此处再做一遍。
-// 在指定工作目录下用 spawn 执行命令，合并 stdout/stderr，超时则 kill，长输出截断。
+// 四级安全模式：
+// - readonly: 不允许执行命令
+// - safe: 系统阻止危险命令
+// - ai_review: AI 自主评估风险（默认）
+// - full: 无限制
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const { validateShellCommand } = require("../lib/security.cjs");
 
 // 输出截断上限（字符）
 const MAX_OUTPUT_CHARS = 30_000;
@@ -12,36 +16,6 @@ const MAX_OUTPUT_CHARS = 30_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 120_000;
-
-// 高危命令黑名单：匹配到任一模式即拒绝执行。
-// 这是「防误操作」护栏，不是「防恶意绕过」沙箱（命令拼接/编码无法穷尽）。
-// ⚠️ 重要：此黑名单必须与 src/ai/tools/bash.ts 中的 BLOCKED_PATTERNS 保持同步
-const BLOCKED_PATTERNS = [
-  // 递归强删根目录或家目录
-  { test: /\brm\s+(-[a-z]*\s+)*(-[a-z]*r[a-z]*|--recursive)\b[^|;&]*\s(\/|~|\$HOME)(\s|$)/i, reason: "检测到删除根目录或家目录的高危操作" },
-  { test: /\brm\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*f[a-z]*\s+(\/|~)(\s|$)/i, reason: "检测到强制递归删除根目录的高危操作" },
-  // 关机/重启
-  { test: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: "检测到关机/重启命令" },
-  // 磁盘格式化
-  { test: /\b(mkfs(\.\w+)?|diskpart)\b/i, reason: "检测到磁盘格式化命令" },
-  { test: /\bformat\s+[a-z]:/i, reason: "检测到磁盘格式化命令" },
-  // 直接写裸磁盘设备
-  { test: /\bdd\b[^|;&]*\bof=\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到覆写磁盘设备的高危操作" },
-  { test: />\s*\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到向裸磁盘设备重定向写入" },
-  // fork 炸弹
-  { test: /:\s*\(\s*\)\s*\{.*:.*\}/i, reason: "检测到 fork 炸弹模式" },
-  // 递归改根目录权限/属主
-  { test: /\bchmod\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s\/(\s|$)/i, reason: "检测到递归修改根目录权限" },
-  { test: /\bchown\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s\/(\s|$)/i, reason: "检测到递归修改根目录属主" },
-];
-
-// 命中黑名单返回拒绝原因，否则返回 null
-function checkBlocked(command) {
-  for (const { test, reason } of BLOCKED_PATTERNS) {
-    if (test.test(command)) return reason;
-  }
-  return null;
-}
 
 // 探测可用的 shell。优先 bash（项目脚本与环境均为 Unix 风格），无 bash 时回退。
 // 返回 { file, args }，其中 args 末尾应接命令字符串。
@@ -82,10 +56,25 @@ async function execShell(request) {
     return { success: false, error: "命令不能为空", exitCode: null, stdout: "", stderr: "", timedOut: false, truncated: false };
   }
 
-  // 黑名单（主进程二次校验）
-  const blockedReason = checkBlocked(command);
-  if (blockedReason) {
-    return { success: false, error: `命令被安全策略拦截：${blockedReason}`, blocked: true, exitCode: null, stdout: "", stderr: "", timedOut: false, truncated: false };
+  // 安全策略校验（支持四级模式）
+  const validation = validateShellCommand(command);
+  if (!validation.allowed) {
+    return { 
+      success: false, 
+      error: validation.reason, 
+      blocked: true, 
+      exitCode: null, 
+      stdout: "", 
+      stderr: "", 
+      timedOut: false, 
+      truncated: false 
+    };
+  }
+
+  // ai_review 模式：如果标记为需要审查，在输出中附加警告信息
+  let aiReviewWarning = "";
+  if (validation.aiReview) {
+    aiReviewWarning = `⚠️ AI 审查模式：${validation.reason}\n`;
   }
 
   // 工作目录校验：必须存在且为目录
@@ -147,13 +136,19 @@ async function execShell(request) {
       clearTimeout(timer);
       const outTrunc = truncateOutput(stdout);
       const errTrunc = truncateOutput(stderr);
+      
+      // 如果有 AI 审查警告，添加到 stderr 开头
+      const finalStderr = aiReviewWarning ? aiReviewWarning + errTrunc.text : errTrunc.text;
+      
       resolve({
         success: !timedOut && exitCode === 0,
         exitCode: timedOut ? null : exitCode,
         stdout: outTrunc.text,
-        stderr: errTrunc.text,
+        stderr: finalStderr,
         timedOut,
         truncated: outTrunc.truncated || errTrunc.truncated,
+        aiReview: validation.aiReview || false,
+        riskLevel: validation.riskLevel,
       });
     };
 

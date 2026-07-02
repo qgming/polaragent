@@ -18,6 +18,10 @@ export interface TeamMessage {
   attachments?: ChatAttachment[];
   skillRefs?: ChatSkillRef[];
   segments?: Segment[];
+  // 错误信息（不影响 content 显示）
+  error?: string;
+  // 当前重试次数
+  retryAttempt?: number;
   speakerAgentId?: string;
   vote?: {
     topic: string;

@@ -34,9 +34,20 @@ function parseMcpServerEntry(id: string, rawServer: unknown): McpToolConfig {
   if (!id.trim()) throw new Error("mcpServers 的 server 名称不能为空。");
 
   const server = getObject(rawServer, `mcpServers.${id}`);
+
+  // 对 server.type 进行前置类型检查，提供更准确的错误上下文
+  if ("type" in server && typeof server.type !== "string" && typeof server.type !== "object" && server.type != null) {
+    throw new Error(
+      `mcpServers.${id}.type 必须是字符串或对象，当前类型: ${typeof server.type}`
+    );
+  }
+
   const transportObject = isObject(server.transport) ? server.transport : undefined;
   const transportConfig = transportObject ?? server;
-  const transport = normalizeTransport(server.type ?? transportObject?.type ?? server.transport);
+  const transport = normalizeTransport(
+    server.type ?? transportObject?.type ?? server.transport,
+    `mcpServers.${id}.type`
+  );
   const displayName = optionalString(server.name) ?? id;
   const description = optionalString(server.description) ?? `${displayName} MCP server`;
 
@@ -125,10 +136,12 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() : undefined;
 }
 
-function normalizeTransport(value: unknown): McpTransport {
+function normalizeTransport(value: unknown, context?: string): McpTransport {
   if (value == null) return "stdio";
   if (typeof value !== "string") {
-    throw new Error('server type 必须是字符串："stdio"、"streamable_http"、"streamable-http"、"streamablehttp"、"http" 或 "sse"。');
+    // 根据上下文提供更具描述性的错误信息
+    const ctx = context ? ` (${context})` : "";
+    throw new Error(`transport type 必须是字符串${ctx}，可选值: "stdio"、"sse"、"streamable_http"、"streamable-http"、"http"、"streamableHttp"。当前类型: ${typeof value}`);
   }
   // 归一化：转小写并去掉所有非字母数字字符，兼容 streamablehttp / streamable-http /
   // streamable_http / streamableHttp / http 等多种常见写法。

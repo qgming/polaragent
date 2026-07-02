@@ -65,6 +65,7 @@ export function HomePage({
   createThread,
   failAssistant,
   finishAssistant,
+  setRetryAttempt,
   setActiveAgent,
   setComposer,
   startExchange,
@@ -90,6 +91,7 @@ export function HomePage({
     finalContent: string,
     metadata?: { model?: string; tokenCount?: number; segments?: Segment[] },
   ) => void;
+  setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
   setActiveAgent: (agentId: string) => void;
   setComposer: (value: string) => void;
   startExchange: (
@@ -266,6 +268,7 @@ export function HomePage({
             segments,
           }),
         onError: (message) => failAssistant(threadId, assistantId, message),
+        onRetry: (attempt) => setRetryAttempt(threadId, assistantId, attempt),
       },
       activeAgent?.id || activeAgentId,
       {

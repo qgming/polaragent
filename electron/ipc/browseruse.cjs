@@ -4,6 +4,7 @@ const http = require("http");
 const { app, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const { clampNumber } = require("../lib/utils.cjs");
 
 // 共享的浏览器端 DOM 辅助函数（注入到 CDP Runtime.evaluate 中执行）
 const BROWSER_RUNTIME_HELPERS = `
@@ -218,12 +219,6 @@ function normalizeConfig(input = {}) {
     waitAfterActionMs: clampNumber(input.waitAfterActionMs, config.waitAfterActionMs, 0, 10000),
     verboseLogs: Boolean(input.verboseLogs ?? config.verboseLogs),
   };
-}
-
-function clampNumber(value, fallback, min, max) {
-  const number = Number(value ?? fallback);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(number)));
 }
 
 function log(...args) {

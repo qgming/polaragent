@@ -16,11 +16,25 @@ export interface ChatSkillRef {
   name: string;
 }
 
+/**
+ * Segment 基础接口
+ * 所有消息片段的共同属性
+ */
+interface SegmentBase {
+  kind: string;
+  /** 创建时间戳（可选，用于记录片段生成时间） */
+  createdAt?: number;
+}
+
+/**
+ * 消息片段类型
+ * 支持文本、思考、引导、工具调用等多种类型
+ */
 export type Segment =
-  | { kind: "text"; text: string }
-  | { kind: "thinking"; text: string }
-  | { kind: "guidance"; text: string; createdAt: number }
-  | {
+  | (SegmentBase & { kind: "text"; text: string })
+  | (SegmentBase & { kind: "thinking"; text: string })
+  | (SegmentBase & { kind: "guidance"; text: string })
+  | (SegmentBase & {
       kind: "tool";
       toolCallId: string;
       toolName: string;
@@ -29,7 +43,7 @@ export type Segment =
       resultText?: string;
       todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
       details?: Record<string, unknown>;
-    };
+    });
 
 export interface ChatMessage {
   id: string;
@@ -44,6 +58,10 @@ export interface ChatMessage {
   segments?: Segment[];
   // Provider 缓存命中标记（0.80 after_provider_response 事件提取）
   providerCacheHit?: boolean;
+  // 错误信息（不影响 content 显示）
+  error?: string;
+  // 当前重试次数（0 = 未重试，1-5 = 正在重试）
+  retryAttempt?: number;
 }
 
 export interface ChatThread {

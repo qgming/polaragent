@@ -56,6 +56,40 @@ const WRITE_TOOLS = new Set([
 
 const EXECUTE_TOOLS = new Set(["run_bash"]);
 
+// 低风险工具集合：直接放行，不触发 AI
+const LOW_RISK_TOOLS = new Set([
+  "read_file",
+  "list_directory",
+  "web_search",
+  "web_fetch",
+  "list_skills",
+  "read_skill",
+  "read_skill_file",
+  "speech_recognition",
+  "update_todos",
+  "ask_user",
+  "request_team_vote",
+  "cast_team_vote",
+  "control_team_flow",
+]);
+
+// 中风险工具集合：直接放行，不触发 AI
+const MEDIUM_RISK_TOOLS = new Set([
+  "write_file",
+  "edit_file",
+  "create_directory",
+  "image_generation",
+  "image_edit",
+  "speech_synthesis",
+  "create_office_document",
+]);
+
+// 高风险工具集合：触发 AI 审查
+const HIGH_RISK_TOOLS = new Set([
+  "delete_file",
+  "run_bash",
+]);
+
 export async function reviewToolPermission(
   request: ToolPermissionRequest,
 ): Promise<ToolPermissionDecision> {
@@ -69,7 +103,28 @@ export async function reviewToolPermission(
     return reviewReadonly(request);
   }
 
-  return reviewWithAi(request, mode);
+  // ai_review 模式：分层审查
+  if (mode === "ai_review") {
+    // 低风险/中风险操作直接放行
+    if (LOW_RISK_TOOLS.has(request.toolName) || MEDIUM_RISK_TOOLS.has(request.toolName)) {
+      return { allow: true, reason: "低风险操作，直接放行。" };
+    }
+
+    // 高风险操作触发 AI 审查
+    if (HIGH_RISK_TOOLS.has(request.toolName) || request.toolName.startsWith("mcp_")) {
+      return reviewWithAi(request, mode);
+    }
+
+    // 未知工具：触发 AI 审查
+    return reviewWithAi(request, mode);
+  }
+
+  // safe 模式：使用本地规则
+  if (mode === "safe") {
+    return reviewSafe(request);
+  }
+
+  return { allow: true };
 }
 
 function reviewReadonly(request: ToolPermissionRequest): ToolPermissionDecision {
@@ -82,6 +137,72 @@ function reviewReadonly(request: ToolPermissionRequest): ToolPermissionDecision 
     allow: false,
     reason: `当前工具权限为只读模式，已阻止「${label}」。如需执行写入、命令或外部副作用，请在输入栏底部切换权限模式。`,
   };
+}
+
+// safe 模式：使用本地规则审查，不触发 AI
+function reviewSafe(request: ToolPermissionRequest): ToolPermissionDecision {
+  // 低风险/中风险操作直接放行
+  if (LOW_RISK_TOOLS.has(request.toolName) || MEDIUM_RISK_TOOLS.has(request.toolName)) {
+    return { allow: true };
+  }
+
+  // 删除文件：检查是否在工作目录内
+  if (request.toolName === "delete_file") {
+    const targetPath = String(request.input.path ?? "");
+    if (isWithinWorkingDir(targetPath, request.workingDir)) {
+      return { allow: true };
+    }
+    return {
+      allow: false,
+      reason: "安全模式下，删除操作仅限于工作目录内。",
+    };
+  }
+
+  // Shell 命令：检查危险模式
+  if (request.toolName === "run_bash") {
+    const command = String(request.input.command ?? "");
+    if (isDangerousCommand(command)) {
+      return {
+        allow: false,
+        reason: "安全模式下，检测到高危命令，已阻止执行。",
+      };
+    }
+    return { allow: true };
+  }
+
+  // MCP 工具：默认放行（由工具自身控制）
+  if (request.toolName.startsWith("mcp_")) {
+    return { allow: true };
+  }
+
+  // 未知工具：默认放行
+  return { allow: true };
+}
+
+// 判断目标路径是否在工作目录内
+function isWithinWorkingDir(targetPath: string, workingDir?: string): boolean {
+  if (!workingDir || !targetPath) return true;
+  const normalizedTarget = targetPath.toLowerCase().replace(/\\/g, "/");
+  // 确保末尾带 / 防止前缀绕过（如 /project 匹配 /project-evil）
+  const normalizedWorkDir = workingDir.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "") + "/";
+  return normalizedTarget.startsWith(normalizedWorkDir);
+}
+
+// 判断命令是否包含高危模式
+function isDangerousCommand(command: string): boolean {
+  const dangerousPatterns = [
+    /\brm\s+(-[a-z]*\s+)*(-[a-z]*r[a-z]*|--recursive)\b[^|;&]*\s(\/|~|\$HOME|\\|C:\\)(\s|$)/i,
+    /\brm\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*f[a-z]*\s+(\/|~|C:\\)(\s|$)/i,
+    /\b(shutdown|reboot|halt|poweroff)\b/i,
+    /\b(mkfs(\.\w+)?|diskpart)\b/i,
+    /\bformat\s+[a-z]:/i,
+    /\bdd\b[^|;&]*\bof=\/dev\/(sd|hd|nvme|disk|vd)/i,
+    />\s*\/dev\/(sd|hd|nvme|disk|vd)/i,
+    /:\s*\(\s*\)\s*\{.*:.*\}/i, // fork 炸弹
+    /\bgit\s+reset\s+--hard\b/i,
+    /\bgit\s+clean\s+-fdx\b/i,
+  ];
+  return dangerousPatterns.some((pattern) => pattern.test(command));
 }
 
 async function reviewWithAi(
@@ -107,8 +228,13 @@ async function reviewWithAi(
     "删除单个明确文件、编辑明确文件、在项目内创建目录、项目内命令执行不应仅因为有副作用而拒绝；只有在目标范围巨大、路径危险、意图明显破坏或会造成不可逆损失时才拒绝。",
     "未知 MCP 工具不要默认拒绝；只有名称或参数显示会删除、批量修改、泄露数据、执行系统级破坏操作时才拒绝。",
     "workingDir 为空时不要因此自动拒绝；仅当参数路径明显指向系统关键位置、用户主目录大范围、磁盘根目录或敏感文件时拒绝。",
-    "reason 用一句简短中文说明允许或拒绝的关键依据。允许时说明风险可接受；拒绝时指出具体高危点。",
-    "你必须只输出 JSON：{\"allow\":true|false,\"reason\":\"简短中文原因\"}",
+    "reason 用一句简短中文说明允许或拒绝的关键依据。",
+    "",
+    "你必须只输出纯 JSON 对象（不要包含代码块标记），格式如下：",
+    "允许示例：",
+    '{"allow": true, "reason": "常规文件读取操作，风险可接受"}',
+    "拒绝示例：",
+    '{"allow": false, "reason": "递归删除根目录，高危操作"}',
   ].join("\n");
 
   const userPrompt = JSON.stringify(
@@ -132,6 +258,7 @@ async function reviewWithAi(
       userPrompt,
       temperature: 0,
       maxTokens: 300,
+      jsonMode: true,
     });
     return parseAiDecision(result);
   } catch (error) {

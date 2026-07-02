@@ -45,6 +45,10 @@
     "aiReview": {
       "label": "自动审查",
       "description": "每次工具执行前由 AI 判断是否允许，不确定时拒绝。"
+    },
+    "safe": {
+      "label": "安全",
+      "description": "执行大多数操作，阻止高危命令和系统关键路径。"
     }
   },
   "trace": {

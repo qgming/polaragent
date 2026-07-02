@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld("polaragent", {
     createTempDir: (prefix) => invoke("fs:create-temp-dir", { prefix }),
     createTempFile: (opts) => invoke("fs:create-temp-file", opts || {}),
   },
+  security: {
+    setMode: (mode) => invoke("security:set-mode", { mode }),
+  },
   config: {
     read: (fileName) => invoke("config:read", { fileName }),
     write: (fileName, content) => invoke("config:write", { fileName, content }),

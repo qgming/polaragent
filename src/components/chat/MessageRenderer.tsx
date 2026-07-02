@@ -1,7 +1,7 @@
 // 对话消息渲染：单条消息视图 + 按 segment 顺序/按待办分组的内容渲染。
 // 从 ChatPage 抽出——这些属于「消息呈现」逻辑，与页面骨架解耦。
-import { Copy, FileCode, Hash, Zap } from "lucide-react";
-import { memo, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Copy, FileCode, Hash, Loader2, Zap } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -76,11 +76,7 @@ export const ChatMessageView = memo(function ChatMessageView({
           </span>
         ) : null}
       </div>
-      {message.status === "error" ? (
-        <div className="whitespace-pre-wrap text-destructive">
-          {message.content || " "}
-        </div>
-      ) : message.segments && message.segments.length > 0 ? (
+      {message.segments && message.segments.length > 0 ? (
         <SegmentedContent
           segments={message.segments}
           streaming={message.status === "streaming"}
@@ -98,6 +94,23 @@ export const ChatMessageView = memo(function ChatMessageView({
           />
         </>
       )}
+
+      {/* 重试状态显示 */}
+      {message.retryAttempt ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+          <Loader2 className="size-3.5 animate-spin" />
+          <span>正在重试 {message.retryAttempt}/5</span>
+        </div>
+      ) : null}
+
+      {/* 错误信息单独显示（在复制按钮上方） */}
+      {message.error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
+          <span className="whitespace-pre-wrap">{message.error}</span>
+        </div>
+      ) : null}
+
       {message.status === "streaming" ? null : (
         <>
           {/* 生成的图片 */}
@@ -445,10 +458,48 @@ function TaskGroupInner({
   );
 }
 
+/**
+ * 懒加载媒体组件
+ * 使用 Intersection Observer 监听元素是否进入视口，只在进入视口时检查文件存在性
+ */
+function LazyMediaLoader({
+  path,
+  children,
+}: {
+  path: string;
+  children: (url: string | null) => React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+
+  // 使用 Intersection Observer 监听元素进入视口
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setIsVisible(true);
+        observer.disconnect();
+      }
+    });
+
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // 元素进入视口后，检查文件存在性并获取 URL
+  useEffect(() => {
+    if (isVisible) {
+      fileUrl(path)
+        .then(setUrl)
+        .catch(() => setUrl(null));
+    }
+  }, [isVisible, path]);
+
+  return <div ref={ref}>{children(url)}</div>;
+}
+
 // 提取并显示生成的图片
 function GeneratedImages({ segments }: { segments: Segment[] }) {
-  const [existingImages, setExistingImages] = useState<Set<string>>(new Set());
-
   const imageSegments = useMemo(
     () =>
       segments.filter(
@@ -472,59 +523,23 @@ function GeneratedImages({ segments }: { segments: Segment[] }) {
     [imageSegments],
   );
 
-  useEffect(() => {
-    const checkFiles = async () => {
-      const existing = new Set<string>();
-
-      for (const path of allImagePaths) {
-        try {
-          const url = await fileUrl(path);
-          if (url) existing.add(path);
-        } catch {
-          // 文件不存在
-        }
-      }
-
-      setExistingImages(existing);
-    };
-
-    if (allImagePaths.length > 0) {
-      void checkFiles();
-    }
-  }, [allImagePaths]);
-
-  const visiblePaths = allImagePaths.filter((path) => existingImages.has(path));
-
-  if (visiblePaths.length === 0) return null;
+  if (allImagePaths.length === 0) return null;
 
   return (
     <div className="mt-3 flex gap-2 overflow-x-auto">
-      {visiblePaths.map((path) => (
-        <GeneratedImageItem key={path} imagePath={path} />
+      {allImagePaths.map((path) => (
+        <LazyMediaLoader key={path} path={path}>
+          {(url) => (url ? <GeneratedImageItem imagePath={path} imageUrl={url} /> : null)}
+        </LazyMediaLoader>
       ))}
     </div>
   );
 }
 
-function GeneratedImageItem({ imagePath }: { imagePath: string }) {
-  const [url, setUrl] = useState("");
+function GeneratedImageItem({ imagePath, imageUrl }: { imagePath: string; imageUrl: string }) {
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    void fileUrl(imagePath)
-      .then((next) => {
-        if (alive) setUrl(next);
-      })
-      .catch(() => {
-        if (alive) setUrl("");
-      });
-    return () => {
-      alive = false;
-    };
-  }, [imagePath]);
-
-  if (!url || failed) return null;
+  if (failed) return null;
 
   return (
     <button
@@ -533,7 +548,7 @@ function GeneratedImageItem({ imagePath }: { imagePath: string }) {
       className="h-32 shrink-0 overflow-hidden rounded-md transition-opacity hover:opacity-80"
     >
       <img
-        src={url}
+        src={imageUrl}
         alt=""
         className="h-full object-cover"
         onError={() => setFailed(true)}
@@ -544,8 +559,6 @@ function GeneratedImageItem({ imagePath }: { imagePath: string }) {
 
 // 提取并显示语音合成的音频条
 function SynthesizedAudioBars({ segments }: { segments: Segment[] }) {
-  const [existingAudios, setExistingAudios] = useState<Set<string>>(new Set());
-
   const audioSegments = useMemo(
     () =>
       segments.filter(
@@ -561,52 +574,26 @@ function SynthesizedAudioBars({ segments }: { segments: Segment[] }) {
     [segments],
   );
 
-  const allAudioPaths = useMemo(
-    () => audioSegments.map((seg) => seg.details!.audioPath as string),
-    [audioSegments],
-  );
-
-  useEffect(() => {
-    const checkFiles = async () => {
-      const existing = new Set<string>();
-
-      for (const path of allAudioPaths) {
-        try {
-          const url = await fileUrl(path);
-          if (url) existing.add(path);
-        } catch {
-          // 文件不存在
-        }
-      }
-
-      setExistingAudios(existing);
-    };
-
-    if (allAudioPaths.length > 0) {
-      void checkFiles();
-    }
-  }, [allAudioPaths]);
-
-  const visibleSegments = audioSegments.filter((seg) => {
-    const audioPath = seg.details!.audioPath as string;
-    return existingAudios.has(audioPath);
-  });
-
-  if (visibleSegments.length === 0) return null;
+  if (audioSegments.length === 0) return null;
 
   return (
     <div className="mt-3 space-y-2">
-      {visibleSegments.map((seg) => {
+      {audioSegments.map((seg) => {
         const audioPath = seg.details!.audioPath as string;
         const duration =
           typeof seg.details!.duration === "number" ? seg.details!.duration : undefined;
         return (
-          <AudioBar
-            key={seg.toolCallId}
-            audioPath={audioPath}
-            duration={duration}
-            variant="assistant"
-          />
+          <LazyMediaLoader key={seg.toolCallId} path={audioPath}>
+            {(url) =>
+              url ? (
+                <AudioBar
+                  audioPath={audioPath}
+                  duration={duration}
+                  variant="assistant"
+                />
+              ) : null
+            }
+          </LazyMediaLoader>
         );
       })}
     </div>

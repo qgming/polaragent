@@ -16,7 +16,13 @@ const REFINER_SYSTEM_PROMPT = [
   "3. 补充必要的标点符号（问号、句号、逗号等）",
   "4. 保持原意不变，不添加原文没有的内容",
   "5. 如果原文包含多个独立的句子或问题，用标点分隔清楚",
-  '只输出一个 JSON 对象，格式为 {"text": "整理后的文本"}，不要包含任何额外解释或代码块标记。',
+  "",
+  "你必须只输出纯 JSON 对象（不要包含代码块标记），格式如下：",
+  '{"text": "整理后的文本内容"}',
+  "",
+  "示例：",
+  "输入：嗯 那个 我想问一下 就是 这个代码 怎么 运行啊",
+  '输出：{"text": "请问这段代码怎么运行？"}',
 ].join("\n");
 
 /**
@@ -38,6 +44,7 @@ export async function refineVoiceText(text: string): Promise<string> {
       userPrompt,
       temperature: 0.3,
       maxTokens: 500,
+      jsonMode: true,
     });
     return extractRefinedText(result);
   } catch (error) {
