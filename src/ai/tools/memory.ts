@@ -48,10 +48,15 @@ const searchMemoryParams = Type.Object({
 });
 
 const rememberMemoryParams = Type.Object({
-  content: Type.String({ description: "要长期记住的一句话事实、偏好、约定或纠正" }),
-  type: Type.Optional(memoryTypeSchema),
-  scope: Type.Optional(memoryScopeSchema),
-  tags: Type.Optional(Type.Array(Type.String(), { description: "用于管理和筛选的短标签" })),
+    content: Type.String({ description: "要长期记住的一句话事实、偏好、约定或纠正" }),
+    type: Type.Optional(memoryTypeSchema),
+    scope: Type.Optional(memoryScopeSchema),
+    tags: Type.Optional(Type.Array(Type.String(), { description: "用于管理和筛选的短标签" })),
+    structured: Type.Optional(
+        Type.Record(Type.String(), Type.String(), {
+            description: "键值对形式的结构化数据，如 {\"theme\": \"dark\", \"language\": \"zh-CN\"}。可选。",
+        }),
+    ),
 });
 
 const forgetMemoryParams = Type.Object({
@@ -107,6 +112,69 @@ function formatScope(scope: MemoryScope): string {
   return scope === "project" ? "项目" : "全局";
 }
 
+/**
+ * 检测新记忆与相似记忆之间是否存在潜在语义冲突。
+ * 采用轻量级否定词检测：高相似度下，一方含否定词而另一方不含，则视为潜在矛盾。
+ * 阈值设得较高，宁可漏报也不要误报。
+ */
+function detectContradictions(
+  newContent: string,
+  similarMemories: any[],
+): Array<{ id: string; content: string; score: number }> {
+  const CONTRADICTION_THRESHOLD = 0.75;
+
+  // 中英文常见否定词（仅用于判断语气是否相反）
+  const negationPatterns = [
+    /不|没|非|无|否|别|未|休|莫|勿/,
+    /not|no|never|don't|doesn't|won't|can't|isn't|aren't|didn't|couldn't|shouldn't|wouldn't/i,
+  ];
+
+  const newHasNegation = negationPatterns.some((p) => p.test(newContent));
+
+  return similarMemories
+    .filter((mem) => {
+      if (typeof mem.score !== "number" || mem.score < CONTRADICTION_THRESHOLD) return false;
+      if (!mem.content || typeof mem.content !== "string") return false;
+
+      const memHasNegation = negationPatterns.some((p) => p.test(mem.content));
+
+      // 高相似度下，仅当肯定/否定语气相反时才认为可能冲突
+      return newHasNegation !== memHasNegation;
+    })
+    .map((mem) => ({
+      id: String(mem.id ?? ""),
+      content: mem.content,
+      score: mem.score,
+    }));
+}
+
+/**
+ * 将结构化键值对序列化后附加到记忆内容中。
+ */
+function buildMemoryContent(content: string, structured?: Record<string, string>): string {
+  if (!structured || Object.keys(structured).length === 0) return content;
+
+  const structuredStr = Object.entries(structured)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+  return `${content} [${structuredStr}]`;
+}
+
+/**
+ * 格式化单条记忆内容；若内容末尾包含 [k=v; ...] 结构化标记，则解析并展示。
+ */
+function formatMemoryContent(content: string): string {
+  const structuredMatch = content.match(/\[(.+)]$/);
+  if (!structuredMatch) return content;
+
+  const raw = structuredMatch[1];
+  const pairs = raw.split("; ").map((pair) => pair.split("="));
+  if (pairs.length === 0 || pairs.some((p) => p.length !== 2)) return content;
+
+  const formattedPairs = pairs.map(([k, v]) => `  ${k}: ${v}`).join("\n");
+  return `${content}\n结构化数据:\n${formattedPairs}`;
+}
+
 export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemoryParams> {
   return {
     name: "search_memory",
@@ -136,7 +204,8 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
         };
       }
       const topK = params.topK ?? configured.retrieval.topK;
-      const threshold = configured.retrieval.threshold;
+      // 用户未指定阈值时使用更宽松的默认值，避免检索不到相近记忆
+      const threshold = configured.retrieval.threshold ?? 0.5;
 
       try {
         const result = await searchMemories({
@@ -158,7 +227,7 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
         const markdown = result.results
           .map((memory, index) => {
             const tags = memory.tags.length > 0 ? ` 标签: ${memory.tags.join(", ")}` : "";
-            return `### ${index + 1}. ${formatScope(memory.scope)} / ${formatMemoryType(memory.type)} / ${memory.score.toFixed(3)}\nID: ${memory.id}${tags}\n\n${memory.content}`;
+            return `### ${index + 1}. ${formatScope(memory.scope)} / ${formatMemoryType(memory.type)} / ${memory.score.toFixed(3)}\nID: ${memory.id}${tags}\n\n${formatMemoryContent(memory.content)}`;
           })
           .join("\n\n---\n\n");
 
@@ -207,10 +276,40 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
       }
 
       const type = (params.type ?? (scope === "project" ? "project" : "preference")) as MemoryType;
+
+      // 写入前先检测语义冲突（轻量级否定词检测，阈值较高，宁可漏报也不误报）
+      try {
+        const similarResults = await searchMemories({
+          query: params.content,
+          scopes: [scope],
+          projectKey: runtime.projectKey,
+          topK: 5,
+          threshold: 0.5, // 降低阈值以捕获更多潜在矛盾候选，最终过滤仍由 detectContradictions 负责
+          config: runtime.config,
+        });
+
+        const contradictions = detectContradictions(params.content, similarResults.results);
+        if (contradictions.length > 0) {
+          const conflictList = contradictions
+            .map((c) => `- 已有记忆 [${c.id}]: "${c.content}" (相似度: ${c.score.toFixed(2)})`)
+            .join("\n");
+          return {
+            content: text(
+              `⚠️ 检测到潜在矛盾记忆：\n${conflictList}\n\n新记忆: "${params.content}"\n\n请确认是否仍要写入。如果这是有意的更新（用户改变了偏好），请直接重新调用并确认。`,
+            ),
+            details: { contradictions },
+          };
+        }
+      } catch {
+        // 冲突检测失败不应阻塞正常写入
+      }
+
+      const finalContent = buildMemoryContent(params.content, params.structured);
+
       try {
         const result = await createMemory({
           memory: {
-            content: params.content,
+            content: finalContent,
             type,
             scope,
             projectKey: scope === "project" ? runtime.projectKey : undefined,
@@ -219,6 +318,8 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
             tags: params.tags ?? [],
           },
           config: runtime.config,
+          // 提高去重阈值，减少因内容相似而意外覆盖已有记忆
+          dedupeThreshold: 0.95,
           sensitiveFilter: runtime.settings.memory?.sensitiveFilter ?? true,
         });
 

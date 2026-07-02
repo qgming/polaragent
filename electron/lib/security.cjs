@@ -12,6 +12,10 @@
 const path = require("node:path");
 const os = require("node:os");
 
+// 共享黑名单：渲染侧与主进程的唯一事实来源
+// 使用 __dirname 同级 JSON，避免 Electron asar 打包后找不到 src/lib 下的文件
+const blockedPatterns = require(path.join(__dirname, "blocked-patterns.json"));
+
 // 运行时安全模式（由渲染进程通过 IPC 同步）
 let _runtimeMode = null;
 
@@ -154,25 +158,12 @@ function validateShellCommand(command) {
     };
   }
   
-  // 定义危险命令模式
-  const dangerousPatterns = [
-    // 递归强删根目录或家目录
-    { test: /\brm\s+(-[a-z]*\s+)*(-[a-z]*r[a-z]*|--recursive)\b[^|;&]*\s(\/|~|\$HOME|\\|C:\\)(\s|$)/i, reason: "检测到删除根目录或家目录的高危操作", level: "critical" },
-    { test: /\brm\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*f[a-z]*\s+(\/|~|C:\\)(\s|$)/i, reason: "检测到强制递归删除根目录的高危操作", level: "critical" },
-    // 关机/重启
-    { test: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: "检测到关机/重启命令", level: "critical" },
-    // 磁盘格式化
-    { test: /\b(mkfs(\.\w+)?|diskpart)\b/i, reason: "检测到磁盘格式化命令", level: "critical" },
-    { test: /\bformat\s+[a-z]:/i, reason: "检测到磁盘格式化命令", level: "critical" },
-    // 直接写裸磁盘设备
-    { test: /\bdd\b[^|;&]*\bof=\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到覆写磁盘设备的高危操作", level: "critical" },
-    { test: />\s*\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到向裸磁盘设备重定向写入", level: "critical" },
-    // fork 炸弹
-    { test: /:\s*\(\s*\)\s*\{.*:.*\}/i, reason: "检测到 fork 炸弹模式", level: "critical" },
-    // 递归改根目录权限/属主
-    { test: /\bchmod\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s(\/|C:\\)(\s|$)/i, reason: "检测到递归修改根目录权限", level: "high" },
-    { test: /\bchown\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s(\/|C:\\)(\s|$)/i, reason: "检测到递归修改根目录属主", level: "high" },
-  ];
+  // 危险命令模式：从共享 JSON 加载，与渲染侧 bash.ts 保持唯一事实来源
+  const dangerousPatterns = blockedPatterns.patterns.map(({ pattern, flags, description }) => ({
+    test: new RegExp(pattern, flags),
+    reason: description,
+    level: description.includes("权限") || description.includes("属主") ? "high" : "critical",
+  }));
   
   // 检查是否命中危险模式
   let matchedPattern = null;

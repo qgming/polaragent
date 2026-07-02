@@ -32,6 +32,13 @@ const askUserParams = Type.Object({
       description: "自定义输入选项的标签，例如：其他 / 补充说明。",
     }),
   ),
+  timeout: Type.Optional(
+    Type.Number({
+      description: "超时时间（毫秒），用户未在此时间内响应则自动返回超时提示。默认不超时。",
+      minimum: 1000,
+      maximum: 600000, // 最大 10 分钟
+    }),
+  ),
 });
 
 export function askUserTool(
@@ -77,7 +84,24 @@ export function askUserTool(
         mode,
         options,
         customOptionLabel: params.customOptionLabel?.trim() || undefined,
+        timeout: params.timeout,
       });
+
+      if (result.timedOut) {
+        return {
+          content: text(
+            `⏱️ ${result.message || "用户未在指定时间内响应"}。请根据已有信息继续，或稍后再次询问。`,
+          ),
+          details: {
+            askUser: {
+              prompt,
+              mode,
+              options,
+              timedOut: true,
+            },
+          },
+        };
+      }
 
       return {
         content: text(JSON.stringify(result, null, 2)),

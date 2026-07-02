@@ -49,6 +49,8 @@ interface Window {
       appendFile: (path: string, content: string) => Promise<void>;
       createDirectory: (path: string) => Promise<void>;
       deletePath: (path: string) => Promise<void>;
+      rename: (src: string, dest: string) => Promise<void>;
+      copy: (src: string, dest: string) => Promise<void>;
       listDirectory: (path: string) => Promise<string[]>;
       listDirectoryEntries: (path: string) => Promise<Array<{ name: string; isDir: boolean }>>;
       exists: (path: string) => Promise<boolean>;
@@ -526,6 +528,9 @@ interface ComputerUseSnapshotOptions {
   detailLevel?: "compact" | "full";
   includeScreenshot?: boolean;
   screenshotMode?: "path" | "base64";
+  screenshotFormat?: "png" | "jpeg";
+  screenshotQuality?: number;
+  screenshotTarget?: "screen" | "window" | "region";
   maxDepth?: number;
   maxNodes?: number;
 }
@@ -601,6 +606,7 @@ interface ComputerUseClickOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseMoveOptions {
@@ -613,6 +619,7 @@ interface ComputerUseMoveOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseDragOptions {
@@ -622,6 +629,7 @@ interface ComputerUseDragOptions {
   processId?: number;
   nativeWindowHandle?: number;
   activate?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseScrollOptions {
@@ -636,6 +644,7 @@ interface ComputerUseScrollOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseTypeOptions {
@@ -645,6 +654,7 @@ interface ComputerUseTypeOptions {
   processId?: number;
   nativeWindowHandle?: number;
   activate?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseKeypressOptions {
@@ -653,6 +663,7 @@ interface ComputerUseKeypressOptions {
   processId?: number;
   nativeWindowHandle?: number;
   activate?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseFindOptions {
@@ -703,6 +714,7 @@ interface ComputerUseFocusOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseInvokeOptions {
@@ -714,6 +726,7 @@ interface ComputerUseInvokeOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseSetValueOptions {
@@ -727,6 +740,7 @@ interface ComputerUseSetValueOptions {
   activate?: boolean;
   viewMode?: "control" | "content" | "raw";
   includeOffscreen?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseListWindowsOptions {
@@ -746,6 +760,7 @@ interface ComputerUseActivateWindowOptions {
   processId?: number;
   nativeWindowHandle?: number;
   activate?: boolean;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseWaitOptions {
@@ -759,6 +774,7 @@ interface ComputerUseBatchOptions {
   }>;
   stopOnError?: boolean;
   maxActions?: number;
+  delayMode?: "fast" | "stable" | "slow";
 }
 
 interface ComputerUseBatchResult {

@@ -227,6 +227,19 @@ export interface AutomationConfig {
     screenshotMode: "path" | "base64";
     restoreClipboard: boolean;
     actionTimeoutMs: number;
+    // Windows UIA 动作延迟配置（毫秒）
+    delays?: {
+      ActivateShowWindow: number;
+      ActivateForeground: number;
+      ClickBefore: number;
+      ClickBetween: number;
+      ClickAfter: number;
+      TypeClipboard: number;
+      TypePaste: number;
+      DragBefore: number;
+      DragBetween: number;
+      ScrollBefore: number;
+    };
   };
 }
 

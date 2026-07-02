@@ -10,27 +10,25 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { runShell } from "@/lib/electron/electron-api";
 import { text, type ToolContext } from "./tool-context";
+import blockedPatterns from "@/lib/blocked-patterns.json";
 
 // 超时边界（与主进程 shell.cjs 对齐）
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 120_000;
 
-// 黑名单模式（渲染侧预检，与主进程一致）
-// ⚠️ 重要：此黑名单必须与 electron/ipc/shell.cjs 中的 BLOCKED_PATTERNS 保持同步
-// 任何修改都需要同步更新两处,否则渲染侧与主进程的拦截行为会不一致
-const BLOCKED_PATTERNS = [
-  { test: /\brm\s+(-[a-z]*\s+)*(-[a-z]*r[a-z]*|--recursive)\b[^|;&]*\s(\/|~|\$HOME)(\s|$)/i, reason: "检测到删除根目录或家目录的高危操作" },
-  { test: /\brm\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*f[a-z]*\s+(\/|~)(\s|$)/i, reason: "检测到强制递归删除根目录的高危操作" },
-  { test: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: "检测到关机/重启命令" },
-  { test: /\b(mkfs(\.\w+)?|diskpart)\b/i, reason: "检测到磁盘格式化命令" },
-  { test: /\bformat\s+[a-z]:/i, reason: "检测到磁盘格式化命令" },
-  { test: /\bdd\b[^|;&]*\bof=\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到覆写磁盘设备的高危操作" },
-  { test: />\s*\/dev\/(sd|hd|nvme|disk|vd)/i, reason: "检测到向裸磁盘设备重定向写入" },
-  { test: /:\s*\(\s*\)\s*\{.*:.*\}/i, reason: "检测到 fork 炸弹模式" },
-  { test: /\bchmod\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s\/(\s|$)/i, reason: "检测到递归修改根目录权限" },
-  { test: /\bchown\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\b[^|;&]*\s\/(\s|$)/i, reason: "检测到递归修改根目录属主" },
-];
+// 从共享 JSON 加载黑名单，保证渲染侧与主进程完全一致
+// 单个正则无效时跳过该条，避免整个模块加载失败
+const BLOCKED_PATTERNS = blockedPatterns.patterns
+  .map(({ pattern, flags, description }) => {
+    try {
+      return { test: new RegExp(pattern, flags), reason: description };
+    } catch (e) {
+      console.error(`[bash] 无效黑名单正则: /${pattern}/${flags}`, e);
+      return null;
+    }
+  })
+  .filter((item): item is NonNullable<typeof item> => item !== null);
 
 // 命中黑名单返回拒绝原因，否则返回 null
 function checkBlocked(command: string): string | null {

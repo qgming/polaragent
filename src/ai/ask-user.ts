@@ -18,12 +18,14 @@ export interface AskUserRuntimeRequest {
   mode: AskUserMode;
   options: AskUserOption[];
   customOptionLabel?: string;
+  timeout?: number;
 }
 
 interface PendingAskUser {
   threadId: string;
   resolve: (response: AskUserResponse) => void;
   reject: (error: Error) => void;
+  timeoutHandle?: ReturnType<typeof setTimeout>;
 }
 
 const pendingRequests = new Map<string, PendingAskUser>();
@@ -38,24 +40,51 @@ export async function initiateAskUser(
 ): Promise<AskUserResponse> {
   const requestId = createId();
 
-  useAskUserStore.getState().enqueueRequest({
-    requestId,
-    threadId: request.threadId,
-    requesterId: request.requesterId,
-    requesterName:
-      request.requesterName || (request.isTeam ? "团队成员" : "助手"),
-    isTeam: !!request.isTeam,
-    prompt: request.prompt,
-    mode: request.mode,
-    options: request.options,
-    customOptionLabel: request.customOptionLabel,
-  });
-
   return new Promise<AskUserResponse>((resolve, reject) => {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    if (request.timeout && request.timeout > 0) {
+      timeoutHandle = setTimeout(() => {
+        pendingRequests.delete(requestId);
+        useAskUserStore.getState().clearRequest(requestId);
+        resolve({
+          selectedOptionIds: [],
+          selectedOptions: [],
+          text: "",
+          customText: "",
+          submittedAt: Date.now(),
+          timedOut: true,
+          message: `用户未在 ${request.timeout! / 1000} 秒内响应`,
+        });
+      }, request.timeout);
+    }
+
     pendingRequests.set(requestId, {
       threadId: request.threadId,
-      resolve,
-      reject,
+      resolve: (response: AskUserResponse) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        pendingRequests.delete(requestId);
+        resolve(response);
+      },
+      reject: (error: Error) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        pendingRequests.delete(requestId);
+        reject(error);
+      },
+      timeoutHandle,
+    });
+
+    useAskUserStore.getState().enqueueRequest({
+      requestId,
+      threadId: request.threadId,
+      requesterId: request.requesterId,
+      requesterName:
+        request.requesterName || (request.isTeam ? "团队成员" : "助手"),
+      isTeam: !!request.isTeam,
+      prompt: request.prompt,
+      mode: request.mode,
+      options: request.options,
+      customOptionLabel: request.customOptionLabel,
     });
   });
 }
@@ -69,6 +98,7 @@ export function submitAskUserResponse(
 
   pendingRequests.delete(requestId);
   useAskUserStore.getState().clearRequest(requestId);
+  if (pending.timeoutHandle) clearTimeout(pending.timeoutHandle);
 
   pending.resolve({
     ...response,
@@ -83,6 +113,7 @@ export function cancelAskUserRequest(requestId: string): boolean {
 
   pendingRequests.delete(requestId);
   useAskUserStore.getState().clearRequest(requestId);
+  if (pending.timeoutHandle) clearTimeout(pending.timeoutHandle);
   pending.reject(new Error("用户取消了输入请求"));
   return true;
 }
@@ -91,6 +122,7 @@ export function cancelAskUserRequestsForThread(threadId: string): void {
   for (const [requestId, pending] of pendingRequests.entries()) {
     if (pending.threadId !== threadId) continue;
     pendingRequests.delete(requestId);
+    if (pending.timeoutHandle) clearTimeout(pending.timeoutHandle);
     pending.reject(new Error("用户取消了输入请求"));
   }
 

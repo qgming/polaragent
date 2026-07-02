@@ -451,6 +451,10 @@ async function handleCommand(params) {
       return await click(args);
     case "fill":
       return await fill(args);
+    case "drag":
+      return await drag(args);
+    case "upload":
+      return await upload(args);
     case "exec":
       return await executeScript(args);
     case "screenshot":
@@ -474,7 +478,12 @@ async function getTabs(args) {
 async function openTab(args) {
   const { url, profile, active, window, allowFocus, groupTitle } = args;
   const resp = await sendToExtension("openTab", { url, profile, active, window, allowFocus, groupTitle });
-  return { tabId: resp.id || resp.data?.id || resp.result?.data?.id, ...resp };
+  const tabId = resp.id || resp.data?.id || resp.result?.data?.id;
+  if (tabId) {
+    // #3 页面就绪检测：新标签页打开后等待页面加载完成
+    await waitForPageReady(tabId).catch(() => {});
+  }
+  return { tabId, ...resp };
 }
 
 async function closeTab(args) {
@@ -503,8 +512,160 @@ function isNavigationTransientError(error) {
   );
 }
 
+// #3 页面就绪检测：获取当前 URL 与 readyState
+async function getPageState(tabId) {
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", {
+      expression: `(function(){ return { url: location.href, readyState: document.readyState }; })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    return resp.result?.value || resp.value || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+// #3 页面就绪检测：等待 document.readyState === 'complete' 且无 pending 资源
+async function waitForPageReady(tabId, timeoutMs = 5000) {
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const resp = await cdp(tabId, "Runtime.evaluate", {
+        expression: `
+          (function() {
+            if (document.readyState !== 'complete') return { ready: false, reason: 'readyState=' + document.readyState };
+            const entries = performance.getEntriesByType('resource');
+            const pending = entries.filter(r => r.responseEnd === 0);
+            if (pending.length > 0) return { ready: false, reason: pending.length + ' pending resources' };
+            return { ready: true };
+          })()
+        `,
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      const value = resp.result?.value || resp.value;
+      if (value?.ready) return true;
+    } catch (error) {
+      // 页面可能正在导航，忽略错误继续等待
+    }
+    await sleep(200);
+  }
+  log("页面就绪检测超时，降级继续执行");
+  return false;
+}
+
+// #5 页面导航检测：对比操作前后的 URL/readyState，若发生导航则等待新页面就绪
+async function detectAndWaitForNavigation(tabId, preState, timeoutMs = 5000) {
+  try {
+    const postState = await getPageState(tabId);
+    const urlChanged = preState?.url && postState?.url && preState.url !== postState.url;
+    const readyStateRegressed = preState?.readyState === 'complete' && postState?.readyState && postState.readyState !== 'complete';
+    if (!urlChanged && !readyStateRegressed) return false;
+    log("检测到页面导航，等待新页面就绪");
+    await waitForPageReady(tabId, timeoutMs);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// 复用 snapshot 逻辑：为指定 tab 生成快照并写入 snapshotCache
+async function buildAndCacheSnapshot(tabId, limit = 200, offset = 0) {
+  const expression = `(${buildSnapshotScript.toString()})(${JSON.stringify({ limit, offset })})`;
+  const resp = await cdp(tabId, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  const elements = resp.result?.value || resp.value || [];
+  const snapshotId = `${tabId}:${Date.now()}`;
+  snapshotCache.set(snapshotId, { tabId, elements, createdAt: Date.now() });
+  pruneSnapshotCache();
+  return { snapshotId, tabId, elements, count: elements.length };
+}
+
+async function performClick(tabId, args, resolved) {
+  const expression = buildClickScript({
+    target: resolved.target,
+    element: resolved.element,
+    action: args.action,
+    waitMs: config.waitAfterActionMs,
+  });
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    return { result: resp.result?.value || resp.value || {}, resolved };
+  } catch (error) {
+    if (!isNavigationTransientError(error)) throw error;
+    await sleep(Math.max(100, config.waitAfterActionMs));
+    return { result: { ok: true, selector: resolved.target }, resolved, navigationLikely: true };
+  }
+}
+
+async function performFill(tabId, args, resolved) {
+  const expression = buildFillScript({
+    target: resolved.target,
+    element: resolved.element,
+    value: String(args.value ?? ""),
+    clear: Boolean(args.clear),
+    append: Boolean(args.append),
+    selectBy: args.selectBy,
+    waitMs: config.waitAfterActionMs,
+  });
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    return { result: resp.result?.value || resp.value || {}, resolved };
+  } catch (error) {
+    if (!isNavigationTransientError(error)) throw error;
+    await sleep(Math.max(100, config.waitAfterActionMs));
+    return { result: { ok: true, selector: resolved.target }, resolved, navigationLikely: true };
+  }
+}
+
+// #4 @e 引用容错：元素未找到时自动重新快照，按 selector/text 重新匹配后重试一次
+async function retryActionAfterResnapshot(tabId, args, originalResolved, actionName) {
+  try {
+    log("元素定位失败，尝试重新快照后重试:", args.target);
+    const newSnapshot = await buildAndCacheSnapshot(tabId);
+    const originalElement = originalResolved.element;
+    if (!originalElement) return null;
+
+    const rematched = newSnapshot.elements.find((el) => {
+      if (!el) return false;
+      if (originalElement.selector && el.selector === originalElement.selector) return true;
+      if (originalElement.text && el.text && el.text === originalElement.text) return true;
+      if (Array.isArray(originalElement.selectors) && Array.isArray(el.selectors)) {
+        return originalElement.selectors.some((s) => el.selectors.includes(s));
+      }
+      return false;
+    });
+
+    if (!rematched) {
+      log("重新快照后未找到匹配元素:", args.target);
+      return null;
+    }
+
+    log("重新快照后找到匹配元素，重试操作:", rematched.ref || rematched.selector);
+    const newResolved = { target: rematched.selector || rematched.ref, element: rematched };
+
+    if (actionName === "click") {
+      const perf = await performClick(tabId, args, newResolved);
+      return { ...perf, snapshotId: newSnapshot.snapshotId };
+    }
+    if (actionName === "fill") {
+      const perf = await performFill(tabId, args, newResolved);
+      return { ...perf, snapshotId: newSnapshot.snapshotId };
+    }
+  } catch (error) {
+    log("重新快照重试失败:", error.message);
+  }
+  return null;
+}
+
 async function scanPage(args) {
   const tabId = await getActiveTabId(args.tabId);
+  // #3 页面就绪检测：扫描前等待页面加载完成
+  await waitForPageReady(tabId);
   const expression = args.textOnly === false
     ? "document.documentElement.outerHTML"
     : `(${buildScanTextScript.toString()})()`;
@@ -546,19 +707,12 @@ function buildScanTextScript() {
 
 async function snapshot(args) {
   const tabId = await getActiveTabId(args.tabId);
+  // #3 页面就绪检测：快照前等待页面加载完成
+  await waitForPageReady(tabId);
   const limit = clampNumber(args.limit, 200, 1, 1000);
   const offset = clampNumber(args.offset, 0, 0, 100000);
-  const expression = `(${buildSnapshotScript.toString()})(${JSON.stringify({ limit, offset })})`;
-  const resp = await cdp(tabId, "Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  });
-  const elements = resp.result?.value || resp.value || [];
-  const snapshotId = `${tabId}:${Date.now()}`;
-  snapshotCache.set(snapshotId, { tabId, elements, createdAt: Date.now() });
-  pruneSnapshotCache();
-  return { snapshotId, sessionKey: snapshotId, tabId, elements, count: elements.length };
+  const result = await buildAndCacheSnapshot(tabId, limit, offset);
+  return { ...result, sessionKey: result.snapshotId };
 }
 
 function buildSnapshotScript({ limit, offset }) {
@@ -792,29 +946,52 @@ function resolveCachedTarget(tabId, target, snapshotId) {
 async function click(args) {
   const tabId = await getActiveTabId(args.tabId);
   const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
-  const expression = buildClickScript({
-    target: resolved.target,
-    element: resolved.element,
-    waitMs: config.waitAfterActionMs,
-  });
-  let result;
-  try {
-    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    result = resp.result?.value || resp.value || {};
-  } catch (error) {
-    if (!isNavigationTransientError(error)) throw error;
-    await sleep(Math.max(100, config.waitAfterActionMs));
-    return { clicked: true, target: args.target, selector: resolved.target, element: resolved.element, navigationLikely: true };
+
+  // #3 页面就绪检测：操作前等待页面 readyState 与资源加载完成
+  await waitForPageReady(tabId);
+
+  // #5 导航检测：记录操作前页面状态
+  const preState = await getPageState(tabId);
+
+  let { result, resolved: finalResolved, navigationLikely } = await performClick(tabId, args, resolved);
+
+  // #5 导航检测：操作后对比 URL/readyState，若发生导航则等待新页面就绪
+  const navigated = navigationLikely || (await detectAndWaitForNavigation(tabId, preState));
+
+  // #4 @e 引用容错：若元素未找到，自动重新快照并按 selector/text 重新匹配后重试一次
+  if (result.ok === false && result.error && result.error.includes("未找到元素")) {
+    const retry = await retryActionAfterResnapshot(tabId, args, resolved, "click");
+    if (retry) {
+      const retryNavigated = retry.navigationLikely || (await detectAndWaitForNavigation(tabId, preState));
+      if (retry.result.ok === false) throw new Error(retry.result.error || `点击失败: ${args.target}`);
+      return {
+        clicked: true,
+        target: args.target,
+        selector: retry.result.selector || retry.resolved.target,
+        element: retry.resolved.element,
+        navigationLikely: retryNavigated || navigated,
+        reSnapshotted: true,
+        snapshotId: retry.snapshotId,
+      };
+    }
+    throw new Error(`${result.error}。已尝试自动重新快照但仍无法定位。请重新执行 browser_snapshot 获取最新页面状态。`);
   }
+
   if (result.ok === false) throw new Error(result.error || `点击失败: ${args.target}`);
-  return { clicked: true, target: args.target, selector: result.selector || resolved.target, element: resolved.element };
+  return {
+    clicked: true,
+    target: args.target,
+    selector: result.selector || finalResolved.target,
+    element: finalResolved.element,
+    navigationLikely: navigated,
+  };
 }
 
 function buildClickScript(payload) {
   return `(async function() {
   ${BROWSER_RUNTIME_HELPERS}
   const result = await (async function(payload) {
-    const { target, element, waitMs } = payload || {};
+    const { target, element, action, waitMs } = payload || {};
     const found = findActionElement(target, element);
     const el = found && found.el;
     if (!el) return { ok: false, error: "未找到元素: " + (target || element?.ref || "") };
@@ -824,9 +1001,29 @@ function buildClickScript(payload) {
     el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     await nextFrame();
     if (typeof el.focus === "function") el.focus({ preventScroll: true });
-    el.click();
+    const clickAction = action || "click";
+    if (clickAction === "click") {
+      el.click();
+    } else {
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: window.screenX + cx, screenY: window.screenY + cy };
+      if (clickAction === "dblclick") {
+        el.dispatchEvent(new MouseEvent("click", eventInit));
+        el.dispatchEvent(new MouseEvent("click", eventInit));
+        el.dispatchEvent(new MouseEvent("dblclick", eventInit));
+      } else if (clickAction === "contextmenu") {
+        el.dispatchEvent(new MouseEvent("contextmenu", eventInit));
+      } else if (clickAction === "mousedown") {
+        el.dispatchEvent(new MouseEvent("mousedown", eventInit));
+      } else if (clickAction === "mouseup") {
+        el.dispatchEvent(new MouseEvent("mouseup", eventInit));
+      } else {
+        return { ok: false, error: "不支持的点击动作: " + clickAction };
+      }
+    }
     await waitForDomSettled(waitMs, el.ownerDocument);
-    return { ok: true, selector: found.selector };
+    return { ok: true, selector: found.selector, action: clickAction };
   })(${JSON.stringify(payload)});
   return result;
 })()`;
@@ -835,26 +1032,45 @@ function buildClickScript(payload) {
 async function fill(args) {
   const tabId = await getActiveTabId(args.tabId);
   const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
-  const payload = {
-    target: resolved.target,
-    element: resolved.element,
-    value: String(args.value ?? ""),
-    clear: Boolean(args.clear),
-    append: Boolean(args.append),
-    waitMs: config.waitAfterActionMs,
-  };
-  const expression = buildFillScript(payload);
-  let result;
-  try {
-    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    result = resp.result?.value || resp.value || {};
-  } catch (error) {
-    if (!isNavigationTransientError(error)) throw error;
-    await sleep(Math.max(100, config.waitAfterActionMs));
-    return { filled: true, target: args.target, selector: resolved.target, element: resolved.element, navigationLikely: true };
+
+  // #3 页面就绪检测：操作前等待页面 readyState 与资源加载完成
+  await waitForPageReady(tabId);
+
+  // #5 导航检测：记录操作前页面状态
+  const preState = await getPageState(tabId);
+
+  let { result, resolved: finalResolved, navigationLikely } = await performFill(tabId, args, resolved);
+
+  // #5 导航检测：操作后对比 URL/readyState，若发生导航则等待新页面就绪
+  const navigated = navigationLikely || (await detectAndWaitForNavigation(tabId, preState));
+
+  // #4 @e 引用容错：若元素未找到，自动重新快照并按 selector/text 重新匹配后重试一次
+  if (result.ok === false && result.error && result.error.includes("未找到元素")) {
+    const retry = await retryActionAfterResnapshot(tabId, args, resolved, "fill");
+    if (retry) {
+      const retryNavigated = retry.navigationLikely || (await detectAndWaitForNavigation(tabId, preState));
+      if (retry.result.ok === false) throw new Error(retry.result.error || `填充失败: ${args.target}`);
+      return {
+        filled: true,
+        target: args.target,
+        selector: retry.result.selector || retry.resolved.target,
+        element: retry.resolved.element,
+        navigationLikely: retryNavigated || navigated,
+        reSnapshotted: true,
+        snapshotId: retry.snapshotId,
+      };
+    }
+    throw new Error(`${result.error}。已尝试自动重新快照但仍无法定位。请重新执行 browser_snapshot 获取最新页面状态。`);
   }
+
   if (result.ok === false) throw new Error(result.error || `填充失败: ${args.target}`);
-  return { filled: true, target: args.target, selector: resolved.target, element: resolved.element };
+  return {
+    filled: true,
+    target: args.target,
+    selector: result.selector || finalResolved.target,
+    element: finalResolved.element,
+    navigationLikely: navigated,
+  };
 }
 
 function buildFillScript(payload) {
@@ -870,7 +1086,7 @@ function buildFillScript(payload) {
     else el.value = nextValue;
   }
   const result = await (async function(payload) {
-    const { target, element, value, clear, append, waitMs } = payload || {};
+    const { target, element, value, clear, append, selectBy, waitMs } = payload || {};
     const found = findActionElement(target, element);
     const el = found && found.el;
     if (!el) return { ok: false, error: "未找到元素: " + target };
@@ -878,23 +1094,150 @@ function buildFillScript(payload) {
     await nextFrame();
     if (typeof el.focus === "function") el.focus({ preventScroll: true });
     if (el instanceof HTMLSelectElement) {
-      el.value = value;
+      const by = selectBy || "value";
+      if (by === "index") {
+        const idx = Number(value);
+        if (Number.isInteger(idx) && idx >= 0 && idx < el.options.length) {
+          el.selectedIndex = idx;
+        } else {
+          return { ok: false, error: "无效的选项索引: " + value };
+        }
+      } else if (by === "text") {
+        const needle = String(value || "").trim();
+        const option = Array.from(el.options).find((o) => (o.text || "").trim() === needle) ||
+                       Array.from(el.options).find((o) => (o.text || "").trim().toLowerCase() === needle.toLowerCase());
+        if (!option) return { ok: false, error: "未找到选项文本: " + value };
+        el.value = option.value;
+      } else {
+        el.value = value;
+        if (el.value !== value && Array.from(el.options).every((o) => o.value !== value)) {
+          return { ok: false, error: "未找到选项 value: " + value };
+        }
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     } else if ("value" in el) {
       if (clear) setNativeValue(el, "");
       setNativeValue(el, append ? (el.value || "") + value : value);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     } else if (el.isContentEditable) {
       if (!append) el.textContent = "";
       el.textContent = (el.textContent || "") + value;
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
       return { ok: false, error: "元素不可输入: " + target };
     }
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
     await waitForDomSettled(waitMs, el.ownerDocument);
     return { ok: true, selector: found.selector };
   })(${JSON.stringify(payload)});
   return result;
 })()`;
+}
+
+async function drag(args) {
+  const tabId = await getActiveTabId(args.tabId);
+  const sourceResolved = resolveCachedTarget(tabId, args.source, args.snapshotId || args.sessionKey);
+  const targetResolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+
+  await waitForPageReady(tabId);
+
+  const expression = buildDragScript({
+    source: sourceResolved.target,
+    sourceElement: sourceResolved.element,
+    target: targetResolved.target,
+    targetElement: targetResolved.element,
+    waitMs: config.waitAfterActionMs,
+  });
+
+  try {
+    const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+    const result = resp.result?.value || resp.value || {};
+    if (result.ok === false) throw new Error(result.error || `拖拽失败: ${args.source} -> ${args.target}`);
+    return { dragged: true, source: args.source, target: args.target };
+  } catch (error) {
+    if (!isNavigationTransientError(error)) throw error;
+    await sleep(Math.max(100, config.waitAfterActionMs));
+    return { dragged: true, source: args.source, target: args.target, navigationLikely: true };
+  }
+}
+
+function buildDragScript(payload) {
+  return `(async function() {
+  ${BROWSER_RUNTIME_HELPERS}
+  const result = await (async function(payload) {
+    const { source, sourceElement, target, targetElement, waitMs } = payload || {};
+    const foundSource = findActionElement(source, sourceElement);
+    const foundTarget = findActionElement(target, targetElement);
+    const src = foundSource && foundSource.el;
+    const dst = foundTarget && foundTarget.el;
+    if (!src) return { ok: false, error: "未找到源元素: " + (source || sourceElement?.ref || "") };
+    if (!dst) return { ok: false, error: "未找到目标元素: " + (target || targetElement?.ref || "") };
+    src.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    dst.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    await nextFrame();
+
+    function makeEvent(type, x, y, dataTransfer) {
+      return new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        screenX: x,
+        screenY: y,
+        dataTransfer: dataTransfer || new DataTransfer(),
+      });
+    }
+
+    const srcRect = src.getBoundingClientRect();
+    const dstRect = dst.getBoundingClientRect();
+    const srcX = srcRect.left + srcRect.width / 2;
+    const srcY = srcRect.top + srcRect.height / 2;
+    const dstX = dstRect.left + dstRect.width / 2;
+    const dstY = dstRect.top + dstRect.height / 2;
+    const dt = new DataTransfer();
+
+    src.dispatchEvent(makeEvent("dragstart", srcX, srcY, dt));
+    await nextFrame();
+    dst.dispatchEvent(makeEvent("dragenter", dstX, dstY, dt));
+    await nextFrame();
+    dst.dispatchEvent(makeEvent("dragover", dstX, dstY, dt));
+    await nextFrame();
+    dst.dispatchEvent(makeEvent("drop", dstX, dstY, dt));
+    await nextFrame();
+    src.dispatchEvent(makeEvent("dragend", dstX, dstY, dt));
+    await waitForDomSettled(waitMs, dst.ownerDocument);
+    return { ok: true };
+  })(${JSON.stringify(payload)});
+  return result;
+})()`;
+}
+
+async function upload(args) {
+  const tabId = await getActiveTabId(args.tabId);
+  await waitForPageReady(tabId);
+
+  const target = args.target || args.selector;
+  const resolved = resolveCachedTarget(tabId, target, args.snapshotId || args.sessionKey);
+  const selector = resolved.target || target;
+  if (!selector) throw new Error("无效的文件输入选择器");
+
+  const filePath = args.workDir ? path.resolve(args.workDir, args.filePath) : path.resolve(args.filePath);
+  if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
+
+  // 通过 CDP DOM 域定位 input[type=file] 并设置文件列表
+  const docResp = await cdp(tabId, "DOM.getDocument", {});
+  const rootNodeId = docResp.root?.nodeId;
+  if (!rootNodeId) throw new Error("无法获取页面 DOM 根节点");
+
+  const queryResp = await cdp(tabId, "DOM.querySelector", { nodeId: rootNodeId, selector });
+  const nodeId = queryResp.nodeId;
+  if (!nodeId) throw new Error(`未找到文件输入元素: ${target}`);
+
+  await cdp(tabId, "DOM.setFileInputFiles", { nodeId, files: [filePath] });
+  return { uploaded: true, selector: target, filePath };
 }
 
 async function executeScript(args) {

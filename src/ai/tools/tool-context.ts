@@ -41,6 +41,10 @@ export interface ToolContext {
     options: Array<{ id: string; label: string }>;
     onCast: (optionId: string) => void;
   };
+  // 浏览器扩展是否已连接；未指定时默认可用，保持向后兼容
+  browserExtensionConnected?: boolean;
+  // Computer Use 是否可用（Windows + Worker 就绪）；未指定时默认可用，保持向后兼容
+  computerUseAvailable?: boolean;
 }
 
 // 构造返回给模型的文本内容

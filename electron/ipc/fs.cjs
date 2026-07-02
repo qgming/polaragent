@@ -81,7 +81,46 @@ function register(ipcMain) {
     const stat = await fsp.stat(target);
     await fsp.rm(target, { recursive: stat.isDirectory(), force: true });
   });
-  
+
+  // 重命名/移动路径（源路径需要删除权限，目标路径需要写入权限）
+  ipcMain.handle("fs:rename", async (_event, { src, dest }) => {
+    const srcValidation = validateFileAccess(src, "delete");
+    if (!srcValidation.allowed) {
+      throw new Error(srcValidation.reason);
+    }
+    const destValidation = validateFileAccess(dest, "write");
+    if (!destValidation.allowed) {
+      throw new Error(destValidation.reason);
+    }
+    await ensureDir(path.dirname(dest));
+    try {
+      await fsp.rename(src, dest);
+    } catch (err) {
+      // 跨分区/设备移动时回退为复制后删除
+      if (err && err.code === "EXDEV") {
+        await fsp.cp(src, dest, { recursive: true, force: true });
+        const stat = await fsp.stat(src);
+        await fsp.rm(src, { recursive: stat.isDirectory(), force: true });
+      } else {
+        throw err;
+      }
+    }
+  });
+
+  // 复制路径（源路径需要读取权限，目标路径需要写入权限）
+  ipcMain.handle("fs:copy", async (_event, { src, dest }) => {
+    const srcValidation = validateFileAccess(src, "read");
+    if (!srcValidation.allowed) {
+      throw new Error(srcValidation.reason);
+    }
+    const destValidation = validateFileAccess(dest, "write");
+    if (!destValidation.allowed) {
+      throw new Error(destValidation.reason);
+    }
+    await ensureDir(path.dirname(dest));
+    await fsp.cp(src, dest, { recursive: true, force: true });
+  });
+
   // 列举目录（读取操作）
   ipcMain.handle("fs:list-directory", async (_event, { path: target }) => {
     const validation = validateFileAccess(target, "read");

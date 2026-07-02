@@ -13,6 +13,29 @@ import { text, type ToolContext } from "./tool-context";
 // 查询缓存：缓存键 -> { 结果, 时间戳 }
 const queryCache = new Map<string, { results: any[]; timestamp: number }>();
 const CACHE_TTL = CACHE_TTL_CONSTANTS.KNOWLEDGE;
+const CACHE_CAPACITY = 100;
+
+/**
+ * 访问缓存并将该键移动到最近使用端，实现简单的 LRU 语义。
+ */
+function accessCache(key: string) {
+  const value = queryCache.get(key);
+  if (value) {
+    queryCache.delete(key);
+    queryCache.set(key, value);
+  }
+  return value;
+}
+
+/**
+ * 当缓存超过容量时，移除最久未使用的条目（Map 头部的键）。
+ */
+function evictCache() {
+  while (queryCache.size > CACHE_CAPACITY) {
+    const oldestKey = queryCache.keys().next().value as string | undefined;
+    if (oldestKey) queryCache.delete(oldestKey);
+  }
+}
 
 const searchKnowledgeParams = Type.Object({
   query: Type.String({ description: "检索关键词或问题" }),
@@ -27,6 +50,18 @@ const searchKnowledgeParams = Type.Object({
       minimum: 1,
       maximum: 20,
     }),
+  ),
+  filePath: Type.Optional(
+    Type.String({ description: "按文件路径或文件名过滤（支持部分匹配）" }),
+  ),
+  dateRange: Type.Optional(
+    Type.Object(
+      {
+        start: Type.Optional(Type.String({ description: "起始日期 ISO 格式" })),
+        end: Type.Optional(Type.String({ description: "结束日期 ISO 格式" })),
+      },
+      { description: "按文档更新日期过滤" },
+    ),
   ),
 });
 
@@ -62,11 +97,13 @@ export function searchKnowledgeTool(
       const topK = params.topK ?? knowledgeConfig.retrieval.topK;
       const threshold = knowledgeConfig.retrieval.threshold;
 
-      // 生成缓存键
-      const cacheKey = `${params.query}:${kbIds.sort().join(",")}:${topK}:${threshold}`;
+      // 生成缓存键（包含过滤参数，避免不同过滤条件命中相同缓存）
+      const cacheKey = `${params.query}:${kbIds.sort().join(",")}:${topK}:${threshold}:${
+        params.filePath || ""
+      }:${JSON.stringify(params.dateRange || {})}`;
 
-      // 检查缓存
-      const cached = queryCache.get(cacheKey);
+      // 检查缓存（LRU：命中后移动到最近使用端）
+      const cached = accessCache(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         const markdown = cached.results
           .map(
@@ -100,10 +137,27 @@ export function searchKnowledgeTool(
           { concurrency: REMOTE_CONCURRENCY },
         );
 
-        const merged = allResults
+        let merged = allResults
           .flatMap((r: any) => r.results)
           .sort((a: any, b: any) => b.score - a.score)
           .slice(0, topK);
+
+        // 按文件路径过滤（结果中 file 字段通常为文件路径或文件名）
+        if (params.filePath) {
+          merged = merged.filter((r: any) =>
+            (r.filePath ?? r.file ?? "").includes(params.filePath!),
+          );
+        }
+
+        // 按日期范围过滤（仅在结果包含 updatedAt 时生效）
+        if (params.dateRange) {
+          const start = params.dateRange.start ? new Date(params.dateRange.start).getTime() : 0;
+          const end = params.dateRange.end ? new Date(params.dateRange.end).getTime() : Infinity;
+          merged = merged.filter((r: any) => {
+            const date = r.updatedAt ? new Date(r.updatedAt).getTime() : 0;
+            return date >= start && date <= end;
+          });
+        }
 
         if (merged.length === 0) {
           return {
@@ -112,14 +166,9 @@ export function searchKnowledgeTool(
           };
         }
 
-        // 缓存结果
+        // 缓存结果（写入后执行 LRU 淘汰）
         queryCache.set(cacheKey, { results: merged, timestamp: Date.now() });
-
-        // 简单的缓存清理
-        if (queryCache.size > 100) {
-          const oldestKey = Array.from(queryCache.keys())[0];
-          queryCache.delete(oldestKey);
-        }
+        evictCache();
 
         const markdown = merged
           .map(

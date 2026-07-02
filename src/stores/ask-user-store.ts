@@ -25,6 +25,8 @@ export interface AskUserResponse {
   text: string;
   customText: string;
   submittedAt: number;
+  timedOut?: boolean;
+  message?: string;
 }
 
 interface AskUserState {

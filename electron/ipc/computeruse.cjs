@@ -248,12 +248,55 @@ async function runComputerUse(action, args = {}, timeoutMs = config.actionTimeou
     const result = await run(args);
     return postProcessResult(action, args, result);
   } catch (error) {
+    // 元素失效时进行多轮重定位重试，并在最终失败时给 AI 返回候选元素列表
     if (options.relocate !== false && args?.elementId && isStaleElementError(error)) {
-      const relocated = await relocateElement(args.elementId, args);
-      if (relocated?.id && relocated.id !== args.elementId) {
-        const retryArgs = { ...args, elementId: relocated.id };
-        const result = await run(retryArgs);
-        return postProcessResult(action, retryArgs, result);
+      const MAX_RELOCATE_RETRIES = 3;
+      let lastError = error;
+      let currentArgs = { ...args };
+      let bestCandidates = null;
+
+      for (let attempt = 1; attempt <= MAX_RELOCATE_RETRIES; attempt++) {
+        if (options.relocate === false || !currentArgs.elementId || !isStaleElementError(lastError)) {
+          break;
+        }
+
+        // 每轮递增搜索深度，扩大查找范围
+        const depthBoost = (attempt - 1) * 2;
+        const relocated = await relocateElement(currentArgs.elementId, currentArgs, depthBoost);
+
+        if (relocated?.id && relocated.id !== currentArgs.elementId) {
+          currentArgs = { ...currentArgs, elementId: relocated.id };
+          try {
+            const result = await run(currentArgs);
+            return postProcessResult(action, currentArgs, result);
+          } catch (retryError) {
+            lastError = retryError;
+            continue;
+          }
+        }
+
+        // 保存评分最高的候选列表，用于最终失败时的反馈
+        if (relocated?.candidates?.length > 0) {
+          bestCandidates = relocated.candidates;
+        }
+      }
+
+      // 最终失败：构造结构化错误信息返回给 AI
+      const errorMessage = lastError?.message || "元素操作失败";
+      if (bestCandidates?.length > 0) {
+        const candidateList = bestCandidates
+          .slice(0, 3)
+          .map((c, i) =>
+            `候选 ${i + 1}: id="${c.id}" name="${c.name || ""}" type="${c.controlType || ""}" 位置=${JSON.stringify(c.boundingBox || null)}`
+          )
+          .join("\n");
+        throw new Error(
+          `${errorMessage}\n\n已尝试 ${MAX_RELOCATE_RETRIES} 次重定位均未成功。以下是可能的替代元素：\n${candidateList}\n\n请使用 windows_find 重新搜索，或使用上述候选 id 重试操作。`
+        );
+      } else {
+        throw new Error(
+          `${errorMessage}\n\n已尝试 ${MAX_RELOCATE_RETRIES} 次重定位均未成功。请使用 windows_find 重新搜索目标元素。`
+        );
       }
     }
     throw error;
@@ -284,7 +327,7 @@ function isStaleElementError(error) {
   return message.includes("stale") || message.includes("out of range") || message.includes("元素 id 已失效");
 }
 
-async function relocateElement(elementId, args) {
+async function relocateElement(elementId, args, depthBoost = 0) {
   const cached = elementCache.get(elementId);
   if (!cached) return null;
 
@@ -296,7 +339,7 @@ async function relocateElement(elementId, args) {
       query,
       controlType: cached.controlType || undefined,
       scope: args.scope || "active_window",
-      maxDepth: args.maxDepth || 8,
+      maxDepth: (args.maxDepth || 8) + depthBoost,
       maxNodes: args.maxNodes || 1200,
       maxResults: 30,
       windowTitle: args.windowTitle,
@@ -307,10 +350,18 @@ async function relocateElement(elementId, args) {
       includeOffscreen: args.includeOffscreen,
     }, 45000, { relocate: false });
     const candidates = Array.isArray(result.results) ? result.results : [];
-    return candidates
-      .map((candidate) => ({ candidate, score: scoreRelocationCandidate(cached, candidate) }))
+
+    // 对所有候选进行评分、过滤并按分数降序排列（排除原失效元素本身）
+    const scored = candidates
+      .filter((candidate) => candidate.id && candidate.id !== elementId)
+      .map((candidate) => scoreRelocationCandidate(cached, candidate))
       .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)[0]?.candidate || null;
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      id: scored[0]?.id || null,
+      candidates: scored.slice(0, 3),
+    };
   } catch (_) {
     return null;
   }
@@ -328,7 +379,15 @@ function scoreRelocationCandidate(source, candidate) {
     const dy = Math.abs((source.boundingBox.centerY ?? source.boundingBox.y) - (candidate.boundingBox.centerY ?? candidate.boundingBox.y));
     if (dx + dy < 80) score += 2;
   }
-  return score;
+  return {
+    id: candidate.id,
+    score,
+    name: candidate.name || null,
+    automationId: candidate.automationId || null,
+    className: candidate.className || null,
+    controlType: candidate.controlType || null,
+    boundingBox: candidate.boundingBox || null,
+  };
 }
 
 function rememberElementsFromResult(result) {

@@ -17,6 +17,7 @@ export interface TodoItem {
   id: string;
   content: string;
   status: TodoStatus;
+  priority?: "high" | "medium" | "low";
 }
 
 export type ArtifactKind = "final" | "working";

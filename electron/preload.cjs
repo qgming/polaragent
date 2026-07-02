@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld("polaragent", {
     appendFile: (path, content) => invoke("fs:append-file", { path, content }),
     createDirectory: (path) => invoke("fs:create-directory", { path }),
     deletePath: (path) => invoke("fs:delete-path", { path }),
+    rename: (src, dest) => invoke("fs:rename", { src, dest }),
+    copy: (src, dest) => invoke("fs:copy", { src, dest }),
     listDirectory: (path) => invoke("fs:list-directory", { path }),
     listDirectoryEntries: (path) => invoke("fs:list-directory-entries", { path }),
     exists: (path) => invoke("fs:exists", { path }),

@@ -40,9 +40,21 @@ function createViewModeFields(viewModeDesc = "UIA 树视图模式", includeOffsc
   };
 }
 
+/** 创建操作延迟模式字段 */
+function createDelayModeField() {
+  return {
+    delayMode: Type.Optional(
+      Type.Union([Type.Literal("fast"), Type.Literal("stable"), Type.Literal("slow")], {
+        description: "操作延迟模式：fast=快速(0.5x延迟)，stable=默认，slow=慢速(2x延迟)",
+      }),
+    ),
+  };
+}
+
 // 默认实例（用于不需要上下文描述的场景）
 const windowTargetingFields = createWindowTargetingFields();
 const viewModeFields = createViewModeFields();
+const delayModeField = createDelayModeField();
 
 // Windows Computer Use 快照参数
 const snapshotParams = Type.Object({
@@ -75,6 +87,19 @@ const snapshotParams = Type.Object({
       default: "path",
     }),
   ),
+  screenshotFormat: Type.Optional(
+    Type.Union([Type.Literal("png"), Type.Literal("jpeg")], {
+      description: "截图格式，默认 png。jpeg 格式文件更小。",
+    }),
+  ),
+  screenshotQuality: Type.Optional(
+    Type.Number({ description: "JPEG 质量 1-100，默认 90。仅在 format=jpeg 时生效。", minimum: 1, maximum: 100 }),
+  ),
+  screenshotTarget: Type.Optional(
+    Type.Union([Type.Literal("screen"), Type.Literal("window"), Type.Literal("region")], {
+      description: "截图目标：screen=全屏(默认)，window=当前活动窗口，region=指定区域",
+    }),
+  ),
   ...viewModeFields,
   detailLevel: Type.Optional(
     Type.Union([Type.Literal("compact"), Type.Literal("full")], {
@@ -98,6 +123,7 @@ const clickParams = Type.Object({
   ),
   ...createWindowTargetingFields("点击前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 输入文本参数
@@ -105,6 +131,7 @@ const typeTextParams = Type.Object({
   text: Type.String({ description: "要输入的文本" }),
   restoreClipboard: Type.Optional(Type.Boolean({ description: "输入后恢复剪贴板内容" })),
   ...createWindowTargetingFields("输入前激活目标窗口"),
+  ...delayModeField,
 });
 
 // 按键参数
@@ -113,6 +140,7 @@ const keypressParams = Type.Object({
     description: "按键序列，如 ['Ctrl', 'C']",
   }),
   ...createWindowTargetingFields("按键前激活目标窗口"),
+  ...delayModeField,
 });
 
 // 查找元素参数
@@ -153,6 +181,7 @@ const scrollParams = Type.Object({
   deltaX: Type.Optional(Type.Number({ description: "水平滚动距离", default: 0 })),
   ...createWindowTargetingFields("滚动前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 双击参数（与点击相同）
@@ -165,6 +194,7 @@ const moveParams = Type.Object({
   elementId: Type.Optional(Type.String({ description: "UI 元素 ID" })),
   ...createWindowTargetingFields("移动前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 列出窗口参数
@@ -227,6 +257,7 @@ const focusParams = Type.Object({
   elementId: Type.String({ description: "UI 元素 ID" }),
   ...createWindowTargetingFields("聚焦前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 调用参数
@@ -235,6 +266,7 @@ const invokeParams = Type.Object({
   fallbackClick: Type.Optional(Type.Boolean({ description: "无 UIA Invoke/Toggle 等模式时回退为点击", default: true })),
   ...createWindowTargetingFields("调用前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 设置值参数
@@ -245,6 +277,7 @@ const setValueParams = Type.Object({
   restoreClipboard: Type.Optional(Type.Boolean({ description: "回退输入后恢复剪贴板" })),
   ...createWindowTargetingFields("设置前激活目标窗口"),
   ...createViewModeFields("解析 elementId 时使用的 UIA 视图模式"),
+  ...delayModeField,
 });
 
 // 激活窗口参数
@@ -252,6 +285,7 @@ const activateWindowParams = Type.Object({
   windowTitle: Type.Optional(Type.String({ description: "目标窗口标题关键字" })),
   processId: Type.Optional(Type.Number({ description: "目标窗口进程 ID" })),
   nativeWindowHandle: Type.Optional(Type.Number({ description: "目标窗口句柄 HWND" })),
+  ...delayModeField,
 });
 
 // 等待参数
@@ -271,6 +305,7 @@ const dragParams = Type.Object({
     }),
   ),
   ...createWindowTargetingFields("拖拽前激活目标窗口"),
+  ...delayModeField,
 });
 
 // 批量操作参数
@@ -304,6 +339,7 @@ const batchParams = Type.Object({
     },
   ),
   stopOnError: Type.Optional(Type.Boolean({ description: "遇到失败时停止后续动作", default: true })),
+  ...delayModeField,
 });
 
 // ============================================================
@@ -389,6 +425,9 @@ export function windowsSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
           maxNodes: params.maxNodes ?? defaults?.defaultMaxNodes ?? 250,
           includeScreenshot: params.includeScreenshot ?? defaults?.includeScreenshotByDefault ?? true,
           screenshotMode: params.screenshotMode ?? defaults?.screenshotMode ?? "path",
+          screenshotFormat: params.screenshotFormat,
+          screenshotQuality: params.screenshotQuality,
+          screenshotTarget: params.screenshotTarget,
           viewMode: params.viewMode,
           includeOffscreen: params.includeOffscreen,
           detailLevel: params.detailLevel,
@@ -464,6 +503,7 @@ export function windowsClickTool(_ctx: ToolContext): AgentTool<typeof clickParam
           activate: params.activate,
           viewMode: params.viewMode,
           includeOffscreen: params.includeOffscreen,
+          delayMode: params.delayMode,
         });
 
         if (!result.ok) {
@@ -524,6 +564,7 @@ export function windowsTypeTool(_ctx: ToolContext): AgentTool<typeof typeTextPar
           processId: params.processId,
           nativeWindowHandle: params.nativeWindowHandle,
           activate: params.activate,
+          delayMode: params.delayMode,
         });
 
         if (!result.ok) {
@@ -587,6 +628,7 @@ export function windowsKeypressTool(_ctx: ToolContext): AgentTool<typeof keypres
           processId: params.processId,
           nativeWindowHandle: params.nativeWindowHandle,
           activate: params.activate,
+          delayMode: params.delayMode,
         });
 
         if (!result.ok) {
@@ -981,6 +1023,7 @@ export function windowsBatchTool(_ctx: ToolContext): AgentTool<typeof batchParam
         const result = await window.polaragent.computeruse.batch({
           actions: params.actions,
           stopOnError: params.stopOnError ?? true,
+          delayMode: params.delayMode,
         });
         const summary = result.results
           .map((item, index) => `${index + 1}. ${item.action}: ${item.ok ? "成功" : `失败 - ${item.error || "未知错误"}`}`)

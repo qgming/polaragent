@@ -9,6 +9,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import { useToolsStore } from "@/stores/tools-store";
+import { useConfigStore } from "@/stores/config-store";
 import type { ToolContext } from "./tool-context";
 import { updateTodosTool } from "./update-todos";
 import { askUserTool } from "./ask-user";
@@ -22,6 +23,9 @@ import {
   deleteFileTool,
   createDirectoryTool,
   listDirectoryTool,
+  moveFileTool,
+  copyFileTool,
+  searchFilesTool,
 } from "./file-operations";
 import { searchWebTool } from "./web-search";
 import { readWebPageTool } from "./web-fetch";
@@ -61,6 +65,8 @@ import {
   browserSnapshotTool,
   browserClickTool,
   browserFillTool,
+  browserDragTool,
+  browserUploadTool,
   browserExecuteTool,
   browserScreenshotTool,
   browserNetworkTool,
@@ -95,8 +101,34 @@ function reg(group: string) {
 
 // 按组创建注册项的快捷函数
 const system = reg("system");
-const cu = reg("computeruse");
-const bu = reg("browseruse");
+const cu = (
+  id: string,
+  name: string,
+  description: string,
+  factory: (ctx: ToolContext) => AgentTool<any>,
+) =>
+  reg("computeruse")(
+    id,
+    name,
+    description,
+    factory,
+    // 仅当上下文显式标记 Computer Use 不可用时才不装配；未指定时默认可用
+    (ctx) => ctx.computerUseAvailable !== false,
+  );
+const bu = (
+  id: string,
+  name: string,
+  description: string,
+  factory: (ctx: ToolContext) => AgentTool<any>,
+) =>
+  reg("browseruse")(
+    id,
+    name,
+    description,
+    factory,
+    // 仅当上下文显式标记浏览器扩展未连接时不装配；未指定时默认可用
+    (ctx) => ctx.browserExtensionConnected !== false,
+  );
 const task = reg("task");
 const network = reg("network");
 const file = reg("file");
@@ -109,6 +141,42 @@ const dev = reg("dev");
 const skill = reg("skill");
 const interaction = reg("interaction");
 const team = reg("team");
+
+// ASR 接口是否已配置（provider、apiKey、model 齐全）
+function asrAvailable(): boolean {
+  const settings = useConfigStore.getState().settings.audio;
+  const asrConfig = settings?.asr;
+  if (!asrConfig?.provider) return false;
+  const activeConfig = asrConfig.provider === "audio" ? asrConfig.audio : asrConfig.chat;
+  return Boolean(activeConfig?.apiKey?.trim() && activeConfig?.model?.trim());
+}
+
+// TTS 接口是否已配置（provider、apiKey、model、voices 齐全）
+function ttsAvailable(): boolean {
+  const settings = useConfigStore.getState().settings.audio;
+  const ttsConfig = settings?.tts;
+  if (!ttsConfig?.provider) return false;
+  const activeConfig = ttsConfig.provider === "audio" ? ttsConfig.audio : ttsConfig.chat;
+  return Boolean(
+    activeConfig?.apiKey?.trim() &&
+      activeConfig?.model?.trim() &&
+      activeConfig?.voices &&
+      activeConfig.voices.length > 0,
+  );
+}
+
+// 图片生成接口是否已配置（当前所选标准必填项齐全）
+function imageGenerationAvailable(): boolean {
+  const config = useConfigStore.getState().settings.imageGeneration;
+  if (!config?.provider) return false;
+  if (config.provider === "gemini") {
+    return Boolean(config.gemini?.apiKey?.trim() && config.gemini?.model?.trim());
+  }
+  if (config.provider === "openai-chat") {
+    return Boolean(config.openaiChat?.apiKey?.trim() && config.openaiChat?.model?.trim());
+  }
+  return Boolean(config.openaiImages?.apiKey?.trim() && config.openaiImages?.model?.trim());
+}
 
 // 工具分组配置（用于工具页面的分组展示）
 export const TOOL_GROUPS: Record<string, { name: string; description: string; order: number }> = {
@@ -155,9 +223,11 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_close", "关闭标签页", "关闭指定的浏览器标签页。", browserCloseTool),
   bu("browser_scan", "扫描页面", "扫描页面内容,获取文本或结构化信息。", browserScanTool),
   bu("browser_snapshot", "页面快照", "获取页面可操作元素快照,生成 @e 引用用于后续点击或填充。", browserSnapshotTool),
-  bu("browser_click", "点击元素", "点击页面元素,支持 CSS 选择器或 @e 引用。", browserClickTool),
-  bu("browser_fill", "填充表单", "填充表单输入框。", browserFillTool),
-  bu("browser_execute", "执行脚本", "在页面中执行 JavaScript 代码。", browserExecuteTool),
+  bu("browser_click", "点击元素", "点击页面元素,支持 CSS 选择器或 @e 引用。可通过 action 指定单击、双击、右键菜单、鼠标按下/释放。", browserClickTool),
+  bu("browser_fill", "填充表单", "填充表单输入框；目标为 <select> 下拉框时可按 value、text 或 index 选择选项。", browserFillTool),
+  bu("browser_drag", "拖拽元素", "在页面中模拟拖拽操作，将源元素拖动到目标元素。", browserDragTool),
+  bu("browser_upload", "上传文件", "通过 input[type=file] 元素上传本地文件。", browserUploadTool),
+  bu("browser_execute", "执行脚本", "在页面中执行 JavaScript 代码，也可模拟键盘组合键等操作。", browserExecuteTool),
   bu("browser_screenshot", "浏览器截图", "截取页面截图。", browserScreenshotTool),
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
@@ -175,14 +245,17 @@ const TOOL_REGISTRY: ToolEntry[] = [
   file("create_directory", "新建目录", "在工作目录下创建目录，会自动创建必要的父目录。", createDirectoryTool),
   file("delete_file", "删除路径", "删除工作目录下的文件或目录；目录会递归删除其内部文件。", deleteFileTool),
   file("list_directory", "列出目录", "列出工作目录或指定目录下的文件与子目录。", listDirectoryTool),
+  file("move_file", "移动/重命名", "移动或重命名文件/目录，支持跨目录移动和同目录重命名。", moveFileTool),
+  file("copy_file", "复制文件", "复制文件或目录到指定位置。", copyFileTool),
+  file("search_files", "搜索文件", "使用 Glob 模式搜索文件与目录。", searchFilesTool),
   office("create_office_document", "创建办公文档", "生成 Word、PPT 或 PDF 文件，保存后出现在产物面板并可用独立预览窗口打开。", createOfficeDocumentTool),
   network("web_search", "网络搜索", "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。", searchWebTool),
   network("web_fetch", "网页读取", "读取网页正文并提取主要文本，支持按标题或锚点分段提取与链接、表格抽取。", readWebPageTool),
-  image("image_generation", "生成图片", "调用图片生成模型，根据提示词生成图片并保存到工作目录。", generateImageTool),
+  image("image_generation", "生成图片", "调用图片生成模型，根据提示词生成图片并保存到工作目录。", generateImageTool, () => imageGenerationAvailable()),
   // 仅当所选图片接口标准支持编辑时才注册（openai-chat 不支持）。
   image("image_edit", "编辑图片", "调用图片编辑模型，基于本地源图和可选蒙版编辑图片并保存结果。", editImageTool, () => imageEditAvailable()),
-  audio("speech_recognition", "语音识别", "将音频文件转写为文字，支持常见音频格式（mp3/wav/m4a/webm/ogg 等）。", speechRecognitionTool),
-  audio("speech_synthesis", "语音合成", "将文字合成为语音并保存到工作目录，登记为产物。", speechSynthesisTool),
+  audio("speech_recognition", "语音识别", "将音频文件转写为文字，支持常见音频格式（mp3/wav/m4a/webm/ogg 等）。", speechRecognitionTool, () => asrAvailable()),
+  audio("speech_synthesis", "语音合成", "将文字合成为语音并保存到工作目录，登记为产物。", speechSynthesisTool, () => ttsAvailable()),
   dev("run_bash", "运行命令", "在会话工作目录下执行 shell 命令，返回标准输出与错误输出。高危命令会被拦截。", runBashTool),
   knowledge("search_knowledge", "检索知识库", "在已启用的知识库中检索相关文档片段，获取项目文档、技术规范等上下文信息。", searchKnowledgeTool),
   memory("search_memory", "检索记忆", "检索长期记忆，获取用户偏好、身份画像、历史纠正和项目上下文。", searchMemoryTool),

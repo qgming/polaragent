@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Shell 命令安全黑名单 — 唯一事实来源。渲染侧 (src/ai/tools/bash.ts) 和主进程 (electron/lib/security.cjs) 均从此文件加载。请勿直接修改此文件中的正则字符串，如需调整请先更新设计文档并同步两端测试。",
+  "patterns": [
+    {
+      "pattern": "rm\\s+(-[a-z]*\\s+)*(-[a-z]*r[a-z]*|--recursive)\\b[^|;&]*\\s(\\/|~|\\$HOME|\\\\|C:\\\\)(\\s|$)",
+      "flags": "i",
+      "description": "递归删除根目录/家目录/Windows 系统盘"
+    },
+    {
+      "pattern": "rm\\s+(-[a-z]*\\s+)*(-[a-z]*r[a-z]*|--recursive)\\b[^|;&]*\\s(\\/|~|C:\\\\)(\\s|$)",
+      "flags": "i",
+      "description": "递归删除根目录或系统盘"
+    },
+    {
+      "pattern": "(shutdown|reboot|halt|poweroff|init\\s+0)\\b",
+      "flags": "i",
+      "description": "关机/重启"
+    },
+    {
+      "pattern": "mkfs\\.|diskpart",
+      "flags": "i",
+      "description": "磁盘格式化"
+    },
+    {
+      "pattern": "format\\s+[a-zA-Z]:",
+      "flags": "i",
+      "description": "格式化盘符"
+    },
+    {
+      "pattern": "dd\\s+.*of=\\/dev\\/",
+      "flags": "i",
+      "description": "dd 写入设备"
+    },
+    {
+      "pattern": ">\\s*\\/dev\\/(sd[a-z]|hd[a-z]|nvme|disk|vd)",
+      "flags": "i",
+      "description": "重定向写裸设备"
+    },
+    {
+      "pattern": ":\\(\\)\\s*\\{\\s*:\\|:\\s*&\\s*\\}\\s*;*:",
+      "flags": "",
+      "description": "fork 炸弹"
+    },
+    {
+      "pattern": "chmod\\s+(-[a-z]*\\s+)*(-[a-z]*R|--recursive)\\b[^|;&]*\\s(\\/|C:\\\\)(\\s|$)",
+      "flags": "i",
+      "description": "递归修改根目录/系统盘权限"
+    },
+    {
+      "pattern": "chown\\s+(-[a-z]*\\s+)*(-[a-z]*R|--recursive)\\b[^|;&]*\\s(\\/|C:\\\\)(\\s|$)",
+      "flags": "i",
+      "description": "递归修改根目录/系统盘属主"
+    },
+    {
+      "pattern": "del\\s+(\\/[a-z]+\\s+)*\\/[a-z]*s[a-z]*(\\s+\\/[a-z]+)*\\s+([a-zA-Z]:\\\\|\\*)",
+      "flags": "i",
+      "description": "Windows 递归删除"
+    },
+    {
+      "pattern": "reg\\s+delete\\s+(HKLM|HKCU|HKCR|HKU|HKCC)\\\\(SOFTWARE|SYSTEM|SAM)",
+      "flags": "i",
+      "description": "删除关键注册表项"
+    },
+    {
+      "pattern": "bcdedit\\s+\\/set\\s+.*safeboot",
+      "flags": "i",
+      "description": "设置安全模式启动"
+    }
+  ]
+}

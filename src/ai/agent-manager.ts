@@ -291,6 +291,20 @@ export class AgentManager {
     const mergedSkillIds = resolveSkillSelection(rawSkillIds, allSkillIds);
     const skills = skillLoader.toPiSkills(mergedSkillIds);
 
+    // 异步检测 Computer Use 与 Browser Use 运行状态，用于按需装配对应工具组
+    const [computerHealthResult, browserStatusResult] = await Promise.allSettled([
+      window.polaragent?.computeruse?.health?.() ?? Promise.reject(new Error("unavailable")),
+      window.polaragent?.browseruse?.status?.() ?? Promise.reject(new Error("unavailable")),
+    ]);
+    const computerUseAvailable =
+      computerHealthResult.status === "fulfilled"
+        ? Boolean(computerHealthResult.value?.ok)
+        : undefined;
+    const browserExtensionConnected =
+      browserStatusResult.status === "fulfilled"
+        ? Boolean(browserStatusResult.value?.connected)
+        : undefined;
+
     // 装配工具（全局工具，受工具页开关过滤;团队投票工具仅团队上下文可见）。
     const toolCtx: ToolContext = {
       threadId,
@@ -325,6 +339,8 @@ export class AgentManager {
             }
           : undefined,
       teamCastVote: teamContext?.voteCasting,
+      computerUseAvailable,
+      browserExtensionConnected,
     };
     const tools = buildAgentTools(toolCtx);
 

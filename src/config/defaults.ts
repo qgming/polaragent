@@ -138,6 +138,18 @@ export const defaultSettings: Settings = {
       screenshotMode: "path",
       restoreClipboard: true,
       actionTimeoutMs: 60000,
+      delays: {
+        ActivateShowWindow: 80,
+        ActivateForeground: 120,
+        ClickBefore: 60,
+        ClickBetween: 30,
+        ClickAfter: 80,
+        TypeClipboard: 50,
+        TypePaste: 80,
+        DragBefore: 60,
+        DragBetween: 30,
+        ScrollBefore: 40,
+      },
     },
   },
   knowledge: {

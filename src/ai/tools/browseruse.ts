@@ -136,6 +136,13 @@ export function browserSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
 const clickParams = Type.Object({
   tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
   target: Type.String({ description: "目标元素: CSS 选择器或 @e 引用 (如 @e1)" }),
+  action: Type.Optional(Type.Union([
+    Type.Literal("click"),       // 默认：单击
+    Type.Literal("dblclick"),    // 双击
+    Type.Literal("contextmenu"), // 右键菜单
+    Type.Literal("mousedown"),   // 鼠标按下
+    Type.Literal("mouseup"),     // 鼠标释放
+  ], { description: "点击动作类型，默认 click" })),
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
@@ -143,13 +150,13 @@ export function browserClickTool(_ctx: ToolContext): AgentTool<typeof clickParam
   return {
     name: "browser_click",
     label: "点击元素",
-    description: "点击页面元素,支持 CSS 选择器或 @e 引用",
+    description: "点击页面元素,支持 CSS 选择器或 @e 引用。可通过 action 指定单击、双击、右键菜单、鼠标按下/释放",
     parameters: clickParams,
     execute: async (_toolCallId, params: Static<typeof clickParams>) => {
       await callBrowserUse("click", params);
       return {
-        content: text(`已点击元素: ${params.target}`),
-        details: { target: params.target },
+        content: text(`已${params.action ?? "点击"}元素: ${params.target}`),
+        details: { target: params.target, action: params.action },
       };
     },
   };
@@ -159,9 +166,14 @@ export function browserClickTool(_ctx: ToolContext): AgentTool<typeof clickParam
 const fillParams = Type.Object({
   tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
   target: Type.String({ description: "目标元素: CSS 选择器或 @e 引用" }),
-  value: Type.String({ description: "要填充的文本" }),
+  value: Type.String({ description: "要填充的文本或 <select> 要选中的值" }),
   clear: Type.Optional(Type.Boolean({ description: "填充前清空", default: false })),
   append: Type.Optional(Type.Boolean({ description: "追加模式", default: false })),
+  selectBy: Type.Optional(Type.Union([
+    Type.Literal("value"), // 按 option.value 选择
+    Type.Literal("text"),  // 按 option 文本选择
+    Type.Literal("index"), // 按 option 索引选择（从 0 开始）
+  ], { description: "当目标是 <select> 元素时的选择方式，默认 value" })),
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
@@ -169,13 +181,61 @@ export function browserFillTool(_ctx: ToolContext): AgentTool<typeof fillParams>
   return {
     name: "browser_fill",
     label: "填充表单",
-    description: "填充表单输入框",
+    description: "填充表单输入框；当目标为 <select> 下拉框时，可按 value、text 或 index 选择选项",
     parameters: fillParams,
     execute: async (_toolCallId, params: Static<typeof fillParams>) => {
       await callBrowserUse("fill", params);
       return {
         content: text(`已填充 ${params.target}: ${params.value}`),
-        details: { target: params.target },
+        details: { target: params.target, selectBy: params.selectBy },
+      };
+    },
+  };
+}
+
+// 拖拽元素
+const dragParams = Type.Object({
+  tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
+  source: Type.String({ description: "拖拽源元素的 CSS 选择器或 @e 引用" }),
+  target: Type.String({ description: "拖拽目标元素的 CSS 选择器或 @e 引用" }),
+  snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
+});
+
+export function browserDragTool(_ctx: ToolContext): AgentTool<typeof dragParams> {
+  return {
+    name: "browser_drag",
+    label: "拖拽元素",
+    description: "在页面中模拟拖拽操作，将源元素拖动到目标元素",
+    parameters: dragParams,
+    execute: async (_toolCallId, params: Static<typeof dragParams>) => {
+      await callBrowserUse("drag", params);
+      return {
+        content: text(`已拖拽从 ${params.source} 到 ${params.target}`),
+        details: { source: params.source, target: params.target },
+      };
+    },
+  };
+}
+
+// 上传文件
+const uploadParams = Type.Object({
+  tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
+  selector: Type.String({ description: "input[type=file] 的 CSS 选择器" }),
+  filePath: Type.String({ description: "要上传的本地文件绝对路径" }),
+  snapshotId: Type.Optional(Type.String({ description: "用于解析 @e 引用的快照 ID" })),
+});
+
+export function browserUploadTool(ctx: ToolContext): AgentTool<typeof uploadParams> {
+  return {
+    name: "browser_upload",
+    label: "上传文件",
+    description: "通过 input[type=file] 元素上传本地文件",
+    parameters: uploadParams,
+    execute: async (_toolCallId, params: Static<typeof uploadParams>) => {
+      await callBrowserUse("upload", { ...params, workDir: ctx.workingDir });
+      return {
+        content: text(`已上传文件到 ${params.selector}: ${params.filePath}`),
+        details: { selector: params.selector, filePath: params.filePath },
       };
     },
   };
@@ -184,14 +244,14 @@ export function browserFillTool(_ctx: ToolContext): AgentTool<typeof fillParams>
 // 执行 JavaScript
 const executeParams = Type.Object({
   tabId: Type.Optional(Type.Number({ description: "标签页 ID" })),
-  script: Type.String({ description: "要执行的 JavaScript 代码" }),
+  script: Type.String({ description: "要执行的 JavaScript 代码，可模拟键盘组合键等操作" }),
 });
 
 export function browserExecuteTool(_ctx: ToolContext): AgentTool<typeof executeParams> {
   return {
     name: "browser_execute",
     label: "执行脚本",
-    description: "在页面中执行 JavaScript 代码",
+    description: "在页面中执行 JavaScript 代码。需要键盘组合键时可用 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true })) 等方式模拟",
     parameters: executeParams,
     execute: async (_toolCallId, params: Static<typeof executeParams>) => {
       const result = await callBrowserUse("exec", params);

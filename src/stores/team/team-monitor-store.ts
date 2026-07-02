@@ -7,6 +7,7 @@ export interface TodoItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed";
+  priority?: "high" | "medium" | "low";
 }
 
 // 产物项（复用 task-monitor-store 的类型）
