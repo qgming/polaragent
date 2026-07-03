@@ -9,6 +9,7 @@ import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import { useTeamsStore } from "@/stores/team/teams-store";
 import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
+import { useScheduleStore } from "@/stores/schedule-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { useKnowledgeStore } from "@/stores/knowledge-store";
 import { providerManager } from "@/ai/providers";
@@ -76,6 +77,11 @@ export async function initializeApp() {
     await useToolsStore.getState().loadInstalledMcpTools();
     await useToolsStore.getState().refreshInstalledMcpTools();
     console.log("✓ 技能/助手/工具加载完成");
+
+    // 3.4 初始化定时任务运行时。依赖配置、技能、Agent 运行时与工具目录，
+    // 放在它们之后，确保恢复任务时可直接调用 promptAgent。
+    await useScheduleStore.getState().initialize();
+    console.log("✓ 定时任务运行时初始化完成");
 
     // 4. 兜底等待侧边栏加载完成（多数情况下此时早已完成）
     await sidebarPromise;

@@ -540,6 +540,11 @@ function assistantSegments(
       }
     } else if (block.type === "toolCall") {
       const result = toolResults.get(block.id);
+      const widget = extractWidgetSegmentFromDetails(result?.details);
+      if (widget) {
+        segments.push(widget);
+        continue;
+      }
       segments.push({
         kind: "tool",
         toolCallId: block.id,
@@ -624,9 +629,44 @@ function extractDetails(details: unknown): Record<string, unknown> | undefined {
   return details as Record<string, unknown>;
 }
 
+function extractWidgetSegmentFromDetails(
+  details: Record<string, unknown> | undefined,
+): Extract<Segment, { kind: "widget" }> | undefined {
+  const widget = details?.widget;
+  if (!widget || typeof widget !== "object") return undefined;
+
+  const record = widget as Record<string, unknown>;
+  if (typeof record.widgetId !== "string" || typeof record.title !== "string" || typeof record.html !== "string") {
+    return undefined;
+  }
+
+  return {
+    kind: "widget",
+    widgetId: record.widgetId,
+    title: record.title,
+    html: record.html,
+    updateMode: record.update_mode === "patch" ? "patch" : "replace",
+    widgetPath: typeof record.widget_path === "string" ? record.widget_path : null,
+    data:
+      record.data && typeof record.data === "object"
+        ? (record.data as Record<string, unknown>)
+        : null,
+  };
+}
+
 // 工具结果 details -> 完整可读文本（供步骤项点击展开查看）
 function toolResultDetailsText(details: unknown): string | undefined {
   if (details === undefined || details === null) return undefined;
+  if (details && typeof details === "object" && "widget" in (details as Record<string, unknown>)) {
+    const widget = (details as Record<string, unknown>).widget;
+    if (widget && typeof widget === "object") {
+      const info = widget as Record<string, unknown>;
+      const title = typeof info.title === "string" ? info.title : "未命名 Widget";
+      const mode = info.update_mode === "patch" ? "patch" : "replace";
+      const source = info.source === "file" ? "模板文件" : "内联代码";
+      return `Widget: ${title}\n更新模式: ${mode}\n来源: ${source}`;
+    }
+  }
   if (typeof details === "string") {
     return details.trim() || undefined;
   }

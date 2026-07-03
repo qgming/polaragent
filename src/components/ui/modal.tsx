@@ -20,6 +20,34 @@ const sizeClass = {
 
 type ModalSize = keyof typeof sizeClass;
 
+const NESTED_FLOATING_SELECTORS = [
+  '[data-radix-popper-content-wrapper]',
+  '[data-slot="dropdown-menu-content"]',
+  '[data-slot="dropdown-menu-sub-content"]',
+  '[data-slot="popover-content"]',
+  '[data-slot="tooltip-content"]',
+];
+
+function isNestedFloatingTarget(target: EventTarget | null) {
+  if (!(target instanceof Node)) return false;
+
+  const element = target instanceof HTMLElement ? target : target.parentElement;
+  return Boolean(element?.closest(NESTED_FLOATING_SELECTORS.join(",")));
+}
+
+function preventOutsideDismissForNestedFloating(
+  event:
+    | Parameters<NonNullable<React.ComponentProps<typeof DialogPrimitive.Content>["onInteractOutside"]>>[0]
+    | Parameters<NonNullable<React.ComponentProps<typeof DialogPrimitive.Content>["onPointerDownOutside"]>>[0]
+    | Parameters<NonNullable<React.ComponentProps<typeof DialogPrimitive.Content>["onFocusOutside"]>>[0],
+) {
+  // Radix floating layers render in portals, so their interactions can be reported as
+  // dialog-outside events. Treat those layers as part of the modal interaction surface.
+  if (isNestedFloatingTarget(event.target)) {
+    event.preventDefault();
+  }
+}
+
 // 根：受控 open / onOpenChange
 function Modal(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="modal" {...props} />;
@@ -57,6 +85,9 @@ function ModalContent({
   children,
   size = "md",
   showCloseButton = true,
+  onInteractOutside,
+  onPointerDownOutside,
+  onFocusOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   size?: ModalSize;
@@ -73,6 +104,21 @@ function ModalContent({
           sizeClass[size],
           className,
         )}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          if (event.defaultPrevented) return;
+          preventOutsideDismissForNestedFloating(event);
+        }}
+        onPointerDownOutside={(event) => {
+          onPointerDownOutside?.(event);
+          if (event.defaultPrevented) return;
+          preventOutsideDismissForNestedFloating(event);
+        }}
+        onFocusOutside={(event) => {
+          onFocusOutside?.(event);
+          if (event.defaultPrevented) return;
+          preventOutsideDismissForNestedFloating(event);
+        }}
         {...props}
       >
         {children}

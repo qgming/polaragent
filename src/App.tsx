@@ -26,6 +26,7 @@ import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { HomePage } from "@/pages/HomePage";
 import { KnowledgePage } from "@/pages/KnowledgePage";
+import { SchedulePage } from "@/pages/SchedulePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
 import { TeamPage } from "@/pages/TeamPage";
@@ -489,6 +490,7 @@ function App() {
               {activePage === "skills" ? <SkillsPage /> : null}
               {activePage === "tools" ? <ToolsPage /> : null}
               {activePage === "knowledge" ? <KnowledgePage /> : null}
+              {activePage === "schedule" ? <SchedulePage /> : null}
               {activePage === "agent" ? (
                 <AgentsPage
                   onStartChat={(agentId) => {

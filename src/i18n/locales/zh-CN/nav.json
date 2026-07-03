@@ -6,6 +6,7 @@
     "agent": { "title": "助手", "description": "编排模型、工具、记忆和执行策略" },
     "team": { "title": "团队", "description": "编排多个助手协作完成复杂任务" },
     "knowledge": { "title": "知识库", "description": "管理可被 AI 检索的文档与资料" },
+    "schedule": { "title": "定时任务", "description": "创建并管理后台自动执行的 Agent 任务" },
     "settings": { "title": "设置", "description": "配置模型、窗口行为、外观和本地数据" }
   },
   "sidebar": {
@@ -15,6 +16,7 @@
     "teamTab": "团队",
     "newChat": "新对话",
     "knowledge": "知识库",
+    "schedule": "定时任务",
     "extensions": "扩展",
     "skills": "技能",
     "tools": "工具",

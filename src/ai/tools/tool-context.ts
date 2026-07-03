@@ -14,6 +14,7 @@ export interface ToolContext {
   workingDir?: string;
   permissionMode: ToolPermissionMode;
   isTeam?: boolean;
+  isBackground?: boolean;
   requester?: {
     id: string;
     name: string;

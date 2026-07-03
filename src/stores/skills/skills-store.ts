@@ -2,6 +2,11 @@
 
 import { create } from "zustand";
 import type { SkillConfig } from "@/types/config";
+import {
+  deleteSkillByName as deleteSkillApi,
+  patchSkill as patchSkillApi,
+  writeSkill as writeSkillApi,
+} from "@/lib/electron/electron-api";
 import { skillLoader } from "@/lib/skill";
 
 interface SkillsState {
@@ -15,6 +20,9 @@ interface SkillsState {
   toggleSkill: (id: string, enabled: boolean) => void;
   installSkill: (source: string, type: "git" | "local") => Promise<boolean>;
   uninstallSkill: (id: string) => Promise<boolean>;
+  writeSkill: (name: string, content: string) => Promise<boolean>;
+  patchSkill: (name: string, oldString: string, newString: string) => Promise<boolean>;
+  deleteSkillByName: (name: string) => Promise<boolean>;
   getSkill: (id: string) => SkillConfig | undefined;
   getEnabledSkills: () => SkillConfig[];
   clearError: () => void;
@@ -103,6 +111,66 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "卸载 Skill 失败";
+      set({ error: message, isLoading: false });
+      return false;
+    }
+  },
+
+  writeSkill: async (name: string, content: string) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const result = await writeSkillApi(name, content);
+      if (!result.success) {
+        set({ error: result.message || "写入 Skill 失败", isLoading: false });
+        return false;
+      }
+
+      await skillLoader.initialize();
+      set({ skills: skillLoader.getAllSkills(), isLoading: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "写入 Skill 失败";
+      set({ error: message, isLoading: false });
+      return false;
+    }
+  },
+
+  patchSkill: async (name: string, oldString: string, newString: string) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const result = await patchSkillApi(name, oldString, newString);
+      if (!result.success) {
+        set({ error: result.message || "更新 Skill 失败", isLoading: false });
+        return false;
+      }
+
+      await skillLoader.initialize();
+      set({ skills: skillLoader.getAllSkills(), isLoading: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "更新 Skill 失败";
+      set({ error: message, isLoading: false });
+      return false;
+    }
+  },
+
+  deleteSkillByName: async (name: string) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const result = await deleteSkillApi(name);
+      if (!result.success) {
+        set({ error: result.message || "删除 Skill 失败", isLoading: false });
+        return false;
+      }
+
+      await skillLoader.initialize();
+      set({ skills: skillLoader.getAllSkills(), isLoading: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "删除 Skill 失败";
       set({ error: message, isLoading: false });
       return false;
     }

@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld("polaragent", {
     },
   },
   fs: {
+    // 安全说明：故意不接受 options 参数 —— 渲染层无法通过 fs API
+    // 注入 securityMode 等安全模式覆盖字段。安全模式只能由用户通过
+    // security:set-mode IPC 一次性同步到主进程。
     readFile: (path) => invoke("fs:read-file", { path }),
     readBase64File: (path) => invoke("fs:read-base64-file", { path }),
     readBinaryFile: (path) => invoke("fs:read-binary-file", { path }),
@@ -114,6 +117,9 @@ contextBridge.exposeInMainWorld("polaragent", {
     installFromLocal: (sourcePath) => invoke("skills:install-local", { sourcePath }),
     installFromZip: (zipPath) => invoke("skills:install-zip", { zipPath }),
     uninstall: (skillId) => invoke("skills:uninstall", { skillId }),
+    writeSkill: (name, content) => invoke("skills:write-skill", { name, content }),
+    patchSkill: (name, oldString, newString) => invoke("skills:patch-skill", { name, oldString, newString }),
+    deleteSkillByName: (name) => invoke("skills:delete-skill", { name }),
   },
   mcp: {
     stdioListTools: (server) => invoke("mcp:stdio-list-tools", { server }),

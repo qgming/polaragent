@@ -35,6 +35,15 @@ export type Segment =
   | (SegmentBase & { kind: "thinking"; text: string })
   | (SegmentBase & { kind: "guidance"; text: string })
   | (SegmentBase & {
+      kind: "widget";
+      widgetId: string;
+      title: string;
+      html: string;
+      updateMode: "replace" | "patch";
+      widgetPath?: string | null;
+      data?: Record<string, unknown> | null;
+    })
+  | (SegmentBase & {
       kind: "tool";
       toolCallId: string;
       toolName: string;

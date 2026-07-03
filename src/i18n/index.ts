@@ -17,6 +17,7 @@ import zhCN_skills from "./locales/zh-CN/skills.json";
 import zhCN_tools from "./locales/zh-CN/tools.json";
 import zhCN_team from "./locales/zh-CN/team.json";
 import zhCN_tutorial from "./locales/zh-CN/tutorial.json";
+import zhCN_schedule from "./locales/zh-CN/schedule.json";
 
 import enUS_common from "./locales/en-US/common.json";
 import enUS_settings from "./locales/en-US/settings.json";
@@ -29,6 +30,7 @@ import enUS_skills from "./locales/en-US/skills.json";
 import enUS_tools from "./locales/en-US/tools.json";
 import enUS_team from "./locales/en-US/team.json";
 import enUS_tutorial from "./locales/en-US/tutorial.json";
+import enUS_schedule from "./locales/en-US/schedule.json";
 
 /** 语言资源表：key 为 BCP 47 语言代码，value 为各命名空间翻译 */
 const resources = {
@@ -44,6 +46,7 @@ const resources = {
     tools: zhCN_tools,
     team: zhCN_team,
     tutorial: zhCN_tutorial,
+    schedule: zhCN_schedule,
   },
   "en-US": {
     common: enUS_common,
@@ -57,6 +60,7 @@ const resources = {
     tools: enUS_tools,
     team: enUS_team,
     tutorial: enUS_tutorial,
+    schedule: enUS_schedule,
   },
 };
 

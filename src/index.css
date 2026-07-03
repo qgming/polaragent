@@ -280,6 +280,14 @@ button {
   width: 100%;
 }
 
+.chat-content :where(iframe):not(:where(.not-prose, .not-prose *)),
+.markdown-preview :where(iframe):not(:where(.not-prose, .not-prose *)) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .chat-content :where(.markdown-table-wrap table):not(:where(.not-prose, .not-prose *)),
 .markdown-preview :where(table):not(:where(.not-prose, .not-prose *)) {
   width: 100%;

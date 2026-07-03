@@ -456,7 +456,7 @@ async function saveImageResponseItems({
       ctx,
       safeImageFileName(outputFileName, index, items.length, prefix, extension),
     );
-    await writeBase64File(target, base64);
+    await writeBase64File(target, base64, { securityMode: ctx.permissionMode });
     addImageArtifact(ctx, target);
     saved.push({ path: target, name: fileName(target) });
   }

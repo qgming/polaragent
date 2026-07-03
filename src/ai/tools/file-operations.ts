@@ -75,9 +75,9 @@ export function writeFileTool(
       const target = resolvePath(ctx, params.path);
       const content = params.content;
       if (params.append) {
-        await appendFile(target, content);
+        await appendFile(target, content, { securityMode: ctx.permissionMode });
       } else {
-        await writeFile(target, content);
+        await writeFile(target, content, { securityMode: ctx.permissionMode });
       }
 
       const artifact = {
@@ -211,7 +211,7 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
           : original.replace(params.oldString, params.newString);
       }
 
-      await writeFile(target, updated);
+      await writeFile(target, updated, { securityMode: ctx.permissionMode });
 
       const artifact = {
         path: target,
@@ -252,7 +252,7 @@ export function createDirectoryTool(
     parameters: createDirectoryParams,
     execute: async (_id, params: Static<typeof createDirectoryParams>) => {
       const target = resolvePath(ctx, params.path);
-      await createDirectory(target);
+      await createDirectory(target, { securityMode: ctx.permissionMode });
       return {
         content: text(`已创建目录 ${fileName(target)}`),
         details: { path: target },
@@ -280,7 +280,7 @@ export function deleteFileTool(
     parameters: deleteFileParams,
     execute: async (_id, params: Static<typeof deleteFileParams>) => {
       const target = resolvePath(ctx, params.path);
-      await deleteFile(target);
+      await deleteFile(target, { securityMode: ctx.permissionMode });
 
       if (ctx.isTeam) {
         useTeamMonitorStore
@@ -346,12 +346,12 @@ export function moveFileTool(ctx: ToolContext): AgentTool<typeof moveFileParams>
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
       try {
-        await renamePath(src, dest);
+        await renamePath(src, dest, { securityMode: ctx.permissionMode });
       } catch (err) {
         // 跨设备/分区时回退为复制后删除
         if (err && typeof err === "object" && "code" in err && err.code === "EXDEV") {
-          await copyPath(src, dest);
-          await deleteFile(src);
+          await copyPath(src, dest, { securityMode: ctx.permissionMode });
+          await deleteFile(src, { securityMode: ctx.permissionMode });
         } else {
           throw err;
         }
@@ -381,7 +381,7 @@ export function copyFileTool(ctx: ToolContext): AgentTool<typeof copyFileParams>
     execute: async (_id, params: Static<typeof copyFileParams>) => {
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
-      await copyPath(src, dest);
+      await copyPath(src, dest, { securityMode: ctx.permissionMode });
       return {
         content: text(`已将 ${params.source} 复制到 ${params.destination}`),
         details: { source: src, destination: dest },

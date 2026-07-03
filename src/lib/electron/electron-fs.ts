@@ -86,6 +86,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
       if (typeof content !== "string") {
         return err(new FileError("not_supported", "仅支持写入文本内容", path));
       }
+      // 安全说明：不传 securityMode 覆盖字段 —— AI 内部 harness 用 fs 与 shell
+      // 必须走用户当前权限模式，绝不能自行升权到 full。参见 security.cjs。
       await window.polaragent.fs.writeFile(path, content);
       return ok(undefined);
     } catch (error) {
@@ -203,6 +205,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     options?: { cwd?: string; timeout?: number },
   ): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
     try {
+      // 安全说明：AI 内部 harness 执行 shell 命令不允许覆盖 securityMode。
+      // 必须走用户当前权限模式，绝不能自行升权到 full。
       const result = await window.polaragent.shell.exec({
         command,
         cwd: options?.cwd ?? this.cwd,

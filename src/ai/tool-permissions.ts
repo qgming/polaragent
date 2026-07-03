@@ -3,7 +3,14 @@
 
 import { callLlm } from "./llm-call";
 import { toolDisplayName } from "./tools";
+import { resolvePath } from "./tools/tool-context";
 import { resolveModelService } from "./model-router";
+import {
+  extractLabeledBoolean,
+  extractLastLabeledValue,
+  normalizeLooseBoolean,
+  parseJsonObjectCandidates,
+} from "./structured-output";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 export interface ToolPermissionRequest {
@@ -27,12 +34,18 @@ type ToolRisk = "read" | "write" | "execute" | "network" | "interaction" | "unkn
 const READ_ONLY_TOOLS = new Set([
   "read_file",
   "list_directory",
+  "search_files",
   "web_search",
   "web_fetch",
   "list_skills",
   "read_skill",
   "read_skill_file",
   "speech_recognition",
+  "search_knowledge",
+  "search_memory",
+  // 安全说明：render_widget 不属于只读 —— AI 提供的 HTML 会在 iframe 渲染
+  // 执行脚本，等同代码执行入口。所以不应列入只读集，也不应在 readonly
+  // 模式自动放行；它在 HIGH_RISK_TOOLS 中，会走 AI 审查。（本次审计 C1 修正）
 ]);
 
 const SAFE_STATE_TOOLS = new Set([
@@ -41,6 +54,10 @@ const SAFE_STATE_TOOLS = new Set([
   "request_team_vote",
   "cast_team_vote",
   "control_team_flow",
+  // 安全说明：schedule_task 不列入安全档/低风险档。
+  // AI 创建后台无人监督任务 == 持久化 + 自动触发 + 用户不在场，必须走
+  // AI 审查（reviewWithAi），让审查器评估任务参数是否包含越权意图。
+  // schedule_task 也归入 HIGH_RISK_TOOLS，确保 ai_review 模式触发审查。
 ]);
 
 const WRITE_TOOLS = new Set([
@@ -48,24 +65,34 @@ const WRITE_TOOLS = new Set([
   "edit_file",
   "create_directory",
   "delete_file",
+  "move_file",
+  "copy_file",
   "image_generation",
   "image_edit",
   "speech_synthesis",
   "create_office_document",
+  "remember_memory",
+  "forget_memory",
 ]);
 
 const EXECUTE_TOOLS = new Set(["run_bash"]);
 
 // 低风险工具集合：直接放行，不触发 AI
+// 安全说明：render_widget 与 schedule_task 均不列入。
+//   - render_widget：内联 HTML 经 iframe 渲染，等同代码执行入口，必须审查。
+//   - schedule_task：后台无人监督任务持久化 + AI 可自选权限，必须审查。
 const LOW_RISK_TOOLS = new Set([
   "read_file",
   "list_directory",
+  "search_files",
   "web_search",
   "web_fetch",
   "list_skills",
   "read_skill",
   "read_skill_file",
   "speech_recognition",
+  "search_knowledge",
+  "search_memory",
   "update_todos",
   "ask_user",
   "request_team_vote",
@@ -78,16 +105,28 @@ const MEDIUM_RISK_TOOLS = new Set([
   "write_file",
   "edit_file",
   "create_directory",
+  "move_file",
+  "copy_file",
   "image_generation",
   "image_edit",
   "speech_synthesis",
   "create_office_document",
+  "remember_memory",
+  "forget_memory",
 ]);
 
 // 高风险工具集合：触发 AI 审查
+// 安全说明：
+//   - delete_file / run_bash：原高风险
+//   - render_widget：AI 内联 HTML 在 iframe 渲染 ≈ 代码执行
+//     （曾经被列入 LOW_RISK 自动放行，本次审计 C1 后纠正）
+//   - schedule_task：后台无人监督持久化任务 + AI 可选权限档
+//     （曾经被列入 LOW_RISK 自动放行，本次审计 C3 后纠正）
 const HIGH_RISK_TOOLS = new Set([
   "delete_file",
   "run_bash",
+  "render_widget",
+  "schedule_task",
 ]);
 
 export async function reviewToolPermission(
@@ -105,9 +144,9 @@ export async function reviewToolPermission(
 
   // ai_review 模式：分层审查
   if (mode === "ai_review") {
-    // 低风险/中风险操作直接放行
-    if (LOW_RISK_TOOLS.has(request.toolName) || MEDIUM_RISK_TOOLS.has(request.toolName)) {
-      return { allow: true, reason: "低风险操作，直接放行。" };
+    const directDecision = reviewAiReview(request);
+    if (directDecision) {
+      return directDecision;
     }
 
     // 高风险操作触发 AI 审查
@@ -125,6 +164,23 @@ export async function reviewToolPermission(
   }
 
   return { allow: true };
+}
+
+function reviewAiReview(request: ToolPermissionRequest): ToolPermissionDecision | null {
+  if (LOW_RISK_TOOLS.has(request.toolName) || MEDIUM_RISK_TOOLS.has(request.toolName)) {
+    return { allow: true };
+  }
+
+  // 安全说明（H1, H3）：曾经在此处对 delete_file 与 run_bash 做"工作目录/
+  // 本地黑名单"自动放行，但这等价于 fail-open 删除/执行：
+  //   - H1：isDangerousCommand 黑名单覆盖不全（漏 powershell -enc、
+  //     schtasks /create、密钥外传等），命中黑名单才送 AI 审查的设计等于
+  //     "默认允许任意未匹配黑名单的命令"。run_bash 现在直接送 AI 审查。
+  //   - H3：isWithinWorkingDir 在 workingDir 为空时 return true，导致
+  //     未绑定工作目录的会话中 delete_file 任意路径都被自动放行。
+  //     delete_file 现在直接送 AI 审查。
+  // delete_file、run_bash 已列入 HIGH_RISK_TOOLS，会被外层走 reviewWithAi。
+  return null;
 }
 
 function reviewReadonly(request: ToolPermissionRequest): ToolPermissionDecision {
@@ -148,7 +204,7 @@ function reviewSafe(request: ToolPermissionRequest): ToolPermissionDecision {
 
   // 删除文件：检查是否在工作目录内
   if (request.toolName === "delete_file") {
-    const targetPath = String(request.input.path ?? "");
+    const targetPath = resolveRequestPath(request, "path");
     if (isWithinWorkingDir(targetPath, request.workingDir)) {
       return { allow: true };
     }
@@ -179,9 +235,26 @@ function reviewSafe(request: ToolPermissionRequest): ToolPermissionDecision {
   return { allow: true };
 }
 
+function resolveRequestPath(request: ToolPermissionRequest, key: string): string {
+  const raw = request.input[key];
+  if (typeof raw !== "string" || raw.trim().length === 0) return "";
+  try {
+    // 用 as 而非完整 ToolContext —— resolvePath 仅消费 workingDir 字段。
+    // 之前用 as { workingDir?: string } 转换后类型不合 ToolContext，
+    // 这里改用最小 cast：只构造 resolvePath 实际使用的字段。
+    return resolvePath({ workingDir: request.workingDir } as unknown as Parameters<typeof resolvePath>[0], raw);
+  } catch {
+    return raw;
+  }
+}
+
 // 判断目标路径是否在工作目录内
+// 安全说明（H3）：曾经 workingDir 为空时 return true，导致未绑定工作目录
+// 的会话中 delete_file 的任意路径都被判定为"在工作目录内"自动放行。
+// 修正为 return false —— 工作目录未设置即视为"不在工作目录内"，
+// 调用方应在 safe/ai_review 模式下对不确定路径一律 deny 或送 AI 审查。
 function isWithinWorkingDir(targetPath: string, workingDir?: string): boolean {
-  if (!workingDir || !targetPath) return true;
+  if (!workingDir || !targetPath) return false;
   const normalizedTarget = targetPath.toLowerCase().replace(/\\/g, "/");
   // 确保末尾带 / 防止前缀绕过（如 /project 匹配 /project-evil）
   const normalizedWorkDir = workingDir.toLowerCase().replace(/\\/g, "/").replace(/\/$/, "") + "/";
@@ -230,11 +303,15 @@ async function reviewWithAi(
     "workingDir 为空时不要因此自动拒绝；仅当参数路径明显指向系统关键位置、用户主目录大范围、磁盘根目录或敏感文件时拒绝。",
     "reason 用一句简短中文说明允许或拒绝的关键依据。",
     "",
-    "你必须只输出纯 JSON 对象（不要包含代码块标记），格式如下：",
-    "允许示例：",
+    "优先只输出纯 JSON 对象（不要包含代码块标记）。如果模型能力限制导致不能稳定输出 JSON，至少输出可提取的 allow/reason 键值。",
+    "标准允许示例：",
     '{"allow": true, "reason": "常规文件读取操作，风险可接受"}',
-    "拒绝示例：",
+    "标准拒绝示例：",
     '{"allow": false, "reason": "递归删除根目录，高危操作"}',
+    "退化允许示例：",
+    "allow: true\nreason: 常规文件读取操作，风险可接受",
+    "退化拒绝示例：",
+    "allow: false\nreason: 递归删除根目录，高危操作",
   ].join("\n");
 
   const userPrompt = JSON.stringify(
@@ -269,30 +346,55 @@ async function reviewWithAi(
   }
 }
 
-function parseAiDecision(content: string): ToolPermissionDecision {
-  try {
-    const parsed = JSON.parse(content) as { allow?: unknown; reason?: unknown };
-    if (typeof parsed.allow !== "boolean") {
-      return {
-        allow: false,
-        reason: "AI 审查结果缺少 allow 布尔字段，已拒绝执行。",
-      };
+export function parseAiDecision(content: string): ToolPermissionDecision {
+  for (const parsed of parseJsonObjectCandidates(content)) {
+    const decision = decisionFromParsedRecord(parsed);
+    if (decision) {
+      return decision;
     }
-    return {
-      allow: parsed.allow,
-      reason:
-        typeof parsed.reason === "string" && parsed.reason.trim()
-          ? parsed.reason.trim()
-          : parsed.allow
-            ? "AI 审查允许执行。"
-            : "AI 审查拒绝执行。",
-    };
-  } catch {
+  }
+
+  const allow = extractLabeledBoolean(content, ["allow", "allowed", "decision", "result"]);
+  if (allow == null) {
     return {
       allow: false,
-      reason: "AI 审查结果不是有效 JSON，已拒绝执行。",
+      reason: "AI 审查结果缺少可识别的 allow 字段，已拒绝执行。",
     };
   }
+
+  const reason = extractLastLabeledValue(content, ["reason", "原因", "说明"]);
+  return {
+    allow,
+    reason: normalizeDecisionReason(allow, reason),
+  };
+}
+
+function decisionFromParsedRecord(parsed: Record<string, unknown>): ToolPermissionDecision | null {
+  const allow =
+    typeof parsed.allow === "boolean"
+      ? parsed.allow
+      : normalizeLooseBoolean(parsed.allow);
+  if (allow == null) return null;
+
+  const reason =
+    typeof parsed.reason === "string"
+      ? parsed.reason
+      : typeof parsed.message === "string"
+        ? parsed.message
+        : typeof parsed.explanation === "string"
+          ? parsed.explanation
+          : null;
+
+  return {
+    allow,
+    reason: normalizeDecisionReason(allow, reason),
+  };
+}
+
+function normalizeDecisionReason(allow: boolean, reason: string | null | undefined): string {
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+  if (trimmed) return trimmed;
+  return allow ? "已通过自动审查。" : "自动审查已拒绝执行。";
 }
 
 function classifyToolRisk(toolName: string): ToolRisk {

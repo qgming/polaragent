@@ -1,6 +1,7 @@
 import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import {
   getRepo,
+  getScheduleRepo,
   getTeamRepo,
   sessionPromises,
 } from "./session-repo";
@@ -9,6 +10,7 @@ import {
   readLastCustomEntryString,
   type SessionMeta,
 } from "./meta-selection";
+import { isScheduleThreadId } from "@/lib/schedule/runtime-ids";
 import { TEAM_REF_ENTRY } from "./entries";
 import { readTitleIndex, rebuildTitleIndex, removeTitleIndex } from "./title-index";
 import { getSessionProjectId } from "./preferences";
@@ -27,6 +29,13 @@ export async function openOrCreateTeamSession(
   sessionId: string,
 ): Promise<Session> {
   return openOrCreateSessionImpl(sessionId, getTeamRepo, "team::");
+}
+
+/** 定时任务后台会话版：打开/创建 schedule 会话（存于 schedule/conversations 下的独立 repo）。 */
+export async function openOrCreateScheduleSession(
+  sessionId: string,
+): Promise<Session> {
+  return openOrCreateSessionImpl(sessionId, getScheduleRepo, "schedule::");
 }
 
 async function openOrCreateSessionImpl(
@@ -61,7 +70,7 @@ export async function listSessions(): Promise<
   Array<{ id: string; createdAt: string; path: string; title?: string; updatedAt?: number; projectId?: string }>
 > {
   const repo = await getRepo();
-  const metas = await repo.list().catch(() => []);
+  const metas = (await repo.list().catch(() => [])).filter((meta) => !isScheduleThreadId(meta.id));
   const groups = new Map<string, SessionMeta[]>();
   for (const meta of metas) {
     const list = groups.get(meta.id);

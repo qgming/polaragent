@@ -16,6 +16,7 @@ import {
 import { AudioBar } from "@/components/chat/AudioBar";
 import { IconButton } from "@/components/IconButton";
 import { MarkdownContent } from "@/components/markdown/MarkdownContent";
+import { WidgetRenderer, coalesceWidgetSegments } from "@/components/widget/WidgetRenderer";
 import { stripMarkdown } from "@/lib/markdown";
 import { fileUrl } from "@/lib/electron/electron-api";
 import { copyText } from "@/lib/electron/electron-window";
@@ -297,21 +298,26 @@ function FlatSegmentedContent({
   segments: Segment[];
   streaming?: boolean;
 }) {
+  const normalizedSegments = useMemo(() => coalesceWidgetSegments(segments), [segments]);
+
   // 切分为有序 block：text / thinking（逐段独立）/ tools（连续合并）
   const blocks: Array<
     | { type: "text"; text: string }
     | { type: "thinking"; text: string }
     | { type: "guidance"; text: string }
+    | { type: "widget"; widget: Extract<Segment, { kind: "widget" }> }
     | { type: "tools"; tools: ToolSeg[] }
   > = [];
 
-  for (const seg of segments) {
+  for (const seg of normalizedSegments) {
     if (seg.kind === "text") {
       blocks.push({ type: "text", text: seg.text });
     } else if (seg.kind === "thinking") {
       blocks.push({ type: "thinking", text: seg.text });
     } else if (seg.kind === "guidance") {
       blocks.push({ type: "guidance", text: seg.text });
+    } else if (seg.kind === "widget") {
+      blocks.push({ type: "widget", widget: seg });
     } else {
       // 连续的工具段合并到同一组
       const last = blocks[blocks.length - 1];
@@ -340,6 +346,9 @@ function FlatSegmentedContent({
         }
         if (block.type === "guidance") {
           return <GuidanceRow key={`guidance-${index}`} text={block.text} />;
+        }
+        if (block.type === "widget") {
+          return <WidgetRenderer key={`widget-${block.widget.widgetId}`} widget={block.widget} />;
         }
         return <ToolStepsRow key={`tools-${index}`} tools={block.tools} />;
       })}
@@ -448,9 +457,11 @@ function TaskGroupInner({
   segments: Segment[];
   streaming?: boolean;
 }) {
+  const normalizedSegments = useMemo(() => coalesceWidgetSegments(segments), [segments]);
+
   return (
     <div className="space-y-1">
-      {segments.map((seg, index) => {
+      {normalizedSegments.map((seg, index) => {
         if (seg.kind === "text") {
           return (
             <div key={`t-${index}`}>
@@ -471,6 +482,9 @@ function TaskGroupInner({
               <GuidanceRow text={seg.text} />
             </div>
           );
+        }
+        if (seg.kind === "widget") {
+          return <WidgetRenderer key={`w-${seg.widgetId}`} widget={seg} />;
         }
         // 工具段逐个平铺（沿用单行项 + 点击展开结果，不再二次折叠）
         return <ToolStepItem key={seg.toolCallId} tool={seg} />;

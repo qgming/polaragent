@@ -1,0 +1,257 @@
+{
+  "page": {
+    "title": "定时任务",
+    "bannerTitle": "自动执行后台任务",
+    "bannerDescription": "按时间触发 Agent 指令，保留独立运行目录和最近执行日志。",
+    "kitLabel": "Schedule Kit",
+    "emptyTitle": "还没有定时任务",
+    "emptyDescription": "创建一个一次性或周期性任务，让 Agent 在后台自动执行。",
+    "emptyFilteredTitle": "没有匹配的任务",
+    "emptyFilteredDescription": "试试调整搜索词或状态筛选条件。"
+  },
+  "toolbar": {
+    "create": "新建任务",
+    "refresh": "刷新",
+    "searchPlaceholder": "搜索任务名称、指令或目录",
+    "statusTitle": "筛选状态",
+    "statusLabels": {
+      "all": "全部状态",
+      "enabled": "仅已启用",
+      "disabled": "仅已停用",
+      "running": "仅运行中"
+    },
+    "statusAll": "全部状态",
+    "statusEnabled": "仅已启用",
+    "statusDisabled": "仅已停用",
+    "statusRunning": "仅运行中"
+  },
+  "stats": {
+    "total": "总任务数",
+    "enabled": "已启用",
+    "running": "运行中",
+    "runs": "总执行次数"
+  },
+  "task": {
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "running": "运行中",
+    "nextRun": "下次执行",
+    "lastRun": "最近执行",
+    "never": "未执行",
+    "manualRun": "立即执行",
+    "openWorkingDir": "打开工作目录",
+    "logs": "日志",
+    "edit": "编辑",
+    "delete": "删除",
+    "agent": "助手",
+    "workingDir": "工作目录",
+    "message": "指令"
+  },
+  "editor": {
+    "createTitle": "新建定时任务",
+    "editTitle": "编辑定时任务",
+    "descriptionText": "把调度方式、执行目录和 Agent 指令收在一个更直接的配置流里。",
+    "name": "任务名称",
+    "nameHint": "给任务起一个一眼能看懂的名字。",
+    "namePlaceholder": "例如：每天早上整理日报",
+    "description": "任务描述",
+    "descriptionHint": "可选，用来补充任务目标或执行边界。",
+    "descriptionPlaceholder": "例如：读取项目目录中的最新文档并输出摘要",
+    "mode": "调度方式",
+    "at": "一次",
+    "every": "周期",
+    "cron": "Cron",
+    "atTime": "执行时间",
+    "atTimeHint": "适合只执行一次的提醒、整理或发布任务。",
+    "repeatValue": "执行频率",
+    "repeatValueHint": "填写数字频率，比如每 2 小时、每 3 天。",
+    "repeatUnit": "频率单位",
+    "repeatUnitHint": "选一个对用户更直观的时间单位。",
+    "repeatPresetsTitle": "常用频率",
+    "startAt": "起始时间",
+    "startAtHint": "可选。不填则从创建任务时开始计算。",
+    "cronExpr": "Cron 表达式",
+    "cronExprHint": "高级模式下可直接填写五段 Cron 表达式。",
+    "message": "Agent 指令",
+    "messageHint": "写清楚执行目标、输出形式和注意事项。",
+    "messagePlaceholder": "例如：检查工作目录里的未提交改动，生成中文日报并输出到 logs 目录。",
+    "workingDir": "工作目录",
+    "workingDirHint": "不要再手输路径，直接选择本次任务的主要工作区。",
+    "workingDirPlaceholder": "点击选择任务工作目录",
+    "openWorkingDir": "在文件资源管理器中打开工作目录",
+    "clearWorkingDir": "清除工作目录",
+    "agentId": "助手 ID",
+    "agentHint": "选择最适合这个任务的助手人格或工作流。",
+    "agentMenuTitle": "选择执行助手",
+    "permissionMode": "权限模式",
+    "permissionHint": "给自动任务一个合适的操作边界，减少误操作风险。",
+    "missedRunPolicy": "补偿策略",
+    "missedRunPolicyHint": "应用离线或睡眠后，恢复时要怎样处理错过的触发。",
+    "enabled": "启用任务",
+    "enabledHint": "关闭后任务会保留配置，但不会继续触发。",
+    "sections": {
+      "basicsTitle": "任务基础信息",
+      "basicsDescription": "先确定任务名称、目标描述，以及由哪个助手来执行。",
+      "scheduleTitle": "触发方式",
+      "scheduleDescription": "把原本偏技术化的时间配置，变成更接近人类习惯的选择。",
+      "environmentTitle": "执行环境",
+      "environmentDescription": "工作目录、参考目录、权限策略都在这里配置。",
+      "messageTitle": "执行指令",
+      "messageDescription": "这里写给 Agent 的真正任务说明。"
+    },
+    "units": {
+      "milliseconds": "毫秒",
+      "seconds": "秒",
+      "minutes": "分钟",
+      "hours": "小时",
+      "days": "天"
+    },
+    "unitDescriptions": {
+      "milliseconds": "适合实验或极高频轮询",
+      "seconds": "适合秒级短任务",
+      "minutes": "适合常规定时检查",
+      "hours": "适合日报、巡检、同步",
+      "days": "适合每日类任务"
+    },
+    "repeatPresets": {
+      "15m": "每 15 分钟",
+      "30m": "每 30 分钟",
+      "1h": "每 1 小时",
+      "6h": "每 6 小时",
+      "1d": "每 1 天"
+    },
+    "calendarPresets": {
+      "hourly": {
+        "title": "每小时",
+        "description": "固定每小时的某一分钟执行"
+      },
+      "daily": {
+        "title": "每天",
+        "description": "每天同一时间执行一次"
+      },
+      "weekly": {
+        "title": "每周",
+        "description": "指定星期和时间执行"
+      },
+      "monthly": {
+        "title": "每月",
+        "description": "指定每月某一天执行"
+      },
+      "advanced": {
+        "title": "高级",
+        "description": "直接填写 Cron 表达式"
+      }
+    },
+    "calendarMinute": "每小时第几分钟",
+    "calendarMinuteHint": "例如填 5，表示每小时的 05 分执行。",
+    "calendarTime": "执行时间",
+    "calendarTimeHint": "选择一个更自然的具体时间点。",
+    "calendarWeekdays": "执行星期",
+    "calendarWeekdaysHint": "可以多选，比如工作日自动执行。",
+    "calendarDayOfMonth": "每月日期",
+    "calendarDayOfMonthHint": "支持 1 到 31 号。",
+    "weekdaysShort": {
+      "mon": "周一",
+      "tue": "周二",
+      "wed": "周三",
+      "thu": "周四",
+      "fri": "周五",
+      "sat": "周六",
+      "sun": "周日"
+    },
+    "schedulePreview": "当前会生成的 Cron",
+    "permissionOptions": {
+      "readonly": {
+        "title": "只读",
+        "description": "只能查看和分析内容，不能修改文件。"
+      },
+      "safe": {
+        "title": "安全",
+        "description": "适合大多数自动化任务，默认限制高危操作。"
+      },
+      "ai_review": {
+        "title": "AI 审查",
+        "description": "让 AI 自主判断风险，是当前最平衡的默认选项。"
+      },
+      "full": {
+        "title": "完全权限",
+        "description": "适合你非常明确知道会发生什么的任务。"
+      }
+    },
+    "missedRunOptions": {
+      "run_latest": {
+        "title": "补最近一次",
+        "description": "恢复后只执行最后一次错过的任务。"
+      },
+      "run_all": {
+        "title": "全部补跑",
+        "description": "恢复后把错过的任务尽量都执行一遍。"
+      },
+      "skip": {
+        "title": "直接跳过",
+        "description": "恢复后不补跑，等待下一个正常触发。"
+      },
+      "prompt": {
+        "title": "稍后决定",
+        "description": "为以后接入更细的人工确认策略预留。"
+      }
+    },
+    "save": "保存",
+    "cancel": "取消"
+  },
+  "summary": {
+    "every": "每 {{value}} {{unit}}",
+    "hourly": "每小时 {{minute}} 分",
+    "daily": "每天 {{time}}",
+    "weekly": "每周 {{days}} {{time}}",
+    "monthly": "每月 {{day}} 号 {{time}}"
+  },
+  "logs": {
+    "title": "执行日志",
+    "description": "查看每次自动触发后的输出、耗时和错误信息。",
+    "empty": "还没有执行记录",
+    "emptyFiltered": "当前筛选条件下没有日志",
+    "status": "状态",
+    "duration": "耗时",
+    "output": "输出",
+    "error": "错误",
+    "triggeredBy": "触发方式",
+    "totalRuns": "命中日志数",
+    "successRuns": "成功数",
+    "failedRuns": "失败数",
+    "averageDuration": "平均耗时",
+    "searchPlaceholder": "搜索输出、错误或目录",
+    "filterAll": "全部日志",
+    "statusLabels": {
+      "success": "成功",
+      "failed": "失败",
+      "running": "运行中",
+      "skipped": "已跳过"
+    },
+    "triggeredByLabels": {
+      "schedule": "定时触发",
+      "manual": "手动执行",
+      "recovery": "恢复补跑"
+    },
+    "from": "开始时间",
+    "to": "结束时间",
+    "showing": "显示 {{filtered}} / {{total}} 条"
+  },
+  "actions": {
+    "created": "定时任务已创建",
+    "updated": "定时任务已更新",
+    "deleted": "定时任务已删除",
+    "runQueued": "任务已开始执行"
+  },
+  "validation": {
+    "nameRequired": "任务名称不能为空",
+    "messageRequired": "Agent 指令不能为空",
+    "atRequired": "请填写执行时间",
+    "everyRequired": "请填写大于 0 的执行频率",
+    "cronRequired": "请填写 Cron 表达式",
+    "hourlyMinuteInvalid": "每小时任务需要填写 0 到 59 之间的分钟数",
+    "calendarTimeInvalid": "请填写有效的执行时间",
+    "weeklyInvalid": "请至少选择一个星期，并填写有效时间",
+    "monthlyInvalid": "请填写有效的每月日期和时间"
+  }
+}

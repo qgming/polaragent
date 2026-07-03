@@ -173,7 +173,7 @@ export function createOfficeDocumentTool(
       );
 
       if (kind === "word") {
-        await writeBase64File(target, await generateDocxBase64(titledProject));
+        await writeBase64File(target, await generateDocxBase64(titledProject), { securityMode: ctx.permissionMode });
       } else if (kind === "ppt") {
         const sourceHtmlPath = params.sourceHtmlPath?.trim()
           ? resolvePath(ctx, params.sourceHtmlPath.trim())
@@ -185,7 +185,7 @@ export function createOfficeDocumentTool(
             )
           : buildPptHtml(params, titledProject.title, titledProject.subtitle);
         const htmlPath = replaceExtension(target, "html");
-        await writeFile(htmlPath, html);
+        await writeFile(htmlPath, html, { securityMode: ctx.permissionMode });
         addArtifact(ctx, {
           path: htmlPath,
           name: fileName(htmlPath),
@@ -209,7 +209,7 @@ export function createOfficeDocumentTool(
             )
           : buildPdfHtml(params, titledProject);
         if (!sourceHtmlPath) {
-          await writeFile(htmlPath, html);
+          await writeFile(htmlPath, html, { securityMode: ctx.permissionMode });
           addArtifact(ctx, {
             path: htmlPath,
             name: fileName(htmlPath),

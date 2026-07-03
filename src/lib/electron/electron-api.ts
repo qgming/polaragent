@@ -35,6 +35,10 @@ export interface DirEntry {
   isDir: boolean;
 }
 
+export interface SecurityScopedOptions {
+  securityMode?: import("@/types/permissions").ToolPermissionMode;
+}
+
 export type AppUpdatePhase =
   | "idle"
   | "disabled"
@@ -159,24 +163,30 @@ export const installUpdate = (): Promise<AppUpdateStatus> => api().updates.insta
 export const openUpdateReleases = (): Promise<void> => api().updates.openReleases();
 export const onUpdateStatus = (handler: (status: AppUpdateStatus) => void) =>
   api().updates.onStatus(handler);
-export const listDirectory = (path: string) => api().fs.listDirectory(path);
-export const listDirectoryEntries = (path: string) => api().fs.listDirectoryEntries(path);
-export const readFile = (path: string) => api().fs.readFile(path);
-export const readBase64File = (path: string) => api().fs.readBase64File(path);
-export const fileExists = (path: string): Promise<boolean> => api().fs.exists(path);
-export const writeFile = (path: string, content: string) => api().fs.writeFile(path, content);
-export const writeBase64File = (path: string, content: string) => api().fs.writeBase64File(path, content);
-export const appendFile = (path: string, content: string) => api().fs.appendFile(path, content);
-export const renamePath = (src: string, dest: string) => api().fs.rename(src, dest);
-export const copyPath = (src: string, dest: string) => api().fs.copy(src, dest);
-export const createDirectory = (path: string) => api().fs.createDirectory(path);
-export const deleteFile = (path: string) => api().fs.deletePath(path);
+export const listDirectory = (path: string, options?: SecurityScopedOptions) => api().fs.listDirectory(path, options);
+export const listDirectoryEntries = (path: string, options?: SecurityScopedOptions) => api().fs.listDirectoryEntries(path, options);
+export const readFile = (path: string, options?: SecurityScopedOptions) => api().fs.readFile(path, options);
+export const readBase64File = (path: string, options?: SecurityScopedOptions) => api().fs.readBase64File(path, options);
+export const fileExists = (path: string, options?: SecurityScopedOptions): Promise<boolean> => api().fs.exists(path, options);
+export const writeFile = (path: string, content: string, options?: SecurityScopedOptions) => api().fs.writeFile(path, content, options);
+export const writeBase64File = (path: string, content: string, options?: SecurityScopedOptions) => api().fs.writeBase64File(path, content, options);
+export const appendFile = (path: string, content: string, options?: SecurityScopedOptions) => api().fs.appendFile(path, content, options);
+export const renamePath = (src: string, dest: string, options?: SecurityScopedOptions) => api().fs.rename(src, dest, options);
+export const copyPath = (src: string, dest: string, options?: SecurityScopedOptions) => api().fs.copy(src, dest, options);
+export const createDirectory = (path: string, options?: SecurityScopedOptions) => api().fs.createDirectory(path, options);
+export const deleteFile = (path: string, options?: SecurityScopedOptions) => api().fs.deletePath(path, options);
 export const installSkillFromGit = (repoUrl: string) => api().skills.installFromGit(repoUrl);
 export const installSkillFromLocal = (sourcePath: string) => api().skills.installFromLocal(sourcePath);
 export const installSkillFromZip = (zipPath: string) => api().skills.installFromZip(zipPath);
 export const uninstallSkill = (skillId: string) => api().skills.uninstall(skillId);
 export const listSkills = (skillType: "builtin" | "custom") => api().skills.list(skillType);
 export const readSkillMetadata = (skillId: string) => api().skills.readMetadata(skillId);
+export const writeSkill = (name: string, content: string): Promise<{ success: boolean; path: string; message: string }> =>
+  api().skills.writeSkill(name, content);
+export const patchSkill = (name: string, oldString: string, newString: string): Promise<{ success: boolean; path: string; message: string }> =>
+  api().skills.patchSkill(name, oldString, newString);
+export const deleteSkillByName = (name: string): Promise<{ success: boolean; path: string; message: string }> =>
+  api().skills.deleteSkillByName(name);
 
 export async function readConfig<T = any>(fileName: string): Promise<T> {
   return JSON.parse(await api().config.read(fileName)) as T;
@@ -568,6 +578,7 @@ export interface ShellExecRequest {
   command: string;
   cwd: string;
   timeoutMs?: number;
+  securityMode?: import("@/types/permissions").ToolPermissionMode;
 }
 
 export interface ShellExecResponse {

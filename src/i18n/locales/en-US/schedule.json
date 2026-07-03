@@ -1,0 +1,267 @@
+{
+  "page": {
+    "title": "Schedules",
+    "bannerTitle": "Automate background runs",
+    "bannerDescription": "Trigger Agent instructions on a schedule with isolated run directories and recent execution logs.",
+    "kitLabel": "Schedule Kit",
+    "emptyTitle": "No scheduled tasks yet",
+    "emptyDescription": "Create a one-off or recurring task to let the Agent run in the background.",
+    "emptyFilteredTitle": "No matching tasks",
+    "emptyFilteredDescription": "Try adjusting the search query or status filter."
+  },
+  "toolbar": {
+    "create": "New Task",
+    "refresh": "Refresh",
+    "searchPlaceholder": "Search name, instruction, or directory",
+    "statusTitle": "Filter by status",
+    "statusLabels": {
+      "all": "All statuses",
+      "enabled": "Enabled only",
+      "disabled": "Disabled only",
+      "running": "Running only"
+    },
+    "statusAll": "All statuses",
+    "statusEnabled": "Enabled only",
+    "statusDisabled": "Disabled only",
+    "statusRunning": "Running only"
+  },
+  "stats": {
+    "total": "Tasks",
+    "enabled": "Enabled",
+    "running": "Running",
+    "runs": "Total Runs"
+  },
+  "task": {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "running": "Running",
+    "nextRun": "Next Run",
+    "lastRun": "Last Run",
+    "never": "Never",
+    "manualRun": "Run Now",
+    "openWorkingDir": "Open Working Dir",
+    "logs": "Logs",
+    "edit": "Edit",
+    "delete": "Delete",
+    "agent": "Agent",
+    "workingDir": "Working Dir",
+    "message": "Instruction"
+  },
+  "editor": {
+    "createTitle": "Create Schedule",
+    "editTitle": "Edit Schedule",
+    "descriptionText": "Set up the trigger, workspace, and Agent instruction in a more guided flow.",
+    "name": "Task Name",
+    "nameHint": "Give the task a name that is easy to recognize later.",
+    "namePlaceholder": "For example: Morning project digest",
+    "description": "Description",
+    "descriptionHint": "Optional context about the goal or scope of the task.",
+    "descriptionPlaceholder": "For example: Review the latest docs and write a summary",
+    "mode": "Schedule Type",
+    "at": "One-off",
+    "every": "Interval",
+    "cron": "Calendar",
+    "atTime": "Run At",
+    "atTimeHint": "Best for one-time reminders, releases, or cleanups.",
+    "repeatValue": "Repeat Every",
+    "repeatValueHint": "Enter a number like every 2 hours or every 3 days.",
+    "repeatUnit": "Time Unit",
+    "repeatUnitHint": "Choose a unit that matches how people think about this task.",
+    "repeatPresetsTitle": "Quick presets",
+    "startAt": "Start At",
+    "startAtHint": "Optional. Leave empty to start counting from when the task is created.",
+    "cronExpr": "Cron Expression",
+    "cronExprHint": "Use advanced mode if you want to type the raw five-part cron expression.",
+    "message": "Agent Instruction",
+    "messageHint": "Describe the objective, expected output, and any constraints.",
+    "messagePlaceholder": "For example: Inspect the workspace, summarize changes, and save the report to the logs folder.",
+    "workingDir": "Working Directory",
+    "workingDirHint": "Pick the main workspace directly instead of typing a path.",
+    "workingDirPlaceholder": "Click to choose a working directory",
+    "openWorkingDir": "Open working directory in File Explorer",
+    "clearWorkingDir": "Clear working directory",
+    "contextDirs": "Context Directories",
+    "contextHint": "Add extra folders the Agent may need for reference.",
+    "contextEmpty": "No context directories added yet",
+    "addContextDir": "Add directory",
+    "clearContextDirs": "Clear all",
+    "agentId": "Agent ID",
+    "agentHint": "Choose the Agent persona or workflow that fits this task best.",
+    "agentMenuTitle": "Choose an Agent",
+    "projectTemplate": "Project shortcut",
+    "projectTemplateHint": "If this task belongs to a project, pull in its directory with one click.",
+    "projectTemplatePlaceholder": "Optional: fill from a project",
+    "projectWithoutDir": "This project does not have a working directory yet",
+    "noProjects": "No projects available yet. Create one from the sidebar to reuse its working directory here.",
+    "permissionMode": "Permission Mode",
+    "permissionHint": "Set the right safety level for an automated task.",
+    "missedRunPolicy": "Missed Run Policy",
+    "missedRunPolicyHint": "Choose what should happen after the app was offline or sleeping.",
+    "enabled": "Enable task",
+    "enabledHint": "Disabled tasks keep their configuration but stop triggering.",
+    "sections": {
+      "basicsTitle": "Task basics",
+      "basicsDescription": "Start with the task name, a short goal, and which Agent should run it.",
+      "scheduleTitle": "Trigger",
+      "scheduleDescription": "Turn low-level timing fields into more natural scheduling choices.",
+      "environmentTitle": "Execution environment",
+      "environmentDescription": "Configure directories, reference folders, and safety boundaries here.",
+      "messageTitle": "Instruction",
+      "messageDescription": "This is the actual prompt the Agent will receive."
+    },
+    "units": {
+      "milliseconds": "milliseconds",
+      "seconds": "seconds",
+      "minutes": "minutes",
+      "hours": "hours",
+      "days": "days"
+    },
+    "unitDescriptions": {
+      "milliseconds": "Useful for experiments or very high-frequency polling",
+      "seconds": "Good for short second-level loops",
+      "minutes": "Great for routine checks",
+      "hours": "Great for digests, syncs, and reviews",
+      "days": "Best for daily-style tasks"
+    },
+    "repeatPresets": {
+      "15m": "Every 15 min",
+      "30m": "Every 30 min",
+      "1h": "Every 1 hour",
+      "6h": "Every 6 hours",
+      "1d": "Every 1 day"
+    },
+    "calendarPresets": {
+      "hourly": {
+        "title": "Hourly",
+        "description": "Run at the same minute of every hour"
+      },
+      "daily": {
+        "title": "Daily",
+        "description": "Run once a day at a fixed time"
+      },
+      "weekly": {
+        "title": "Weekly",
+        "description": "Choose weekdays and a time"
+      },
+      "monthly": {
+        "title": "Monthly",
+        "description": "Run on a specific day each month"
+      },
+      "advanced": {
+        "title": "Advanced",
+        "description": "Enter the raw cron expression yourself"
+      }
+    },
+    "calendarMinute": "Minute of the hour",
+    "calendarMinuteHint": "For example, 5 means the task runs at hh:05.",
+    "calendarTime": "Run time",
+    "calendarTimeHint": "Pick a specific time that feels natural.",
+    "calendarWeekdays": "Weekdays",
+    "calendarWeekdaysHint": "You can select multiple days, like weekdays only.",
+    "calendarDayOfMonth": "Day of month",
+    "calendarDayOfMonthHint": "Supports days 1 through 31.",
+    "weekdaysShort": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    },
+    "schedulePreview": "Generated cron",
+    "permissionOptions": {
+      "readonly": {
+        "title": "Read-only",
+        "description": "Can inspect and analyze, but cannot change files."
+      },
+      "safe": {
+        "title": "Safe",
+        "description": "Best for most automations, with risky operations restricted by default."
+      },
+      "ai_review": {
+        "title": "AI review",
+        "description": "Lets the AI judge risk before acting. This is the most balanced default."
+      },
+      "full": {
+        "title": "Full access",
+        "description": "Best only when you fully understand what the task may do."
+      }
+    },
+    "missedRunOptions": {
+      "run_latest": {
+        "title": "Run latest only",
+        "description": "After recovery, execute only the most recent missed run."
+      },
+      "run_all": {
+        "title": "Run all missed",
+        "description": "After recovery, try to replay every missed run."
+      },
+      "skip": {
+        "title": "Skip missed runs",
+        "description": "Ignore missed runs and wait for the next normal trigger."
+      },
+      "prompt": {
+        "title": "Decide later",
+        "description": "Reserved for a future confirmation-based recovery flow."
+      }
+    },
+    "save": "Save",
+    "cancel": "Cancel"
+  },
+  "summary": {
+    "every": "Every {{value}} {{unit}}",
+    "hourly": "Every hour at :{{minute}}",
+    "daily": "Every day at {{time}}",
+    "weekly": "Every {{days}} at {{time}}",
+    "monthly": "Every month on day {{day}} at {{time}}"
+  },
+  "logs": {
+    "title": "Execution Logs",
+    "description": "Inspect outputs, durations, and failures for each automatic run.",
+    "empty": "No execution history yet",
+    "emptyFiltered": "No logs match the current filters",
+    "status": "Status",
+    "duration": "Duration",
+    "output": "Output",
+    "error": "Error",
+    "triggeredBy": "Triggered By",
+    "totalRuns": "Matched Logs",
+    "successRuns": "Success",
+    "failedRuns": "Failed",
+    "averageDuration": "Avg Duration",
+    "searchPlaceholder": "Search output, error, or directory",
+    "filterAll": "All logs",
+    "statusLabels": {
+      "success": "Success",
+      "failed": "Failed",
+      "running": "Running",
+      "skipped": "Skipped"
+    },
+    "triggeredByLabels": {
+      "schedule": "Scheduled trigger",
+      "manual": "Manual run",
+      "recovery": "Recovery replay"
+    },
+    "from": "From",
+    "to": "To",
+    "showing": "Showing {{filtered}} of {{total}} logs"
+  },
+  "actions": {
+    "created": "Scheduled task created",
+    "updated": "Scheduled task updated",
+    "deleted": "Scheduled task deleted",
+    "runQueued": "Task started"
+  },
+  "validation": {
+    "nameRequired": "Task name is required",
+    "messageRequired": "Agent instruction is required",
+    "atRequired": "Run time is required",
+    "everyRequired": "Repeat frequency must be greater than 0",
+    "cronRequired": "Cron expression is required",
+    "hourlyMinuteInvalid": "Hourly schedules need a minute value between 0 and 59",
+    "calendarTimeInvalid": "Please choose a valid run time",
+    "weeklyInvalid": "Choose at least one weekday and a valid time",
+    "monthlyInvalid": "Choose a valid day of month and time"
+  }
+}

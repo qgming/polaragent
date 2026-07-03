@@ -5,7 +5,7 @@
  * 四级安全模式：
  * - readonly: 只读，AI 只能读取
  * - safe: 安全，系统阻止高危操作
- * - ai_review: AI 审查，由 AI 自主判断风险（默认）
+ * - ai_review: 自动审查，安全操作默认通过，仅额外判断高风险操作（默认）
  * - full: 完全权限，无任何限制
  */
 
@@ -19,6 +19,15 @@ const blockedPatterns = require(path.join(__dirname, "blocked-patterns.json"));
 // 运行时安全模式（由渲染进程通过 IPC 同步）
 let _runtimeMode = null;
 
+// 仅用于校验渲染层通过 IPC setSecurityMode 同步过来的模式字符串是否
+// 在四档合法范围内；绝不能用于接受 per-call 的覆盖。
+// 保留导出仅为兼容旧 import，无其他调用点读它做覆盖用途。
+function normalizeSecurityMode(mode) {
+  return mode === "readonly" || mode === "safe" || mode === "ai_review" || mode === "full"
+    ? mode
+    : null;
+}
+
 /**
  * 设置运行时安全模式（由前端 IPC 调用）
  * @param {'readonly' | 'safe' | 'ai_review' | 'full'} mode
@@ -30,10 +39,21 @@ function setSecurityMode(mode) {
 /**
  * 获取当前安全模式
  * 优先级：运行时模式 > 环境变量 > 默认值
+ *
+ * 安全说明：
+ *   严禁信任渲染层 IPC payload 提供的 modeOverride —— 安全模式是用户/系统级
+ *   信任边界，绝不能由被审计的渲染层自选。因此本函数不接受外部覆盖。
+ *   历史签名上的 modeOverride 形参仅为兼容旧调用点保留，内部一律忽略并
+ *   固定走 _runtimeMode；后续清理完旧调用点后应移除该形参。
  * @returns {'readonly' | 'safe' | 'ai_review' | 'full'}
  */
-function getSecurityMode() {
-  return _runtimeMode || process.env.POLARAGENT_SECURITY_MODE || "ai_review";
+function getSecurityMode(_modeOverrideIgnored) {
+  // 显式忽略 _modeOverrideIgnored：渲染层不可越权提升安全模式
+  return (
+    _runtimeMode ||
+    process.env.POLARAGENT_SECURITY_MODE ||
+    "ai_review"
+  );
 }
 
 /**
@@ -95,8 +115,8 @@ function isSystemCriticalPath(targetPath) {
  * @param {'read' | 'write' | 'delete'} operation - 操作类型
  * @returns {{ allowed: boolean, reason?: string, aiReview?: boolean }}
  */
-function validateFileAccess(targetPath, operation) {
-  const mode = getSecurityMode();
+function validateFileAccess(targetPath, operation, modeOverride) {
+  const mode = getSecurityMode(modeOverride);
   const resolved = path.resolve(targetPath);
   
   // readonly 模式：只允许读取
@@ -147,8 +167,8 @@ function validateFileAccess(targetPath, operation) {
  * @param {string} command - 命令字符串
  * @returns {{ allowed: boolean, reason?: string, shouldBlock?: boolean, aiReview?: boolean }}
  */
-function validateShellCommand(command) {
-  const mode = getSecurityMode();
+function validateShellCommand(command, modeOverride) {
+  const mode = getSecurityMode(modeOverride);
   
   // readonly 模式：不允许执行命令
   if (mode === "readonly") {
@@ -202,8 +222,8 @@ function validateShellCommand(command) {
  * @param {string} url - 目标URL
  * @returns {{ allowed: boolean, reason?: string }}
  */
-function validateExternalAccess(url) {
-  const mode = getSecurityMode();
+function validateExternalAccess(url, modeOverride) {
+  const mode = getSecurityMode(modeOverride);
   
   // readonly 模式：允许读取
   if (mode === "readonly") {
@@ -240,7 +260,7 @@ function getSecurityModeDescription() {
   const descriptions = {
     readonly: "只读模式 - AI 只能查看文件和系统信息",
     safe: "安全模式 - 系统会阻止高危命令和关键路径操作",
-    ai_review: "AI 审查模式（推荐）- AI 自主评估风险并决定是否执行",
+    ai_review: "自动审查模式（推荐）- 安全操作默认通过，仅额外判断高风险操作",
     full: "完全权限 - AI 拥有与用户相同的系统权限",
   };
   return descriptions[mode] || descriptions.ai_review;

@@ -109,6 +109,7 @@ export function runBashTool(ctx: ToolContext): AgentTool<typeof runBashParams> {
           command,
           cwd: ctx.workingDir,
           timeoutMs,
+          securityMode: ctx.permissionMode,
         });
 
         // 主进程拦截（二次校验）

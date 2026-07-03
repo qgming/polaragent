@@ -1,7 +1,7 @@
 // 导航相关的共享类型与常量
 // src/lib/navigation.tsx
 
-import { Blocks, BookOpen, Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
+import { AlarmClock, Blocks, BookOpen, Bot, Plus, Settings, Users, Wrench, Zap } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type IconComponent = ComponentType<{
@@ -16,6 +16,7 @@ export type PageId =
   | "agent"
   | "team"
   | "knowledge"
+  | "schedule"
   | "settings";
 
 // 各页面的图标（标题与描述已迁移到 nav.json 翻译文件，按 pageId 查 t("nav:pages.<id>.title")）
@@ -29,6 +30,7 @@ export const pages: Record<
   agent: { icon: Bot },
   team: { icon: Users },
   knowledge: { icon: BookOpen },
+  schedule: { icon: AlarmClock },
   settings: { icon: Settings },
 };
 
@@ -45,6 +47,7 @@ export const primaryNav: NavItem[] = [
 // 顶层导航项（排在「扩展」折叠组之后）
 export const secondaryNav: NavItem[] = [
   { id: "knowledge", icon: BookOpen },
+  { id: "schedule", icon: AlarmClock },
 ];
 
 // 「扩展」折叠分组：收纳技能 / 工具 / 助手 / 团队

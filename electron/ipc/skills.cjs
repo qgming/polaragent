@@ -1,4 +1,4 @@
-// IPC：技能（Skill）列举、元数据读取、从 Git/本地/压缩包安装
+// IPC：技能（Skill）列举、元数据读取、从 Git/本地/压缩包安装、写入和删除
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -235,6 +235,217 @@ async function uninstallSkill(skillId) {
   return true;
 }
 
+// ==================== Write / Patch / Delete Skill Helpers ====================
+
+/** 校验技能名称格式：只能包含小写字母、数字和连字符 */
+function validateSkillName(name) {
+  if (!name || typeof name !== "string") {
+    throw new Error("技能名称不能为空");
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("技能名称不能为空");
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmed)) {
+    throw new Error(`技能名称「${trimmed}」格式无效。只能包含小写字母、数字和连字符。`);
+  }
+  return trimmed;
+}
+
+/** 获取技能在 custom 目录下的真实路径，并校验路径安全 */
+function getCustomSkillDir(name) {
+  const customDir = path.join(dataDir(), "skills", "custom");
+  const skillDir = path.join(customDir, name);
+  // 校验路径不越界
+  const resolved = path.resolve(skillDir);
+  const allowedPrefix = path.resolve(customDir);
+  if (!resolved.startsWith(allowedPrefix + path.sep) && resolved !== allowedPrefix) {
+    throw new Error("技能路径超出允许范围");
+  }
+  return { skillDir: resolved, customDir: allowedPrefix };
+}
+
+/** 创建备份（保留最多 10 个版本） */
+async function backupSkillMd(skillMdPath) {
+  if (!fs.existsSync(skillMdPath)) return;
+  const dir = path.dirname(skillMdPath);
+  const bakDir = path.join(dir, ".bak");
+  await ensureDir(bakDir);
+
+  // 读取现有备份并按顺序整理
+  const entries = await fsp.readdir(bakDir).catch(() => []);
+  const bakFiles = entries
+    .filter((e) => e.startsWith("SKILL.md.") && e.endsWith(".bak"))
+    .sort((a, b) => {
+      const numA = parseInt(a.replace("SKILL.md.", "").replace(".bak", ""), 10);
+      const numB = parseInt(b.replace("SKILL.md.", "").replace(".bak", ""), 10);
+      return numA - numB;
+    });
+
+  // 保留最多 10 个版本，超出则删除最旧的
+  while (bakFiles.length >= 10) {
+    const oldest = bakFiles.shift();
+    await fsp.unlink(path.join(bakDir, oldest)).catch(() => {});
+  }
+
+  // 新备份编号为当前最大编号 +1
+  const maxNum = bakFiles.length > 0
+    ? parseInt(bakFiles[bakFiles.length - 1].replace("SKILL.md.", "").replace(".bak", ""), 10)
+    : 0;
+  const newBakPath = path.join(bakDir, `SKILL.md.${maxNum + 1}.bak`);
+  await fsp.copyFile(skillMdPath, newBakPath);
+}
+
+function validateSkillContent(content, expectedName) {
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("SKILL.md 内容不能为空");
+  }
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+  if (!match) {
+    throw new Error("SKILL.md 缺少 frontmatter（--- 包裹的 name/description 段）");
+  }
+  const frontmatter = match[1];
+  const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim()?.replace(/^['\"]|['\"]$/g, "");
+  const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+  if (!name) {
+    throw new Error("SKILL.md frontmatter 缺少 name 字段");
+  }
+  if (name !== expectedName) {
+    throw new Error(`SKILL.md 中的 name 必须与技能目录名一致（期望 ${expectedName}，实际 ${name}）`);
+  }
+  if (!description) {
+    throw new Error("SKILL.md frontmatter 缺少 description 字段");
+  }
+}
+
+async function writeTextAtomically(targetPath, content, previousContent) {
+  const tempPath = `${targetPath}.tmp-${Date.now()}`;
+  try {
+    await fsp.writeFile(tempPath, content, "utf8");
+    if (fs.existsSync(targetPath)) {
+      await fsp.rm(targetPath, { force: true });
+    }
+    await fsp.rename(tempPath, targetPath);
+  } catch (error) {
+    await fsp.rm(tempPath, { force: true }).catch(() => {});
+    if (typeof previousContent === "string") {
+      await fsp.writeFile(targetPath, previousContent, "utf8").catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function backupSkillDirForDeletion(skillDir, name, customDir) {
+  const deletedRoot = path.join(customDir, ".deleted");
+  await ensureDir(deletedRoot);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupDir = path.join(deletedRoot, `${name}-${timestamp}`);
+  await copySkill(skillDir, backupDir);
+  return backupDir;
+}
+
+/** 创建或编辑技能（全量写入 SKILL.md） */
+async function writeSkill(name, content) {
+  const validatedName = validateSkillName(name);
+  const { skillDir } = getCustomSkillDir(validatedName);
+  const skillMdPath = path.join(skillDir, "SKILL.md");
+  const existed = fs.existsSync(skillMdPath);
+  const previousContent = existed ? await readText(skillMdPath) : undefined;
+
+  validateSkillContent(content, validatedName);
+
+  // 确保目录存在
+  await ensureDir(skillDir);
+
+  // 如果文件已存在，先备份
+  if (existed) {
+    await backupSkillMd(skillMdPath);
+  }
+
+  // 写入 SKILL.md
+  await writeTextAtomically(skillMdPath, content, previousContent);
+
+  return {
+    success: true,
+    path: skillMdPath,
+    message: existed ? "技能已更新" : "技能已创建",
+  };
+}
+
+/** 精确替换技能内容 */
+async function patchSkill(name, oldString, newString) {
+  const validatedName = validateSkillName(name);
+  const { skillDir } = getCustomSkillDir(validatedName);
+  const skillMdPath = path.join(skillDir, "SKILL.md");
+
+  if (!fs.existsSync(skillMdPath)) {
+    throw new Error(`技能「${validatedName}」不存在，无法 patch`);
+  }
+
+  // 读取原内容
+  const original = await readText(skillMdPath);
+
+  // 校验 oldString
+  if (!original.includes(oldString)) {
+    throw new Error("未在 SKILL.md 中找到 old_string，请确认片段是否逐字符精确匹配");
+  }
+
+  // 统计出现次数
+  let count = 0;
+  let from = 0;
+  while (true) {
+    const index = original.indexOf(oldString, from);
+    if (index === -1) break;
+    count += 1;
+    from = index + oldString.length;
+  }
+
+  if (count > 1) {
+    throw new Error(`old_string 在文件中出现 ${count} 次，存在歧义。请提供更长的唯一片段。`);
+  }
+
+  // 备份并替换
+  await backupSkillMd(skillMdPath);
+  const updated = original.replace(oldString, newString);
+  validateSkillContent(updated, validatedName);
+  await writeTextAtomically(skillMdPath, updated, original);
+
+  return {
+    success: true,
+    path: skillMdPath,
+    message: "SKILL.md 已精确替换",
+  };
+}
+
+/** 删除技能 */
+async function deleteSkill(name) {
+  const validatedName = validateSkillName(name);
+  const { skillDir } = getCustomSkillDir(validatedName);
+
+  if (!fs.existsSync(skillDir)) {
+    throw new Error(`技能「${validatedName}」不存在`);
+  }
+
+  // 确认是 custom 目录下的技能（不能删 builtin）
+  const customDir = path.join(dataDir(), "skills", "custom");
+  const resolvedSkillDir = path.resolve(skillDir);
+  const resolvedCustomDir = path.resolve(customDir);
+  if (!resolvedSkillDir.startsWith(resolvedCustomDir + path.sep)) {
+    throw new Error("只能删除 custom 目录下的技能");
+  }
+
+  const backupDir = await backupSkillDirForDeletion(skillDir, validatedName, resolvedCustomDir);
+  await fsp.rm(skillDir, { recursive: true, force: true });
+
+  return {
+    success: true,
+    path: skillDir,
+    message: `技能「${validatedName}」已删除（备份: ${backupDir}）`,
+  };
+}
+
+// ==================== IPC Handlers ====================
+
 function register(ipcMain) {
   ipcMain.handle("skills:list", (_event, { skillType }) => listSkills(skillType));
   ipcMain.handle("skills:read-metadata", (_event, { skillId }) => readSkillMetadata(skillId));
@@ -242,6 +453,12 @@ function register(ipcMain) {
   ipcMain.handle("skills:install-local", (_event, { sourcePath }) => installSkillFromLocal(sourcePath));
   ipcMain.handle("skills:install-zip", (_event, { zipPath }) => installSkillFromZip(zipPath));
   ipcMain.handle("skills:uninstall", (_event, { skillId }) => uninstallSkill(skillId));
+  // 写入技能（创建或全量编辑）
+  ipcMain.handle("skills:write-skill", (_event, { name, content }) => writeSkill(name, content));
+  // 精确替换技能内容
+  ipcMain.handle("skills:patch-skill", (_event, { name, oldString, newString }) => patchSkill(name, oldString, newString));
+  // 删除技能
+  ipcMain.handle("skills:delete-skill", (_event, { name }) => deleteSkill(name));
 }
 
 module.exports = { register };

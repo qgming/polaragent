@@ -38,6 +38,7 @@ import {
   SkillComposerInput,
   type SkillComposerHandle,
 } from "@/components/skill/SkillComposerInput";
+import { WidgetRenderer, coalesceWidgetSegments } from "@/components/widget/WidgetRenderer";
 import { TeamMonitorPanel } from "@/components/team/TeamMonitorPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -429,20 +430,25 @@ function FlatSegments({
   segments: Segment[];
   streaming?: boolean;
 }) {
+  const normalizedSegments = useMemo(() => coalesceWidgetSegments(segments), [segments]);
+
   const blocks: Array<
     | { type: "text"; text: string }
     | { type: "thinking"; text: string }
     | { type: "guidance"; text: string }
+    | { type: "widget"; widget: Extract<Segment, { kind: "widget" }> }
     | { type: "tools"; tools: ToolSeg[] }
   > = [];
 
-  for (const seg of segments) {
+  for (const seg of normalizedSegments) {
     if (seg.kind === "text") {
       blocks.push({ type: "text", text: seg.text });
     } else if (seg.kind === "thinking") {
       blocks.push({ type: "thinking", text: seg.text });
     } else if (seg.kind === "guidance") {
       blocks.push({ type: "guidance", text: seg.text });
+    } else if (seg.kind === "widget") {
+      blocks.push({ type: "widget", widget: seg });
     } else {
       const last = blocks[blocks.length - 1];
       if (last && last.type === "tools") {
@@ -471,6 +477,9 @@ function FlatSegments({
         if (block.type === "guidance") {
           return <GuidanceRow key={`guidance-${index}`} text={block.text} />;
         }
+        if (block.type === "widget") {
+          return <WidgetRenderer key={`widget-${block.widget.widgetId}`} widget={block.widget} />;
+        }
         if (block.type === "process") {
           return <ProcessFold key={`process-${index}`} blocks={block.blocks} />;
         }
@@ -484,6 +493,7 @@ type SegmentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "guidance"; text: string }
+  | { type: "widget"; widget: Extract<Segment, { kind: "widget" }> }
   | { type: "tools"; tools: ToolSeg[] };
 
 type RenderBlock =
@@ -514,7 +524,7 @@ function groupProcessBlocks(blocks: SegmentBlock[]): RenderBlock[] {
   };
 
   for (const block of blocks) {
-    if (block.type === "text") {
+    if (block.type === "text" || block.type === "widget") {
       flush();
       grouped.push(block);
     } else {
@@ -559,6 +569,9 @@ function ProcessFold({
             }
             if (block.type === "guidance") {
               return [<GuidanceRow key={`guidance-${index}`} text={block.text} />];
+            }
+            if (block.type === "widget") {
+              return [<WidgetRenderer key={`widget-${block.widget.widgetId}`} widget={block.widget} />];
             }
             return block.tools.map((tool) => (
               <ToolStepItem key={tool.toolCallId} tool={tool} />

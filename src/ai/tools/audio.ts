@@ -178,7 +178,7 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
         ctx,
         safeAudioFileName(params.fileName, "synthesized-speech", extension),
       );
-      await writeBase64File(target, result.base64);
+      await writeBase64File(target, result.base64, { securityMode: ctx.permissionMode });
       addAudioArtifact(ctx, target);
 
       return {

@@ -15,7 +15,7 @@ export type LanguageValue = (typeof supportedLanguages)[number]["value"];
 export const fallbackLanguage = "zh-CN";
 
 /** i18n 命名空间列表 */
-export const namespaceList = ["common", "settings", "nav", "chat", "home", "agents", "knowledge", "skills", "tools", "team", "tutorial"] as const;
+export const namespaceList = ["common", "settings", "nav", "chat", "home", "agents", "knowledge", "skills", "tools", "team", "tutorial", "schedule"] as const;
 
 /**
  * 将用户设置中的 language 值解析为实际 BCP 47 语言代码。

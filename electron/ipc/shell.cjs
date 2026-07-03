@@ -57,6 +57,10 @@ async function execShell(request) {
   }
 
   // 安全策略校验（支持四级模式）
+  // 注意：刻意忽略 request.securityMode —— 安全模式只能由用户通过
+  // security:set-mode IPC 一次性同步到主进程，绝不允许渲染层在每个 shell
+  // 调用上自行升权（如 securityMode:"full"），否则会绕过 safe/ai_review 的
+  // 危险命令黑名单。参见 electron/lib/security.cjs 的 getSecurityMode。
   const validation = validateShellCommand(command);
   if (!validation.allowed) {
     return { 

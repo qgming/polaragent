@@ -5,7 +5,11 @@ import {
   TEAM_SPEAKER_ENTRY,
   TEAM_VOTE_ENTRY,
 } from "./entries";
-import { openOrCreateSession, openOrCreateTeamSession } from "./lifecycle";
+import {
+  openOrCreateScheduleSession,
+  openOrCreateSession,
+  openOrCreateTeamSession,
+} from "./lifecycle";
 
 export async function appendGuidanceMessage(
   sessionId: string,
@@ -34,6 +38,21 @@ export async function appendTeamGuidanceMessage(
     });
   } catch (error) {
     console.error(`写入团队会话引导失败 ${sessionId}:`, error);
+  }
+}
+
+export async function appendScheduleGuidanceMessage(
+  sessionId: string,
+  text: string,
+): Promise<void> {
+  try {
+    const session = await openOrCreateScheduleSession(sessionId);
+    await session.appendCustomEntry(GUIDANCE_ENTRY, {
+      text,
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error(`写入定时任务会话引导失败 ${sessionId}:`, error);
   }
 }
 

@@ -10,7 +10,11 @@
 //     （text/thinking/tool 顺序），合并工具结果摘要，回传 onDone 持久化
 // 历史上下文由 pi Session 原生管理，无需手动注入。
 
-import { agentManager, type TeamContext } from "./agent-manager";
+import {
+  agentManager,
+  type ScheduleContext,
+  type TeamContext,
+} from "./agent-manager";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import {
   DEFAULT_COMPACTION_SETTINGS,
@@ -25,6 +29,7 @@ import { initializeAiRuntime } from "@/lib/app-init";
 import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import { appendGuidanceMessage } from "@/lib/session/personal";
+import { appendScheduleGuidanceMessage } from "@/lib/session/messages";
 import { appendTeamGuidanceMessage } from "@/lib/session/team";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { ChatAttachment, Segment } from "@/lib/chat";
@@ -79,6 +84,8 @@ export interface PromptOptions {
   knowledgeBaseIds?: string[];
   // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
   teamContext?: TeamContext;
+  // 定时任务后台模式：使用独立 schedule 会话仓库，并限制前台交互类工具。
+  scheduleContext?: ScheduleContext;
   // 项目级别的系统提示词（当对话属于某项目时注入）
   projectSystemPrompt?: string;
 }
@@ -303,6 +310,7 @@ export async function promptAgent(
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
+        scheduleContext: options.scheduleContext,
         projectSystemPrompt: options.projectSystemPrompt,
       });
     } catch (error) {
@@ -313,6 +321,7 @@ export async function promptAgent(
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
+        scheduleContext: options.scheduleContext,
         projectSystemPrompt: options.projectSystemPrompt,
       });
     }
@@ -652,6 +661,11 @@ async function persistGuidance(options: PromptOptions, text: string): Promise<vo
   const sessionId = options.teamContext?.sessionId ?? options.threadId;
   if (options.teamContext) {
     await appendTeamGuidanceMessage(sessionId, text);
+  } else if (options.scheduleContext) {
+    await appendScheduleGuidanceMessage(
+      options.scheduleContext.sessionId ?? options.threadId,
+      text,
+    );
   } else {
     await appendGuidanceMessage(sessionId, text);
   }
@@ -804,6 +818,11 @@ function extractSegments(
       }
     } else if (block.type === "toolCall") {
       const result = toolResults.get(block.id);
+      const widget = extractWidgetSegment(result?.details);
+      if (widget) {
+        segments.push(widget);
+        continue;
+      }
       segments.push({
         kind: "tool",
         toolCallId: block.id,
@@ -875,6 +894,29 @@ function extractToolDetails(result: unknown): Record<string, unknown> | undefine
   return details && typeof details === "object" ? details : undefined;
 }
 
+function extractWidgetSegment(details: Record<string, unknown> | undefined): Extract<Segment, { kind: "widget" }> | undefined {
+  const widget = details?.widget;
+  if (!widget || typeof widget !== "object") return undefined;
+
+  const record = widget as Record<string, unknown>;
+  if (typeof record.widgetId !== "string" || typeof record.title !== "string" || typeof record.html !== "string") {
+    return undefined;
+  }
+
+  return {
+    kind: "widget",
+    widgetId: record.widgetId,
+    title: record.title,
+    html: record.html,
+    updateMode: record.update_mode === "patch" ? "patch" : "replace",
+    widgetPath: typeof record.widget_path === "string" ? record.widget_path : null,
+    data:
+      record.data && typeof record.data === "object"
+        ? (record.data as Record<string, unknown>)
+        : null,
+  };
+}
+
 // 工具中间进度 -> 步骤面板里的单行摘要（tool_execution_update 事件用）
 function summarizePartialResult(toolName: string, partial: unknown): string | undefined {
   if (!partial || typeof partial !== "object") return undefined;
@@ -943,6 +985,21 @@ function toolResultText(result: unknown): string | undefined {
     content?: unknown;
     details?: unknown;
   };
+
+  if (
+    record.details &&
+    typeof record.details === "object" &&
+    "widget" in (record.details as Record<string, unknown>)
+  ) {
+    const widget = (record.details as Record<string, unknown>).widget;
+    if (widget && typeof widget === "object") {
+      const info = widget as Record<string, unknown>;
+      const title = typeof info.title === "string" ? info.title : "未命名 Widget";
+      const mode = info.update_mode === "patch" ? "patch" : "replace";
+      const source = info.source === "file" ? "模板文件" : "内联代码";
+      return `Widget: ${title}\n更新模式: ${mode}\n来源: ${source}`;
+    }
+  }
 
   // content 通常是 [{ type: "text", text }] 数组，拼接其文本
   if (Array.isArray(record.content)) {

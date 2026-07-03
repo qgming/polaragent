@@ -6,6 +6,11 @@
 
 import { resolveDefaultModelService } from "./model-router";
 import { callLlm } from "./llm-call";
+import {
+  extractLastLabeledValue,
+  parseJsonObjectCandidates,
+  unwrapStructuredOutput,
+} from "./structured-output";
 
 /** 标题建议字数范围（放宽，不做硬截断，仅在明显超长时按完整词收口） */
 const MIN_TITLE_LENGTH = 5;
@@ -83,8 +88,13 @@ export async function generateConversationTitle(
     `- 标题长度控制在 ${MIN_TITLE_LENGTH}-${MAX_TITLE_LENGTH} 个字\n` +
     '- 优先使用具体名词和动作，避免"问题解答""方案讨论"等空泛标题\n' +
     "- 标题中不要包含引号、句号、序号或多余标点\n" +
-    "- 必须输出纯 JSON 格式，不要包含任何解释、代码块标记或其他内容\n\n" +
-    '输出格式示例：{"title": "实现用户登录功能"}';
+    "- 优先输出纯 JSON，不要包含解释、代码块标记或其他内容\n" +
+    "- 如果模型能力限制导致无法输出严格 JSON，至少输出可提取的单行标题键值\n\n" +
+    "标准输出示例：\n" +
+    '{"title": "实现用户登录功能"}\n\n' +
+    "退化输出示例（无法输出严格 JSON 时使用）：\n" +
+    "title: 实现用户登录功能\n" +
+    "标题：实现用户登录功能";
 
   const userPrompt = `请为以下对话生成标题：\n\n${transcript}`;
 
@@ -124,27 +134,21 @@ function buildTitleTranscript(history: TitleHistoryMessage[]): string {
  * 从模型返回的文本中解析出标题。
  * 优先按 JSON {"title": "..."} 解析；解析失败时退化为把整段文本当标题清洗。
  */
-function extractTitle(raw: string): string | null {
+export function extractTitle(raw: string): string | null {
   const text = raw.trim();
   if (!text) return null;
 
-  // 去掉可能被包裹的 ```json ... ``` 代码块标记
-  const unwrapped = text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
+  const unwrapped = unwrapStructuredOutput(text);
 
-  try {
-    const parsed = JSON.parse(unwrapped) as { title?: unknown };
-    if (parsed && typeof parsed.title === "string") {
+  for (const parsed of parseJsonObjectCandidates(unwrapped)) {
+    if (typeof parsed.title === "string") {
       return sanitizeTitle(parsed.title);
     }
-  } catch {
-    // 不是合法 JSON：尝试从文本中抓取 "title": "..." 片段
-    const match = unwrapped.match(/["']title["']\s*:\s*["']([^"']+)["']/i);
-    if (match) {
-      return sanitizeTitle(match[1]);
-    }
+  }
+
+  const labeledTitle = extractLastLabeledValue(unwrapped, ["title", "标题", "对话标题"]);
+  if (labeledTitle) {
+    return sanitizeTitle(labeledTitle);
   }
 
   // 兜底：整段文本当标题清洗（模型可能未按 JSON 输出）

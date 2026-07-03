@@ -41,20 +41,20 @@ interface Window {
       ) => () => void;
     };
     fs: {
-      readFile: (path: string) => Promise<string>;
-      readBase64File: (path: string) => Promise<string>;
-      readBinaryFile: (path: string) => Promise<string>;
-      writeFile: (path: string, content: string) => Promise<void>;
-      writeBase64File: (path: string, content: string) => Promise<void>;
-      appendFile: (path: string, content: string) => Promise<void>;
-      createDirectory: (path: string) => Promise<void>;
-      deletePath: (path: string) => Promise<void>;
-      rename: (src: string, dest: string) => Promise<void>;
-      copy: (src: string, dest: string) => Promise<void>;
-      listDirectory: (path: string) => Promise<string[]>;
-      listDirectoryEntries: (path: string) => Promise<Array<{ name: string; isDir: boolean }>>;
-      exists: (path: string) => Promise<boolean>;
-      stat: (path: string) => Promise<{
+      readFile: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<string>;
+      readBase64File: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<string>;
+      readBinaryFile: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<string>;
+      writeFile: (path: string, content: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      writeBase64File: (path: string, content: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      appendFile: (path: string, content: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      createDirectory: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      deletePath: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      rename: (src: string, dest: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      copy: (src: string, dest: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<void>;
+      listDirectory: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<string[]>;
+      listDirectoryEntries: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<Array<{ name: string; isDir: boolean }>>;
+      exists: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<boolean>;
+      stat: (path: string, options?: import("@/lib/electron/electron-api").SecurityScopedOptions) => Promise<{
         isDirectory: boolean;
         isFile: boolean;
         isSymlink: boolean;
@@ -158,6 +158,9 @@ interface Window {
       installFromLocal: (sourcePath: string) => Promise<string>;
       installFromZip: (zipPath: string) => Promise<string>;
       uninstall: (skillId: string) => Promise<boolean>;
+      writeSkill: (name: string, content: string) => Promise<{ success: boolean; path: string; message: string }>;
+      patchSkill: (name: string, oldString: string, newString: string) => Promise<{ success: boolean; path: string; message: string }>;
+      deleteSkillByName: (name: string) => Promise<{ success: boolean; path: string; message: string }>;
     };
     mcp: {
       stdioListTools: (server: import("@/lib/mcp").McpServerConfig) => Promise<import("@/lib/mcp").McpDiscoveredTool[]>;
@@ -172,6 +175,7 @@ interface Window {
         command: string;
         cwd: string;
         timeoutMs?: number;
+        securityMode?: import("@/types/permissions").ToolPermissionMode;
       }) => Promise<{
         success: boolean;
         exitCode: number | null;

@@ -92,11 +92,16 @@ import { speechRecognitionTool, speechSynthesisTool } from "./audio";
 // ===== 开发工具 =====
 import { runBashTool } from "./bash";
 
+// ===== Widget 渲染 =====
+import { renderWidgetTool } from "./widget-render";
+import { scheduleTaskTool } from "./schedule-task";
+
 // ===== MCP 集成 =====
 import { buildMcpTools, mcpToolLabels } from "./mcp";
 
 // ===== 技能系统 =====
 import { listSkillsTool, readSkillFileTool, readSkillTool } from "./skills";
+import { writeSkillTool } from "./skills-write";
 
 // ===== 用户交互 =====
 import { askUserTool } from "./ask-user";
@@ -172,6 +177,8 @@ const audio = reg("audio");
 const dev = reg("dev");
 const skill = reg("skill");
 const interaction = reg("interaction");
+const widget = reg("widget");
+const schedule = reg("task");
 const team = reg("team");
 
 // ASR 接口是否已配置（provider、apiKey、model 齐全）
@@ -225,8 +232,9 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   audio: { name: "音频工具", description: "语音识别与语音合成", order: 10 },
   dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 11 },
   skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 12 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 13 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 14 },
+  widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 13 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 14 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 15 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -264,10 +272,12 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
+  schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
   interaction("ask_user", "询问用户", "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。", askUserTool),
   skill("list_skills", "列出技能", "列出当前助手或团队上下文可用的技能名称与适用场景。", listSkillsTool),
   skill("read_skill", "读取技能", "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。", readSkillTool),
   skill("read_skill_file", "读取技能文件", "读取可用技能目录内 references、examples 等子文件。", readSkillFileTool),
+  skill("write_skill", "写入技能", "创建、编辑、精确替换或删除 dataDir/skills/custom 目录下的技能。create 创建新技能目录和 SKILL.md；edit 全量替换 SKILL.md；patch 精确定位 old_string 替换为 new_string；delete 删除整个技能目录（需 confirm=true）。每次修改前会自动备份（保留最多 10 个版本）。", writeSkillTool),
   team("control_team_flow", "控制团队流程", "团队协作中控制继续、交接、结束或标记阻塞，可附带给下一位成员的私聊提示。", controlTeamFlowTool, (ctx) => Boolean(ctx.teamFlow)),
   team("request_team_vote", "发起团队投票", "团队协作中发起投票决策，收集团队成员对方案、方向或是否结束的选择。", requestTeamVoteTool, (ctx) => Boolean(ctx.teamVote)),
   team("cast_team_vote", "提交团队投票", "团队投票收集阶段提交当前成员的投票选择。", castTeamVoteTool, (ctx) => Boolean(ctx.teamCastVote)),
@@ -293,6 +303,7 @@ const TOOL_REGISTRY: ToolEntry[] = [
   memory("search_memory", "检索记忆", "检索长期记忆，获取用户偏好、身份画像、历史纠正和项目上下文。", searchMemoryTool),
   memory("remember_memory", "写入记忆", "在用户明确要求记住或需要修正长期偏好/项目约定时写入记忆。", rememberMemoryTool),
   memory("forget_memory", "忘记记忆", "关闭或删除长期记忆，适合用户要求忘记某个偏好、画像或项目约定时使用。", forgetMemoryTool),
+  widget("render_widget", "渲染 Widget", "在对话中渲染交互式 UI Widget，支持内联 HTML 或 skills 目录下 .html 模板。", renderWidgetTool),
 ];
 
 // 工具名 -> 中文展示标签（供监控面板与步骤轨迹复用）
@@ -346,6 +357,7 @@ export function buildAgentTools(ctx: ToolContext): AgentTool<any>[] {
 
   for (const entry of TOOL_REGISTRY) {
     if (!isBuiltinToolEnabled(entry.id)) continue;
+    if (ctx.isBackground && entry.id === "ask_user") continue;
     if (entry.isAvailable && !entry.isAvailable(ctx)) continue;
     tools.push(entry.factory(ctx));
   }

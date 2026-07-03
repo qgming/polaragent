@@ -6,6 +6,7 @@
     "agent": { "title": "Agents", "description": "Orchestrate models, tools, memory, and execution strategies" },
     "team": { "title": "Teams", "description": "Orchestrate multiple agents to collaborate on complex tasks" },
     "knowledge": { "title": "Knowledge", "description": "Manage documents and materials for AI retrieval" },
+    "schedule": { "title": "Schedules", "description": "Create and manage background Agent automation tasks" },
     "settings": { "title": "Settings", "description": "Configure models, window behavior, appearance, and local data" }
   },
   "sidebar": {
@@ -15,6 +16,7 @@
     "teamTab": "Teams",
     "newChat": "New Chat",
     "knowledge": "Knowledge",
+    "schedule": "Schedules",
     "extensions": "Extensions",
     "skills": "Skills",
     "tools": "Tools",

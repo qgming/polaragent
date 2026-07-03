@@ -19,6 +19,7 @@ import {
 } from "./model-router";
 import { buildAgentTools, type ToolContext } from "./tools";
 import { openOrCreateSession } from "@/lib/session/personal";
+import { openOrCreateScheduleSession } from "@/lib/session/schedule";
 import { openOrCreateTeamSession } from "@/lib/session/team";
 import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
@@ -64,6 +65,11 @@ export interface TeamContext {
   };
   // 团队会话选中的知识库 ID 列表
   knowledgeBaseIds?: string[];
+}
+
+export interface ScheduleContext {
+  isSchedule: true;
+  sessionId?: string;
 }
 
 export interface RuntimeAgentConfig {
@@ -194,10 +200,13 @@ export class AgentManager {
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
+      scheduleContext?: ScheduleContext;
       projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
-    const key = harnessKey(options?.teamContext?.sessionId ?? threadId, agentId);
+    const scopedSessionId =
+      options?.teamContext?.sessionId ?? options?.scheduleContext?.sessionId ?? threadId;
+    const key = harnessKey(scopedSessionId, agentId);
     const configSignature = runtimeConfigSignature(agentId, options?.teamContext);
     const toolsRuntimeSignature = useToolsStore.getState().runtimeSignature;
     const workingDirSignature = JSON.stringify({
@@ -263,6 +272,7 @@ export class AgentManager {
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
+      scheduleContext?: ScheduleContext;
       projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
@@ -275,6 +285,7 @@ export class AgentManager {
     const model = service.model;
 
     const teamContext = options?.teamContext;
+    const scheduleContext = options?.scheduleContext;
     const requesterName = teamContext
       ? (agentConfig?.name ?? "团队成员")
       : (agentConfig?.name ?? "助手");
@@ -311,6 +322,7 @@ export class AgentManager {
       workingDir: options?.workingDir,
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
       isTeam: !!teamContext,
+      isBackground: !!scheduleContext,
       requester: {
         id: agentId,
         name: requesterName,
@@ -344,10 +356,12 @@ export class AgentManager {
     };
     const tools = buildAgentTools(toolCtx);
 
-    const teamSessionId = teamContext?.sessionId ?? threadId;
+    const scopedSessionId = teamContext?.sessionId ?? scheduleContext?.sessionId ?? threadId;
     const [session, env, models] = await Promise.all([
       teamContext
-        ? openOrCreateTeamSession(teamSessionId)
+        ? openOrCreateTeamSession(scopedSessionId)
+        : scheduleContext
+          ? openOrCreateScheduleSession(scopedSessionId)
         : openOrCreateSession(threadId),
       getExecutionEnv(),
       Promise.resolve(
@@ -399,7 +413,7 @@ export class AgentManager {
     harness.setStreamOptions({
       cacheRetention: "short",
       metadata: {
-        sessionId: teamContext?.sessionId || threadId,
+        sessionId: scopedSessionId,
       },
     });
 
@@ -427,7 +441,7 @@ export class AgentManager {
       const entry = event.compactionEntry;
       const source = event.fromHook ? "hook" : "auto";
       console.log(
-        `[压缩] 会话 ${teamSessionId} 压缩完成`,
+        `[压缩] 会话 ${scopedSessionId} 压缩完成`,
         {
           source,
           tokensBefore: entry.tokensBefore,
@@ -441,7 +455,7 @@ export class AgentManager {
 
     // 注册会话级资源清理回调（0.80 新增：session-resources 模块）
     // disposeThread / abortThread 时调 cleanupSessionResources 触发清理
-    const sessionId = teamSessionId;
+    const sessionId = scopedSessionId;
     if (!this.registeredCleanupSessions.has(sessionId)) {
       this.registeredCleanupSessions.add(sessionId);
       registerSessionResourceCleanup(() => {

@@ -3,7 +3,7 @@
  * 
  * - readonly: 只读模式，AI 只能读取文件和执行查询操作
  * - safe: 安全模式（推荐），阻止高危操作（删根目录、格式化磁盘等），适合日常使用
- * - ai_review: AI 审查模式，由 AI 自主判断操作风险并决定是否执行
+ * - ai_review: 自动审查模式，安全和只读操作默认通过，仅对高风险操作做额外判断
  * - full: 完全权限，AI 拥有与用户相同的系统权限，适合高级用户和自动化任务
  */
 export type ToolPermissionMode = "readonly" | "safe" | "ai_review" | "full";
@@ -62,7 +62,7 @@ export const SECURITY_LEVELS: Record<ToolPermissionMode, SecurityLevel> = {
   },
   ai_review: {
     mode: "ai_review",
-    description: "AI 审查模式（推荐）- AI 自主评估每个操作的风险，并在必要时请求用户确认",
+    description: "自动审查模式（推荐）- 安全和只读操作默认通过，仅额外审查高风险操作",
     allowedOperations: {
       fileWrite: true,
       fileDelete: true,
