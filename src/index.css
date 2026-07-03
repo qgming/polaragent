@@ -276,6 +276,17 @@ button {
   background: transparent;
 }
 
+/* 减小 markdown 中水平分隔线 <hr> 的上下间距：
+   Tailwind Typography 默认 prose-sm 给 hr 1.5em 上下 margin（约 21~24px），
+   在对话流里偏大、导致段间视觉断层过深，改为 0.5em（约 7~8px），
+   削弱段落分隔但不丢失分隔语义。 */
+.chat-content :where(hr):not(:where(.not-prose, .not-prose *)),
+.markdown-preview :where(hr):not(:where(.not-prose, .not-prose *)) {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  border-top-width: 1px;
+}
+
 .chat-content :where(table):not(:where(.not-prose, .not-prose *)) {
   width: 100%;
 }

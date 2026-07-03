@@ -33,8 +33,10 @@ const renderWidgetParams = Type.Object({
   ),
 });
 
-// 标签白名单：禁止 iframe/object/embed/base/link/form 等可能形成
-// 二次 iframe 加载或表单提交越权的标签。
+// 标签白名单：禁止 iframe/object/embed/base/link/meta 等可能形成
+// 二次 iframe 加载或越权跳转的标签。
+// form 已放宽：表单场景恢复原生 <form> 能力（提交动作仍受 iframe sandbox +
+// CSP 约束，POST 跳出会被沙箱拦截，事件桥依然推荐用 __WIDGET_EVENT__）。
 // 保留 script：widget 本身需要内联脚本交互能力（沙箱 iframe 已去掉
 // allow-same-origin，allow-scripts 单独一行时 iframe 走 opaque origin，
 // 无法访问父窗资源）。
@@ -45,22 +47,19 @@ const WIDGET_FORBIDDEN_TAGS = [
   "base",
   "link",
   "meta",
-  "form",
 ];
 
-// 危险脚本标识：即便保留 <script>，也禁止明显涉及外传数据的高危 API。
-// 这些规则不试图覆盖所有可能 —— 是 fail-loud 的最小拦截，配合上层
-// HIGH_RISK AI 审查和 iframe 同源隔离形成防御纵深。
-const WIDGET_DANGEROUS_SCRIPT_PATTERNS = [
-  /window\.parent\b/g, // 跨 iframe 边界访问父窗（虽 sandbox 已挡，这里再挡）
-  /top\.postMessage/g,
-  /document\.cookie/g, // cookie 在 opaque origin 下读不到，但何必试
-  /\beval\s*\(/g, // 显式 eval
-  /\bnew\s+Function\s*\(/g, // 字符串构造函数
-  /atob\s*\(/g, // base64 解码常用于绕过文本过滤
-  /btoa\s*\(/g,
-  /\bWebSocket\s*\(/g, // 出站连接
-];
+// 危险脚本 API 黑名单：已全部解除。
+// 取消 fail-loud 字符串拦截的依据是 iframe 物理沙箱已提供防御纵深：
+//   - sandbox="allow-scripts"（不携带 allow-same-origin）→ opaque origin，
+//     widget 内 window.parent / top / document.cookie 物理不可读父窗。
+//   - CSP 默认 default-src 'none'、connect-src 'none' → WebSocket / fetch /
+//     外链脚本 / 远程图片等出站连接全部被浏览器阻断。
+//   - 因此 eval / new Function / atob / btoa 即便在 widget 内执行，也只能
+//     在 opaque origin 内闭环操作，无外传路径。
+// 注意：放宽仅限工具入口净化层。沙箱与 CSP 两层物理防御未动，依然是真实
+// 防线。AI 审查（render_widget 在 ai_review 模式）作为最后一层软防御保留。
+const WIDGET_DANGEROUS_SCRIPT_PATTERNS: RegExp[] = [];
 
 /**
  * 净化 AI 提供的 widget_code HTML：

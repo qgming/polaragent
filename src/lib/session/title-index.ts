@@ -10,11 +10,11 @@
 // （普通见 conversation-store，团队见 team-chat-store / clearTeamSessions）。
 // 首次启动若索引缺失（老用户），由 listSessions / listTeamSessions 回退旧逻辑
 // （逐个 open 读 name）重建一次；此后即走快路径。
-import { getSessionsRoot, getTeamSessionsRoot } from "./session-repo";
+import { getScheduleSessionsRoot, getSessionsRoot, getTeamSessionsRoot } from "./session-repo";
 import { fileExists, readFile, writeFile } from "@/lib/electron/electron-api";
 
 // 索引种类：普通对话 / 团队会话
-export type TitleIndexKind = "normal" | "team";
+export type TitleIndexKind = "normal" | "team" | "schedule";
 
 // 单条索引项（teamId 仅团队索引使用）
 export interface TitleIndexEntry {
@@ -29,7 +29,11 @@ type TitleIndex = Record<string, TitleIndexEntry>;
 
 // 各 kind 的索引文件路径
 async function getIndexPath(kind: TitleIndexKind): Promise<string> {
-  const root = kind === "team" ? await getTeamSessionsRoot() : await getSessionsRoot();
+  const root = kind === "team"
+    ? await getTeamSessionsRoot()
+    : kind === "schedule"
+      ? await getScheduleSessionsRoot()
+      : await getSessionsRoot();
   return `${root}/titles.json`;
 }
 
@@ -37,6 +41,7 @@ async function getIndexPath(kind: TitleIndexKind): Promise<string> {
 const caches: Record<TitleIndexKind, TitleIndex | null> = {
   normal: null,
   team: null,
+  schedule: null,
 };
 
 // 读取索引文件（不存在 / 解析失败均视为空索引）。结果进缓存。
@@ -124,6 +129,7 @@ export async function rebuildTitleIndex(
 export function resetTitleIndexCache(): void {
   caches.normal = null;
   caches.team = null;
+  caches.schedule = null;
 }
 
 // 校验解析结果形状，避免脏数据进缓存

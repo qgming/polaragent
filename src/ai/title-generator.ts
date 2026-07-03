@@ -1,8 +1,8 @@
 // 对话标题自动生成
 // src/ai/title-generator.ts
 //
-// 使用 pi-ai 的 completeSimple 非流式 API，跟随设置中的 provider 配置。
-// 不再依赖 Electron IPC 的 /chat/completions 端点，支持所有 provider 类型。
+// 使用统一的轻量 HTTP 调用层，跟随设置中的 provider 路由配置。
+// 不依赖 Electron IPC 的 /chat/completions 端点，支持 3 种轻量接口类型。
 
 import { resolveDefaultModelService } from "./model-router";
 import { callLlm } from "./llm-call";
@@ -70,7 +70,7 @@ function truncateAtWordBoundary(title: string, limit: number): string {
 
 /**
  * 根据对话历史（用户问题 + AI 正文）生成一个简短标题。
- * 使用 pi-ai 的 completeSimple 非流式 API，跟随设置中的 provider 配置。
+ * 使用统一轻量调用层按当前模型路由发起非流式请求。
  * 失败返回 null（调用方保留原标题）。
  */
 export async function generateConversationTitle(
@@ -88,13 +88,14 @@ export async function generateConversationTitle(
     `- 标题长度控制在 ${MIN_TITLE_LENGTH}-${MAX_TITLE_LENGTH} 个字\n` +
     '- 优先使用具体名词和动作，避免"问题解答""方案讨论"等空泛标题\n' +
     "- 标题中不要包含引号、句号、序号或多余标点\n" +
-    "- 优先输出纯 JSON，不要包含解释、代码块标记或其他内容\n" +
-    "- 如果模型能力限制导致无法输出严格 JSON，至少输出可提取的单行标题键值\n\n" +
-    "标准输出示例：\n" +
-    '{"title": "实现用户登录功能"}\n\n' +
-    "退化输出示例（无法输出严格 JSON 时使用）：\n" +
-    "title: 实现用户登录功能\n" +
-    "标题：实现用户登录功能";
+    "- 你必须只输出一个 JSON 对象，不要包含解释、代码块标记、前后缀或额外文字\n" +
+    "- JSON 必须只有一个核心字段：title\n\n" +
+    "正确示例：\n" +
+    '{"title":"实现用户登录功能"}\n\n' +
+    "错误示例（禁止这样输出）：\n" +
+    "这是一个合适的标题：实现用户登录功能\n" +
+    "```json\n{\"title\":\"实现用户登录功能\"}\n```\n" +
+    "如果你已经输出过非 JSON 内容，必须立刻改为只输出单个 JSON 对象。";
 
   const userPrompt = `请为以下对话生成标题：\n\n${transcript}`;
 
@@ -105,8 +106,10 @@ export async function generateConversationTitle(
       temperature: 0.15,
       maxTokens: 48,
       jsonMode: true,
+      debugLabel: "title-generator",
     });
     const title = extractTitle(result);
+    console.debug("[title-generator] extracted-title", { raw: result, title });
     return title && title.length > 0 ? title : null;
   } catch (error) {
     console.error("生成对话标题失败:", error);
@@ -138,20 +141,63 @@ export function extractTitle(raw: string): string | null {
   const text = raw.trim();
   if (!text) return null;
 
+  console.debug("[title-generator] raw-response", raw);
+
   const unwrapped = unwrapStructuredOutput(text);
 
   for (const parsed of parseJsonObjectCandidates(unwrapped)) {
+    console.debug("[title-generator] parsed-json-candidate", parsed);
     if (typeof parsed.title === "string") {
-      return sanitizeTitle(parsed.title);
+      const title = sanitizeTitle(parsed.title);
+      console.debug("[title-generator] parsed-json-title", title);
+      return title;
     }
   }
 
   const labeledTitle = extractLastLabeledValue(unwrapped, ["title", "标题", "对话标题"]);
   if (labeledTitle) {
-    return sanitizeTitle(labeledTitle);
+    const title = sanitizeTitle(labeledTitle);
+    console.debug("[title-generator] labeled-title", title);
+    return title;
+  }
+
+  const inferredTitle = inferTitleFromFreeText(unwrapped);
+  if (inferredTitle) {
+    const title = sanitizeTitle(inferredTitle);
+    console.debug("[title-generator] inferred-title", title);
+    return title;
   }
 
   // 兜底：整段文本当标题清洗（模型可能未按 JSON 输出）
   const fallback = sanitizeTitle(unwrapped);
+  console.debug("[title-generator] fallback-title", fallback);
   return fallback.length > 0 ? fallback : null;
+}
+
+function inferTitleFromFreeText(raw: string): string | null {
+  const lines = raw
+    .replace(/```(?:json|text)?\s*/gi, "")
+    .replace(/\s*```/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const normalized = line
+      .replace(/^(?:这里是(?:生成的)?标题|建议标题|推荐标题|标题建议|可用标题)\s*[:：]\s*/i, "")
+      .replace(/^[-*]\s*/, "")
+      .trim();
+    if (!normalized) continue;
+    if (/^[{\[]/.test(normalized)) continue;
+    if (/^(?:说明|原因|解释|因为|这是|以下)/.test(normalized)) continue;
+    if (/title\s*[:：=]/i.test(normalized)) continue;
+    return normalized;
+  }
+
+  const inlineMatch = raw.match(/(?:标题|title)\s*(?:可以是|为|是)?\s*[:：]?\s*([^\r\n]+)/i);
+  if (inlineMatch?.[1]) {
+    return inlineMatch[1].trim();
+  }
+
+  return null;
 }

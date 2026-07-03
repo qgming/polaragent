@@ -25,4 +25,24 @@ describe("extractTitle", () => {
       `),
     ).toBe("为 Electron 应用增加自动更新");
   });
+
+  it("repairs json-like title output with bare key and single quotes", () => {
+    expect(extractTitle("{title: '实现用户登录功能',}" )).toBe("实现用户登录功能");
+  });
+
+  it("extracts title from explanatory free text", () => {
+    expect(
+      extractTitle("这里是生成的标题：实现用户登录功能"),
+    ).toBe("实现用户登录功能");
+  });
+
+  it("prefers the first meaningful title-like line from prose", () => {
+    expect(
+      extractTitle(`
+        以下是建议标题
+        为 Electron 应用增加自动更新
+        原因：这能概括核心任务
+      `),
+    ).toBe("为 Electron 应用增加自动更新");
+  });
 });

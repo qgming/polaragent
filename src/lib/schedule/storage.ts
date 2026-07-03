@@ -3,14 +3,21 @@ import {
   deleteFile,
   fileExists,
   getDataDir,
+  listDirectoryEntries,
   readFile,
   writeFile,
 } from "@/lib/electron/electron-api";
+import {
+  deleteScheduleSession,
+  deleteScheduleSessionFilesDir,
+} from "@/lib/session/session-operations";
+import { removeTitleIndex } from "@/lib/session/title-index";
 import type {
   ScheduleLogEntry,
   ScheduleStoreFile,
   ScheduledTask,
 } from "@/types/schedule";
+import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 const SCHEDULE_ROOT = "schedule";
 const TASKS_FILE = "tasks.json";
@@ -24,27 +31,24 @@ async function scheduleRoot(): Promise<string> {
   return `${normalize(await getDataDir())}/${SCHEDULE_ROOT}`;
 }
 
-async function ensureScheduleRoot(): Promise<string> {
-  const root = await scheduleRoot();
-  await createDirectory(root, { securityMode: "full" });
-  await createDirectory(`${root}/logs`, { securityMode: "full" });
-  return root;
-}
-
 async function tasksFilePath(): Promise<string> {
-  return `${await ensureScheduleRoot()}/${TASKS_FILE}`;
+  return `${await scheduleRoot()}/${TASKS_FILE}`;
 }
 
 async function logFilePath(taskId: string): Promise<string> {
-  return `${await ensureScheduleRoot()}/logs/${taskId}.json`;
+  return `${await scheduleRoot()}/logs/${taskId}.json`;
 }
 
 async function taskConfigDir(taskId: string): Promise<string> {
-  return `${await ensureScheduleRoot()}/tasks/${taskId}`;
+  return `${await scheduleRoot()}/tasks/${taskId}`;
 }
 
 async function taskConfigPath(taskId: string): Promise<string> {
   return `${await taskConfigDir(taskId)}/task.json`;
+}
+
+async function scheduleRunRootPath(taskId: string): Promise<string> {
+  return `${await scheduleRoot()}/runs/${taskId}`;
 }
 
 function sortTasks(tasks: ScheduledTask[]): ScheduledTask[] {
@@ -117,11 +121,43 @@ export async function saveScheduledTaskConfig(task: ScheduledTask): Promise<void
 }
 
 export async function deleteScheduledTaskConfig(taskId: string): Promise<void> {
-  const path = await taskConfigPath(taskId);
-  if (!(await fileExists(path, { securityMode: "full" }))) {
-    return;
+  const targets = [
+    await taskConfigDir(taskId),
+    await logFilePath(taskId),
+    await scheduleRunRootPath(taskId),
+  ];
+
+  for (const target of targets) {
+    if (await fileExists(target, { securityMode: "full" }).catch(() => false)) {
+      await deleteFile(target, { securityMode: "full" });
+    }
   }
-  await deleteFile(path, { securityMode: "full" });
+
+  const scheduleSessionRoot = await scheduleRoot();
+  const conversationRoot = `${scheduleSessionRoot}/conversations`;
+  const sessionFiles = await fileExists(conversationRoot, { securityMode: "full" })
+    .then(async (exists) => {
+      if (!exists) return [] as string[];
+      return readConversationSessionIds(taskId, conversationRoot);
+    })
+    .catch(() => [] as string[]);
+
+  await pMap(
+    sessionFiles,
+    async (sessionId) => {
+      await deleteScheduleSession(sessionId);
+      await deleteScheduleSessionFilesDir(sessionId);
+      await removeTitleIndex(sessionId, "schedule").catch(() => undefined);
+    },
+    { concurrency: LOCAL_IO_CONCURRENCY },
+  );
+}
+
+async function readConversationSessionIds(taskId: string, conversationRoot: string): Promise<string[]> {
+  const entries = await listDirectoryEntries(conversationRoot, { securityMode: "full" });
+  return entries
+    .filter((entry) => entry.isDir && entry.name.startsWith(`schedule-run--${taskId}--`))
+    .map((entry) => entry.name);
 }
 
 export async function loadScheduleLogs(taskId: string): Promise<ScheduleLogEntry[]> {
@@ -150,7 +186,7 @@ export async function appendScheduleLog(log: ScheduleLogEntry): Promise<Schedule
 }
 
 export async function scheduleRunRoot(taskId: string): Promise<string> {
-  const root = `${await ensureScheduleRoot()}/runs/${taskId}`;
+  const root = await scheduleRunRootPath(taskId);
   await createDirectory(root, { securityMode: "full" });
   return root;
 }

@@ -95,6 +95,11 @@ import { runBashTool } from "./bash";
 // ===== Widget 渲染 =====
 import { renderWidgetTool } from "./widget-render";
 import { scheduleTaskTool } from "./schedule-task";
+import {
+  deleteScheduleTaskTool,
+  listScheduleTasksTool,
+  updateScheduleTaskTool,
+} from "./schedule-management";
 
 // ===== MCP 集成 =====
 import { buildMcpTools, mcpToolLabels } from "./mcp";
@@ -273,6 +278,9 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
   schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
+  schedule("list_schedule_tasks", "列出定时任务", "列出当前已有的后台定时任务，返回 taskId、名称、启用状态、下次执行时间等信息。", listScheduleTasksTool),
+  schedule("update_schedule_task", "编辑定时任务", "按 taskId 或名称修改已有定时任务，可更新启用状态、调度方式和执行内容。", updateScheduleTaskTool),
+  schedule("delete_schedule_task", "删除定时任务", "按 taskId 或名称删除已有定时任务；删除前必须 confirm=true。", deleteScheduleTaskTool),
   interaction("ask_user", "询问用户", "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。", askUserTool),
   skill("list_skills", "列出技能", "列出当前助手或团队上下文可用的技能名称与适用场景。", listSkillsTool),
   skill("read_skill", "读取技能", "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。", readSkillTool),

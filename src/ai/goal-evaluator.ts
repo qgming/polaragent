@@ -2,7 +2,7 @@
 // src/ai/goal-evaluator.ts
 //
 // 调用 LLM 判断当前任务是否完成目标，并生成续跑 prompt。
-// 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
+// 使用统一轻量调用层，跟随设置中的 provider 路由配置。
 
 import { callLlm } from "./llm-call";
 import { resolveModelService, firstModelService } from "./model-router";

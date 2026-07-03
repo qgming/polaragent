@@ -1,6 +1,7 @@
 export {
   clearTeamSessions,
   deleteSession,
+  deleteScheduleSession,
   deleteTeamSession,
   listSessions,
   listTeamSessions,
@@ -11,6 +12,7 @@ export {
   setTeamSessionTitle,
 } from "./lifecycle";
 export {
+  deleteScheduleSessionFilesDir,
   deleteSessionFilesDir,
   deleteTeamSessionFilesDir,
   ensureSessionFilesDir,

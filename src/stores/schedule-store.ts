@@ -54,9 +54,11 @@ interface ScheduleStoreState {
 
   initialize: () => Promise<void>;
   loadTasks: () => Promise<void>;
+  getTaskByIdOrName: (query: { id?: string; name?: string }) => ScheduledTask | null;
   createTask: (request: CreateScheduledTaskRequest) => Promise<ScheduledTask>;
   updateTask: (request: UpdateScheduledTaskRequest) => Promise<ScheduledTask>;
   deleteTask: (taskId: string) => Promise<void>;
+  stopTaskRun: (taskId: string) => boolean;
   toggleTask: (taskId: string, enabled: boolean) => Promise<void>;
   runTaskNow: (taskId: string) => Promise<ScheduleLogEntry>;
   loadLogs: (taskId: string) => Promise<ScheduleLogEntry[]>;
@@ -113,6 +115,38 @@ export const useScheduleStore = create<ScheduleStoreState>((set, get) => ({
     }
   },
 
+  getTaskByIdOrName: ({ id, name }) => {
+    const tasks = get().tasks;
+    if (id) {
+      return tasks.find((task) => task.id === id) ?? null;
+    }
+
+    const normalizedName = name?.trim().toLowerCase();
+    if (!normalizedName) {
+      return null;
+    }
+
+    const exactMatches = tasks.filter((task) => task.name.trim().toLowerCase() === normalizedName);
+    if (exactMatches.length === 1) {
+      return exactMatches[0];
+    }
+
+    if (exactMatches.length > 1) {
+      throw new Error(`存在多个同名定时任务「${name}」，请改用 taskId 指定目标。`);
+    }
+
+    const partialMatches = tasks.filter((task) => task.name.trim().toLowerCase().includes(normalizedName));
+    if (partialMatches.length === 1) {
+      return partialMatches[0];
+    }
+
+    if (partialMatches.length > 1) {
+      throw new Error(`有多个定时任务名称包含「${name}」，请改用更完整的名称或 taskId。`);
+    }
+
+    return null;
+  },
+
   createTask: async (request) => {
     const timestamp = Date.now();
     const draft: ScheduledTask = {
@@ -131,8 +165,13 @@ export const useScheduleStore = create<ScheduleStoreState>((set, get) => ({
       nextRunAt: computeNextRunAt(draft, timestamp),
     };
     const nextTasks = sortTasks([...get().tasks, task]);
-    await saveScheduledTasks(nextTasks);
     scheduleRuntime.syncTasks(nextTasks);
+    try {
+      await saveScheduledTasks(nextTasks);
+    } catch (error) {
+      scheduleRuntime.syncTasks(get().tasks);
+      throw error;
+    }
     set((state) => ({
       tasks: nextTasks,
       runtimeStates: scheduleRuntime.getStates(),
@@ -164,17 +203,31 @@ export const useScheduleStore = create<ScheduleStoreState>((set, get) => ({
       nextRunAt: computeNextRunAt(merged, Date.now()),
     };
     const nextTasks = sortTasks(get().tasks.map((task) => (task.id === updated.id ? updated : task)));
-    await saveScheduledTasks(nextTasks);
     scheduleRuntime.syncTasks(nextTasks);
+    if (request.enabled === false) {
+      scheduleRuntime.abortTask(updated.id);
+    }
+    try {
+      await saveScheduledTasks(nextTasks);
+    } catch (error) {
+      scheduleRuntime.syncTasks(get().tasks);
+      throw error;
+    }
     set({ tasks: nextTasks, runtimeStates: scheduleRuntime.getStates() });
     return updated;
   },
 
   deleteTask: async (taskId) => {
+    const currentTasks = get().tasks;
     const nextTasks = get().tasks.filter((task) => task.id !== taskId);
-    await saveScheduledTasks(nextTasks);
-    await deleteScheduledTaskConfig(taskId);
-    scheduleRuntime.syncTasks(nextTasks);
+    scheduleRuntime.removeTask(taskId);
+    try {
+      await saveScheduledTasks(nextTasks);
+      await deleteScheduledTaskConfig(taskId);
+    } catch (error) {
+      scheduleRuntime.syncTasks(currentTasks);
+      throw error;
+    }
     set((state) => {
       const nextLogs = { ...state.logsByTask };
       delete nextLogs[taskId];
@@ -185,6 +238,8 @@ export const useScheduleStore = create<ScheduleStoreState>((set, get) => ({
       };
     });
   },
+
+  stopTaskRun: (taskId) => scheduleRuntime.abortTask(taskId),
 
   toggleTask: async (taskId, enabled) => {
     await get().updateTask({ id: taskId, enabled });

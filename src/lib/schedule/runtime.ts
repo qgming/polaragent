@@ -117,6 +117,8 @@ class ScheduleRuntime {
 
   private runningTasks = new Set<string>();
 
+  private removedTasks = new Set<string>();
+
   private states = new Map<string, ScheduleTaskRuntimeState>();
 
   async initialize(): Promise<void> {
@@ -150,21 +152,62 @@ class ScheduleRuntime {
     this.replaceTasks(tasks);
   }
 
+  removeTask(taskId: string): void {
+    this.markTaskRemoved(taskId);
+    emitRuntimeChange();
+  }
+
+  abortTask(taskId: string): boolean {
+    const currentRunId = this.states.get(taskId)?.currentRunId;
+    if (!currentRunId) {
+      return false;
+    }
+
+    const threadId = createScheduleThreadId(taskId, currentRunId);
+    agentManager.abortThread(threadId);
+    useTaskMonitorStore.getState().clearThread(threadId);
+
+    const currentState = this.states.get(taskId);
+    if (currentState) {
+      this.states.set(taskId, {
+        ...currentState,
+        lastMessage: "停止中",
+      });
+      emitRuntimeChange();
+    }
+
+    return true;
+  }
+
   private replaceTasks(tasks: ScheduledTask[]): void {
     const incoming = new Map(tasks.map((task) => [task.id, task]));
     for (const taskId of this.tasks.keys()) {
       if (!incoming.has(taskId)) {
-        this.clearTimer(taskId);
-        this.tasks.delete(taskId);
-        this.states.delete(taskId);
+        this.markTaskRemoved(taskId);
       }
     }
 
     for (const task of tasks) {
+      this.removedTasks.delete(task.id);
       this.tasks.set(task.id, task);
       this.scheduleTask(task);
     }
     emitRuntimeChange();
+  }
+
+  private markTaskRemoved(taskId: string): void {
+    this.removedTasks.add(taskId);
+    this.clearTimer(taskId);
+
+    const currentRunId = this.states.get(taskId)?.currentRunId;
+    if (currentRunId) {
+      const threadId = createScheduleThreadId(taskId, currentRunId);
+      agentManager.abortThread(threadId);
+      useTaskMonitorStore.getState().clearThread(threadId);
+    }
+
+    this.tasks.delete(taskId);
+    this.states.delete(taskId);
   }
 
   private clearTimer(taskId: string): void {
@@ -177,6 +220,7 @@ class ScheduleRuntime {
 
   private scheduleTask(task: ScheduledTask): void {
     this.clearTimer(task.id);
+    const previousState = this.states.get(task.id);
 
     let nextRunAt: number | undefined;
     try {
@@ -198,6 +242,8 @@ class ScheduleRuntime {
       state: this.runningTasks.has(task.id) ? "running" : task.enabled ? "idle" : "paused",
       lastRunAt: task.lastRunAt,
       nextRunAt,
+      currentRunId: previousState?.currentRunId,
+      lastMessage: previousState?.lastMessage,
     });
 
     if (!task.enabled || nextRunAt === undefined) {
@@ -318,10 +364,18 @@ class ScheduleRuntime {
       triggeredBy: trigger,
     };
 
+    const latestTask = this.tasks.get(taskId);
+    if (!latestTask || this.removedTasks.has(taskId)) {
+      this.runningTasks.delete(taskId);
+      this.states.delete(taskId);
+      emitRuntimeChange();
+      return log;
+    }
+
     const taskLogs = await appendScheduleLog(log);
-    const nextRunAt = computeNextRunAt(task, finishedAt);
+    const nextRunAt = computeNextRunAt(latestTask, finishedAt);
     const updatedTask: ScheduledTask = {
-      ...task,
+      ...latestTask,
       lastRunAt: finishedAt,
       nextRunAt,
       lastRunStatus: status,

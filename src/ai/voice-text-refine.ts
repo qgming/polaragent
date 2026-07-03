@@ -2,7 +2,7 @@
 // src/ai/voice-text-refine.ts
 //
 // 使用配置的 AI 模型整理语音识别文本，去除口头语、语气词等。
-// 使用 pi-ai 统一的 streamSimple API，跟随设置中的 provider 配置。
+// 使用统一轻量调用层，跟随设置中的 provider 路由配置。
 
 import { callLlm } from "./llm-call";
 import { resolveDefaultModelService } from "./model-router";

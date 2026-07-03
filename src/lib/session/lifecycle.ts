@@ -229,6 +229,10 @@ export async function deleteTeamSession(sessionId: string): Promise<void> {
   return deleteSessionImpl(sessionId, getTeamRepo, "team::");
 }
 
+export async function deleteScheduleSession(sessionId: string): Promise<void> {
+  return deleteSessionImpl(sessionId, getScheduleRepo, "schedule::");
+}
+
 export async function clearTeamSessions(teamId: string): Promise<string[]> {
   const sessions = await listTeamSessions().catch(() => []);
   const owned = sessions.filter((s) => s.teamId === teamId);

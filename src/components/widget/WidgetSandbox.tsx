@@ -23,28 +23,54 @@ const SANDBOX_ATTR = "allow-scripts";
 const MIN_WIDGET_HEIGHT = 56;
 const HOST_RESIZE_MESSAGE = "WIDGET_HOST_RESIZE";
 const HOST_RESIZE_RETRY_INTERVAL_MS = 120;
-const HOST_RESIZE_RETRY_LIMIT = 20;
-const WIDGET_BASE_CSS = `
+// host resize retry 上限：原 20 次 × 120ms = 2.4 秒后停。但中文字体加载、
+// SVG 异步布局、widget IIFE 修改 DOM 等延迟可能 > 2.4 秒，导致 host 早停后
+// widget 真实高度已增加但无人问询。提升到 60 次 × 120ms ≈ 7.2 秒，且改为
+// 与「连续 N 次无增长」组合判断（见 scheduleHostResizeRetry 的 stableStreak），
+// 避免 host 在 widget 仍在增高时彻底退出。
+const HOST_RESIZE_RETRY_LIMIT = 60;
+const HOST_RESIZE_STABLE_STREAK_LIMIT = 6;
+const WIDGET_THEME_TOKENS_CSS = `
 :root {
   color-scheme: light dark;
-  --widget-fg: #111827;
-  --widget-muted: #6b7280;
+  --widget-fg: #202421;
+  --widget-muted: #858b86;
   --widget-border: #e5e7eb;
-  --widget-surface: rgba(249, 250, 251, 0.7);
-  --widget-button: #2563eb;
-  --widget-button-hover: #1d4ed8;
+  --widget-card: #ffffff;
+  --widget-surface: #f5f5f7;
+  --widget-tint: #f1eafb;
+  --widget-accent: #9b6fe0;
+  --widget-accent-strong: #5b3a9e;
+  --widget-button: #5b3a9e;
+  --widget-button-hover: #4f3289;
+  --widget-button-fg: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --widget-fg: #e5e7eb;
-    --widget-muted: #9ca3af;
-    --widget-border: #374151;
-    --widget-surface: rgba(31, 41, 55, 0.45);
-    --widget-button: #3b82f6;
-    --widget-button-hover: #60a5fa;
+    --widget-fg: #ededed;
+    --widget-muted: #9e9e9e;
+    --widget-border: #2e2e2e;
+    --widget-card: #1a1a1a;
+    --widget-surface: #232326;
+    --widget-tint: #2e2342;
+    --widget-accent: #b898f0;
+    --widget-accent-strong: #c9aef5;
+    --widget-button: #b898f0;
+    --widget-button-hover: #c9aef5;
+    --widget-button-fg: #140f1d;
   }
 }
+`;
+const WIDGET_BASE_CSS = `
+${WIDGET_THEME_TOKENS_CSS}
 *, *::before, *::after { box-sizing: border-box; }
+/* 注意：body 用 overflow:hidden 是 widget 内最深层防滚动条。
+   iframe 自身 scrolling="no" + overflow:hidden 是「视口层」，
+   body overflow:hidden 是「内容层」——双层防滚动，冗余但稳。
+   之前曾把 body 改 visible 试图让 scrollHeight 上报准确，但实测会引入
+   widget 内部滚动条（content overflow 触发浏览器 fallback 渲染）且并未真正修高度。
+   高度精度由父端 syncFrameHeight 的 HEIGHT_BUFFER 缓冲兜底，
+   无需让 body overflow:visible 才能拿到准确上报值。 */
 html, body { width: 100%; min-height: 100%; margin: 0; padding: 0; overflow: hidden; }
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -53,33 +79,43 @@ body {
   color: var(--widget-fg);
   background: transparent;
 }
+/* widget 根节点不再额外加底部 padding。
+   widget 的下方留白由 widget_card 模板内的 padding 控制（各模板自己 16px），
+   高度精度问题由 syncFrameHeight 的 HEIGHT_BUFFER 缓冲兜底，
+   避免双重底部留白让 widget 看上去空旷。 */
 #widget-root {
   display: block;
   width: 100%;
 }
 table { border-collapse: collapse; width: 100%; }
 th, td { border: 1px solid var(--widget-border); padding: 8px 12px; text-align: left; }
-th { background: var(--widget-surface); font-weight: 600; }
+th { background: var(--widget-surface); color: var(--widget-muted); font-weight: 600; }
 input, select, textarea, button { font-family: inherit; font-size: inherit; }
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--widget-border);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 8px 10px;
   color: var(--widget-fg);
-  background: transparent;
+  background: var(--widget-card);
 }
 button {
   border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
+  border-radius: 8px;
+  padding: 8px 14px;
   cursor: pointer;
   background: var(--widget-button);
-  color: #fff;
+  color: var(--widget-button-fg);
+  font-weight: 600;
 }
 button:hover { background: var(--widget-button-hover); }
+:where(button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--widget-accent);
+  outline-offset: 2px;
+}
 svg { display: inline-block; vertical-align: middle; }
 `;
+const WIDGET_HOST_TOKEN_OVERRIDE_CSS = `${WIDGET_THEME_TOKENS_CSS}`;
 
 type FormStateItem =
   | { key: string; tag: "input"; inputType: string; value: string; checked: boolean }
@@ -142,39 +178,104 @@ function sanitizeWidgetHtmlForMeasurement(rawHtml: string): string {
   }
 }
 
+function extractWidgetHeadStyleCss(rawHtml: string): string {
+  const cleanedHtml = stripUnsafeWidgetTags(rawHtml);
+  const headMatch = cleanedHtml.match(/<head\b[^>]*>([\s\S]*)<\/head>/i);
+  if (!headMatch) return "";
+
+  const headHtml = headMatch[1];
+  if (typeof DOMParser !== "undefined") {
+    try {
+      const doc = new DOMParser().parseFromString(`<html><head>${headHtml}</head><body></body></html>`, "text/html");
+      return Array.from(doc.head.querySelectorAll("style"))
+        .map((style) => style.textContent ?? "")
+        .join("\n");
+    } catch {
+      // fall through to regex extraction
+    }
+  }
+
+  const chunks: string[] = [];
+  headHtml.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_match, css: string) => {
+    chunks.push(css);
+    return "";
+  });
+  return chunks.join("\n");
+}
+
+function measureVisualBottom(root: Element | null): number {
+  if (!root) return 0;
+
+  const rootRect = root.getBoundingClientRect();
+  if (!Number.isFinite(rootRect.top) || !Number.isFinite(rootRect.bottom)) {
+    return 0;
+  }
+
+  const view = root.ownerDocument.defaultView;
+  let maxBottom = Math.ceil(rootRect.height);
+  for (const element of Array.from(root.querySelectorAll("*"))) {
+    if (view?.getComputedStyle(element).position === "fixed") continue;
+    const rect = element.getBoundingClientRect();
+    if (!Number.isFinite(rect.top) || !Number.isFinite(rect.bottom)) continue;
+    maxBottom = Math.max(maxBottom, Math.ceil(rect.bottom - rootRect.top));
+  }
+  return maxBottom;
+}
+
 function measureWidgetFallbackHeight(rawHtml: string, width: number): number | null {
   if (typeof document === "undefined" || width <= 0) return null;
 
-  const container = document.createElement("div");
-  container.setAttribute("aria-hidden", "true");
-  container.style.position = "absolute";
-  container.style.left = "-100000px";
-  container.style.top = "0";
-  container.style.width = `${Math.ceil(width)}px`;
-  container.style.visibility = "hidden";
-  container.style.pointerEvents = "none";
-  container.style.overflow = "visible";
-  container.style.zIndex = "-1";
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.tabIndex = -1;
+  iframe.style.position = "absolute";
+  iframe.style.left = "-100000px";
+  iframe.style.top = "0";
+  iframe.style.width = `${Math.ceil(width)}px`;
+  iframe.style.height = "1px";
+  iframe.style.visibility = "hidden";
+  iframe.style.pointerEvents = "none";
+  iframe.style.overflow = "hidden";
+  iframe.style.border = "0";
+  iframe.style.zIndex = "-1";
+  document.body.appendChild(iframe);
 
-  const style = document.createElement("style");
-  style.textContent = `${WIDGET_BASE_CSS}\n#widget-root{display:block;width:100%;}`;
+  const doc = iframe.contentDocument;
+  if (!doc) {
+    iframe.remove();
+    return null;
+  }
 
-  const root = document.createElement("div");
-  root.id = "widget-root";
-  root.innerHTML = sanitizeWidgetHtmlForMeasurement(rawHtml);
+  const measurementCss = [
+    WIDGET_BASE_CSS,
+    // fallback 只关心固有内容高度，不要让 html/body 的 min-height 跟 iframe 视口绑定。
+    "html, body { min-height: 0 !important; height: auto !important; overflow: visible !important; }",
+    "body { margin: 0 !important; }",
+    extractWidgetHeadStyleCss(rawHtml),
+    WIDGET_HOST_TOKEN_OVERRIDE_CSS,
+  ].join("\n");
 
-  container.append(style, root);
-  document.body.appendChild(container);
+  doc.open();
+  doc.write(`<!DOCTYPE html><html lang=zh-CN><head><meta charset=\"UTF-8\"><style>${measurementCss}</style></head><body><div id=widget-root>${sanitizeWidgetHtmlForMeasurement(rawHtml)}</div></body></html>`);
+  doc.close();
 
+  const body = doc.body;
+  const root = doc.getElementById("widget-root");
+  const bodyRect = body?.getBoundingClientRect();
+  const rootRect = root?.getBoundingClientRect();
   const measuredHeight = Math.max(
     MIN_WIDGET_HEIGHT,
-    Math.ceil(container.getBoundingClientRect().height),
-    Math.ceil(root.getBoundingClientRect().height),
-    container.scrollHeight,
-    root.scrollHeight,
+    body?.scrollHeight ?? 0,
+    body?.offsetHeight ?? 0,
+    bodyRect ? Math.ceil(bodyRect.height) : 0,
+    measureVisualBottom(body),
+    root?.scrollHeight ?? 0,
+    root?.offsetHeight ?? 0,
+    rootRect ? Math.ceil(rootRect.height) : 0,
+    measureVisualBottom(root),
   );
 
-  container.remove();
+  iframe.remove();
   return Number.isFinite(measuredHeight) ? measuredHeight : null;
 }
 
@@ -306,6 +407,22 @@ ${WIDGET_BASE_CSS}
     }
   }
 
+  function measureVisualBottom(rootEl) {
+    if (!rootEl) return 0;
+    var rootRect = rootEl.getBoundingClientRect();
+    if (!isFinite(rootRect.top) || !isFinite(rootRect.bottom)) return 0;
+    var maxBottom = Math.ceil(rootRect.height);
+    var elements = rootEl.querySelectorAll("*");
+    for (var i = 0; i < elements.length; i += 1) {
+      var el = elements[i];
+      if (window.getComputedStyle && window.getComputedStyle(el).position === "fixed") continue;
+      var rect = el.getBoundingClientRect();
+      if (!isFinite(rect.top) || !isFinite(rect.bottom)) continue;
+      maxBottom = Math.max(maxBottom, Math.ceil(rect.bottom - rootRect.top));
+    }
+    return maxBottom;
+  }
+
   function emitResize() {
     var root = document.documentElement;
     var body = document.body;
@@ -318,12 +435,14 @@ ${WIDGET_BASE_CSS}
       body ? body.scrollHeight : 0,
       body ? body.offsetHeight : 0,
       bodyRect ? Math.ceil(bodyRect.height) : 0,
+      body ? measureVisualBottom(body) : 0,
       root ? root.scrollHeight : 0,
       root ? root.offsetHeight : 0,
       rootRect ? Math.ceil(rootRect.height) : 0,
       widget ? widget.scrollHeight : 0,
       widget ? widget.offsetHeight : 0,
-      widgetRect ? Math.ceil(widgetRect.height) : 0
+      widgetRect ? Math.ceil(widgetRect.height) : 0,
+      widget ? measureVisualBottom(widget) : 0
     );
     post({ type: "WIDGET_RESIZE", height: nextHeight });
   }
@@ -340,16 +459,25 @@ ${WIDGET_BASE_CSS}
   function scheduleSyncBurst() {
     syncWidgetFrame();
     requestAnimationFrame(syncWidgetFrame);
+    // 短窗 burst（32~420ms）：覆盖首屏布局稳定、SVG 第一帧渲染、widget 内 IIFE 改 DOM。
     window.setTimeout(syncWidgetFrame, 32);
     window.setTimeout(syncWidgetFrame, 96);
     window.setTimeout(syncWidgetFrame, 220);
+    // 长窗 burst（600~2000ms）：覆盖中文字体加载完 metric 切换、fonts.ready 二次重排、
+    //   异步数据填充后 DOM 变化、SVG 渐进布局。原只到 420ms 不够，导致 widget 异步
+    //   增高后 host 不再收到 WIDGET_RESIZE 上报，host frameHeight 锁在早期较小的值，
+    //   表现就是「下方被截且不是固定值」。
+    window.setTimeout(syncWidgetFrame, 600);
+    window.setTimeout(syncWidgetFrame, 1000);
+    window.setTimeout(syncWidgetFrame, 1500);
+    window.setTimeout(syncWidgetFrame, 2000);
     if (resizeBurstTimer !== null) {
       window.clearTimeout(resizeBurstTimer);
     }
     resizeBurstTimer = window.setTimeout(function() {
       syncWidgetFrame();
       resizeBurstTimer = null;
-    }, 420);
+    }, 3000);
   }
 
   function documentOpenShim() {
@@ -459,6 +587,9 @@ ${WIDGET_BASE_CSS}
 })();
 <\/script>
 ${headContent}
+<style>
+${WIDGET_HOST_TOKEN_OVERRIDE_CSS}
+</style>
 </head>
 <body>
 <div id=widget-root>${bodyContent}</div>
@@ -474,6 +605,13 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
   const hostSyncTimersRef = useRef<number[]>([]);
   const hostRetryTimerRef = useRef<number | null>(null);
   const hostRetryCountRef = useRef(0);
+  const lastObservedMeasurementWidthRef = useRef(0);
+  // 记录 host retry 期间「lastMeasuredHeightRef 连续无增长」的次数：
+  // 一次 tick 内若 lastMeasuredHeightRef 与上一次 tick 持平，streak++；
+  // 否则 streak 归零。连续达到 HOST_RESIZE_STABLE_STREAK_LIMIT 才视为稳定、
+  // 停止 retry。比单纯「>MIN 就立刻停」更稳，覆盖字体加载延迟、SVG 异步等场景。
+  const hostRetryStableStreakRef = useRef(0);
+  const lastTickMeasuredHeightRef = useRef(MIN_WIDGET_HEIGHT);
   const reportedHeightRef = useRef(MIN_WIDGET_HEIGHT);
   const fallbackHeightRef = useRef<number | null>(null);
   const liveHeightRef = useRef<number | null>(null);
@@ -508,6 +646,9 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
       reportedHeightRef.current = MIN_WIDGET_HEIGHT;
       fallbackHeightRef.current = null;
       liveHeightRef.current = null;
+      lastObservedMeasurementWidthRef.current = 0;
+      hostRetryStableStreakRef.current = 0;
+      lastTickMeasuredHeightRef.current = MIN_WIDGET_HEIGHT;
       lastMeasuredHeightRef.current = MIN_WIDGET_HEIGHT;
       setFrameHeight(MIN_WIDGET_HEIGHT);
     } else if (contentChanged) {
@@ -548,12 +689,15 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
   };
 
   const syncFrameHeight = () => {
-    const nextHeight = Math.max(
+    const rawHeight = Math.max(
       MIN_WIDGET_HEIGHT,
       reportedHeightRef.current,
       fallbackHeightRef.current ?? 0,
       liveHeightRef.current ?? 0,
     );
+    // 动态缓冲：内容越高，缓冲越大，覆盖中文字体 metrics、SVG 异步布局等差异。
+    const HEIGHT_BUFFER = Math.max(16, Math.ceil(rawHeight * 0.04));
+    const nextHeight = rawHeight + HEIGHT_BUFFER;
     lastMeasuredHeightRef.current = nextHeight;
     setFrameHeight(nextHeight);
   };
@@ -591,12 +735,15 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
       root?.scrollHeight ?? 0,
       root?.offsetHeight ?? 0,
       rootRect ? Math.ceil(rootRect.height) : 0,
+      measureVisualBottom(root),
       body?.scrollHeight ?? 0,
       body?.offsetHeight ?? 0,
       bodyRect ? Math.ceil(bodyRect.height) : 0,
+      measureVisualBottom(body),
       widget?.scrollHeight ?? 0,
       widget?.offsetHeight ?? 0,
       widgetRect ? Math.ceil(widgetRect.height) : 0,
+      measureVisualBottom(widget),
     );
 
     if (!Number.isFinite(nextHeight) || nextHeight <= 0) return false;
@@ -670,14 +817,24 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
   const scheduleHostResizeRetry = () => {
     clearHostResizeRetry();
     hostRetryCountRef.current = 0;
+    hostRetryStableStreakRef.current = 0;
+    lastTickMeasuredHeightRef.current = MIN_WIDGET_HEIGHT;
 
     const tick = () => {
-      if (lastMeasuredHeightRef.current > MIN_WIDGET_HEIGHT) {
+      if (hostRetryCountRef.current >= HOST_RESIZE_RETRY_LIMIT) {
         clearHostResizeRetry();
         return;
       }
 
-      if (hostRetryCountRef.current >= HOST_RESIZE_RETRY_LIMIT) {
+      const currentMeasured = lastMeasuredHeightRef.current;
+      if (currentMeasured <= lastTickMeasuredHeightRef.current) {
+        hostRetryStableStreakRef.current += 1;
+      } else {
+        hostRetryStableStreakRef.current = 0;
+      }
+      lastTickMeasuredHeightRef.current = currentMeasured;
+
+      if (hostRetryStableStreakRef.current >= HOST_RESIZE_STABLE_STREAK_LIMIT) {
         clearHostResizeRetry();
         return;
       }
@@ -704,9 +861,6 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
         const nextHeight = Math.max(MIN_WIDGET_HEIGHT, Math.ceil(msg.height));
         reportedHeightRef.current = nextHeight;
         syncFrameHeight();
-        if (nextHeight > MIN_WIDGET_HEIGHT) {
-          clearHostResizeRetry();
-        }
       }
     }
 
@@ -762,9 +916,18 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
     if (!iframe || typeof ResizeObserver !== "function") return undefined;
 
     const observer = new ResizeObserver(() => {
+      const nextWidth = getMeasurementWidth();
+      const widthChanged = nextWidth > 0 && nextWidth !== lastObservedMeasurementWidthRef.current;
+      if (widthChanged) {
+        lastObservedMeasurementWidthRef.current = nextWidth;
+      }
+
       void measureLiveIframeHeight();
       syncFallbackMeasuredHeight();
       requestResizeSyncBurst();
+      if (widthChanged) {
+        scheduleHostResizeRetry();
+      }
     });
 
     const parent = iframe.parentElement;
@@ -799,6 +962,13 @@ export function WidgetSandbox({ widgetId, html, data = {}, updateMode = "replace
         requestResizeSyncBurst();
         scheduleHostResizeRetry();
       }}
+      /* iframe 自身必须 overflow:hidden + scrolling="no"：
+         (1) iframe 是 HTML replaced element，超出 height 的内容会被 viewport 裁，
+             scrolling 控制是否给用户出滚动条——我们要「不要滚动条」 → scrolling="no"。
+         (2) overflow:"hidden" 同步阻断，确保 view 端不出任何滚动 UI。
+         高度精度由父端 frameHeight + syncFrameHeight 的动态 HEIGHT_BUFFER
+         保证：iframe height 永远略大于 widget 真实内容，不会出现「内容溢出 iframe 视口」
+         的视觉被切情形。 */
       style={{ height: frameHeight, minHeight: frameHeight, overflow: "hidden", maxHeight: "none" }}
     />
   );

@@ -27,12 +27,12 @@ function register(ipcMain) {
   });
   
   // 读取二进制文件，返回 base64 编码（渲染层再 atob 转 Uint8Array）
-  ipcMain.handle("fs:read-binary-file", async (_event, { path: target }) => {
-    const validation = validateFileAccess(target, "read");
-    if (!validation.allowed) {
-      throw new Error(validation.reason);
+  ipcMain.handle("fs:read-binary-file", async (_event, { path: binaryTarget }) => {
+    const binaryValidation = validateFileAccess(binaryTarget, "read");
+    if (!binaryValidation.allowed) {
+      throw new Error(binaryValidation.reason);
     }
-    const buffer = await fsp.readFile(target);
+    const buffer = await fsp.readFile(binaryTarget);
     return buffer.toString("base64");
   });
   
@@ -153,12 +153,12 @@ function register(ipcMain) {
   });
   
   // 获取文件信息（读取操作）
-  ipcMain.handle("fs:stat", async (_event, { path: target }) => {
-    const validation = validateFileAccess(target, "read");
-    if (!validation.allowed) {
-      throw new Error(validation.reason);
+  ipcMain.handle("fs:stat", async (_event, { path: statTarget }) => {
+    const statValidation = validateFileAccess(statTarget, "read");
+    if (!statValidation.allowed) {
+      throw new Error(statValidation.reason);
     }
-    const stat = await fsp.stat(target);
+    const stat = await fsp.stat(statTarget);
     return { 
       isDirectory: stat.isDirectory(), 
       isFile: stat.isFile(), 
@@ -170,16 +170,16 @@ function register(ipcMain) {
   
   // 创建临时目录，返回绝对路径（临时目录始终允许）
   ipcMain.handle("fs:create-temp-dir", async (_event, { prefix }) => {
-    const tmpBase = os.tmpdir();
-    const dir = await fsp.mkdtemp(path.join(tmpBase, prefix || "polaragent-"));
+    const tmpDirBase = os.tmpdir();
+    const dir = await fsp.mkdtemp(path.join(tmpDirBase, prefix || "polaragent-"));
     return dir;
   });
   
   // 创建临时文件，返回绝对路径（临时文件始终允许）
   ipcMain.handle("fs:create-temp-file", async (_event, { prefix, suffix }) => {
-    const tmpBase = os.tmpdir();
+    const tmpFileBase = os.tmpdir();
     const fileName = `${prefix || ""}${Date.now()}-${Math.random().toString(36).slice(2)}${suffix || ""}`;
-    const filePath = path.join(tmpBase, fileName);
+    const filePath = path.join(tmpFileBase, fileName);
     await fsp.writeFile(filePath, "", "utf8");
     return filePath;
   });

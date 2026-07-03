@@ -39,12 +39,12 @@
       "description": "允许读取、搜索、查看和交互，阻止写入、删除和命令执行。"
     },
     "full": {
-      "label": "完全",
+      "label": "完全访问",
       "description": "不做额外权限拦截，仍保留工具自身的安全校验。"
     },
     "aiReview": {
-      "label": "自动审查",
-      "description": "每次工具执行前由 AI 判断是否允许，不确定时拒绝。"
+      "label": "替我审批",
+      "description": "每次工具执行前由 AI 审批，并说明允许或拒绝的具体依据。"
     },
     "safe": {
       "label": "安全",

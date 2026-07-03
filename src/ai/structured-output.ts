@@ -19,9 +19,11 @@ export function parseJsonObjectCandidates(raw: string): JsonRecord[] {
 
   for (const text of collectCandidateTexts(raw)) {
     pushParsedObject(candidates, seen, text);
+    pushParsedObject(candidates, seen, repairJsonLikeObjectText(text));
 
     for (const segment of extractBalancedSegments(text, "{", "}")) {
       pushParsedObject(candidates, seen, segment);
+      pushParsedObject(candidates, seen, repairJsonLikeObjectText(segment));
     }
   }
 
@@ -130,8 +132,11 @@ function collectCandidateTexts(raw: string): string[] {
 }
 
 function pushParsedObject(target: JsonRecord[], seen: Set<string>, text: string): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
   try {
-    const parsed = JSON.parse(text) as unknown;
+    const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
 
     const signature = JSON.stringify(parsed);
@@ -141,6 +146,66 @@ function pushParsedObject(target: JsonRecord[], seen: Set<string>, text: string)
   } catch {
     // 忽略无效 JSON，继续走规则提取兜底。
   }
+}
+
+function repairJsonLikeObjectText(raw: string): string {
+  let text = unwrapStructuredOutput(raw)
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\uFEFF/g, "")
+    .trim();
+
+  if (!text.startsWith("{") || !text.endsWith("}")) {
+    return text;
+  }
+
+  text = text.replace(/[:：]/g, ":");
+
+  text = text.replace(
+    /([{,]\s*)'([^'\r\n]+?)'(\s*:)/g,
+    (_match, prefix: string, key: string, suffix: string) => {
+      return `${prefix}${JSON.stringify(key)}${suffix}`;
+    },
+  );
+
+  text = text.replace(
+    /([{,]\s*)([A-Za-z_\u4e00-\u9fa5][A-Za-z0-9_\-\u4e00-\u9fa5]*)(\s*:)/g,
+    (_match, prefix: string, key: string, suffix: string) => {
+      return `${prefix}${JSON.stringify(key)}${suffix}`;
+    },
+  );
+
+  text = text.replace(
+    /(:\s*)'([^'\\]*(?:\\.[^'\\]*)*)'/g,
+    (_match, prefix: string, value: string) => {
+      return `${prefix}${JSON.stringify(value)}`;
+    },
+  );
+
+  text = text.replace(/,\s*([}\]])/g, "$1");
+
+  text = text.replace(
+    /(:\s*)([^"\[{\r\n][^,}\r\n]*?)(\s*)(?=[,}])/g,
+    (_match, prefix: string, value: string, trailingWhitespace: string) => {
+      const normalized = normalizeJsonLikeScalar(value);
+      return `${prefix}${normalized}${trailingWhitespace}`;
+    },
+  );
+
+  return text;
+}
+
+function normalizeJsonLikeScalar(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '""';
+  if (/^(?:true|false|null)$/i.test(trimmed)) return trimmed.toLowerCase();
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return trimmed;
+  if (/^[\[{]/.test(trimmed)) return trimmed;
+  if (/^"(?:[^"\\]|\\.)*"$/.test(trimmed)) return trimmed;
+  if (/^'(?:[^'\\]|\\.)*'$/.test(trimmed)) {
+    return JSON.stringify(trimmed.slice(1, -1));
+  }
+  return JSON.stringify(trimmed);
 }
 
 function extractBalancedSegments(

@@ -43,8 +43,8 @@
       "description": "No extra permission interception. Tool-level safety checks still apply."
     },
     "aiReview": {
-      "label": "AI review",
-      "description": "Let AI decide before each tool execution. Deny when uncertain."
+      "label": "AI approval",
+      "description": "Ask AI to explicitly approve each tool call and explain the concrete reason for allowing or rejecting it."
     },
     "safe": {
       "label": "Safe",
