@@ -11,52 +11,33 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { useToolsStore } from "@/stores/tools-store";
 import { useConfigStore } from "@/stores/config-store";
 import type { ToolContext } from "./tool-context";
-import { updateTodosTool } from "./update-todos";
-import { askUserTool } from "./ask-user";
-import { listSkillsTool, readSkillFileTool, readSkillTool } from "./skills";
-import { controlTeamFlowTool } from "./team-control";
-import { castTeamVoteTool, requestTeamVoteTool } from "./team-vote";
-import {
-  readFileTool,
-  writeFileTool,
-  editFileTool,
-  deleteFileTool,
-  createDirectoryTool,
-  listDirectoryTool,
-  moveFileTool,
-  copyFileTool,
-  searchFilesTool,
-} from "./file-operations";
-import { searchWebTool } from "./web-search";
-import { readWebPageTool } from "./web-fetch";
-import { editImageTool, generateImageTool, imageEditAvailable } from "./image-generation";
-import { speechRecognitionTool, speechSynthesisTool } from "./audio";
-import { createOfficeDocumentTool } from "./office";
-import { runBashTool } from "./bash";
-import { buildMcpTools, mcpToolLabels } from "./mcp";
-import { searchKnowledgeTool } from "./knowledge";
-import { forgetMemoryTool, rememberMemoryTool, searchMemoryTool } from "./memory";
+
+// ===== 系统信息 =====
 import { systemInfoTool } from "./system-info";
+
+// ===== Computer Use (Windows 桌面控制) =====
 import {
   windowsSnapshotTool,
-  windowsClickTool,
-  windowsTypeTool,
-  windowsKeypressTool,
-  windowsFindTool,
-  windowsScrollTool,
-  windowsDoubleClickTool,
-  windowsMoveTool,
-  windowsListWindowsTool,
   windowsAccessibilityTreeTool,
+  windowsListWindowsTool,
+  windowsFindTool,
   windowsElementInfoTool,
   windowsFocusTool,
   windowsInvokeTool,
   windowsSetValueTool,
   windowsActivateWindowTool,
-  windowsWaitTool,
+  windowsClickTool,
+  windowsDoubleClickTool,
+  windowsMoveTool,
   windowsDragTool,
+  windowsScrollTool,
+  windowsTypeTool,
+  windowsKeypressTool,
+  windowsWaitTool,
   windowsBatchTool,
 } from "./computeruse";
+
+// ===== Browser Use (浏览器控制) =====
 import {
   browserTabsTool,
   browserOpenTool,
@@ -72,6 +53,57 @@ import {
   browserNetworkTool,
   browserConsoleTool,
 } from "./browseruse";
+
+// ===== 任务管理 =====
+import { updateTodosTool } from "./update-todos";
+
+// ===== 网络工具 =====
+import { searchWebTool } from "./web-search";
+import { readWebPageTool } from "./web-fetch";
+
+// ===== 文件操作 =====
+import {
+  readFileTool,
+  writeFileTool,
+  editFileTool,
+  deleteFileTool,
+  createDirectoryTool,
+  listDirectoryTool,
+  moveFileTool,
+  copyFileTool,
+  searchFilesTool,
+} from "./file-operations";
+
+// ===== 办公创作 =====
+import { createOfficeDocumentTool } from "./office";
+
+// ===== 知识库 =====
+import { searchKnowledgeTool } from "./knowledge";
+
+// ===== 长期记忆 =====
+import { forgetMemoryTool, rememberMemoryTool, searchMemoryTool } from "./memory";
+
+// ===== 图片工具 =====
+import { editImageTool, generateImageTool, imageEditAvailable } from "./image-generation";
+
+// ===== 音频工具 =====
+import { speechRecognitionTool, speechSynthesisTool } from "./audio";
+
+// ===== 开发工具 =====
+import { runBashTool } from "./bash";
+
+// ===== MCP 集成 =====
+import { buildMcpTools, mcpToolLabels } from "./mcp";
+
+// ===== 技能系统 =====
+import { listSkillsTool, readSkillFileTool, readSkillTool } from "./skills";
+
+// ===== 用户交互 =====
+import { askUserTool } from "./ask-user";
+
+// ===== 团队协作 =====
+import { controlTeamFlowTool } from "./team-control";
+import { castTeamVoteTool, requestTeamVoteTool } from "./team-vote";
 
 export type { ToolContext } from "./tool-context";
 

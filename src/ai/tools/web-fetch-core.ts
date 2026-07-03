@@ -1,18 +1,103 @@
-// 网页正文抽取 —— 从 HTML 中提取主要文本，支持分段定位
-// src/ai/tools/web-fetch-extraction.ts
+// 网页内容解析核心 —— HTML 解析、正文提取、结构化抽取
+// src/ai/tools/web-fetch-core.ts
 //
 // 在渲染进程（浏览器环境）用 DOMParser 解析 HTML，剔除噪声节点，
 // 收集正文块（标题/段落/列表等），并支持三种提取模式：
 //   full          —— 全文
 //   heading_range —— 按标题及其下属层级截取一段
 //   anchor_range  —— 以命中锚点的正文块为中心，前后扩展若干块
+// 同时提供结构化抽取能力：链接、表格。
 // 仅依赖渲染进程原生可用的 DOMParser 与 URL API。
 
-import {
-  extractLinks,
-  extractTables,
-  normalizeWhitespace,
-} from "./web-fetch-structured";
+// ============================================================
+// 结构化抽取：类型定义与辅助函数
+// ============================================================
+
+// 页面链接：文本 + 绝对地址
+export interface WebFetchLink {
+  text: string;
+  url: string;
+}
+
+// 页面表格：可选标题 + 表头 + 数据行
+export interface WebFetchTable {
+  caption?: string;
+  headers: string[];
+  rows: string[][];
+}
+
+// 把连续空白折叠为单个空格并去除首尾空白
+export function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+// 把相对链接解析为绝对地址；仅保留 http/https，其余返回 null
+function resolveLinkUrl(href: string, pageUrl: string) {
+  try {
+    const url = new URL(href, pageUrl);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// 提取根节点下的所有有效链接（按绝对地址去重）
+export function extractLinks(root: HTMLElement, pageUrl: string) {
+  const seen = new Set<string>();
+  return Array.from(root.querySelectorAll("a[href]")).flatMap(
+    (node): WebFetchLink[] => {
+      const href = node.getAttribute("href")?.trim();
+      const url = href ? resolveLinkUrl(href, pageUrl) : null;
+      if (!url || seen.has(url)) {
+        return [];
+      }
+      seen.add(url);
+      return [{ text: normalizeWhitespace(node.textContent ?? "") || url, url }];
+    },
+  );
+}
+
+// 提取一行中的单元格文本（去空）
+function extractRowCells(row: Element) {
+  return Array.from(row.querySelectorAll("th, td"))
+    .map((cell) => normalizeWhitespace(cell.textContent ?? ""))
+    .filter(Boolean);
+}
+
+// 提取根节点下的所有表格（区分表头与数据行）
+export function extractTables(root: HTMLElement) {
+  return Array.from(root.querySelectorAll("table")).flatMap(
+    (table): WebFetchTable[] => {
+      const rows = Array.from(table.querySelectorAll("tr"));
+      if (rows.length === 0) {
+        return [];
+      }
+
+      const headerRow =
+        table.querySelector("thead tr")
+        ?? rows.find((row) => row.querySelector("th"))
+        ?? null;
+      const headers = headerRow ? extractRowCells(headerRow) : [];
+      const dataRows = rows
+        .filter((row) => row !== headerRow)
+        .map(extractRowCells)
+        .filter((cells) => cells.length > 0);
+      const caption = normalizeWhitespace(
+        table.querySelector("caption")?.textContent ?? "",
+      );
+
+      return headers.length > 0 || dataRows.length > 0
+        ? [{ caption: caption || undefined, headers, rows: dataRows }]
+        : [];
+    },
+  );
+}
+
+// ============================================================
+// 正文提取：类型定义与核心逻辑
+// ============================================================
 
 // 摘要片段长度（用于 details.excerpt）
 const EXCERPT_CHARS = 280;
@@ -194,7 +279,7 @@ function resolveHeadingWindow(blocks: WebContentBlock[], heading: string, occurr
   );
 
   if (headingIndex < 0) {
-    throw new Error(`未找到标题“${normalizedHeading}”。`);
+    throw new Error(`未找到标题"${normalizedHeading}"。`);
   }
 
   const currentHeading = blocks[headingIndex];

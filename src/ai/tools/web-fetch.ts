@@ -17,8 +17,9 @@ import {
   extractWebPageContent,
   type WebFetchExtractOptions,
   type WebFetchMode,
-} from "./web-fetch-extraction";
-import type { WebFetchLink, WebFetchTable } from "./web-fetch-structured";
+  type WebFetchLink,
+  type WebFetchTable,
+} from "./web-fetch-core";
 
 // 默认与上限正文字符数（防止模型给出过大值压垮上下文）
 const DEFAULT_MAX_CHARS = 8_000;
