@@ -14,6 +14,31 @@ import {
 } from "@/lib/electron/electron-api";
 import { parseSkillMdContent, validateSkillMdContent } from "./skill-parser";
 
+const ENABLED_STATE_STORAGE_KEY = "polaragent-skills-enabled-state";
+
+function readEnabledState(): Record<string, boolean> {
+  try {
+    const raw = globalThis.localStorage?.getItem(ENABLED_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { enabledById?: Record<string, boolean> };
+    return parsed?.enabledById ?? {};
+  } catch (error) {
+    console.warn("读取技能启用状态失败，使用默认值:", error);
+    return {};
+  }
+}
+
+function writeEnabledState(enabledById: Record<string, boolean>) {
+  try {
+    globalThis.localStorage?.setItem(
+      ENABLED_STATE_STORAGE_KEY,
+      JSON.stringify({ enabledById }),
+    );
+  } catch (error) {
+    console.error("保存技能启用状态失败:", error);
+  }
+}
+
 /**
  * SkillLoader - 加载和管理符合 Agent Skills 标准的 Skills
  */
@@ -42,7 +67,27 @@ export class SkillLoader {
     // 3. 加载 ~/.agents/skills/ 全局 Skills (npx skills 安装的)
     await this.loadGlobalSkills();
 
+    // 4. 应用持久化的启用状态
+    await this.applyPersistedEnabledStates();
+
     console.log(`✓ Skills 加载完成，共 ${this.skills.size} 个`);
+  }
+
+  private async applyPersistedEnabledStates() {
+    const enabledById = readEnabledState();
+    for (const [id, skill] of this.skills) {
+      if (typeof enabledById[id] === "boolean") {
+        skill.enabled = enabledById[id];
+      }
+    }
+  }
+
+  private persistEnabledStates() {
+    const enabledById: Record<string, boolean> = {};
+    for (const [id, skill] of this.skills) {
+      enabledById[id] = skill.enabled;
+    }
+    writeEnabledState(enabledById);
   }
 
   /**
@@ -202,7 +247,7 @@ export class SkillLoader {
     const skill = this.skills.get(id);
     if (skill) {
       skill.enabled = enabled;
-      // TODO: 保存到配置文件
+      this.persistEnabledStates();
       console.log(`Skill ${skill.name} ${enabled ? "已启用" : "已禁用"}`);
     }
   }
@@ -310,6 +355,7 @@ export class SkillLoader {
 
       // 从内存中移除
       this.skills.delete(id);
+      this.persistEnabledStates();
       console.log(`Skill ${skill.name} 已卸载`);
       return true;
     } catch (error) {

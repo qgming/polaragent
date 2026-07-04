@@ -461,9 +461,7 @@ function KnowledgeDetailPage({ knowledgeBase }: { knowledgeBase: any }) {
 function filterKnowledgeBases(knowledgeBases: KnowledgeBase[], search: string) {
   const query = search.trim().toLowerCase();
   if (!query) return knowledgeBases;
-  return knowledgeBases.filter((kb) =>
-    `${kb.name} ${kb.description ?? ""}`.toLowerCase().includes(query),
-  );
+  return knowledgeBases.filter((kb) => kb.name.toLowerCase().includes(query));
 }
 
 function isSupportedKnowledgeFilePath(filePath: string) {

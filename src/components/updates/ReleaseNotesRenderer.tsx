@@ -74,7 +74,7 @@ export function ReleaseNotesRenderer({ content, className = "" }: ReleaseNotesRe
   if (format === "html") {
     return (
       <div
-        className={`prose prose-sm max-w-none dark:prose-invert prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 ${className}`}
+        className={`markdown-preview prose prose-sm max-w-none break-words text-foreground dark:prose-invert prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 ${className}`}
         dangerouslySetInnerHTML={{ __html: sanitizedHtml || "" }}
       />
     );

@@ -21,7 +21,6 @@ export function KnowledgeSettingsModal({
   const { t } = useTranslation("knowledge");
   const updateKnowledgeBase = useKnowledgeStore((state) => state.updateKnowledgeBase);
   const [name, setName] = useState(knowledgeBase.name);
-  const [description, setDescription] = useState(knowledgeBase.description || "");
   const [enabled, setEnabled] = useState(knowledgeBase.enabled);
   const [chunkSize, setChunkSize] = useState(knowledgeBase.chunkSize);
   const [overlap, setOverlap] = useState(knowledgeBase.overlap);
@@ -35,7 +34,6 @@ export function KnowledgeSettingsModal({
     try {
       await updateKnowledgeBase(knowledgeBase.id, {
         name: name.trim(),
-        description: description.trim() || undefined,
         enabled,
         chunkSize,
         overlap,
@@ -66,16 +64,6 @@ export function KnowledgeSettingsModal({
                 onChange={(e) => setName(e.target.value)}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 required
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-muted-foreground">{t("form.description")}</span>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               />
             </label>
 

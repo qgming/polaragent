@@ -314,7 +314,7 @@ function AgentMarketView({
   };
 
   return (
-    <div className="mt-5">
+    <div className="mt-3">
       {/* 分类 chip */}
       <div className="flex flex-wrap gap-2">
         {categories.map((c) => (
@@ -395,7 +395,7 @@ function GroupChip({
 
 function AgentGrid({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {children}
     </div>
   );
@@ -486,7 +486,7 @@ function AgentCardSkeleton() {
 function MarketError({ message }: { message: string }) {
   const { t } = useTranslation("agents");
   return (
-    <div className="mt-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
+    <div className="mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
       <h3 className="text-base font-semibold">{t("market.loadFailed")}</h3>
       <p className="mt-2 max-w-[460px] text-sm leading-6 text-muted-foreground">
         {message}
@@ -568,7 +568,7 @@ function AgentList({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-border bg-card">
+    <section className="mt-3 rounded-xl border border-border bg-card">
       {agents.map((agent) => (
         <AgentRow
           key={agent.id}
@@ -645,7 +645,7 @@ function EmptyCloudState({
   return (
     <div
       className={cn(
-        "mt-4 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 text-center",
+        "mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 text-center",
         compact ? "min-h-[220px]" : "min-h-[320px]",
       )}
     >

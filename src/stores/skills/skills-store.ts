@@ -18,6 +18,7 @@ interface SkillsState {
   // 操作
   loadSkills: () => Promise<void>;
   toggleSkill: (id: string, enabled: boolean) => void;
+  setSkillsEnabled: (ids: string[], enabled: boolean) => void;
   installSkill: (source: string, type: "git" | "local") => Promise<boolean>;
   uninstallSkill: (id: string) => Promise<boolean>;
   writeSkill: (name: string, content: string) => Promise<boolean>;
@@ -57,6 +58,22 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     set((state) => ({
       skills: state.skills.map((skill) =>
         skill.id === id ? { ...skill, enabled } : skill,
+      ),
+    }));
+  },
+
+  setSkillsEnabled: (ids: string[], enabled: boolean) => {
+    if (ids.length === 0) return;
+
+    const uniqueIds = Array.from(new Set(ids));
+    const uniqueIdSet = new Set(uniqueIds);
+    for (const id of uniqueIds) {
+      skillLoader.toggleSkill(id, enabled);
+    }
+
+    set((state) => ({
+      skills: state.skills.map((skill) =>
+        uniqueIdSet.has(skill.id) ? { ...skill, enabled } : skill,
       ),
     }));
   },

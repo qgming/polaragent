@@ -9,6 +9,10 @@
     "emptyFilteredTitle": "No matching tasks",
     "emptyFilteredDescription": "Try adjusting the search query or status filter."
   },
+  "tabs": {
+    "tasks": "Schedules",
+    "logs": "Logs"
+  },
   "toolbar": {
     "create": "New Task",
     "refresh": "Refresh",
@@ -35,6 +39,9 @@
     "enabled": "Enabled",
     "disabled": "Disabled",
     "running": "Running",
+    "enable": "Enable task",
+    "disable": "Disable task",
+    "more": "More actions",
     "nextRun": "Next Run",
     "lastRun": "Last Run",
     "never": "Never",
@@ -85,8 +92,7 @@
     "contextEmpty": "No context directories added yet",
     "addContextDir": "Add directory",
     "clearContextDirs": "Clear all",
-    "agentId": "Agent ID",
-    "agentHint": "Choose the Agent persona or workflow that fits this task best.",
+    "agentId": "Agent",
     "agentMenuTitle": "Choose an Agent",
     "projectTemplate": "Project shortcut",
     "projectTemplateHint": "If this task belongs to a project, pull in its directory with one click.",
@@ -99,6 +105,12 @@
     "missedRunPolicyHint": "Choose what should happen after the app was offline or sleeping.",
     "enabled": "Enable task",
     "enabledHint": "Disabled tasks keep their configuration but stop triggering.",
+    "schedulePlan": "Scheduled time",
+    "emptyValue": "Not set",
+    "planOptions": {
+      "at": "Does not repeat",
+      "every": "Interval"
+    },
     "sections": {
       "basicsTitle": "Task basics",
       "basicsDescription": "Start with the task name, a short goal, and which Agent should run it.",
@@ -148,7 +160,7 @@
         "description": "Run on a specific day each month"
       },
       "advanced": {
-        "title": "Advanced",
+        "title": "Custom",
         "description": "Enter the raw cron expression yourself"
       }
     },
@@ -159,15 +171,16 @@
     "calendarWeekdays": "Weekdays",
     "calendarWeekdaysHint": "You can select multiple days, like weekdays only.",
     "calendarDayOfMonth": "Day of month",
+    "monthlyDayValue": "Day {{day}} of month",
     "calendarDayOfMonthHint": "Supports days 1 through 31.",
     "weekdaysShort": {
-      "mon": "Mon",
-      "tue": "Tue",
-      "wed": "Wed",
-      "thu": "Thu",
-      "fri": "Fri",
-      "sat": "Sat",
-      "sun": "Sun"
+      "mon": "M",
+      "tue": "T",
+      "wed": "W",
+      "thu": "T",
+      "fri": "F",
+      "sat": "S",
+      "sun": "S"
     },
     "schedulePreview": "Generated cron",
     "permissionOptions": {
@@ -218,9 +231,12 @@
   },
   "logs": {
     "title": "Execution Logs",
+    "detailTitle": "Log Detail",
     "description": "Inspect outputs, durations, and failures for each automatic run.",
     "empty": "No execution history yet",
     "emptyFiltered": "No logs match the current filters",
+    "taskFilterAll": "All Tasks",
+    "statusFilterAll": "All Statuses",
     "status": "Status",
     "duration": "Duration",
     "output": "Output",
@@ -242,6 +258,11 @@
       "schedule": "Scheduled trigger",
       "manual": "Manual run",
       "recovery": "Recovery replay"
+    },
+    "ranges": {
+      "day": "By Day",
+      "week": "By Week",
+      "month": "By Month"
     },
     "from": "From",
     "to": "To",

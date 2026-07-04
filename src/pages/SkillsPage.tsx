@@ -37,12 +37,17 @@ import { cn } from "@/lib/utils";
 
 type SkillTab = "market" | "builtin" | "custom" | "global";
 
+function normalizeSkillKey(value: string): string {
+  return value.toLowerCase().replace(/[\s-_]+/g, "");
+}
+
 export function SkillsPage() {
   const { t } = useTranslation("skills");
   const skills = useSkillsStore((state) => state.skills);
   const isLoading = useSkillsStore((state) => state.isLoading);
   const loadSkills = useSkillsStore((state) => state.loadSkills);
   const toggleSkill = useSkillsStore((state) => state.toggleSkill);
+  const setSkillsEnabled = useSkillsStore((state) => state.setSkillsEnabled);
   const uninstallSkill = useSkillsStore((state) => state.uninstallSkill);
 
   const [activeTab, setActiveTab] = useState<SkillTab>("market");
@@ -71,15 +76,19 @@ export function SkillsPage() {
   const visibleBuiltin = filterSkills(builtinSkills, search);
   const visibleCustom = filterSkills(customSkills, search);
   const visibleGlobal = filterSkills(globalSkills, search);
+  const allGlobalEnabled = globalSkills.length > 0 && globalSkills.every((skill) => skill.enabled);
+  const enabledGlobalCount = globalSkills.filter((skill) => skill.enabled).length;
 
   // 已安装技能名集合（用于技能广场标记「已安装」）
   const installedNames = useMemo(
-    () =>
-      new Set(
-        skills.map((skill) =>
-          (skill.name || skill.id).toLowerCase().replace(/\s+/g, ""),
-        ),
-      ),
+    () => {
+      const keys = new Set<string>();
+      for (const skill of skills) {
+        keys.add(normalizeSkillKey(skill.id));
+        if (skill.name) keys.add(normalizeSkillKey(skill.name));
+      }
+      return keys;
+    },
     [skills],
   );
 
@@ -164,7 +173,7 @@ export function SkillsPage() {
         {activeTab === "builtin" ? (
           <>
             {visibleBuiltin.length > 0 ? (
-              <section className="mt-5 rounded-xl border border-border bg-card">
+              <section className="mt-3 rounded-xl border border-border bg-card">
                 {visibleBuiltin.map((skill) => (
                   <InstalledSkillRow
                     key={skill.id}
@@ -187,7 +196,7 @@ export function SkillsPage() {
         {activeTab === "custom" ? (
           <>
             {visibleCustom.length > 0 ? (
-              <section className="mt-5 rounded-xl border border-border bg-card">
+              <section className="mt-3 rounded-xl border border-border bg-card">
                 {visibleCustom.map((skill) => (
                   <InstalledSkillRow
                     key={skill.id}
@@ -212,7 +221,34 @@ export function SkillsPage() {
         {activeTab === "global" ? (
           <>
             {visibleGlobal.length > 0 ? (
-              <section className="mt-5 rounded-xl border border-border bg-card">
+              <section className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
+                <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">{t("globalControls.title")}</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t("globalControls.summary", {
+                        enabled: enabledGlobalCount,
+                        total: globalSkills.length,
+                      })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground">
+                      {allGlobalEnabled
+                        ? t("globalControls.enabled")
+                        : t("globalControls.disabled")}
+                    </span>
+                    <Switch
+                      checked={allGlobalEnabled}
+                      onCheckedChange={(checked) =>
+                        setSkillsEnabled(
+                          globalSkills.map((skill) => skill.id),
+                          checked,
+                        )
+                      }
+                    />
+                  </div>
+                </div>
                 {visibleGlobal.map((skill) => (
                   <InstalledSkillRow
                     key={skill.id}
@@ -304,13 +340,13 @@ function MarketView({
   };
 
   const isInstalled = (skill: MarketSkill) =>
-    installedNames.has((skill.name || skill.id).toLowerCase().replace(/\s+/g, ""));
+    installedNames.has(normalizeSkillKey(skill.name || skill.id));
 
   // 等待态：当前分类暂无缓存且正在加载/后台刷新
   const waiting = isLoading || (results.length === 0 && isRefreshing);
 
   return (
-    <div className="mt-5">
+    <div className="mt-3">
       {/* 分类 chip */}
       <div className="flex flex-wrap gap-2">
         {MARKET_CATEGORIES.map((category) => (
@@ -364,7 +400,7 @@ function MarketView({
 
 function SkillGrid({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {children}
     </div>
   );
@@ -470,7 +506,7 @@ function SkillCardSkeleton() {
 function MarketError({ message }: { message: string }) {
   const { t } = useTranslation("skills");
   return (
-    <div className="mt-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
+    <div className="mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
       <AlertCircle className="size-9 text-destructive" />
       <h3 className="mt-4 text-base font-semibold">{t("market.loadFailed")}</h3>
       <p className="mt-2 max-w-[460px] text-sm leading-6 text-muted-foreground">
@@ -603,7 +639,7 @@ function EmptyCloudState({
   return (
     <div
       className={cn(
-        "mt-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 text-center",
+        "mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-6 text-center",
         compact ? "min-h-[220px]" : "min-h-[320px]",
       )}
     >

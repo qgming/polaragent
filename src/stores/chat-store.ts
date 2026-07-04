@@ -190,6 +190,8 @@ interface ExchangeStart {
 
 interface ChatState {
   threads: ChatThread[];
+  hydrated: boolean;
+  hydrating: boolean;
   activeThreadId: string;
   composer: string;
   // 正在后台运行（响应中）的会话 id 列表。多会话可并行运行、互不关联。
@@ -275,6 +277,8 @@ const createId = () =>
 const titleGenerationInFlight = new Set<string>();
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  hydrated: false,
+  hydrating: false,
   activeThreadId: "",
   composer: "",
   runningThreadIds: [],
@@ -789,34 +793,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // 启动时从磁盘索引回读会话列表，填充侧边栏（消息按需在 selectThread 时加载）
   hydrateThreads: async () => {
+    if (get().hydrating || get().hydrated) return;
+    set({ hydrating: true });
     const convStore = useConversationStore.getState();
-    await convStore.loadConversations();
+    try {
+      await convStore.loadConversations();
 
-    const metas = useConversationStore.getState().conversations;
-    if (metas.length === 0) return;
+      const metas = useConversationStore.getState().conversations;
+      if (metas.length === 0) {
+        set({ hydrated: true, hydrating: false });
+        return;
+      }
 
-    set((state) => {
-      const existingIds = new Set(state.threads.map((t) => t.id));
-      const restored: ChatThread[] = metas
-        .filter((meta) => !existingIds.has(meta.id))
-        .map((meta) => ({
-          id: meta.id,
-          title: meta.title || "新对话",
-          subtitle: "对话",
-          messages: [], // 占位，进入会话时再从 JSONL 回读
-          updatedAt: meta.updatedAt,
-          permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
-          loaded: false,
-          autoTitled: true, // 已持久化的会话沿用其标题，不再自动改名
-          projectId: meta.projectId, // 恢复项目归属
-        }));
+      set((state) => {
+        const existingIds = new Set(state.threads.map((t) => t.id));
+        const restored: ChatThread[] = metas
+          .filter((meta) => !existingIds.has(meta.id))
+          .map((meta) => ({
+            id: meta.id,
+            title: meta.title || "新对话",
+            subtitle: "对话",
+            messages: [], // 占位，进入会话时再从 JSONL 回读
+            updatedAt: meta.updatedAt,
+            permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
+            loaded: false,
+            autoTitled: true, // 已持久化的会话沿用其标题，不再自动改名
+            projectId: meta.projectId, // 恢复项目归属
+          }));
 
-      // 合并后按更新时间倒序，确保侧边栏顺序稳定
-      const merged = [...state.threads, ...restored].sort(
-        (a, b) => b.updatedAt - a.updatedAt,
-      );
-      return { threads: merged };
-    });
+        // 合并后按更新时间倒序，确保侧边栏顺序稳定
+        const merged = [...state.threads, ...restored].sort(
+          (a, b) => b.updatedAt - a.updatedAt,
+        );
+        return { threads: merged, hydrated: true, hydrating: false };
+      });
+    } catch (error) {
+      set({ hydrated: true, hydrating: false });
+      throw error;
+    }
   },
 
   // 按需从 JSONL 回读某会话的历史消息（仅在首次进入时加载，避免覆盖内存中的最新状态）

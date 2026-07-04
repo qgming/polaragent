@@ -45,8 +45,6 @@
     "settingsTitle": "Knowledge Base Settings",
     "name": "Name",
     "namePlaceholder": "e.g. Project docs, technical manual",
-    "description": "Description",
-    "descriptionPlaceholder": "Briefly describe the content scope of this knowledge base",
     "chunkSize": "Chunk Size (tokens)",
     "overlap": "Chunk Overlap (tokens)",
     "recommended": "{{value}} (recommended)",
@@ -59,6 +57,8 @@
   "card": {
     "more": "More",
     "moreActions": "More actions for {{name}}",
+    "enable": "Enable knowledge base",
+    "disable": "Disable knowledge base",
     "edit": "Edit Knowledge Base",
     "delete": "Delete",
     "deleteConfirm": "Delete knowledge base \"{{name}}\"? This action cannot be undone.",

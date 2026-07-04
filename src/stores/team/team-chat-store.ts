@@ -36,6 +36,8 @@ export type { TeamMessage, TeamThread } from "@/lib/team";
 
 interface TeamChatState {
   threads: TeamThread[];
+  hydrated: boolean;
+  hydrating: boolean;
   // 当前激活的团队会话 id（处于团队聊天页时）
   activeTeamThreadId: string;
   composer: string;
@@ -104,6 +106,8 @@ const teamTitleGenerationInFlight = new Set<string>();
 
 export const useTeamChatStore = create<TeamChatState>((set, get) => ({
   threads: [],
+  hydrated: false,
+  hydrating: false,
   activeTeamThreadId: "",
   composer: "",
   runningThreadIds: [],
@@ -406,8 +410,13 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
 
   // 启动时回读团队会话列表（按 team_ref 归属），消息按需在 select 时加载
   hydrateTeamThreads: async () => {
+    if (get().hydrating || get().hydrated) return;
+    set({ hydrating: true });
     const sessions = await listTeamSessions().catch(() => []);
-    if (sessions.length === 0) return;
+    if (sessions.length === 0) {
+      set({ hydrated: true, hydrating: false });
+      return;
+    }
 
     set((state) => {
       const existingIds = new Set(state.threads.map((t) => t.id));
@@ -429,7 +438,7 @@ export const useTeamChatStore = create<TeamChatState>((set, get) => ({
       const merged = [...state.threads, ...restored].sort(
         (a, b) => b.updatedAt - a.updatedAt,
       );
-      return { threads: merged };
+      return { threads: merged, hydrated: true, hydrating: false };
     });
   },
 

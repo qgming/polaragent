@@ -45,8 +45,6 @@
     "settingsTitle": "知识库设置",
     "name": "名称",
     "namePlaceholder": "例如：项目文档、技术手册",
-    "description": "简介",
-    "descriptionPlaceholder": "简要说明这个知识库的内容范围",
     "chunkSize": "分块大小 (tokens)",
     "overlap": "块重叠 (tokens)",
     "recommended": "{{value}}（推荐）",
@@ -59,6 +57,8 @@
   "card": {
     "more": "更多",
     "moreActions": "{{name}} 的更多操作",
+    "enable": "启用知识库",
+    "disable": "停用知识库",
     "edit": "编辑知识库",
     "delete": "删除",
     "deleteConfirm": "确定要删除知识库\"{{name}}\"吗？此操作不可恢复。",

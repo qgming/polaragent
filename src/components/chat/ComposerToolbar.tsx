@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { pickImageFile, pickTextFile, pickAudioFile, pickDocumentFile } from "@/lib/electron/electron-api";
+import { summarizeSkillDescription } from "@/lib/skill";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import type { SkillConfig } from "@/types/config";
 
@@ -35,10 +36,7 @@ function basename(path: string): string {
 // 截断描述为一行，避免过长
 function truncateDesc(text: string, max = 60): string {
   if (!text) return "";
-  // 取第一行或者到第一个句号
-  const firstLine = text.split(/\n/)[0];
-  if (firstLine.length <= max) return firstLine;
-  return firstLine.slice(0, max) + "…";
+  return summarizeSkillDescription(text, max);
 }
 
 // 技能分组排序：已安装 → 内置 → 全局

@@ -325,7 +325,7 @@ function TabTrigger({
 
 function ToolSection({ children }: { children: ReactNode }) {
   return (
-    <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card">
+    <section className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
       {children}
     </section>
   );

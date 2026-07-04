@@ -90,7 +90,7 @@ export function SettingDropdown({
   const current = options.find((option) => option.value === value);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

@@ -1,4 +1,5 @@
 import type { SkillConfig } from "@/types/config";
+import { stripMarkdown } from "@/lib/markdown/plain-text";
 
 export type SkillType = "builtin" | "custom" | "global";
 
@@ -45,7 +46,7 @@ export function parseSkillMdContent(
 
   return {
     id: frontmatter.name,
-    name: capitalize(frontmatter.name.replace(/-/g, " ")),
+    name: frontmatter.name,
     description: frontmatter.description,
     version: frontmatter.metadata?.version || "1.0.0",
     type: options.type ?? "builtin",
@@ -61,6 +62,12 @@ export function parseSkillMdContent(
       instructions: body.trim(),
     },
   };
+}
+
+export function summarizeSkillDescription(text: string, max = 120): string {
+  const firstMeaningfulLine = extractFirstMeaningfulLine(text);
+  if (firstMeaningfulLine.length <= max) return firstMeaningfulLine;
+  return `${firstMeaningfulLine.slice(0, max).trimEnd()}...`;
 }
 
 export function validateSkillMdContent(content: string): string[] {
@@ -108,7 +115,7 @@ function parseSimpleYaml(yaml: string): SkillMdFrontmatter {
     let rawValue = trimmed.slice(colonIndex + 1);
     let value = rawValue.trim();
 
-    if (value === "|") {
+    if (/^[>|][+-]?$/.test(value)) {
       const blockLines: string[] = [];
       const baseIndent = line.length - trimmed.length;
       for (let j = i + 1; j < lines.length; j++) {
@@ -122,7 +129,10 @@ function parseSimpleYaml(yaml: string): SkillMdFrontmatter {
         blockLines.push(nextLine.trimEnd());
         i = j;
       }
-      value = blockLines.join("\n").trimEnd();
+      value =
+        value.startsWith(">")
+          ? blockLines.map((entry) => entry.trim()).join(" ").replace(/\s+/g, " ").trim()
+          : blockLines.join("\n").trimEnd();
     } else {
       if (
         (value.startsWith('"') && value.endsWith('"')) ||
@@ -141,6 +151,23 @@ function parseSimpleYaml(yaml: string): SkillMdFrontmatter {
   }
 
   return result as unknown as SkillMdFrontmatter;
+}
+
+function extractFirstMeaningfulLine(text: string): string {
+  const plain = stripMarkdown(text || "");
+  for (const rawLine of plain.split(/\r?\n/)) {
+    const normalized = sanitizeSummaryLine(rawLine);
+    if (normalized) return normalized;
+  }
+  return sanitizeSummaryLine(text);
+}
+
+function sanitizeSummaryLine(line: string): string {
+  return line
+    .replace(/^\s*[>|丨｜]+\s*/, "")
+    .replace(/^\s*[:：-]+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parsePermissions(compatibility: string): string[] {
@@ -162,8 +189,4 @@ function parsePermissions(compatibility: string): string[] {
   }
 
   return permissions;
-}
-
-function capitalize(str: string): string {
-  return str.charAt(0).toUpperCase() + str.slice(1);
 }

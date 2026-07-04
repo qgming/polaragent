@@ -4,12 +4,12 @@
     "bannerTitle": "Teach agents more useful abilities",
     "bannerDescription": "Install the right skills so writing, research, and organizing work can be safely delegated.",
     "kitLabel": "Skill Hub",
-    "searchPlaceholder": "Search skills (press Enter to search cloud market)",
+    "searchPlaceholder": "Search skills (press Enter to search market)",
     "install": "Install Skill"
   },
   "tabs": {
-    "market": "Cloud Market",
-    "builtin": "Local Built-in",
+    "market": "Market",
+    "builtin": "Built-in",
     "installed": "Installed",
     "global": "Global"
   },
@@ -56,6 +56,12 @@
   "list": {
     "edit": "Edit",
     "delete": "Delete"
+  },
+  "globalControls": {
+    "title": "Global skill master switch",
+    "summary": "{{enabled}} of {{total}} global skills enabled",
+    "enabled": "All enabled",
+    "disabled": "Not all enabled"
   },
   "installDialog": {
     "title": "Install Skill",

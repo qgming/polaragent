@@ -7,6 +7,7 @@ export {
 } from "./skill-selection";
 export {
   parseSkillMdContent,
+  summarizeSkillDescription,
   validateSkillMdContent,
   type SkillMdFrontmatter,
   type SkillType,

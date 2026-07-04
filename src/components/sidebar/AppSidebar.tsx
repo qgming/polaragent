@@ -3,7 +3,7 @@
 //
 // 列表项子组件拆分至同目录：SidebarButton / ThreadItem / TeamList / ProjectList。
 
-import { FolderOpen, MessageCircle, Settings, Users } from "lucide-react";
+import { FolderOpen, Loader2, MessageCircle, Settings, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,6 +14,10 @@ import {
   type PageId,
 } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
+import { useChatStore } from "@/stores/chat-store";
+import { useProjectsStore } from "@/stores/project/projects-store";
+import { useTeamsStore } from "@/stores/team/teams-store";
+import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { SidebarButton } from "./SidebarButton";
 import { ExtensionNavGroup } from "./ExtensionNavGroup";
 import { ThreadItem } from "./ThreadItem";
@@ -86,6 +90,12 @@ export function AppSidebar({
   threads: Array<{ id: string; title: string; updatedAt: number }>;
 }) {
   const { t } = useTranslation("nav");
+  const chatHydrating = useChatStore((state) => state.hydrating);
+  const chatHydrated = useChatStore((state) => state.hydrated);
+  const teamsLoading = useTeamsStore((state) => state.isLoading);
+  const teamThreadsHydrating = useTeamChatStore((state) => state.hydrating);
+  const teamThreadsHydrated = useTeamChatStore((state) => state.hydrated);
+  const projectsLoading = useProjectsStore((state) => state.isLoading);
   // 记录上一个 tab，用于推导内容横滑方向：切到右侧 tab → 内容从右进(+1)，反之 -1
   const tabOrder: SidebarTab[] = ["tasks", "project", "team"];
   const prevTabRef = useRef(sidebarTab);
@@ -199,46 +209,58 @@ export function AppSidebar({
             className="app-scrollbar h-full overflow-y-auto"
           >
             {sidebarTab === "tasks" ? (
-              <div className="space-y-1">
-                {threads.map((thread) => (
-                  <ThreadItem
-                    active={thread.id === activeThreadId && activePage === "chat"}
-                    key={thread.id}
-                    onClear={() => onClearThread(thread.id)}
-                    onDelete={() => onDeleteThread(thread.id)}
-                    onClick={() => onSelectThread(thread.id)}
-                    onRename={(title) => onRenameThread(thread.id, title)}
-                    running={runningThreadIds.includes(thread.id)}
-                    thread={thread}
-                  />
-                ))}
-              </div>
+              chatHydrating || !chatHydrated ? (
+                <SidebarLoadingState label={t("sidebar.tasks")} />
+              ) : (
+                <div className="space-y-1">
+                  {threads.map((thread) => (
+                    <ThreadItem
+                      active={thread.id === activeThreadId && activePage === "chat"}
+                      key={thread.id}
+                      onClear={() => onClearThread(thread.id)}
+                      onDelete={() => onDeleteThread(thread.id)}
+                      onClick={() => onSelectThread(thread.id)}
+                      onRename={(title) => onRenameThread(thread.id, title)}
+                      running={runningThreadIds.includes(thread.id)}
+                      thread={thread}
+                    />
+                  ))}
+                </div>
+              )
             ) : sidebarTab === "project" ? (
-              <ProjectList
-                activeThreadId={activeThreadId}
-                onNewProjectThread={onNewProjectThread}
-                onSelectThread={onSelectThread}
-                onDeleteThread={onDeleteThread}
-                onRenameThread={onRenameThread}
-                onEditProject={onEditProject}
-                onDeleteProject={onDeleteProject}
-                onClearProjectChats={onClearProjectChats}
-                runningThreadIds={runningThreadIds}
-                onNewProject={onNewProject}
-              />
+              projectsLoading ? (
+                <SidebarLoadingState label={t("sidebar.projectTab")} />
+              ) : (
+                <ProjectList
+                  activeThreadId={activeThreadId}
+                  onNewProjectThread={onNewProjectThread}
+                  onSelectThread={onSelectThread}
+                  onDeleteThread={onDeleteThread}
+                  onRenameThread={onRenameThread}
+                  onEditProject={onEditProject}
+                  onDeleteProject={onDeleteProject}
+                  onClearProjectChats={onClearProjectChats}
+                  runningThreadIds={runningThreadIds}
+                  onNewProject={onNewProject}
+                />
+              )
             ) : (
-              <TeamList
-                activeTeamId={activeTeamId}
-                activeTeamThreadId={activeTeamThreadId}
-                onEditTeam={onEditTeam}
-                onClearTeam={onClearTeam}
-                onDeleteTeam={onDeleteTeam}
-                onSelectTeamThread={onSelectTeamThread}
-                onNewTeamThread={onNewTeamThread}
-                onRenameTeamThread={onRenameTeamThread}
-                onDeleteTeamThread={onDeleteTeamThread}
-                runningTeamThreadIds={runningTeamThreadIds}
-              />
+              teamsLoading || teamThreadsHydrating || !teamThreadsHydrated ? (
+                <SidebarLoadingState label={t("sidebar.teamTab")} />
+              ) : (
+                <TeamList
+                  activeTeamId={activeTeamId}
+                  activeTeamThreadId={activeTeamThreadId}
+                  onEditTeam={onEditTeam}
+                  onClearTeam={onClearTeam}
+                  onDeleteTeam={onDeleteTeam}
+                  onSelectTeamThread={onSelectTeamThread}
+                  onNewTeamThread={onNewTeamThread}
+                  onRenameTeamThread={onRenameTeamThread}
+                  onDeleteTeamThread={onDeleteTeamThread}
+                  runningTeamThreadIds={runningTeamThreadIds}
+                />
+              )
             )}
           </motion.div>
         </AnimatePresence>
@@ -256,5 +278,19 @@ export function AppSidebar({
       </div>
       </div>
     </motion.aside>
+  );
+}
+
+function SidebarLoadingState({ label }: { label: string }) {
+  const { t } = useTranslation("common");
+
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center px-3 py-8 text-center">
+      <div className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+      </div>
+      <p className="mt-3 text-sm font-medium text-foreground">{label}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{t("loading")}</p>
+    </div>
   );
 }

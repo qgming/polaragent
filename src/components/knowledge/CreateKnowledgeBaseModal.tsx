@@ -14,7 +14,6 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
   const { t } = useTranslation("knowledge");
   const createKnowledgeBase = useKnowledgeStore((state) => state.createKnowledgeBase);
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
   const [chunkSize, setChunkSize] = useState(512);
   const [overlap, setOverlap] = useState(50);
   const [submitting, setSubmitting] = useState(false);
@@ -27,13 +26,11 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
     try {
       await createKnowledgeBase({
         name: name.trim(),
-        description: description.trim() || undefined,
         chunkSize,
         overlap,
       });
       onOpenChange(false);
       setName("");
-      setDescription("");
       setChunkSize(512);
       setOverlap(50);
     } catch (error) {
@@ -63,17 +60,6 @@ export function CreateKnowledgeBaseModal({ open, onOpenChange }: CreateKnowledge
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
                 required
                 autoFocus
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-muted-foreground">{t("form.description")}</span>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t("form.descriptionPlaceholder")}
-                rows={3}
-                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring"
               />
             </label>
 
