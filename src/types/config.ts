@@ -353,32 +353,6 @@ export interface AgentConfig {
 }
 
 /**
- * Team 配置（多 Agent 协作）
- * 团队会话与配置存于 {dataDir}/teams 下，与普通对话物理隔离。
- */
-export interface TeamConfig {
-  id: string;
-  name: string;
-  avatar: string; // emoji
-  description: string;
-  version: string;
-  // 协作模式：领导模式或头脑风暴模式
-  mode: "leader" | "equal";
-  // 领导成员的 agentId（必须是 memberIds 之一，仅领导模式需要）
-  leaderId: string;
-  // 成员 agentId 列表（含领导）
-  memberIds: string[];
-  // 团队整体系统提示词
-  systemPrompt: string;
-  // 团队级技能：对所有成员可用（即使成员自身未启用）
-  enabledSkills: string[];
-  // 团队工作区目录
-  workspaceDir?: string;
-  // 单次用户消息内最多自动接力轮数（防死循环，默认 8）
-  maxRounds?: number;
-}
-
-/**
  * 项目配置（对话分组 + 专属提示词 + 共享工作目录）
  * 项目配置存于 {dataDir}/projects/<id>.json，项目内的对话仍走普通对话仓库。
  */

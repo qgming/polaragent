@@ -10,7 +10,7 @@
 import { AgentHarness } from "@earendil-works/pi-agent-core";
 import { formatSkillsForSystemPrompt } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
-import type { AgentConfig, TeamConfig } from "@/types/config";
+import type { AgentConfig } from "@/types/config";
 import {
   firstModelService,
   requireModelService,
@@ -20,12 +20,10 @@ import {
 import { buildAgentTools, type ToolContext } from "./tools";
 import { openOrCreateSession } from "@/lib/session/personal";
 import { openOrCreateScheduleSession } from "@/lib/session/schedule";
-import { openOrCreateTeamSession } from "@/lib/session/team";
 import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { useChatStore } from "@/stores/chat-store";
-import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { resolveSkillSelection, skillLoader } from "@/lib/skill";
 import { reviewToolPermission } from "./tool-permissions";
 import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
@@ -39,32 +37,13 @@ import {
   cleanupSessionResources,
 } from "@earendil-works/pi-ai";
 
-// 团队上下文：成员发言时叠加到该成员自身配置之上。
-export interface TeamContext {
-  // 用团队会话仓库打开 session（teams/conversations），而非普通对话仓库
-  isTeam: true;
-  // 团队级技能：并入该成员启用的技能（即使成员自身未启用）
-  extraSkillIds: string[];
-  // 团队整体系统提示词（叠加到成员 systemPrompt 之后）
-  teamSystemPrompt: string;
-  // 身份前缀（「你是 X，团队成员有 …，发言请用第一人称」），置于系统提示词最前
-  identityPrefix: string;
-  // 该成员在团队会话里的独立 session id（每成员一个文件，互不污染历史）。
-  // 缺省时回退到 threadId（旧行为）。
-  sessionId?: string;
-  // 团队投票工具上下文。存在时会把 request_team_vote 注入给当前成员。
-  teamConfig?: TeamConfig;
-  currentAgentId?: string;
-  members?: AgentConfig[];
-  // 团队投票收集阶段：后台要求当前成员必须调用 cast_team_vote 落票。
-  voteCasting?: {
-    voteId: string;
-    voterId: string;
-    options: Array<{ id: string; label: string }>;
-    onCast: (optionId: string) => void;
-  };
-  // 团队会话选中的知识库 ID 列表
-  knowledgeBaseIds?: string[];
+// 子代理上下文：普通对话通过 delegate_task 启动的专家子会话。
+export interface SubagentContext {
+  isSubagent: true;
+  parentThreadId: string;
+  parentAgentId: string;
+  sessionId: string;
+  task: string;
 }
 
 export interface ScheduleContext {
@@ -102,19 +81,14 @@ function normalizeWorkingDir(dir?: string): string {
   return (dir ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-// 判断某线程当前是否正在运行（普通会话或团队会话）。
+// 判断某线程当前是否正在运行（普通会话）。
 // 用于配置变更时决定是否 abort 旧 harness：运行中则不 abort，避免打断在途响应。
-function isThreadRunning(threadId: string, sessionId?: string): boolean {
+function isThreadRunning(threadId: string): boolean {
   const chatRunning = useChatStore.getState().runningThreadIds;
-  const teamRunning = useTeamChatStore.getState().runningThreadIds;
-  return (
-    chatRunning.includes(threadId) ||
-    teamRunning.includes(threadId) ||
-    (sessionId ? teamRunning.includes(sessionId) : false)
-  );
+  return chatRunning.includes(threadId);
 }
 
-function runtimeConfigSignature(agentId: string, teamContext?: TeamContext): string {
+function runtimeConfigSignature(agentId: string, subagentContext?: SubagentContext): string {
   const state = useConfigStore.getState();
   const agent = state.agents.find((item) => item.id === agentId);
   const lockedProviderId = agent?.config.provider?.trim() || "";
@@ -134,9 +108,7 @@ function runtimeConfigSignature(agentId: string, teamContext?: TeamContext): str
     enabledSkills: agent?.config.enabledSkills ?? [],
     memoryEnabled: state.settings.memory?.enabled ?? false,
     projectMemoryEnabled: state.settings.memory?.projectMemoryEnabled ?? false,
-    teamSystemPrompt: teamContext?.teamSystemPrompt ?? "",
-    teamExtraSkills: teamContext?.extraSkillIds ?? [],
-    teamVoteCasting: Boolean(teamContext?.voteCasting),
+    subagent: Boolean(subagentContext),
   });
 }
 
@@ -199,16 +171,16 @@ export class AgentManager {
       workingDir?: string;
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
-      teamContext?: TeamContext;
+      subagentContext?: SubagentContext;
       scheduleContext?: ScheduleContext;
       projectId?: string;
       projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
     const scopedSessionId =
-      options?.teamContext?.sessionId ?? options?.scheduleContext?.sessionId ?? threadId;
+      options?.subagentContext?.sessionId ?? options?.scheduleContext?.sessionId ?? threadId;
     const key = harnessKey(scopedSessionId, agentId);
-    const configSignature = runtimeConfigSignature(agentId, options?.teamContext);
+    const configSignature = runtimeConfigSignature(agentId, options?.subagentContext);
     const toolsRuntimeSignature = useToolsStore.getState().runtimeSignature;
     const workingDirSignature = JSON.stringify({
       dir: normalizeWorkingDir(options?.workingDir),
@@ -233,7 +205,7 @@ export class AgentManager {
       // 重新打开同一个 pi Session 可保留历史并装配最新运行时配置。
       // 仅在该会话当前无在途 run 时才 abort 旧 harness：若正在响应中直接 abort 会让
       // 在途请求抛错且无 UI 反馈，这里只移除缓存引用，让在途 run 自然结束后被 GC。
-      if (!isThreadRunning(threadId, options?.teamContext?.sessionId)) {
+      if (!isThreadRunning(threadId)) {
         void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
       }
       this.harnesses.delete(key);
@@ -273,7 +245,7 @@ export class AgentManager {
       workingDir?: string;
       permissionMode?: ToolPermissionMode;
       knowledgeBaseIds?: string[];
-      teamContext?: TeamContext;
+      subagentContext?: SubagentContext;
       scheduleContext?: ScheduleContext;
       projectId?: string;
       projectSystemPrompt?: string;
@@ -287,20 +259,15 @@ export class AgentManager {
     const service = requireModelService(agentId);
     const model = service.model;
 
-    const teamContext = options?.teamContext;
+    const subagentContext = options?.subagentContext;
     const scheduleContext = options?.scheduleContext;
-    const requesterName = teamContext
-      ? (agentConfig?.name ?? "团队成员")
-      : (agentConfig?.name ?? "助手");
+    const requesterName = agentConfig?.name ?? "助手";
 
     // 渐进式披露：把该 Agent 启用的技能转成 pi 的 Skill，
     // 在系统提示里仅列「清单 + 文件位置」（不塞全文），
     // AI 判断任务匹配某技能时，可用 list_skills/read_skill 读取全文。
-    // 团队模式下并入团队级技能（对全员可用），去重。
     const ownSkillIds = agentConfig?.config.enabledSkills ?? [];
-    const rawSkillIds = teamContext
-      ? Array.from(new Set([...ownSkillIds, ...teamContext.extraSkillIds]))
-      : ownSkillIds;
+    const rawSkillIds = ownSkillIds;
     const allSkillIds = skillLoader.getEnabledSkills().map((skill) => skill.id);
     const mergedSkillIds = resolveSkillSelection(rawSkillIds, allSkillIds);
     const skills = skillLoader.toPiSkills(mergedSkillIds);
@@ -319,13 +286,15 @@ export class AgentManager {
         ? Boolean(browserStatusResult.value?.connected)
         : undefined;
 
-    // 装配工具（全局工具，受工具页开关过滤;团队投票工具仅团队上下文可见）。
+    // 装配工具（全局工具，受工具页开关过滤）。
     const toolCtx: ToolContext = {
       threadId,
       projectId: options?.projectId,
       workingDir: options?.workingDir,
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
-      isTeam: !!teamContext,
+      isSubagent: !!subagentContext,
+      parentThreadId: subagentContext?.parentThreadId,
+      parentAgentId: subagentContext?.parentAgentId,
       isBackground: !!scheduleContext,
       requester: {
         id: agentId,
@@ -333,40 +302,16 @@ export class AgentManager {
       },
       skills,
       knowledgeBaseIds: options?.knowledgeBaseIds,
-      teamVote:
-        !teamContext?.voteCasting &&
-        teamContext?.teamConfig &&
-        teamContext.currentAgentId
-          ? {
-              team: teamContext.teamConfig,
-              initiatorId: teamContext.currentAgentId,
-            }
-          : undefined,
-      teamFlow:
-        !teamContext?.voteCasting &&
-        teamContext?.teamConfig &&
-        teamContext.currentAgentId &&
-        teamContext.members
-          ? {
-              threadId,
-              team: teamContext.teamConfig,
-              currentAgentId: teamContext.currentAgentId,
-              members: teamContext.members,
-            }
-          : undefined,
-      teamCastVote: teamContext?.voteCasting,
       computerUseAvailable,
       browserExtensionConnected,
     };
     const tools = buildAgentTools(toolCtx);
 
-    const scopedSessionId = teamContext?.sessionId ?? scheduleContext?.sessionId ?? threadId;
+    const scopedSessionId = subagentContext?.sessionId ?? scheduleContext?.sessionId ?? threadId;
     const [session, env, models] = await Promise.all([
-      teamContext
-        ? openOrCreateTeamSession(scopedSessionId)
-        : scheduleContext
+      scheduleContext
           ? openOrCreateScheduleSession(scopedSessionId)
-        : openOrCreateSession(threadId),
+          : openOrCreateSession(scopedSessionId),
       getExecutionEnv(),
       Promise.resolve(
         buildModelsFromConfigs(useConfigStore.getState().providers.providers),
@@ -385,19 +330,16 @@ export class AgentManager {
     const memoryBlock = useConfigStore.getState().settings.memory?.enabled
       ? "你可以使用 search_memory 检索长期记忆。当用户偏好、身份画像、历史纠正、长期目标或当前项目约定可能影响回答时，请主动调用该工具；不要假设记忆会自动出现在提示词中。用户要求记住或忘记信息时，可分别使用 remember_memory 或 forget_memory。"
       : "";
-    // 团队模式：身份前缀 + 成员自身提示词 + 团队整体提示词 + 技能清单，依次拼接。
     // 项目提示词：在 basePrompt 之后、技能清单之前注入
     const projectPrompt = options?.projectSystemPrompt?.trim() || "";
-    const promptParts = teamContext
+    const delegationBlock = subagentContext
       ? [
-          teamContext.identityPrefix,
-          basePrompt,
-          projectPrompt,
-          teamContext.teamSystemPrompt,
-          skillsBlock,
-          memoryBlock,
-        ]
-      : [basePrompt, projectPrompt, skillsBlock, memoryBlock];
+          `你是由主对话助手临时调用的子代理。主会话 ID：${subagentContext.parentThreadId}。`,
+          `你的任务：${subagentContext.task}`,
+          "专注完成该任务，给出可直接交给主助手使用的结论、证据、变更摘要或风险点。不要再次调用 delegate_task。",
+        ].join("\n")
+      : "当用户任务包含多步骤调研、代码审查、方案对比、实现拆分、测试验证或需要专业视角时，你应主动调用 delegate_task 委派给合适的子代理。主助手保留最终答复权，整合子代理结果后再回复用户；简单闲聊或单步问题不必委派。";
+    const promptParts = [delegationBlock, basePrompt, projectPrompt, skillsBlock, memoryBlock];
     const systemPrompt = promptParts
       .map((part) => part?.trim())
       .filter((part): part is string => !!part)
@@ -430,7 +372,6 @@ export class AgentManager {
         input: event.input,
         permissionMode: toolCtx.permissionMode,
         workingDir: options?.workingDir,
-        isTeam: !!teamContext,
       });
       return decision.allow
         ? undefined

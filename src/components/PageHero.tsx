@@ -1,5 +1,5 @@
 // 页面头部 Hero：大标题 + 介绍卡片（右上角带图标角标）
-// 五个资源页面（技能 / 助手 / 工具 / 团队 / 知识库）共用此组件。
+// 资源页面（技能 / 助手 / 工具 / 知识库）共用此组件。
 import type { IconComponent } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 

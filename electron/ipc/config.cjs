@@ -1,4 +1,4 @@
-// IPC：配置读写（普通配置文件 + agents/mcp/teams 三类带 builtin/custom 区分的配置）
+// IPC：配置读写（普通配置文件 + agents/mcp 两类带 builtin/custom 区分的配置）
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -12,11 +12,10 @@ function configPath(fileName) {
   return path.join(dataDir(), "config", fileName);
 }
 
-// 三类带类型的配置根目录
+// 带类型的配置根目录
 function typedConfigDir(kind) {
   if (kind === "agents") return path.join(dataDir(), "agents");
   if (kind === "mcp") return path.join(dataDir(), "mcp");
-  if (kind === "teams") return path.join(dataDir(), "teams");
   throw new Error(`Unknown config kind: ${kind}`);
 }
 
@@ -70,10 +69,6 @@ function register(ipcMain) {
   ipcMain.handle("config:read-mcp", (_event, { mcpId }) => readTypedConfig("mcp", mcpId));
   ipcMain.handle("config:write-mcp", (_event, { mcpId, content }) => writeTypedConfig("mcp", mcpId, content));
   ipcMain.handle("config:delete-mcp", (_event, { mcpId }) => deleteTypedConfig("mcp", mcpId));
-  ipcMain.handle("config:list-teams", () => listJsonIds(path.join(dataDir(), "teams")));
-  ipcMain.handle("config:read-team", (_event, { teamId }) => readTypedConfig("teams", teamId));
-  ipcMain.handle("config:write-team", (_event, { teamId, content }) => writeTypedConfig("teams", teamId, content));
-  ipcMain.handle("config:delete-team", (_event, { teamId }) => deleteTypedConfig("teams", teamId));
   ipcMain.handle("config:fetch-builtin-mcp", async () => {
     const dir = path.join(dataDir(), "mcp", "builtin");
     const ids = await listJsonIds(dir);

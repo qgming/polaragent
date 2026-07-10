@@ -129,7 +129,7 @@ export function listSkillsTool(
     name: "list_skills",
     label: "列出技能",
     description:
-      "列出当前助手或团队上下文可用的技能。遇到任务可能匹配某个技能时，先调用此工具查看技能名称和适用场景，再用 read_skill 读取具体说明。",
+      "列出当前助手可用的技能。遇到任务可能匹配某个技能时，先调用此工具查看技能名称和适用场景，再用 read_skill 读取具体说明。",
     parameters: listSkillsParams,
     executionMode: "parallel",
     execute: async () => {

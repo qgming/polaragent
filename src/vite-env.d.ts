@@ -78,10 +78,6 @@ interface Window {
       readMcp: (mcpId: string) => Promise<string>;
       writeMcp: (mcpId: string, content: string) => Promise<void>;
       deleteMcp: (mcpId: string) => Promise<void>;
-      listTeams: () => Promise<string[]>;
-      readTeam: (teamId: string) => Promise<string>;
-      writeTeam: (teamId: string, content: string) => Promise<void>;
-      deleteTeam: (teamId: string) => Promise<void>;
       fetchBuiltinMcpConfigs: () => Promise<string>;
     };
     llm: {

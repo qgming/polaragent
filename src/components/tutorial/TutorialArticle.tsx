@@ -18,7 +18,6 @@ export type TutorialArticleSection =
   | "agent"
   | "skill"
   | "tool"
-  | "team"
   | "knowledge"
   | "model"
   | "browseruse"

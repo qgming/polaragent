@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence } from "motion/react";
 
 import { abortAgentThread, resetAgent } from "@/ai/agent";
-import { abortTeamThread } from "@/ai/team";
 import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { AskUserModal } from "@/components/AskUserModal";
 import { GlobalSessionSearch } from "@/components/GlobalSessionSearch";
@@ -16,11 +15,9 @@ import { AutoUpdateHandler } from "@/components/updates/AutoUpdateHandler";
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/hooks/useTheme";
 import { useLanguage } from "@/hooks/useLanguage";
-import { initializeApp, initializeAiRuntime } from "@/lib/app-init";
+import { initializeApp } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
-import { TeamEditorModal } from "@/components/team/TeamEditorModal";
 import { ProjectEditorModal } from "@/components/project/ProjectEditorModal";
-import type { TeamConfig } from "@/types/config";
 import type { ProjectConfig } from "@/types/config";
 import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
@@ -29,8 +26,6 @@ import { KnowledgePage } from "@/pages/KnowledgePage";
 import { SchedulePage } from "@/pages/SchedulePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SkillsPage } from "@/pages/SkillsPage";
-import { TeamPage } from "@/pages/TeamPage";
-import { TeamChatPage } from "@/pages/TeamChatPage";
 import { ToolsPage } from "@/pages/ToolsPage";
 import { TutorialPage } from "@/pages/TutorialPage";
 import {
@@ -41,10 +36,7 @@ import {
 } from "@/stores/chat-store";
 import { useConversationStore } from "@/stores/conversation-store";
 import { useConfigStore } from "@/stores/config-store";
-import { useTeamsStore } from "@/stores/team/teams-store";
-import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
-import { clearTeamSessions } from "@/lib/session/team";
 import type { SettingsSection } from "@/pages/SettingsPage";
 
 function App() {
@@ -54,12 +46,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"tasks" | "project" | "team">("tasks");
-  // 团队聊天视图：非空时主区域渲染 TeamChatPage（覆盖普通页面内容）。
-  const [teamChatView, setTeamChatView] = useState<{
-    teamId: string;
-    threadId: string;
-  } | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<"tasks" | "project">("tasks");
   // 项目聊天视图：非空时主区域用 ChatPage 渲染（传入 subtitle + hideWorkingDirPicker）。
   const [projectChatView, setProjectChatView] = useState<{
     projectId: string;
@@ -77,9 +64,6 @@ function App() {
   );
   // 正在后台运行的会话 id 列表（驱动侧边栏会话项的加载图标）
   const runningThreadIds = useChatStore((state) => state.runningThreadIds);
-  const runningTeamThreadIds = useTeamChatStore(
-    (state) => state.runningThreadIds,
-  );
   const clearThread = useChatStore((state) => state.clearThread);
   const createThread = useChatStore((state) => state.createThread);
   const deleteThread = useChatStore((state) => state.deleteThread);
@@ -100,20 +84,6 @@ function App() {
     (state) => state.settings.appearance.chatFontSize,
   );
   const agents = useConfigStore((state) => state.agents);
-
-  // 团队相关：列表 + 删除（编辑用弹窗）、团队会话 store 动作
-  const teams = useTeamsStore((state) => state.teams);
-  const removeTeam = useTeamsStore((state) => state.removeTeam);
-  const updateTeam = useTeamsStore((state) => state.updateTeam);
-  const createTeamThread = useTeamChatStore((state) => state.createTeamThread);
-  const selectTeamThread = useTeamChatStore((state) => state.selectTeamThread);
-  const renameTeamThread = useTeamChatStore((state) => state.renameTeamThread);
-  const deleteTeamThread = useTeamChatStore((state) => state.deleteTeamThread);
-  const clearTeamThreadsOfTeam = useTeamChatStore(
-    (state) => state.clearTeamThreadsOfTeam,
-  );
-  // 侧边栏「编辑团队」用的弹窗状态
-  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
 
   // 项目相关：列表 + 编辑弹窗状态
   const projects = useProjectsStore((state) => state.projects);
@@ -161,22 +131,19 @@ function App() {
     if (page === "chat") {
       showHome();
     }
-    // 切到任意主导航页面时退出团队/项目聊天视图
-    setTeamChatView(null);
+    // 切到任意主导航页面时退出项目聊天视图
     setProjectChatView(null);
     setActivePage(page);
   };
 
   const openSettingsSection = (section: SettingsSection) => {
     setSettingsSection(section);
-    setTeamChatView(null);
     setProjectChatView(null);
     setActivePage("settings");
   };
 
   const handleSelectThread = (threadId: string) => {
     selectThread(threadId);
-    setTeamChatView(null);
     // 项目会话走 projectChatView 独立视图
     const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
     if (thread?.projectId) {
@@ -205,73 +172,11 @@ function App() {
     );
   };
 
-  // ===== 团队相关 =====
-
-  // 在团队聊天页内新建会话
-  const handleNewTeamThread = (teamId: string) => {
-    const threadId = createTeamThread(teamId);
-    setTeamChatView({ teamId, threadId });
-  };
-
-  // 在团队聊天页内切换历史会话
-  const handleSelectTeamThread = (teamId: string, threadId: string) => {
-    selectTeamThread(threadId);
-    setTeamChatView({ teamId, threadId });
-    setActivePage("chat");
-  };
-
-  // 重命名某团队会话（侧边栏会话子项）
-  const handleRenameTeamThread = (threadId: string, title: string) => {
-    renameTeamThread(threadId, title);
-  };
-
-  // 删除某团队会话；若删的是当前打开的会话，退出团队聊天视图
-  const handleDeleteTeamThread = (threadId: string) => {
-    abortTeamThread(threadId);
-    deleteTeamThread(threadId);
-    setTeamChatView((view) =>
-      view?.threadId === threadId ? null : view,
-    );
-  };
-
-  // 清空某团队的全部会话（磁盘 + 内存）
-  const handleClearTeam = (teamId: string) => {
-    useTeamChatStore
-      .getState()
-      .threads.filter((thread) => thread.teamId === teamId)
-      .forEach((thread) => abortTeamThread(thread.id));
-    void clearTeamSessions(teamId);
-    clearTeamThreadsOfTeam(teamId);
-    // 若正处于该团队聊天页，退出
-    setTeamChatView((view) => (view?.teamId === teamId ? null : view));
-  };
-
-  // 删除团队（连同其全部会话）
-  const handleDeleteTeam = (teamId: string) => {
-    useTeamChatStore
-      .getState()
-      .threads.filter((thread) => thread.teamId === teamId)
-      .forEach((thread) => abortTeamThread(thread.id));
-    void clearTeamSessions(teamId);
-    clearTeamThreadsOfTeam(teamId);
-    void removeTeam(teamId);
-    setTeamChatView((view) => (view?.teamId === teamId ? null : view));
-  };
-
-  // 保存团队编辑（侧边栏「编辑团队」入口）
-  const editingTeam = teams.find((t) => t.id === editingTeamId) ?? null;
-  const handleSaveEditingTeam = async (team: TeamConfig) => {
-    await updateTeam(team.id, team);
-    initializeAiRuntime();
-    setEditingTeamId(null);
-  };
-
   // ===== 项目相关 =====
 
   // 在项目内新建对话：传入 projectId 关联项目，切换到项目聊天视图
   const handleNewProjectThread = (projectId: string) => {
     const threadId = createThread(undefined, undefined, undefined, projectId);
-    setTeamChatView(null);
     setProjectChatView({ projectId, threadId });
     setActivePage("chat");
   };
@@ -373,15 +278,12 @@ function App() {
           onOpenTutorial={() => setTutorialOpen(true)}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           showPanelToggle={
-            teamChatView
-              ? true
-              : projectChatView
+            projectChatView
                 ? true
                 : activePage === "chat" && !!activeThreadId
           }
           sidebarCollapsed={sidebarCollapsed}
           statsThreadId={projectChatView?.threadId}
-          teamPanelThreadId={teamChatView?.threadId}
         />
 
         {activePage === "settings" ? (
@@ -405,20 +307,11 @@ function App() {
                   key="app-sidebar"
                   activePage={activePage}
                   activeThreadId={activeThreadId}
-                  activeTeamId={teamChatView?.teamId}
-                  activeTeamThreadId={teamChatView?.threadId}
                   onClearThread={handleClearThread}
                   onDeleteThread={handleDeleteThread}
                   onOpenPage={openPage}
                   onRenameThread={renameThread}
                   onSelectThread={handleSelectThread}
-                  onEditTeam={(teamId) => setEditingTeamId(teamId)}
-                  onClearTeam={handleClearTeam}
-                  onDeleteTeam={handleDeleteTeam}
-                  onSelectTeamThread={handleSelectTeamThread}
-                  onNewTeamThread={handleNewTeamThread}
-	                  onRenameTeamThread={handleRenameTeamThread}
-	                  onDeleteTeamThread={handleDeleteTeamThread}
 	                  // 项目相关
 	                  onNewProjectThread={handleNewProjectThread}
 	                  onEditProject={handleEditProject}
@@ -426,7 +319,6 @@ function App() {
 	                  onClearProjectChats={handleClearProjectChats}
 	                  onNewProject={handleNewProject}
 	                  runningThreadIds={runningThreadIds}
-	                  runningTeamThreadIds={runningTeamThreadIds}
 	                  sidebarTab={sidebarTab}
                   setSidebarTab={setSidebarTab}
                   threads={orphanThreads}
@@ -435,12 +327,7 @@ function App() {
             </AnimatePresence>
 
             <main className="min-w-0 flex-1 bg-background">
-              {teamChatView ? (
-                <TeamChatPage
-                  teamId={teamChatView.teamId}
-                  threadId={teamChatView.threadId}
-                />
-              ) : projectChatView ? (
+              {projectChatView ? (
                 <ChatPage
                   activeThreadTitle={activeThreadTitle}
                   agentId={activeThreadAgentId || activeAgentId}
@@ -489,9 +376,6 @@ function App() {
                   setActiveAgent={setActiveAgent}
                   setComposer={setComposer}
                   startExchange={startExchange}
-                  onCreateTeamThread={(teamId: string, threadId: string) => {
-                    setTeamChatView({ teamId, threadId });
-                  }}
                 />
               ) : null}
               {activePage === "skills" ? <SkillsPage /> : null}
@@ -507,21 +391,12 @@ function App() {
                   }}
                 />
               ) : null}
-	              {activePage === "team" ? <TeamPage /> : null}
 	                </>
               )}
             </main>
           </div>
         )}
 
-        {/* 侧边栏「编辑团队」弹窗 */}
-        {editingTeam ? (
-          <TeamEditorModal
-            team={editingTeam}
-            onClose={() => setEditingTeamId(null)}
-            onSave={handleSaveEditingTeam}
-          />
-        ) : null}
         {/* 新建/编辑项目弹窗 */}
         {projectEditorOpen ? (
           <ProjectEditorModal
@@ -535,7 +410,6 @@ function App() {
         ) : null}
         <GlobalSessionSearch
           onOpenChange={setSearchOpen}
-          onOpenTeamThread={handleSelectTeamThread}
           onOpenThread={handleSelectThread}
           open={searchOpen}
         />

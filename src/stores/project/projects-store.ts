@@ -1,4 +1,4 @@
-// 项目配置 Store —— 镜像 config-store 的 teams CRUD
+// 项目配置 Store —— 本地项目 CRUD
 //
 // 项目配置以本地文件为准（{dataDir}/projects/<id>.json，经 Electron API 读写）。
 // 这里只做内存镜像 + 增删改，落盘交给 Electron API。

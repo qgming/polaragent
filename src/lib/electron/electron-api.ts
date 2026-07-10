@@ -379,14 +379,6 @@ export const writeAgentConfig = (agentId: string, content: any) =>
   api().config.writeAgent(agentId, JSON.stringify(content, null, 2));
 export const deleteAgentConfig = (agentId: string) => api().config.deleteAgent(agentId);
 
-export const listTeams = (): Promise<string[]> => api().config.listTeams();
-export async function readTeamConfig<T = any>(teamId: string): Promise<T> {
-  return JSON.parse(await api().config.readTeam(teamId)) as T;
-}
-export const writeTeamConfig = (teamId: string, content: any) =>
-  api().config.writeTeam(teamId, JSON.stringify(content, null, 2));
-export const deleteTeamConfig = (teamId: string) => api().config.deleteTeam(teamId);
-
 // 网络搜索接口
 export interface WebSearchRequest {
   provider: "tavily" | "exa" | "serper" | "searxng" | "brave";

@@ -29,7 +29,6 @@ import {
 import { TIMEOUTS } from "@/config/constants";
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
 const IMAGE_REQUEST_TIMEOUT_MS = TIMEOUTS.IMAGE_GENERATION;
@@ -186,11 +185,7 @@ function imageExtensionFromUrl(url: string) {
 
 function addImageArtifact(ctx: ToolContext, path: string) {
   const artifact = { path, name: fileName(path), kind: "final" as const };
-  if (ctx.isTeam) {
-    useTeamMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  } else {
-    useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  }
+  useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 }
 
 function extractChatContent(payload: any) {

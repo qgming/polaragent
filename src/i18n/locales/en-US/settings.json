@@ -50,7 +50,7 @@
   },
   "models": {
     "title": "Model Settings",
-    "description": "Manage model services and default routing model. Chat, teams, and title generation use these to switch providers and models.",
+    "description": "Manage model services and default routing model. Chat, subagents, and title generation use these to switch providers and models.",
     "modelServices": "Model Services",
     "addService": "Add Service",
     "emptyState": "No model services yet. Click \"Add Service\" in the top right to start configuring.",
@@ -327,7 +327,7 @@
   "about": {
     "title": "About",
     "description": "Version and application info for PolarAgent.",
-    "appDescription": "A local-first AI Agent desktop app supporting conversations, team collaboration, skills, and tool extensions.",
+    "appDescription": "A local-first AI Agent desktop app supporting conversations, subagent collaboration, skills, and tool extensions.",
     "checkUpdate": "Check for Updates",
     "checking": "Checking",
     "upToDate": "You're up to date",

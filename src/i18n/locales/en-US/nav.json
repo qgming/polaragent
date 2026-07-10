@@ -4,7 +4,6 @@
     "skills": { "title": "Skills", "description": "Manage capabilities and workflows that Agents can invoke" },
     "tools": { "title": "Tools", "description": "Manage built-in tools and MCP servers" },
     "agent": { "title": "Agents", "description": "Orchestrate models, tools, memory, and execution strategies" },
-    "team": { "title": "Teams", "description": "Orchestrate multiple agents to collaborate on complex tasks" },
     "knowledge": { "title": "Knowledge", "description": "Manage documents and materials for AI retrieval" },
     "schedule": { "title": "Schedules", "description": "Create and manage background Agent automation tasks" },
     "settings": { "title": "Settings", "description": "Configure models, window behavior, appearance, and local data" }
@@ -13,7 +12,6 @@
     "chat": "New Chat",
     "tasks": "Chats",
     "projectTab": "Projects",
-    "teamTab": "Teams",
     "newChat": "New Chat",
     "knowledge": "Knowledge",
     "schedule": "Schedules",
@@ -21,7 +19,6 @@
     "skills": "Skills",
     "tools": "Tools",
     "agent": "Agents",
-    "team": "Teams",
     "settings": "Settings"
   },
   "titleBar": {
@@ -39,8 +36,6 @@
     "sessionStats": "Session Stats",
     "tutorial": "Tutorial",
     "expandPanel": "Expand Monitor Panel",
-    "collapsePanel": "Collapse Monitor Panel",
-    "expandTeamPanel": "Expand Team Panel",
-    "collapseTeamPanel": "Collapse Team Panel"
+    "collapsePanel": "Collapse Monitor Panel"
   }
 }

@@ -6,8 +6,6 @@ import { useChatStore } from "@/stores/chat-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useSkillsMarketStore } from "@/stores/skills/skills-market-store";
 import { useAgentsMarketStore } from "@/stores/agents-market-store";
-import { useTeamsStore } from "@/stores/team/teams-store";
-import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
 import { useScheduleStore } from "@/stores/schedule-store";
 import { useToolsStore } from "@/stores/tools-store";
@@ -22,32 +20,24 @@ export async function initializeApp() {
   console.log("开始初始化应用...");
 
   try {
-    // 1. 初始化配置（最先，后续会话/团队/技能都依赖数据目录）
+    // 1. 初始化配置（最先，后续会话/技能都依赖数据目录）
     await useConfigStore.getState().initialize();
     await applyAutomationRuntimeSettings();
     console.log("✓ 配置初始化完成");
 
-    // 2. 会话与团队优先加载，填充侧边栏（用户最先看到的内容）。
-    //    两组互不依赖，并行发起：
-    //      a) 普通对话会话列表
-    //      b) 团队配置 → 团队会话列表（团队会话 hydrate 依赖团队配置归属，故串行）
-    //    它们都只依赖数据目录，与后面的技能/MCP 无关；先发起，末尾再兜底 await 捕获错误。
+    // 2. 会话优先加载，填充侧边栏（用户最先看到的内容）。
+    //    这些数据只依赖数据目录，与后面的技能/MCP 无关；先发起，末尾再兜底 await 捕获错误。
     const sidebarPromise = Promise.all([
       useChatStore
         .getState()
         .hydrateThreads()
         .then(() => console.log("✓ 对话会话加载完成")),
-      (async () => {
-        await useTeamsStore.getState().loadTeams();
-        await useTeamChatStore.getState().hydrateTeamThreads();
-        console.log("✓ 团队及团队会话加载完成");
-      })(),
-      // 项目配置：与团队同级并行预加载，供侧边栏项目列表和对话提示词注入
+      // 项目配置：并行预加载，供侧边栏项目列表和对话提示词注入
       useProjectsStore
         .getState()
         .loadProjects()
         .then(() => console.log("✓ 项目列表加载完成")),
-      // 知识库列表：仅依赖数据目录，与会话/团队同级并行预加载，
+      // 知识库列表：仅依赖数据目录，与会话同级并行预加载，
       // 启动后即就绪，避免进入知识库页或对话引用知识库时才加载。
       useKnowledgeStore
         .getState()

@@ -18,7 +18,6 @@ import {
   type OfficeProject,
 } from "@/lib/office";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 import pptExportTemplate from "../../../resources/builtin/skills/ppt-generator/assets/export-template.html?raw";
 
@@ -262,11 +261,7 @@ function addArtifact(
   ctx: ToolContext,
   artifact: { path: string; name: string; kind: "final" | "working" },
 ) {
-  if (ctx.isTeam) {
-    useTeamMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  } else {
-    useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  }
+  useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 }
 
 function buildOfficeSource(

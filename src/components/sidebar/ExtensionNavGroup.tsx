@@ -1,4 +1,4 @@
-// 「扩展」折叠导航组：收纳技能 / 工具 / 助手 / 团队
+// 「扩展」折叠导航组：收纳技能 / 工具 / 助手
 // 展开/收起状态持久化到 localStorage，重启后保留。
 import { ChevronRight } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -17,17 +17,15 @@ function readStoredExpanded(): boolean {
 
 export function ExtensionNavGroup({
   activePage,
-  activeTeamId,
   onOpenPage,
 }: {
   activePage: PageId;
-  activeTeamId?: string;
   onOpenPage: (page: PageId) => void;
 }) {
   const { t } = useTranslation("nav");
-  // 当前是否有子项处于激活态（团队页另需排除团队会话激活的情况，与原顶层逻辑一致）
+  // 当前是否有子项处于激活态
   const hasActiveChild = extensionNav.items.some(
-    (item) => activePage === item.id && !activeTeamId,
+    (item) => activePage === item.id,
   );
 
   const [expanded, setExpanded] = useState(readStoredExpanded);
@@ -77,7 +75,7 @@ export function ExtensionNavGroup({
           >
             <div className="ml-[18px] mt-1 space-y-1 border-l border-border pl-2">
               {extensionNav.items.map((item) => {
-                const active = activePage === item.id && !activeTeamId;
+                const active = activePage === item.id;
                 const Icon = item.icon;
                 return (
                   <button

@@ -5,7 +5,6 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Skill } from "@earendil-works/pi-agent-core";
-import type { AgentConfig, TeamConfig } from "@/types/config";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 // 工具执行时的会话上下文：把产物/待办归属到正确的会话与工作目录
@@ -14,35 +13,18 @@ export interface ToolContext {
   projectId?: string;
   workingDir?: string;
   permissionMode: ToolPermissionMode;
-  isTeam?: boolean;
+  isSubagent?: boolean;
+  parentThreadId?: string;
+  parentAgentId?: string;
   isBackground?: boolean;
   requester?: {
     id: string;
     name: string;
   };
-  // 当前助手/团队上下文允许使用的技能。技能工具只能读取这里列出的技能。
+  // 当前助手上下文允许使用的技能。技能工具只能读取这里列出的技能。
   skills?: Skill[];
   // 当前会话选中的知识库 ID 列表
   knowledgeBaseIds?: string[];
-  // 团队成员工具上下文。存在时团队成员可发起投票。
-  teamVote?: {
-    team: TeamConfig;
-    initiatorId: string;
-  };
-  // 团队流程控制上下文。存在时团队成员可用 control_team_flow 控制接力/结束。
-  teamFlow?: {
-    threadId: string;
-    team: TeamConfig;
-    currentAgentId: string;
-    members: AgentConfig[];
-  };
-  // 团队投票收集阶段专用上下文。存在时只允许当前成员用 cast_team_vote 落票。
-  teamCastVote?: {
-    voteId: string;
-    voterId: string;
-    options: Array<{ id: string; label: string }>;
-    onCast: (optionId: string) => void;
-  };
   // 浏览器扩展是否已连接；未指定时默认可用，保持向后兼容
   browserExtensionConnected?: boolean;
   // Computer Use 是否可用（Windows + Worker 就绪）；未指定时默认可用，保持向后兼容

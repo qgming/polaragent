@@ -14,7 +14,6 @@
       "agent": "Agent Management",
       "skill": "Skills",
       "tool": "Tool Integrations",
-      "team": "Team Collaboration",
       "knowledge": "Knowledge Base",
       "model": "Model Settings",
       "browseruse": "Browser Use",
@@ -61,7 +60,7 @@
         { "type": "tip", "text": "Top-bar buttons also provide quick access to search, sidebar toggles, and other actions." },
         { "type": "section", "text": "Next steps" },
         { "type": "p", "text": "After the quick start, continue with the feature guides." },
-        { "type": "ol", "items": ["Read **Chat** for conversation tips.", "Explore **Skills** and **Tool Integrations** to extend AI capabilities.", "Try **Team Collaboration** for multi-agent work.", "Configure advanced features such as **Browser Use** and **Computer Use**.", "Read **Tips** for more efficient workflows."] },
+        { "type": "ol", "items": ["Read **Chat** for conversation tips.", "Explore **Skills** and **Tool Integrations** to extend AI capabilities.", "Use subagents in ordinary chat for complex work that benefits from multiple perspectives.", "Configure advanced features such as **Browser Use** and **Computer Use**.", "Read **Tips** for more efficient workflows."] },
         { "type": "tip", "text": "If you run into issues, check the **FAQ** section." }
       ]
     },
@@ -179,25 +178,6 @@
         { "type": "tip", "text": "Protect API keys and other secrets. Do not paste or share them directly in chats." },
         { "type": "section", "text": "Common tool types" },
         { "type": "list", "items": ["**Search engines**: web and academic search.", "**Code repositories**: GitHub and GitLab integrations.", "**Cloud services**: storage and compute platforms.", "**Databases**: SQL and NoSQL connections."] }
-      ]
-    },
-    "team": {
-      "title": "Team Collaboration",
-      "description": "Learn how to let multiple AI agents work together.",
-      "blocks": [
-        { "type": "section", "text": "What is a team?" },
-        { "type": "list", "items": ["**Multi-agent collaboration**: agents with different strengths solve problems together.", "**Task decomposition**: subtasks are assigned by capability.", "**Shared context**: members share context and intermediate results.", "**Deliberation**: multiple perspectives analyze and validate a plan."] },
-        { "type": "section", "text": "Create a team" },
-        { "type": "ol", "items": ["Open **Teams** and click **Create Team**.", "Name the team and add a description.", "Add at least two members.", "Assign roles and responsibilities.", "Configure serial, parallel, or hybrid collaboration mode."] },
-        { "type": "section", "text": "Use a team" },
-        { "type": "ol", "items": ["Select a team from the main page or sidebar.", "Describe your task or question.", "The team starts collaborating and divides the work.", "Review each member's progress.", "Receive a combined final result and suggestions."] },
-        { "type": "tip", "text": "Teams are useful for tasks that need multiple specialties, such as software development or content production." },
-        { "type": "section", "text": "Collaboration modes" },
-        { "type": "list", "items": ["**Serial**: members work in order; later members depend on earlier output.", "**Parallel**: members work independently at the same time.", "**Hybrid**: the task selects serial or parallel flow automatically."] },
-        { "type": "section", "text": "Team management" },
-        { "type": "list", "items": ["Adjust members and responsibilities anytime.", "Review historical collaboration records.", "Export team reports.", "Archive or delete teams you no longer need."] },
-        { "type": "section", "text": "Common scenarios" },
-        { "type": "list", "items": ["**Software development**: product manager + architect + developer + tester.", "**Content creation**: planner + writer + editor + proofreader.", "**Data analysis**: collection + cleaning + analysis + visualization.", "**Decision support**: multi-angle analysis + risk assessment + option comparison."] }
       ]
     },
     "knowledge": {
@@ -328,8 +308,8 @@
         { "type": "tip", "text": "When a chat gets very long, AI may forget early details. Summarize key points and start a new chat." },
         { "type": "section", "text": "Domain-specific work" },
         { "type": "list", "items": ["**Programming**: specify language, framework, versions, and errors.", "**Writing**: specify style, audience, length, and outline.", "**Learning**: explain your current level and ask for examples.", "**Analysis**: provide complete data and analysis dimensions."] },
-        { "type": "section", "text": "Team collaboration tips" },
-        { "type": "list", "items": ["Give each team member a clear role.", "Let members focus on their strengths.", "Use serial mode for complex tasks that need coherence.", "Use parallel mode for simple independent subtasks."] },
+        { "type": "section", "text": "Subagent collaboration tips" },
+        { "type": "list", "items": ["Split complex work into clear subtasks.", "Give subagents enough context and an expected output format.", "Let the main assistant synthesize results instead of stacking raw outputs.", "Ask different agents to cross-check important conclusions when needed."] },
         { "type": "section", "text": "Knowledge base best practices" },
         { "type": "list", "items": ["Use clear section headings.", "Place important concepts in separate paragraphs.", "Avoid overly long documents; under 10,000 words is a good target.", "Put related documents in the same knowledge base."] }
       ]
@@ -356,11 +336,9 @@
         { "type": "tip", "text": "For safety, AI cannot freely access your file system. Provide content through knowledge bases, attachments, or approved tools." },
         { "type": "subheading", "text": "Q: Skill installation fails." },
         { "type": "list", "items": ["Check network connectivity.", "Confirm enough storage is available.", "Restart the app and try again.", "Check logs for the specific error."] },
-        { "type": "subheading", "text": "Q: Team collaboration is not effective." },
-        { "type": "list", "items": ["Make member roles clearer.", "Adjust collaboration mode.", "Describe the task more precisely.", "Change the team composition if needed."] },
         { "type": "section", "text": "Performance" },
         { "type": "subheading", "text": "Q: The app feels slow." },
-        { "type": "list", "items": ["Close chats and teams you do not need.", "Clean old chat history regularly.", "Reduce the number of simultaneous tasks.", "Check system resource usage."] },
+        { "type": "list", "items": ["Close chats you do not need.", "Clean old chat history regularly.", "Reduce the number of simultaneous tasks.", "Check system resource usage."] },
         { "type": "subheading", "text": "Q: Storage usage is too high." },
         { "type": "list", "items": ["Delete unneeded chat history.", "Clean outdated knowledge base documents.", "Uninstall unused skills.", "Check storage details in settings."] },
         { "type": "section", "text": "Account and security" },

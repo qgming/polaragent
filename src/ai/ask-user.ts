@@ -1,4 +1,4 @@
-// ask_user 请求运行时 —— 普通对话与团队对话共用同一套等待/提交机制。
+// ask_user 请求运行时。
 
 import {
   useAskUserStore,
@@ -13,7 +13,6 @@ export interface AskUserRuntimeRequest {
   threadId: string;
   requesterId?: string;
   requesterName?: string;
-  isTeam?: boolean;
   prompt: string;
   mode: AskUserMode;
   options: AskUserOption[];
@@ -78,9 +77,7 @@ export async function initiateAskUser(
       requestId,
       threadId: request.threadId,
       requesterId: request.requesterId,
-      requesterName:
-        request.requesterName || (request.isTeam ? "团队成员" : "助手"),
-      isTeam: !!request.isTeam,
+      requesterName: request.requesterName || "助手",
       prompt: request.prompt,
       mode: request.mode,
       options: request.options,

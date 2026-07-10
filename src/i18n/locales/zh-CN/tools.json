@@ -140,10 +140,6 @@
       "interaction": {
         "name": "用户交互",
         "description": "向用户请求输入，收集选择反馈"
-      },
-      "team": {
-        "name": "团队协作",
-        "description": "控制协作流程，发起和参与投票"
       }
     },
     "tools": {
@@ -271,13 +267,17 @@
         "name": "更新待办",
         "description": "维护当前任务的待办清单，用完整列表同步任务进度。"
       },
+      "delegate_task": {
+        "name": "调用子代理",
+        "description": "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。"
+      },
       "ask_user": {
         "name": "询问用户",
         "description": "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。"
       },
       "list_skills": {
         "name": "列出技能",
-        "description": "列出当前助手或团队上下文可用的技能名称与适用场景。"
+        "description": "列出当前助手可用的技能名称与适用场景。"
       },
       "read_skill": {
         "name": "读取技能",
@@ -286,18 +286,6 @@
       "read_skill_file": {
         "name": "读取技能文件",
         "description": "读取可用技能目录内 references、examples 等子文件。"
-      },
-      "control_team_flow": {
-        "name": "控制团队流程",
-        "description": "团队协作中控制继续、交接、结束或标记阻塞，可附带给下一位成员的私聊提示。"
-      },
-      "request_team_vote": {
-        "name": "发起团队投票",
-        "description": "团队协作中发起投票决策，收集团队成员对方案、方向或是否结束的选择。"
-      },
-      "cast_team_vote": {
-        "name": "提交团队投票",
-        "description": "团队投票收集阶段提交当前成员的投票选择。"
       },
       "read_file": {
         "name": "读取文件",

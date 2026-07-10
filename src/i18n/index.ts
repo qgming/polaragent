@@ -15,7 +15,6 @@ import zhCN_agents from "./locales/zh-CN/agents.json";
 import zhCN_knowledge from "./locales/zh-CN/knowledge.json";
 import zhCN_skills from "./locales/zh-CN/skills.json";
 import zhCN_tools from "./locales/zh-CN/tools.json";
-import zhCN_team from "./locales/zh-CN/team.json";
 import zhCN_tutorial from "./locales/zh-CN/tutorial.json";
 import zhCN_schedule from "./locales/zh-CN/schedule.json";
 
@@ -28,7 +27,6 @@ import enUS_agents from "./locales/en-US/agents.json";
 import enUS_knowledge from "./locales/en-US/knowledge.json";
 import enUS_skills from "./locales/en-US/skills.json";
 import enUS_tools from "./locales/en-US/tools.json";
-import enUS_team from "./locales/en-US/team.json";
 import enUS_tutorial from "./locales/en-US/tutorial.json";
 import enUS_schedule from "./locales/en-US/schedule.json";
 
@@ -44,7 +42,6 @@ const resources = {
     knowledge: zhCN_knowledge,
     skills: zhCN_skills,
     tools: zhCN_tools,
-    team: zhCN_team,
     tutorial: zhCN_tutorial,
     schedule: zhCN_schedule,
   },
@@ -58,7 +55,6 @@ const resources = {
     knowledge: enUS_knowledge,
     skills: enUS_skills,
     tools: enUS_tools,
-    team: enUS_team,
     tutorial: enUS_tutorial,
     schedule: enUS_schedule,
   },

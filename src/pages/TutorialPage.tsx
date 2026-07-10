@@ -2,7 +2,7 @@
 // src/pages/TutorialPage.tsx
 
 import { useState } from "react";
-import { ArrowLeft, BookOpen, MessageSquare, Bot, Wrench, Package, Users, Database, Settings2, Lightbulb, HelpCircle, Globe, Monitor } from "lucide-react";
+import { ArrowLeft, BookOpen, MessageSquare, Bot, Wrench, Package, Database, Settings2, Lightbulb, HelpCircle, Globe, Monitor } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { QuickStartGuide } from "@/components/tutorial/QuickStartGuide";
@@ -10,7 +10,6 @@ import { ChatGuide } from "@/components/tutorial/ChatGuide";
 import { AgentGuide } from "@/components/tutorial/AgentGuide";
 import { SkillGuide } from "@/components/tutorial/SkillGuide";
 import { ToolGuide } from "@/components/tutorial/ToolGuide";
-import { TeamGuide } from "@/components/tutorial/TeamGuide";
 import { KnowledgeGuide } from "@/components/tutorial/KnowledgeGuide";
 import { ModelGuide } from "@/components/tutorial/ModelGuide";
 import { BrowserUseGuide } from "@/components/tutorial/BrowserUseGuide";
@@ -24,7 +23,6 @@ export type TutorialSection =
   | "agent"
   | "skill"
   | "tool"
-  | "team"
   | "knowledge"
   | "model"
   | "browseruse"
@@ -55,7 +53,6 @@ const navGroups: Array<{
   {
     titleKey: "nav.groups.advanced",
     items: [
-      { id: "team", labelKey: "nav.items.team", icon: Users },
       { id: "knowledge", labelKey: "nav.items.knowledge", icon: Database },
       { id: "model", labelKey: "nav.items.model", icon: Settings2 },
       { id: "browseruse", labelKey: "nav.items.browseruse", icon: Globe },
@@ -120,7 +117,6 @@ export function TutorialPage({
           {activeSection === "agent" && <AgentGuide />}
           {activeSection === "skill" && <SkillGuide />}
           {activeSection === "tool" && <ToolGuide />}
-          {activeSection === "team" && <TeamGuide />}
           {activeSection === "knowledge" && <KnowledgeGuide />}
           {activeSection === "model" && <ModelGuide />}
           {activeSection === "browseruse" && <BrowserUseGuide />}

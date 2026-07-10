@@ -6,15 +6,11 @@ import { calculateContextTokens } from "@/lib/session/compaction";
 import { skillLoader } from "@/lib/skill";
 import type { ChatAttachment, ChatMessage, ChatSkillRef, Segment } from "@/lib/chat";
 import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
-import type { TeamMessage } from "@/lib/team";
 import { toolDisplayName } from "@/ai/tools";
-import { getRepo, getTeamRepo } from "./session-repo";
+import { getRepo } from "./session-repo";
 import { pickBestMeta } from "./meta-selection";
 import { openOrCreateSession } from "./personal";
-import { GUIDANCE_ENTRY, TEAM_SPEAKER_ENTRY, TEAM_VOTE_ENTRY } from "./entries";
-
-// 团队会话消息：在普通 ChatMessage 基础上附带发言成员 id / 投票信息。
-export type TeamChatMessage = ChatMessage & Pick<TeamMessage, "speakerAgentId" | "vote">;
+import { GUIDANCE_ENTRY } from "./entries";
 
 /**
  * 回读某会话的「任务监控」快照（待办 + 产物），供重启后恢复右侧面板。
@@ -128,21 +124,10 @@ export async function loadChatMessages(
   return loadChatMessagesImpl(sessionId, getRepo);
 }
 
-/**
- * 团队会话版：回读团队会话历史，并为每条 assistant 消息附带发言成员 speakerAgentId。
- * 发言成员来自运行时在每位成员发言前写入的 team_speaker 自定义条目（按出现顺序跟踪）。
- */
-export async function loadTeamChatMessages(
-  sessionId: string,
-): Promise<TeamChatMessage[]> {
-  return loadChatMessagesImpl(sessionId, getTeamRepo, { trackSpeaker: true });
-}
-
 async function loadChatMessagesImpl(
   sessionId: string,
   repoGetter: () => Promise<JsonlSessionRepo>,
-  opts?: { trackSpeaker?: boolean },
-): Promise<TeamChatMessage[]> {
+): Promise<ChatMessage[]> {
   const repo = await repoGetter();
   const metas = await repo.list().catch(() => []);
   const hits = metas.filter((meta) => meta.id === sessionId);
@@ -183,14 +168,7 @@ async function loadChatMessagesImpl(
     }
   }
 
-  const messages: TeamChatMessage[] = [];
-  const voteMessageIndexes = new Map<string, number>();
-
-  // 团队模式下跟踪「当前发言成员」：每遇到一条 team_speaker 自定义条目就更新。
-  // 不变量：写入端 appendTeamAssistantMessage 始终「先写 team_speaker、再写该成员的
-  // assistant 消息」成对落盘，因此每条 assistant 消息都有正确的前置 speaker。
-  // 若未来新增其它 assistant 写入路径，务必同样先写 speaker，否则归属会沿用上一位。
-  let currentSpeaker: string | undefined;
+  const messages: ChatMessage[] = [];
 
   // 一次用户提问可能触发 agent 多轮调用，产生多条相邻的 assistant 消息
   // （中间夹着 toolResult）。这里把「相邻的 assistant」合并为一条 ChatMessage，
@@ -207,7 +185,6 @@ async function loadChatMessagesImpl(
     cacheWriteTokens?: number;
     cacheReadTokens?: number;
     contextTokens?: number;
-    speakerAgentId?: string;
   } | null = null;
   const pendingGuidance: Array<{ text: string; createdAt: number }> = [];
 
@@ -236,7 +213,6 @@ async function loadChatMessagesImpl(
       cacheReadTokens: pending.cacheReadTokens,
       contextTokens: pending.contextTokens,
       segments: pending.segments,
-      speakerAgentId: pending.speakerAgentId,
     });
     pending = null;
   };
@@ -256,38 +232,6 @@ async function loadChatMessagesImpl(
       continue;
     }
 
-    if (
-      opts?.trackSpeaker &&
-      entry.type === "custom" &&
-      entry.customType === TEAM_VOTE_ENTRY
-    ) {
-      flushPending();
-      const message = parseTeamVoteEntry(entry.data);
-      if (message) {
-        const existingIndex = voteMessageIndexes.get(message.id);
-        if (existingIndex === undefined) {
-          voteMessageIndexes.set(message.id, messages.length);
-          messages.push(message);
-        } else {
-          messages[existingIndex] = message;
-        }
-      }
-      continue;
-    }
-
-    // 团队模式：team_speaker 自定义条目用于切换「当前发言成员」，先落地上一位的消息
-    if (
-      opts?.trackSpeaker &&
-      entry.type === "custom" &&
-      entry.customType === TEAM_SPEAKER_ENTRY
-    ) {
-      const data = entry.data as { agentId?: unknown } | undefined;
-      if (data && typeof data.agentId === "string") {
-        flushPending();
-        currentSpeaker = data.agentId;
-      }
-      continue;
-    }
     if (entry.type !== "message") continue;
     const message = entry.message;
     const timestamp = Date.parse(entry.timestamp) || message.timestamp || 0;
@@ -356,7 +300,6 @@ async function loadChatMessagesImpl(
           cacheWriteTokens: message.usage?.cacheWrite,
           cacheReadTokens: message.usage?.cacheRead,
           contextTokens: message.usage ? calculateContextTokens(message.usage) : undefined,
-          speakerAgentId: currentSpeaker,
         };
       } else {
         pending.id = entry.id;
@@ -383,35 +326,6 @@ async function loadChatMessagesImpl(
   flushPending();
 
   return messages;
-}
-
-function parseTeamVoteEntry(data: unknown): TeamChatMessage | null {
-  if (!data || typeof data !== "object") return null;
-  const message = (data as { message?: unknown }).message;
-  if (!message || typeof message !== "object") return null;
-  const record = message as Partial<TeamMessage>;
-  if (
-    typeof record.id !== "string" ||
-    record.role !== "assistant" ||
-    typeof record.content !== "string" ||
-    typeof record.createdAt !== "number" ||
-    !record.vote
-  ) {
-    return null;
-  }
-
-  return {
-    id: record.id,
-    role: "assistant",
-    content: record.content,
-    createdAt: record.createdAt,
-    status: record.status ?? "complete",
-    model: record.model,
-    tokenCount: record.tokenCount,
-    segments: record.segments,
-    speakerAgentId: record.speakerAgentId,
-    vote: record.vote,
-  };
 }
 
 // 剥离后台注入的技能块 <skill …>…</skill> 与文件块 <file …>…</file>（方案 C）：

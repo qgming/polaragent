@@ -53,12 +53,11 @@
   },
   "globalSearch": {
     "title": "Global session search",
-    "description": "Search content across regular and team sessions.",
+    "description": "Search session content.",
     "placeholder": "Search session content...",
     "titleMatch": "Title match",
     "searching": "Searching...",
-    "noResults": "No matching sessions found",
-    "teamFallback": "Team"
+    "noResults": "No matching sessions found"
   },
   "errorBoundary": {
     "title": "Something went wrong",
@@ -94,12 +93,11 @@
     "deleteChatDescription": "Delete \"{{title}}\"? This will remove the chat from the current list.",
     "clearChatTitle": "Clear chat",
     "clearChatDescription": "Clear all messages in \"{{title}}\"? The session and selected assistant will be kept so you can start again. This cannot be undone.",
-    "noTeams": "No teams yet. Create one on the Teams page.",
     "newSession": "New session",
     "renameSessionTitle": "Rename session",
     "renameSessionDescription": "The session name in the sidebar will update immediately.",
     "deleteSessionTitle": "Delete session",
-    "deleteSessionDescription": "Delete \"{{title}}\"? This will remove the team session and its history. This cannot be undone.",
+    "deleteSessionDescription": "Delete \"{{title}}\"? This will remove the session and its history. This cannot be undone.",
     "noProjects": "No projects yet",
     "newProject": "New Project",
     "newChat": "New Chat",

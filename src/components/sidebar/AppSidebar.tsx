@@ -1,9 +1,9 @@
-// 左侧栏：主导航、会话/项目/团队三 tab 切换与会话列表项
+// 左侧栏：主导航、会话/项目 tab 切换与会话列表项
 // src/components/sidebar/AppSidebar.tsx
 //
-// 列表项子组件拆分至同目录：SidebarButton / ThreadItem / TeamList / ProjectList。
+// 列表项子组件拆分至同目录：SidebarButton / ThreadItem / ProjectList。
 
-import { FolderOpen, Loader2, MessageCircle, Settings, Users } from "lucide-react";
+import { FolderOpen, Loader2, MessageCircle, Settings } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,34 +16,22 @@ import {
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
-import { useTeamsStore } from "@/stores/team/teams-store";
-import { useTeamChatStore } from "@/stores/team/team-chat-store";
 import { SidebarButton } from "./SidebarButton";
 import { ExtensionNavGroup } from "./ExtensionNavGroup";
 import { ThreadItem } from "./ThreadItem";
-import { TeamList } from "./TeamList";
 import { ProjectList } from "./ProjectList";
 
-// 三 tab 类型：会话 / 项目 / 团队
-export type SidebarTab = "tasks" | "project" | "team";
+// tab 类型：会话 / 项目
+export type SidebarTab = "tasks" | "project";
 
 export function AppSidebar({
   activePage,
   activeThreadId,
-  activeTeamId,
-  activeTeamThreadId,
   onOpenPage,
   onClearThread,
   onDeleteThread,
   onRenameThread,
   onSelectThread,
-  onEditTeam,
-  onClearTeam,
-  onDeleteTeam,
-  onSelectTeamThread,
-  onNewTeamThread,
-  onRenameTeamThread,
-  onDeleteTeamThread,
   // 项目相关回调
   onNewProjectThread,
   onEditProject,
@@ -51,31 +39,17 @@ export function AppSidebar({
   onClearProjectChats,
   onNewProject,
   runningThreadIds,
-  runningTeamThreadIds,
   sidebarTab,
   setSidebarTab,
   threads,
 }: {
   activePage: PageId;
   activeThreadId: string;
-  // 当前激活的团队（处于团队聊天页时）——用于高亮侧边栏团队项
-  activeTeamId?: string;
-  // 当前激活的团队会话 id——用于高亮展开列表里的会话子项
-  activeTeamThreadId?: string;
   onOpenPage: (page: PageId) => void;
   onClearThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
   onRenameThread: (threadId: string, title: string) => void;
   onSelectThread: (threadId: string) => void;
-  // 团队相关回调（团队 tab 列表项）
-  onEditTeam: (teamId: string) => void;
-  onClearTeam: (teamId: string) => void;
-  onDeleteTeam: (teamId: string) => void;
-  // 团队会话子项回调
-  onSelectTeamThread: (teamId: string, threadId: string) => void;
-  onNewTeamThread: (teamId: string) => void;
-  onRenameTeamThread: (threadId: string, title: string) => void;
-  onDeleteTeamThread: (threadId: string) => void;
   // 项目相关回调
   onNewProjectThread: (projectId: string) => void;
   onEditProject: (projectId: string) => void;
@@ -83,7 +57,6 @@ export function AppSidebar({
   onClearProjectChats: (projectId: string) => void;
   onNewProject: () => void;
   runningThreadIds: string[];
-  runningTeamThreadIds: string[];
   sidebarTab: SidebarTab;
   setSidebarTab: (tab: SidebarTab) => void;
   // 普通对话列表（非项目对话）
@@ -92,12 +65,9 @@ export function AppSidebar({
   const { t } = useTranslation("nav");
   const chatHydrating = useChatStore((state) => state.hydrating);
   const chatHydrated = useChatStore((state) => state.hydrated);
-  const teamsLoading = useTeamsStore((state) => state.isLoading);
-  const teamThreadsHydrating = useTeamChatStore((state) => state.hydrating);
-  const teamThreadsHydrated = useTeamChatStore((state) => state.hydrated);
   const projectsLoading = useProjectsStore((state) => state.isLoading);
   // 记录上一个 tab，用于推导内容横滑方向：切到右侧 tab → 内容从右进(+1)，反之 -1
-  const tabOrder: SidebarTab[] = ["tasks", "project", "team"];
+  const tabOrder: SidebarTab[] = ["tasks", "project"];
   const prevTabRef = useRef(sidebarTab);
   const direction =
     tabOrder.indexOf(sidebarTab) >= tabOrder.indexOf(prevTabRef.current)
@@ -111,7 +81,6 @@ export function AppSidebar({
   const tabMeta: Record<SidebarTab, { Icon: typeof MessageCircle; label: string }> = {
     tasks: { Icon: MessageCircle, label: t("sidebar.tasks") },
     project: { Icon: FolderOpen, label: t("sidebar.projectTab") },
-    team: { Icon: Users, label: t("sidebar.teamTab") },
   };
 
   return (
@@ -131,8 +100,8 @@ export function AppSidebar({
             <SidebarButton
               active={
                 item.id === "chat"
-                  ? activePage === "chat" && !activeThreadId && !activeTeamId
-                  : activePage === item.id && !activeTeamId
+                  ? activePage === "chat" && !activeThreadId
+                  : activePage === item.id
               }
               icon={item.icon}
               key={item.id}
@@ -141,16 +110,15 @@ export function AppSidebar({
             />
           ))}
 
-          {/* 「扩展」折叠组：技能 / 工具 / 助手 / 团队 */}
+          {/* 「扩展」折叠组：技能 / 工具 / 助手 */}
           <ExtensionNavGroup
             activePage={activePage}
-            activeTeamId={activeTeamId}
             onOpenPage={onOpenPage}
           />
 
           {secondaryNav.map((item) => (
             <SidebarButton
-              active={activePage === item.id && !activeTeamId}
+              active={activePage === item.id}
               icon={item.icon}
               key={item.id}
               label={t(`sidebar.${item.id}`)}
@@ -159,8 +127,8 @@ export function AppSidebar({
           ))}
         </nav>
 
-        {/* 三段 tab：会话 / 项目 / 团队 */}
-        <div className="grid grid-cols-3 gap-0.5 rounded-md bg-muted p-0.5">
+        {/* 两段 tab：会话 / 项目 */}
+        <div className="grid grid-cols-2 gap-0.5 rounded-md bg-muted p-0.5">
           {tabOrder.map((tab) => {
             const active = sidebarTab === tab;
             const { Icon, label } = tabMeta[tab];
@@ -227,7 +195,7 @@ export function AppSidebar({
                   ))}
                 </div>
               )
-            ) : sidebarTab === "project" ? (
+            ) : (
               projectsLoading ? (
                 <SidebarLoadingState label={t("sidebar.projectTab")} />
               ) : (
@@ -242,23 +210,6 @@ export function AppSidebar({
                   onClearProjectChats={onClearProjectChats}
                   runningThreadIds={runningThreadIds}
                   onNewProject={onNewProject}
-                />
-              )
-            ) : (
-              teamsLoading || teamThreadsHydrating || !teamThreadsHydrated ? (
-                <SidebarLoadingState label={t("sidebar.teamTab")} />
-              ) : (
-                <TeamList
-                  activeTeamId={activeTeamId}
-                  activeTeamThreadId={activeTeamThreadId}
-                  onEditTeam={onEditTeam}
-                  onClearTeam={onClearTeam}
-                  onDeleteTeam={onDeleteTeam}
-                  onSelectTeamThread={onSelectTeamThread}
-                  onNewTeamThread={onNewTeamThread}
-                  onRenameTeamThread={onRenameTeamThread}
-                  onDeleteTeamThread={onDeleteTeamThread}
-                  runningTeamThreadIds={runningTeamThreadIds}
                 />
               )
             )}

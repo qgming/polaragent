@@ -85,8 +85,8 @@ export interface ChatMessage {
 
 /**
  * 助手消息完成时由完成回调传入的用量元数据。
- * 个人聊天（chat-store / ChatPage / HomePage / goal-supervisor）与
- * 团队聊天（team-chat-store / team.ts）共用；新增字段必须在此统一添加，
+ * 普通聊天（chat-store / ChatPage / HomePage / goal-supervisor）共用；
+ * 新增字段必须在此统一添加，
  * 避免各调用点的内联类型漂移导致字段被静默丢弃。
  */
 export interface MessageFinishMetadata {

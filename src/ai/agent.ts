@@ -13,7 +13,7 @@
 import {
   agentManager,
   type ScheduleContext,
-  type TeamContext,
+  type SubagentContext,
 } from "./agent-manager";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import {
@@ -30,7 +30,6 @@ import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import { appendGuidanceMessage } from "@/lib/session/personal";
 import { appendScheduleGuidanceMessage } from "@/lib/session/messages";
-import { appendTeamGuidanceMessage } from "@/lib/session/team";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import type { ChatAttachment, Segment } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
@@ -82,8 +81,8 @@ export interface PromptOptions {
   permissionMode?: ToolPermissionMode;
   // 当前会话选中的知识库 ID 列表
   knowledgeBaseIds?: string[];
-  // 团队模式上下文：成员发言时叠加团队技能/系统提示词/身份前缀，并用团队会话仓库打开 session。
-  teamContext?: TeamContext;
+  // 子代理上下文：普通对话通过 delegate_task 启动的专家子会话。
+  subagentContext?: SubagentContext;
   // 定时任务后台模式：使用独立 schedule 会话仓库，并限制前台交互类工具。
   scheduleContext?: ScheduleContext;
   // 当前会话所属项目。存在时会装配项目会话读取工具。
@@ -311,7 +310,7 @@ export async function promptAgent(
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
-        teamContext: options.teamContext,
+        subagentContext: options.subagentContext,
         scheduleContext: options.scheduleContext,
         projectId: options.projectId,
         projectSystemPrompt: options.projectSystemPrompt,
@@ -323,7 +322,7 @@ export async function promptAgent(
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
-        teamContext: options.teamContext,
+        subagentContext: options.subagentContext,
         scheduleContext: options.scheduleContext,
         projectId: options.projectId,
         projectSystemPrompt: options.projectSystemPrompt,
@@ -662,10 +661,8 @@ export async function promptAgent(
 }
 
 async function persistGuidance(options: PromptOptions, text: string): Promise<void> {
-  const sessionId = options.teamContext?.sessionId ?? options.threadId;
-  if (options.teamContext) {
-    await appendTeamGuidanceMessage(sessionId, text);
-  } else if (options.scheduleContext) {
+  const sessionId = options.subagentContext?.sessionId ?? options.threadId;
+  if (options.scheduleContext) {
     await appendScheduleGuidanceMessage(
       options.scheduleContext.sessionId ?? options.threadId,
       text,

@@ -11,11 +11,6 @@ import {
 } from "@/components/ui/dialog";
 import type { ChatMessage, ChatThread } from "@/lib/chat";
 import { useChatStore } from "@/stores/chat-store";
-import {
-  useTeamChatStore,
-} from "@/stores/team/team-chat-store";
-import type { TeamMessage, TeamThread } from "@/lib/team";
-import { useTeamsStore } from "@/stores/team/teams-store";
 import { cn } from "@/lib/utils";
 import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
@@ -29,19 +24,7 @@ type ChatSearchResult = {
   threadId: string;
 };
 
-type TeamSearchResult = {
-  id: string;
-  kind: "team";
-  title: string;
-  excerpt: string;
-  score: number;
-  teamId: string;
-  teamName: string;
-  threadId: string;
-  updatedAt: number;
-};
-
-type SearchResult = ChatSearchResult | TeamSearchResult;
+type SearchResult = ChatSearchResult;
 
 const easeOut = [0.16, 1, 0.3, 1] as const;
 const easeInOut = [0.65, 0, 0.35, 1] as const;
@@ -80,12 +63,10 @@ const contentVariants = {
 
 export function GlobalSessionSearch({
   onOpenChange,
-  onOpenTeamThread,
   onOpenThread,
   open,
 }: {
   onOpenChange: (open: boolean) => void;
-  onOpenTeamThread: (teamId: string, threadId: string) => void;
   onOpenThread: (threadId: string) => void;
   open: boolean;
 }) {
@@ -94,8 +75,6 @@ export function GlobalSessionSearch({
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const threads = useChatStore((state) => state.threads);
-  const teamThreads = useTeamChatStore((state) => state.threads);
-  const teams = useTeamsStore((state) => state.teams);
 
   const trimmedQuery = query.trim();
 
@@ -121,35 +100,22 @@ export function GlobalSessionSearch({
     const timer = window.setTimeout(() => {
       void (async () => {
         const chatStore = useChatStore.getState();
-        const teamStore = useTeamChatStore.getState();
         const unloadedThreads = chatStore.threads.filter((thread) => !thread.loaded);
-        const unloadedTeamThreads = teamStore.threads.filter(
-          (thread) => !thread.loaded,
-        );
 
-        if (unloadedThreads.length === 0 && unloadedTeamThreads.length === 0) {
+        if (unloadedThreads.length === 0) {
           return;
         }
 
         setLoading(true);
-        const loadTasks = [
-          ...unloadedThreads.map((thread) => ({
-            kind: "chat" as const,
-            threadId: thread.id,
-          })),
-          ...unloadedTeamThreads.map((thread) => ({
-            kind: "team" as const,
-            threadId: thread.id,
-          })),
-        ];
+        const loadTasks = unloadedThreads.map((thread) => ({
+          threadId: thread.id,
+        }));
         try {
           await pMap(
             loadTasks,
             async (task) => {
               try {
-                await (task.kind === "chat"
-                  ? chatStore.loadThreadMessages(task.threadId)
-                  : teamStore.loadTeamThreadMessages(task.threadId));
+                await chatStore.loadThreadMessages(task.threadId);
               } catch (error) {
                 console.error(`加载搜索会话消息失败 ${task.threadId}:`, error);
               }
@@ -171,17 +137,13 @@ export function GlobalSessionSearch({
   }, [open, trimmedQuery]);
 
   const results = useMemo(
-    () => buildResults(trimmedQuery, threads, teamThreads, teams, t("globalSearch.teamFallback")),
-    [teamThreads, teams, threads, trimmedQuery, t],
+    () => buildResults(trimmedQuery, threads),
+    [threads, trimmedQuery],
   );
 
   const handleSelect = (result: SearchResult) => {
     onOpenChange(false);
-    if (result.kind === "chat") {
-      onOpenThread(result.threadId);
-      return;
-    }
-    onOpenTeamThread(result.teamId, result.threadId);
+    onOpenThread(result.threadId);
   };
 
   return (
@@ -243,11 +205,6 @@ export function GlobalSessionSearch({
                               <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-foreground">
                                 {result.title}
                               </span>
-                              {result.kind === "team" ? (
-                                <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground group-hover:bg-background">
-                                  {result.teamName}
-                                </span>
-                              ) : null}
                             </span>
                             <span
                               className={cn(
@@ -279,32 +236,14 @@ export function GlobalSessionSearch({
 function buildResults(
   query: string,
   threads: ChatThread[],
-  teamThreads: TeamThread[],
-  teams: Array<{ id: string; name: string }>,
-  teamFallback: string,
 ): SearchResult[] {
   if (!query) {
     return [];
   }
 
-  const teamNames = new Map(teams.map((team) => [team.id, team.name]));
-  const chatResults = threads
+  return threads
     .map((thread) => scoreThread(query, thread))
-    .filter((result): result is ChatSearchResult => result !== null);
-  const teamResults = teamThreads
-    .map((thread) => {
-      const scored = scoreTeamThread(query, thread);
-      if (!scored) {
-        return null;
-      }
-      return {
-        ...scored,
-	        teamName: teamNames.get(thread.teamId) ?? teamFallback,
-      };
-    })
-    .filter((result): result is TeamSearchResult => result !== null);
-
-  return [...chatResults, ...teamResults]
+    .filter((result): result is ChatSearchResult => result !== null)
     .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt)
     .slice(0, 30);
 }
@@ -325,31 +264,10 @@ function scoreThread(query: string, thread: ChatThread): ChatSearchResult | null
   };
 }
 
-function scoreTeamThread(
-  query: string,
-  thread: TeamThread,
-): TeamSearchResult | null {
-  const scored = scoreConversation(query, thread.title, thread.messages);
-  if (!scored) {
-    return null;
-  }
-
-  return {
-    id: `team-${thread.id}`,
-    kind: "team",
-    teamId: thread.teamId,
-    teamName: "",
-    threadId: thread.id,
-    title: thread.title,
-    updatedAt: thread.updatedAt,
-    ...scored,
-  };
-}
-
 function scoreConversation(
   query: string,
   title: string,
-  messages: Array<ChatMessage | TeamMessage>,
+  messages: ChatMessage[],
 ): { excerpt: string; score: number } | null {
   const normalizedQuery = normalize(query);
   const terms = normalizedQuery.split(/\s+/).filter(Boolean);
@@ -417,7 +335,7 @@ function scoreConversation(
   return { excerpt: bestExcerpt, score };
 }
 
-function messageText(message: ChatMessage | TeamMessage): string {
+function messageText(message: ChatMessage): string {
   const segmentText =
     message.segments
       ?.filter(

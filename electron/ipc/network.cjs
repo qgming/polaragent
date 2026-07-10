@@ -134,12 +134,18 @@ async function corsFetch(request) {
       headers[key] = value;
     }
   }
-  const response = await electronRequest(url, {
-    method,
-    headers,
-    body: request.body,
-    timeoutMs: Math.min(Math.max(Number(request.timeoutMs || 120000), 3000), CORS_MAX_TIMEOUT_MS),
-  });
+  let response;
+  try {
+    response = await electronRequest(url, {
+      method,
+      headers,
+      body: request.body,
+      timeoutMs: Math.min(Math.max(Number(request.timeoutMs || 120000), 3000), CORS_MAX_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`跨域代理请求失败（${method} ${redactUrl(url)}）：${message}`);
+  }
   return {
     status: response.status,
     statusText: response.statusText,

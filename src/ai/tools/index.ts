@@ -4,7 +4,7 @@
 // 高内聚低耦合：每个工具实现独立成文件，这里把它们登记为「真实工具目录」。
 // 工具是全局的：由工具页的开关（tools-store.disabledTools）统一控制，
 // 被全局关闭的工具完全不构造、不传给 AI；启用的工具对所有 Agent 可用。
-// 部分工具只在特定上下文里装配，例如团队流程、团队投票收集阶段。
+// 部分工具只在特定上下文里装配，例如后台任务或项目会话。
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
@@ -56,6 +56,7 @@ import {
 
 // ===== 任务管理 =====
 import { updateTodosTool } from "./update-todos";
+import { delegateTaskTool } from "./delegate-task";
 
 // ===== 网络工具 =====
 import { searchWebTool } from "./web-search";
@@ -116,10 +117,6 @@ import { writeSkillTool } from "./skills-write";
 
 // ===== 用户交互 =====
 import { askUserTool } from "./ask-user";
-
-// ===== 团队协作 =====
-import { controlTeamFlowTool } from "./team-control";
-import { castTeamVoteTool, requestTeamVoteTool } from "./team-vote";
 
 export type { ToolContext } from "./tool-context";
 
@@ -191,7 +188,6 @@ const skill = reg("skill");
 const interaction = reg("interaction");
 const widget = reg("widget");
 const schedule = reg("task");
-const team = reg("team");
 
 // ASR 接口是否已配置（provider、apiKey、model 齐全）
 function asrAvailable(): boolean {
@@ -247,7 +243,6 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 13 },
   widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 14 },
   interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 15 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 16 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -285,18 +280,16 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
+  task("delegate_task", "调用子代理", "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
   schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
   schedule("list_schedule_tasks", "列出定时任务", "列出当前已有的后台定时任务，返回 taskId、名称、启用状态、下次执行时间等信息。", listScheduleTasksTool),
   schedule("update_schedule_task", "编辑定时任务", "按 taskId 或名称修改已有定时任务，可更新启用状态、调度方式和执行内容。", updateScheduleTaskTool),
   schedule("delete_schedule_task", "删除定时任务", "按 taskId 或名称删除已有定时任务；删除前必须 confirm=true。", deleteScheduleTaskTool),
   interaction("ask_user", "询问用户", "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。", askUserTool),
-  skill("list_skills", "列出技能", "列出当前助手或团队上下文可用的技能名称与适用场景。", listSkillsTool),
+  skill("list_skills", "列出技能", "列出当前助手可用的技能名称与适用场景。", listSkillsTool),
   skill("read_skill", "读取技能", "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。", readSkillTool),
   skill("read_skill_file", "读取技能文件", "读取可用技能目录内 references、examples 等子文件。", readSkillFileTool),
   skill("write_skill", "写入技能", "创建、编辑、精确替换或删除 dataDir/skills/custom 目录下的技能。create 创建新技能目录和 SKILL.md；edit 全量替换 SKILL.md；patch 精确定位 old_string 替换为 new_string；delete 删除整个技能目录（需 confirm=true）。每次修改前会自动备份（保留最多 10 个版本）。", writeSkillTool),
-  team("control_team_flow", "控制团队流程", "团队协作中控制继续、交接、结束或标记阻塞，可附带给下一位成员的私聊提示。", controlTeamFlowTool, (ctx) => Boolean(ctx.teamFlow)),
-  team("request_team_vote", "发起团队投票", "团队协作中发起投票决策，收集团队成员对方案、方向或是否结束的选择。", requestTeamVoteTool, (ctx) => Boolean(ctx.teamVote)),
-  team("cast_team_vote", "提交团队投票", "团队投票收集阶段提交当前成员的投票选择。", castTeamVoteTool, (ctx) => Boolean(ctx.teamCastVote)),
   file("read_file", "读取文件", "读取工作目录下指定文件的文本内容。", readFileTool),
   file("write_file", "写入文件", "把内容写入工作目录下的文件（覆盖写入），写入后出现在产物面板。", writeFileTool),
   file("edit_file", "编辑文件", "对文件做精确替换编辑（oldString→newString），适合定点修改而非整篇重写。", editFileTool),
@@ -364,12 +357,6 @@ export function buildAgentTools(ctx: ToolContext): AgentTool<any>[] {
     isBuiltinToolEnabled,
     isMcpServerEnabled,
   } = useToolsStore.getState();
-
-  if (ctx.teamCastVote) {
-    const castVoteTool = TOOL_REGISTRY.find((tool) => tool.id === "cast_team_vote");
-    if (!castVoteTool || !isBuiltinToolEnabled(castVoteTool.id)) return [];
-    return [castVoteTool.factory(ctx)];
-  }
 
   const tools: AgentTool<any>[] = [];
 

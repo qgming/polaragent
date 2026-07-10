@@ -52,12 +52,11 @@
   },
   "globalSearch": {
     "title": "全局会话搜索",
-    "description": "搜索普通会话和团队会话中的内容。",
+    "description": "搜索会话中的内容。",
     "placeholder": "搜索会话内容...",
     "titleMatch": "标题匹配",
     "searching": "搜索中...",
-    "noResults": "未找到匹配的会话",
-    "teamFallback": "团队"
+    "noResults": "未找到匹配的会话"
   },
   "errorBoundary": {
     "title": "出错了",
@@ -93,12 +92,11 @@
     "deleteChatDescription": "确定删除「{{title}}」吗？此操作会从当前列表移除该对话。",
     "clearChatTitle": "清空对话",
     "clearChatDescription": "确定清空「{{title}}」的所有消息吗？会话与所选助手会保留，方便继续与该助手开始新对话。此操作不可撤销。",
-    "noTeams": "还没有团队，去「团队」页新建一个",
     "newSession": "新建会话",
     "renameSessionTitle": "重命名会话",
     "renameSessionDescription": "修改后会立即更新侧边栏里的会话名称。",
     "deleteSessionTitle": "删除会话",
-    "deleteSessionDescription": "确定删除「{{title}}」吗？此操作会移除该团队会话及其历史，不可撤销。",
+    "deleteSessionDescription": "确定删除「{{title}}」吗？此操作会移除该会话及其历史，不可撤销。",
     "noProjects": "还没有项目",
     "newProject": "新建项目",
     "newChat": "新建对话",

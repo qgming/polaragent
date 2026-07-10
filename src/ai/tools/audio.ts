@@ -12,7 +12,6 @@ import {
 } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
 const speechRecognitionParams = Type.Object({
@@ -69,11 +68,7 @@ function safeAudioFileName(
 
 function addAudioArtifact(ctx: ToolContext, path: string) {
   const artifact = { path, name: fileName(path), kind: "final" as const };
-  if (ctx.isTeam) {
-    useTeamMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  } else {
-    useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-  }
+  useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 }
 
 export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speechRecognitionParams> {

@@ -1,4 +1,4 @@
-// ask_user —— 普通对话与团队协作共用的用户输入工具
+// ask_user —— 对话流程中的用户输入工具
 
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -79,7 +79,6 @@ export function askUserTool(
         threadId: ctx.threadId,
         requesterId: ctx.requester?.id,
         requesterName: ctx.requester?.name,
-        isTeam: ctx.isTeam,
         prompt,
         mode,
         options,

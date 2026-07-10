@@ -1,26 +1,23 @@
-// 会话标题索引：把侧边栏所需的「id / 标题 / 更新时间 (+团队归属 teamId)」集中存放，
-// 避免为取这些信息而 open 整个 jsonl（会话越多越慢）。listSessions / listTeamSessions
-// 只读这一个索引文件即可，彻底去掉 N 次（团队是 2N 次）全文件读盘。
+// 会话标题索引：把侧边栏所需的「id / 标题 / 更新时间」集中存放，
+// 避免为取这些信息而 open 整个 jsonl（会话越多越慢）。
+// listSessions 只读这一个索引文件即可。
 //
-// 普通会话索引：<appData>/conversations/titles.json        （无 teamId）
-// 团队会话索引：<appData>/teams/conversations/titles.json  （带 teamId）
+// 普通会话索引：<appData>/conversations/titles.json
+// 定时任务索引：<appData>/schedule/conversations/titles.json
 // 两者复用同一套读写逻辑，按 kind 区分文件路径与进程内缓存，物理隔离。
 //
 // 维护时机：创建 / 重命名 / 删除 / 清空 会话时同步写入索引
-// （普通见 conversation-store，团队见 team-chat-store / clearTeamSessions）。
-// 首次启动若索引缺失（老用户），由 listSessions / listTeamSessions 回退旧逻辑
-// （逐个 open 读 name）重建一次；此后即走快路径。
-import { getScheduleSessionsRoot, getSessionsRoot, getTeamSessionsRoot } from "./session-repo";
+// 首次启动若索引缺失（老用户），由 listSessions 回退旧逻辑（逐个 open 读 name）
+// 重建一次；此后即走快路径。
+import { getScheduleSessionsRoot, getSessionsRoot } from "./session-repo";
 import { fileExists, readFile, writeFile } from "@/lib/electron/electron-api";
 
-// 索引种类：普通对话 / 团队会话
-export type TitleIndexKind = "normal" | "team" | "schedule";
+// 索引种类：普通对话 / 定时任务会话
+export type TitleIndexKind = "normal" | "schedule";
 
-// 单条索引项（teamId 仅团队索引使用）
 export interface TitleIndexEntry {
   title: string;
   updatedAt: number;
-  teamId?: string;
   projectId?: string;
 }
 
@@ -29,9 +26,7 @@ type TitleIndex = Record<string, TitleIndexEntry>;
 
 // 各 kind 的索引文件路径
 async function getIndexPath(kind: TitleIndexKind): Promise<string> {
-  const root = kind === "team"
-    ? await getTeamSessionsRoot()
-    : kind === "schedule"
+  const root = kind === "schedule"
       ? await getScheduleSessionsRoot()
       : await getSessionsRoot();
   return `${root}/titles.json`;
@@ -40,7 +35,6 @@ async function getIndexPath(kind: TitleIndexKind): Promise<string> {
 // 进程内缓存：按 kind 分开，避免侧边栏多次读盘；写入时同步更新
 const caches: Record<TitleIndexKind, TitleIndex | null> = {
   normal: null,
-  team: null,
   schedule: null,
 };
 
@@ -78,20 +72,18 @@ async function writeTitleIndex(kind: TitleIndexKind, index: TitleIndex): Promise
 }
 
 // 更新（或新增）单条索引并落盘。title 缺省回退「新对话」。
-// extra.teamId 仅团队索引传入；undefined 不会覆盖已有 teamId（保留原归属）。
 export async function upsertTitleIndex(
   id: string,
   title: string,
   updatedAt: number,
   kind: TitleIndexKind = "normal",
-  extra?: { teamId?: string; projectId?: string },
+  extra?: { projectId?: string },
 ): Promise<void> {
   const index = { ...(await readTitleIndex(kind)) };
   const prev = index[id];
   index[id] = {
     title: title || "新对话",
     updatedAt,
-    teamId: extra?.teamId ?? prev?.teamId,
     projectId: extra?.projectId ?? prev?.projectId,
   };
   await writeTitleIndex(kind, index);
@@ -110,7 +102,7 @@ export async function removeTitleIndex(
 
 // 用「重建出的全量条目」整体覆盖索引（首次缺失时由 list* 调用）。
 export async function rebuildTitleIndex(
-  entries: Array<{ id: string; title: string; updatedAt: number; teamId?: string; projectId?: string }>,
+  entries: Array<{ id: string; title: string; updatedAt: number; projectId?: string }>,
   kind: TitleIndexKind = "normal",
 ): Promise<void> {
   const index: TitleIndex = {};
@@ -118,7 +110,6 @@ export async function rebuildTitleIndex(
     index[entry.id] = {
       title: entry.title || "新对话",
       updatedAt: entry.updatedAt,
-      teamId: entry.teamId,
       projectId: entry.projectId,
     };
   }
@@ -128,7 +119,6 @@ export async function rebuildTitleIndex(
 // 进程内重置缓存（数据目录变化时调用）。
 export function resetTitleIndexCache(): void {
   caches.normal = null;
-  caches.team = null;
   caches.schedule = null;
 }
 
@@ -139,7 +129,6 @@ function isValidIndex(value: unknown): value is TitleIndex {
     if (!entry || typeof entry !== "object") return false;
     const e = entry as Record<string, unknown>;
     if (typeof e.title !== "string" || typeof e.updatedAt !== "number") return false;
-    if (e.teamId !== undefined && typeof e.teamId !== "string") return false;
     if (e.projectId !== undefined && typeof e.projectId !== "string") return false;
   }
   return true;

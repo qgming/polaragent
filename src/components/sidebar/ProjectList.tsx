@@ -243,7 +243,7 @@ function ProjectRow({
         </div>
       </div>
 
-      {/* 对话子列表：缩进 + 左侧竖直引导线（与团队列表样式一致），展开/收起带高度动画 */}
+      {/* 对话子列表：缩进 + 左侧竖直引导线，展开/收起带高度动画 */}
       <AnimatePresence initial={false}>
         {open ? (
           <motion.div
@@ -331,7 +331,7 @@ function ProjectRow({
   );
 }
 
-// 项目对话子项（与 TeamThreadItem 样式一致，但更简洁——只有重命名和删除）
+// 项目对话子项（保持侧栏会话项样式，但更简洁——只有重命名和删除）
 function ProjectThreadItem({
   thread,
   active,

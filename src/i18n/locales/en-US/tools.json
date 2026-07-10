@@ -140,10 +140,6 @@
       "interaction": {
         "name": "User interaction",
         "description": "Ask the user for input and collect choices"
-      },
-      "team": {
-        "name": "Team collaboration",
-        "description": "Control collaboration flow and coordinate team votes"
       }
     },
     "tools": {
@@ -271,13 +267,17 @@
         "name": "Update todos",
         "description": "Maintain the current task todo list and sync progress with a complete list."
       },
+      "delegate_task": {
+        "name": "Delegate to subagent",
+        "description": "Call another assistant as a subagent for a clear subtask and return the result for the current assistant to integrate."
+      },
       "ask_user": {
         "name": "Ask user",
         "description": "Request input, single choice, or multiple choice; prompts support Markdown and choice modes append a custom input option."
       },
       "list_skills": {
         "name": "List skills",
-        "description": "List skill names and use cases available to the current assistant or team context."
+        "description": "List skill names and use cases available to the current assistant."
       },
       "read_skill": {
         "name": "Read skill",
@@ -286,18 +286,6 @@
       "read_skill_file": {
         "name": "Read skill file",
         "description": "Read files under references, examples, and other subfolders in an available skill directory."
-      },
-      "control_team_flow": {
-        "name": "Control team flow",
-        "description": "Control team collaboration by continuing, handing off, ending, or marking blocked, with optional private notes."
-      },
-      "request_team_vote": {
-        "name": "Request team vote",
-        "description": "Start a team vote to collect member choices about a plan, direction, or whether to finish."
-      },
-      "cast_team_vote": {
-        "name": "Cast team vote",
-        "description": "Submit the current member's vote during a team voting stage."
       },
       "read_file": {
         "name": "Read file",

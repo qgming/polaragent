@@ -12,7 +12,6 @@ export interface AskUserRequest {
   threadId: string;
   requesterId?: string;
   requesterName: string;
-  isTeam: boolean;
   prompt: string;
   mode: AskUserMode;
   options: AskUserOption[];

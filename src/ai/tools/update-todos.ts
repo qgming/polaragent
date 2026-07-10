@@ -8,7 +8,6 @@ import {
   useTaskMonitorStore,
   type TodoItem,
 } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { text, type ToolContext } from "./tool-context";
 
 // 待办参数 schema（独立成 const 以便推导 execute 的 params 类型）
@@ -68,8 +67,7 @@ export function updateTodosTool(
     parameters: updateTodosParams,
     execute: async (_id, params: Static<typeof updateTodosParams>) => {
       const action = params.action || "replace";
-      const currentStore = ctx.isTeam ? useTeamMonitorStore : useTaskMonitorStore;
-      const currentTodos = currentStore.getState().getMonitor(ctx.threadId).todos || [];
+      const currentTodos = useTaskMonitorStore.getState().getMonitor(ctx.threadId).todos || [];
 
       let newTodos: TodoItem[];
 
@@ -134,11 +132,7 @@ export function updateTodosTool(
           newTodos = currentTodos;
       }
 
-      if (ctx.isTeam) {
-        useTeamMonitorStore.getState().updateTodos(ctx.threadId, newTodos);
-      } else {
-        useTaskMonitorStore.getState().setTodos(ctx.threadId, newTodos);
-      }
+      useTaskMonitorStore.getState().setTodos(ctx.threadId, newTodos);
 
       const done = newTodos.filter((t) => t.status === "completed").length;
       return {

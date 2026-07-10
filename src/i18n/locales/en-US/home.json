@@ -2,18 +2,10 @@
   "heading": "Beyond Chat, Get Things Done",
   "subheading": "Local-first, self-planning, secure AI workspace",
   "placeholder": "Describe a task, / for shortcuts, @ to add files",
-  "generalType": "General",
-  "teamType": "Team",
-  "generalLabel": "General Chat",
-  "teamLabel": "Team Collaboration",
   "defaultAgent": "Default Agent",
   "noAgents": "No Agents",
-  "selectTeam": "Select Team",
-  "noTeams": "No Teams",
   "selectDirectory": "Select Directory",
   "send": "Send",
   "alertNoModel": "Model Not Configured",
-  "alertNoTeam": "No Team Selected",
-  "alertNoTeamDesc": "Please select a team first",
   "newChat": "New Chat"
 }

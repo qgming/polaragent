@@ -1,5 +1,4 @@
 export * as personalSession from "./personal";
-export * as teamSession from "./team";
 export * from "./lifecycle";
 export * from "./files";
 export * from "./preferences";

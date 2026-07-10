@@ -82,10 +82,6 @@ contextBridge.exposeInMainWorld("polaragent", {
     readMcp: (mcpId) => invoke("config:read-mcp", { mcpId }),
     writeMcp: (mcpId, content) => invoke("config:write-mcp", { mcpId, content }),
     deleteMcp: (mcpId) => invoke("config:delete-mcp", { mcpId }),
-    listTeams: () => invoke("config:list-teams"),
-    readTeam: (teamId) => invoke("config:read-team", { teamId }),
-    writeTeam: (teamId, content) => invoke("config:write-team", { teamId, content }),
-    deleteTeam: (teamId) => invoke("config:delete-team", { teamId }),
     fetchBuiltinMcpConfigs: () => invoke("config:fetch-builtin-mcp"),
   },
   llm: {

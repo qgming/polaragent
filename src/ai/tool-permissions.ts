@@ -21,7 +21,6 @@ export interface ToolPermissionRequest {
   input: Record<string, unknown>;
   permissionMode: ToolPermissionMode;
   workingDir?: string;
-  isTeam?: boolean;
 }
 
 export interface ToolPermissionDecision {
@@ -52,9 +51,7 @@ const READ_ONLY_TOOLS = new Set([
 const SAFE_STATE_TOOLS = new Set([
   "update_todos",
   "ask_user",
-  "request_team_vote",
-  "cast_team_vote",
-  "control_team_flow",
+  "delegate_task",
   // 安全说明：schedule_task 不列入安全档/低风险档。
   // AI 创建后台无人监督任务 == 持久化 + 自动触发 + 用户不在场，必须走
   // AI 审查（reviewWithAi），让审查器评估任务参数是否包含越权意图。
@@ -98,9 +95,7 @@ const LOW_RISK_TOOLS = new Set([
   "search_memory",
   "update_todos",
   "ask_user",
-  "request_team_vote",
-  "cast_team_vote",
-  "control_team_flow",
+  "delegate_task",
 ]);
 
 // 中风险工具集合：用于 safe 模式本地放行。
@@ -308,7 +303,7 @@ async function reviewWithAi(
     "你是 PolarAgent 的工具权限审批器，需要在工具执行前给出明确审批结论：允许或拒绝。",
     "你不是只有拒绝权，也不是默认放行器；你要基于本次工具名称、参数、工作目录、风险类别，明确判断这次调用是否应当批准。",
     "你不会执行工具，也不要补充执行建议；你只负责审批是否允许继续执行。",
-    "默认允许：读取文件、列目录、网络搜索、读取网页、读取技能、语音识别、向用户提问、更新待办、团队投票、团队流程控制、写文件、编辑文件、创建目录、图片生成/编辑、语音合成、常规 MCP 工具。",
+    "默认允许：读取文件、列目录、网络搜索、读取网页、读取技能、语音识别、向用户提问、更新待办、调用子代理、写文件、编辑文件、创建目录、图片生成/编辑、语音合成、常规 MCP 工具。",
     "一般也允许：在工作目录或会话目录内创建/修改项目文件、运行构建/测试/格式化/类型检查命令、启动开发服务、安装项目依赖、执行明确服务于当前任务的脚本。",
     "只有出现以下极高风险时才拒绝：删除整个目录或大量文件、清空磁盘、格式化磁盘、递归删除根目录/用户目录/系统目录、覆盖或破坏关键配置、修改权限导致不可恢复、强制重置版本库并丢弃改动、外传密钥或隐私数据、执行明显恶意代码。",
     "典型必须拒绝的命令包括但不限于：rm -rf /、rm -rf *、del /s、Remove-Item -Recurse 指向根目录/用户目录/项目根且无明确目标、format、mkfs、diskpart 清盘、git reset --hard、git clean -fdx、chmod/chown 大范围修改、把 .env/密钥上传到外部地址。",
@@ -336,7 +331,6 @@ async function reviewWithAi(
     {
       agent: request.requesterName,
       threadId: request.threadId,
-      team: request.isTeam === true,
       toolName: request.toolName,
       toolLabel: toolDisplayName(request.toolName),
       risk: classifyToolRisk(request.toolName),

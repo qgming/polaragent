@@ -2,7 +2,7 @@
 // src/stores/goal-store.ts
 //
 // 按 threadId 管理每个会话的目标状态。
-// 目标模式仅用于普通对话，团队模式不使用。
+// 目标模式按普通对话线程管理。
 
 import { create } from "zustand";
 import {

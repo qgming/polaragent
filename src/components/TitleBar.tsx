@@ -52,7 +52,6 @@ import {
 } from "@/lib/electron/electron-window";
 import { useConfigStore } from "@/stores/config-store";
 import { usePanelOpen, usePanelStore } from "@/stores/panel-store";
-import { useTeamPanelStore } from "@/stores/team/team-panel-store";
 import { cn } from "@/lib/utils";
 
 export function TitleBar({
@@ -63,7 +62,6 @@ export function TitleBar({
   showPanelToggle,
   sidebarCollapsed,
   statsThreadId,
-  teamPanelThreadId,
 }: {
   onOpenAbout: () => void;
   onOpenSearch: () => void;
@@ -72,7 +70,6 @@ export function TitleBar({
   showPanelToggle: boolean;
   sidebarCollapsed: boolean;
   statsThreadId?: string;
-  teamPanelThreadId?: string;
 }) {
   const { t } = useTranslation();
 
@@ -114,7 +111,7 @@ export function TitleBar({
         {showPanelToggle ? (
           <>
             <SessionStatsButton threadId={statsThreadId} />
-            <PanelToggleButton teamThreadId={teamPanelThreadId} />
+            <PanelToggleButton />
             {/* 与窗口控制按钮之间的小竖分割线 */}
             <div className="mx-1 h-5 w-px bg-border" />
           </>
@@ -268,11 +265,7 @@ function SessionStatsButton({ threadId }: { threadId?: string }) {
 }
 
 // 顶部栏右侧：任务监控面板开合按钮（状态来自 panel-store，与对话页共享）
-function PanelToggleButton({ teamThreadId }: { teamThreadId?: string }) {
-  if (teamThreadId) {
-    return <TeamPanelToggleButton threadId={teamThreadId} />;
-  }
-
+function PanelToggleButton() {
   return <ChatPanelToggleButton />;
 }
 
@@ -286,28 +279,6 @@ function ChatPanelToggleButton() {
       className="size-8"
       label={panelOpen ? t("nav:titleBar.collapsePanel") : t("nav:titleBar.expandPanel")}
       onClick={toggle}
-    >
-      {panelOpen ? (
-        <PanelRightClose className="size-4" />
-      ) : (
-        <PanelRightOpen className="size-4" />
-      )}
-    </IconButton>
-  );
-}
-
-function TeamPanelToggleButton({ threadId }: { threadId: string }) {
-  const { t } = useTranslation();
-  const panelOpen = useTeamPanelStore(
-    (state) => state.openByThread[threadId] ?? false,
-  );
-  const toggle = useTeamPanelStore((state) => state.togglePanel);
-
-  return (
-    <IconButton
-      className="size-8"
-      label={panelOpen ? t("nav:titleBar.collapseTeamPanel") : t("nav:titleBar.expandTeamPanel")}
-      onClick={() => toggle(threadId)}
     >
       {panelOpen ? (
         <PanelRightClose className="size-4" />

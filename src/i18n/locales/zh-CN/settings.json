@@ -50,7 +50,7 @@
   },
   "models": {
     "title": "模型设置",
-    "description": "统一管理模型服务与默认路由模型，聊天、团队和标题生成会通过这里切换服务商和模型。",
+    "description": "统一管理模型服务与默认路由模型，聊天、子代理和标题生成会通过这里切换服务商和模型。",
     "modelServices": "模型服务",
     "addService": "添加服务",
     "emptyState": "还没有模型服务，点击右上角「添加服务」开始配置。",
@@ -327,7 +327,7 @@
   "about": {
     "title": "关于软件",
     "description": "PolarAgent 的版本与应用信息。",
-    "appDescription": "面向本地工作的 AI Agent 桌面应用，支持普通会话、团队协作、技能与工具扩展。",
+    "appDescription": "面向本地工作的 AI Agent 桌面应用，支持普通会话、子代理协作、技能与工具扩展。",
     "checkUpdate": "检查更新",
     "checking": "检查中",
     "upToDate": "当前已是最新版本",

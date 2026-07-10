@@ -10,7 +10,7 @@ import {
   PROJECT_REF_ENTRY,
   AGENT_ID_ENTRY,
 } from "./entries";
-import { openOrCreateSession, openOrCreateTeamSession } from "./lifecycle";
+import { openOrCreateSession } from "./lifecycle";
 
 export async function getSessionWorkingDir(
   sessionId: string,
@@ -36,30 +36,6 @@ export async function setSessionWorkingDir(
   }
 }
 
-export async function getTeamSessionWorkingDir(
-  sessionId: string,
-): Promise<string | undefined> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    return readWorkingDirFromEntries(await session.getEntries());
-  } catch (error) {
-    console.error(`读取团队会话工作目录失败 ${sessionId}:`, error);
-    return undefined;
-  }
-}
-
-export async function setTeamSessionWorkingDir(
-  sessionId: string,
-  dir: string,
-): Promise<void> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    await session.appendCustomEntry(WORKING_DIR_ENTRY, { dir });
-  } catch (error) {
-    console.error(`写入团队会话工作目录失败 ${sessionId}:`, error);
-  }
-}
-
 export async function getSessionToolPermissionMode(
   sessionId: string,
 ): Promise<ToolPermissionMode> {
@@ -81,30 +57,6 @@ export async function setSessionToolPermissionMode(
     await session.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode });
   } catch (error) {
     console.error(`写入会话工具权限失败 ${sessionId}:`, error);
-  }
-}
-
-export async function getTeamSessionToolPermissionMode(
-  sessionId: string,
-): Promise<ToolPermissionMode> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    return readToolPermissionModeFromEntries(await session.getEntries());
-  } catch (error) {
-    console.error(`读取团队会话工具权限失败 ${sessionId}:`, error);
-    return DEFAULT_TOOL_PERMISSION_MODE;
-  }
-}
-
-export async function setTeamSessionToolPermissionMode(
-  sessionId: string,
-  mode: ToolPermissionMode,
-): Promise<void> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    await session.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode });
-  } catch (error) {
-    console.error(`写入团队会话工具权限失败 ${sessionId}:`, error);
   }
 }
 
@@ -204,30 +156,6 @@ export async function setSessionAgentId(
     await session.appendCustomEntry(AGENT_ID_ENTRY, { agentId });
   } catch (error) {
     console.error(`写入会话助手 ID 失败 ${sessionId}:`, error);
-  }
-}
-
-export async function getTeamSessionKnowledgeBaseIds(
-  sessionId: string,
-): Promise<string[]> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    return readKnowledgeBaseIdsFromEntries(await session.getEntries());
-  } catch (error) {
-    console.error(`读取团队会话知识库失败 ${sessionId}:`, error);
-    return [];
-  }
-}
-
-export async function setTeamSessionKnowledgeBaseIds(
-  sessionId: string,
-  ids: string[],
-): Promise<void> {
-  try {
-    const session = await openOrCreateTeamSession(sessionId);
-    await session.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids });
-  } catch (error) {
-    console.error(`写入团队会话知识库失败 ${sessionId}:`, error);
   }
 }
 

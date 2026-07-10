@@ -5,7 +5,6 @@
 
 import { Type, type Static } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { realpath } from "fs/promises";
 
 import {
   appendFile,
@@ -19,7 +18,6 @@ import {
   writeFile,
 } from "@/lib/electron/electron-api";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import { useTeamMonitorStore } from "@/stores/team/team-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
 
 // read_file 参数 schema
@@ -86,11 +84,7 @@ export function writeFileTool(
         kind: params.final ? "final" : "working",
       } as const;
 
-      if (ctx.isTeam) {
-        useTeamMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-      } else {
-        useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-      }
+      useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 
       return {
         content: text(`已写入 ${fileName(target)}（${content.length} 字符）`),
@@ -219,11 +213,7 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
         kind: "working",
       } as const;
 
-      if (ctx.isTeam) {
-        useTeamMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-      } else {
-        useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
-      }
+      useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 
       const replaced = params.replaceAll ? count : 1;
       return {
@@ -282,15 +272,9 @@ export function deleteFileTool(
       const target = resolvePath(ctx, params.path);
       await deleteFile(target, { securityMode: ctx.permissionMode });
 
-      if (ctx.isTeam) {
-        useTeamMonitorStore
-          .getState()
-          .removeArtifactsUnderPath(ctx.threadId, target);
-      } else {
-        useTaskMonitorStore
-          .getState()
-          .removeArtifactsUnderPath(ctx.threadId, target);
-      }
+      useTaskMonitorStore
+        .getState()
+        .removeArtifactsUnderPath(ctx.threadId, target);
 
       return {
         content: text(`已删除 ${fileName(target)}`),
@@ -459,19 +443,14 @@ async function globSearch(
 ): Promise<string[]> {
   const patterns = expandBraces(pattern).map((p) => p.split("/").filter(Boolean));
   const results: string[] = [];
-  const visited = new Set<string>(); // 已遍历的真实路径，防止符号链接循环
+  const visited = new Set<string>();
 
   async function walk(dir: string, relPrefix: string) {
     if (results.length >= options.max) return;
 
-    // 获取真实路径并检测循环；无法解析时跳过该目录
-    try {
-      const resolved = await realpath(dir);
-      if (visited.has(resolved)) return;
-      visited.add(resolved);
-    } catch {
-      return;
-    }
+    const normalizedDir = dir.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (visited.has(normalizedDir)) return;
+    visited.add(normalizedDir);
 
     const entries = await listDirectoryEntries(dir);
     for (const entry of entries) {

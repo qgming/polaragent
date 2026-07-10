@@ -73,8 +73,6 @@ async function ensureDataDir() {
     "mcp/builtin",
     "mcp/packages/npm-cache",
     "conversations",
-    "teams",
-    "teams/conversations",
     "knowledge",
     "memory/project-context",
     "memory/user-preferences",
