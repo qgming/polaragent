@@ -19,6 +19,7 @@ import {
 } from "@/lib/electron/electron-api";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 // read_file 参数 schema
 const readFileParams = Type.Object({
@@ -32,12 +33,19 @@ export function readFileTool(ctx: ToolContext): AgentTool<typeof readFileParams>
     description: "读取工作目录下指定文件的文本内容。",
     parameters: readFileParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readFileParams>) => {
+    execute: async (_id, params: Static<typeof readFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
+      progressUpdate(onUpdate, {
+        phase: "fetching",
+        summary: `正在读取文件：${fileName(target)}`,
+        path: target,
+      });
+      throwIfAborted(signal);
       const content = await readFile(target);
       return {
         content: text(content),
-        details: { path: target, bytes: content.length },
+        details: withDuration({ path: target, bytes: content.length }, startedAt),
       };
     },
   };
@@ -69,9 +77,17 @@ export function writeFileTool(
     description:
       "把内容写入工作目录下的文件。默认覆盖写入，append 为 true 时追加到文件末尾。写入成功后该文件会出现在产物面板。",
     parameters: writeFileParams,
-    execute: async (_id, params: Static<typeof writeFileParams>) => {
+    execute: async (_id, params: Static<typeof writeFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       const content = params.content;
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: `${params.append ? "正在追加" : "正在写入"}文件：${fileName(target)}`,
+        path: target,
+        bytes: content.length,
+      });
+      throwIfAborted(signal);
       if (params.append) {
         await appendFile(target, content, { securityMode: ctx.permissionMode });
       } else {
@@ -88,7 +104,12 @@ export function writeFileTool(
 
       return {
         content: text(`已写入 ${fileName(target)}（${content.length} 字符）`),
-        details: { path: target },
+        details: withDuration({
+          path: target,
+          bytes: content.length,
+          appended: Boolean(params.append),
+          artifact,
+        }, startedAt),
       };
     },
   };
@@ -131,18 +152,30 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
       "支持正则替换模式（regex=true），oldString 将作为正则表达式处理。" +
       "适合定点修改，无需重写整个文件。编辑成功后该文件会出现在产物面板。",
     parameters: editFileParams,
-    execute: async (_id, params: Static<typeof editFileParams>) => {
+    execute: async (_id, params: Static<typeof editFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
+      progressUpdate(onUpdate, {
+        phase: "fetching",
+        summary: `正在读取待编辑文件：${fileName(target)}`,
+        path: target,
+      });
 
       if (!params.regex && params.oldString === params.newString) {
         throw new Error("oldString 与 newString 相同，无需编辑");
       }
 
+      throwIfAborted(signal);
       const original = await readFile(target);
 
       let updated: string;
       let count: number;
 
+      progressUpdate(onUpdate, {
+        phase: "processing",
+        summary: `正在计算替换：${fileName(target)}`,
+        path: target,
+      });
       if (params.regex) {
         // 正则模式：oldString 作为正则表达式处理
         let flags = params.regexFlags ?? (params.replaceAll ? "g" : "");
@@ -205,6 +238,12 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
           : original.replace(params.oldString, params.newString);
       }
 
+      throwIfAborted(signal);
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: `正在保存编辑结果：${fileName(target)}`,
+        path: target,
+      });
       await writeFile(target, updated, { securityMode: ctx.permissionMode });
 
       const artifact = {
@@ -218,7 +257,12 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
       const replaced = params.replaceAll ? count : 1;
       return {
         content: text(`已编辑 ${fileName(target)}（替换 ${replaced} 处）`),
-        details: { path: target, replaced },
+        details: withDuration({
+          path: target,
+          replaced,
+          originalBytes: original.length,
+          updatedBytes: updated.length,
+        }, startedAt),
       };
     },
   };
@@ -240,12 +284,19 @@ export function createDirectoryTool(
     description:
       "创建工作目录下的指定目录。会自动创建必要的父目录，适合先搭建项目结构再写入文件。",
     parameters: createDirectoryParams,
-    execute: async (_id, params: Static<typeof createDirectoryParams>) => {
+    execute: async (_id, params: Static<typeof createDirectoryParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: `正在创建目录：${fileName(target)}`,
+        path: target,
+      });
+      throwIfAborted(signal);
       await createDirectory(target, { securityMode: ctx.permissionMode });
       return {
         content: text(`已创建目录 ${fileName(target)}`),
-        details: { path: target },
+        details: withDuration({ path: target }, startedAt),
       };
     },
   };
@@ -268,8 +319,15 @@ export function deleteFileTool(
     description:
       "删除工作目录下的指定文件或目录。目录会递归删除其内部文件；删除成功后会从产物面板移除对应路径下的文件。",
     parameters: deleteFileParams,
-    execute: async (_id, params: Static<typeof deleteFileParams>) => {
+    execute: async (_id, params: Static<typeof deleteFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
+      progressUpdate(onUpdate, {
+        phase: "executing",
+        summary: `正在删除路径：${fileName(target)}`,
+        path: target,
+      });
+      throwIfAborted(signal);
       await deleteFile(target, { securityMode: ctx.permissionMode });
 
       useTaskMonitorStore
@@ -278,7 +336,7 @@ export function deleteFileTool(
 
       return {
         content: text(`已删除 ${fileName(target)}`),
-        details: { path: target },
+        details: withDuration({ path: target }, startedAt),
       };
     },
   };
@@ -300,12 +358,19 @@ export function listDirectoryTool(
     description: "列出工作目录或指定目录下的文件与子目录。",
     parameters: listDirectoryParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof listDirectoryParams>) => {
+    execute: async (_id, params: Static<typeof listDirectoryParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const target = resolvePath(ctx, params.path || ".");
+      progressUpdate(onUpdate, {
+        phase: "fetching",
+        summary: `正在列出目录：${fileName(target) || target}`,
+        path: target,
+      });
+      throwIfAborted(signal);
       const entries = await listDirectory(target);
       return {
         content: text(entries.join("\n") || "(空目录)"),
-        details: { path: target, entries },
+        details: withDuration({ path: target, entries, count: entries.length }, startedAt),
       };
     },
   };
@@ -326,9 +391,17 @@ export function moveFileTool(ctx: ToolContext): AgentTool<typeof moveFileParams>
     description:
       "移动或重命名工作目录下的文件/目录。支持跨目录移动、同目录重命名以及跨分区回退。",
     parameters: moveFileParams,
-    execute: async (_id, params: Static<typeof moveFileParams>) => {
+    execute: async (_id, params: Static<typeof moveFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
+      progressUpdate(onUpdate, {
+        phase: "executing",
+        summary: `正在移动：${fileName(src)} -> ${fileName(dest)}`,
+        source: src,
+        destination: dest,
+      });
+      throwIfAborted(signal);
       try {
         await renamePath(src, dest, { securityMode: ctx.permissionMode });
       } catch (err) {
@@ -342,7 +415,7 @@ export function moveFileTool(ctx: ToolContext): AgentTool<typeof moveFileParams>
       }
       return {
         content: text(`已将 ${params.source} 移动到 ${params.destination}`),
-        details: { source: src, destination: dest },
+        details: withDuration({ source: src, destination: dest }, startedAt),
       };
     },
   };
@@ -362,13 +435,21 @@ export function copyFileTool(ctx: ToolContext): AgentTool<typeof copyFileParams>
     label: "复制文件",
     description: "复制工作目录下的文件或目录到指定位置。",
     parameters: copyFileParams,
-    execute: async (_id, params: Static<typeof copyFileParams>) => {
+    execute: async (_id, params: Static<typeof copyFileParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
+      progressUpdate(onUpdate, {
+        phase: "executing",
+        summary: `正在复制：${fileName(src)} -> ${fileName(dest)}`,
+        source: src,
+        destination: dest,
+      });
+      throwIfAborted(signal);
       await copyPath(src, dest, { securityMode: ctx.permissionMode });
       return {
         content: text(`已将 ${params.source} 复制到 ${params.destination}`),
-        details: { source: src, destination: dest },
+        details: withDuration({ source: src, destination: dest }, startedAt),
       };
     },
   };
@@ -481,22 +562,31 @@ export function searchFilesTool(
       "使用 Glob 模式在工作目录或指定目录下搜索文件与目录，支持 *、?、** 与 {a,b} 语法。",
     parameters: searchFilesParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchFilesParams>) => {
+    execute: async (_id, params: Static<typeof searchFilesParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const basePath = resolvePath(ctx, params.path || ".");
       const maxResults = Math.min(params.maxResults || 100, 500);
+      progressUpdate(onUpdate, {
+        phase: "fetching",
+        summary: `正在搜索文件：${params.pattern}`,
+        path: basePath,
+        pattern: params.pattern,
+      });
+      throwIfAborted(signal);
       const results = await globSearch(params.pattern, {
         cwd: basePath,
         max: maxResults,
       });
+      throwIfAborted(signal);
       if (results.length === 0) {
         return {
           content: text(`未找到匹配 "${params.pattern}" 的文件。`),
-          details: { path: basePath, pattern: params.pattern },
+          details: withDuration({ path: basePath, pattern: params.pattern, results: [] }, startedAt),
         };
       }
       return {
         content: text(`找到 ${results.length} 个匹配：\n${results.join("\n")}`),
-        details: { path: basePath, pattern: params.pattern, results },
+        details: withDuration({ path: basePath, pattern: params.pattern, results }, startedAt),
       };
     },
   };

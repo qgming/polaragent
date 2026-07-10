@@ -19,6 +19,7 @@ import {
 } from "@/lib/office";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 import pptExportTemplate from "../../../resources/builtin/skills/ppt-generator/assets/export-template.html?raw";
 
 const officeSlideParams = Type.Object({
@@ -150,8 +151,15 @@ export function createOfficeDocumentTool(
       "pdfStyle 支持 14 种：executive/data/proposal/whitepaper/academic/minimal/classic/modern/magazine/report/bento/letter/tech/notebook；不指定时按内容自动匹配。" +
       "无需外部 Office 或 OfficeCLI，生成后用户可在独立预览窗口查看。",
     parameters: createOfficeDocumentParams,
-    execute: async (_id, params: Static<typeof createOfficeDocumentParams>) => {
+    execute: async (_id, params: Static<typeof createOfficeDocumentParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const kind = params.format as OfficeKind;
+      progressUpdate(onUpdate, {
+        phase: "preparing",
+        summary: `正在准备 ${kind} 文档...`,
+        format: kind,
+        title: params.title,
+      });
       const source = buildOfficeSource(params);
       const requestedTitle = resolveTitle(params);
       const project = source.trim()
@@ -170,8 +178,14 @@ export function createOfficeDocumentTool(
           extension,
         ),
       );
+      throwIfAborted(signal);
 
       if (kind === "word") {
+        progressUpdate(onUpdate, {
+          phase: "processing",
+          summary: "正在生成 Word 文档...",
+          path: target,
+        });
         await writeBase64File(target, await generateDocxBase64(titledProject), { securityMode: ctx.permissionMode });
       } else if (kind === "ppt") {
         const sourceHtmlPath = params.sourceHtmlPath?.trim()
@@ -184,11 +198,22 @@ export function createOfficeDocumentTool(
             )
           : buildPptHtml(params, titledProject.title, titledProject.subtitle);
         const htmlPath = replaceExtension(target, "html");
+        progressUpdate(onUpdate, {
+          phase: "saving",
+          summary: `正在写入 PPT 工作稿：${fileName(htmlPath)}`,
+          path: htmlPath,
+        });
         await writeFile(htmlPath, html, { securityMode: ctx.permissionMode });
         addArtifact(ctx, {
           path: htmlPath,
           name: fileName(htmlPath),
           kind: "working",
+        });
+        throwIfAborted(signal);
+        progressUpdate(onUpdate, {
+          phase: "processing",
+          summary: `正在导出 PPTX：${fileName(target)}`,
+          path: target,
         });
         await htmlToPptx({
           html,
@@ -208,6 +233,11 @@ export function createOfficeDocumentTool(
             )
           : buildPdfHtml(params, titledProject);
         if (!sourceHtmlPath) {
+          progressUpdate(onUpdate, {
+            phase: "saving",
+            summary: `正在写入 PDF 工作稿：${fileName(htmlPath)}`,
+            path: htmlPath,
+          });
           await writeFile(htmlPath, html, { securityMode: ctx.permissionMode });
           addArtifact(ctx, {
             path: htmlPath,
@@ -215,6 +245,12 @@ export function createOfficeDocumentTool(
             kind: "working",
           });
         }
+        throwIfAborted(signal);
+        progressUpdate(onUpdate, {
+          phase: "processing",
+          summary: `正在导出 PDF：${fileName(target)}`,
+          path: target,
+        });
         await htmlToPdf({
           html,
           sourcePath: htmlPath,
@@ -223,6 +259,7 @@ export function createOfficeDocumentTool(
           pageSize: "A4",
         });
       }
+      throwIfAborted(signal);
 
       const artifact = {
         path: target,
@@ -236,7 +273,7 @@ export function createOfficeDocumentTool(
         content: text(
           `已创建 ${artifact.name}，文件已加入会话产物，可在独立预览窗口打开。`,
         ),
-        details: {
+        details: withDuration({
           path: target,
           format: kind,
           title: titledProject.title,
@@ -251,7 +288,7 @@ export function createOfficeDocumentTool(
             kind === "ppt" || kind === "pdf"
               ? params.sourceHtmlPath?.trim() || undefined
               : undefined,
-        },
+        }, startedAt),
       };
     },
   };

@@ -13,7 +13,12 @@ import {
   Wrench,
 } from "lucide-react";
 
-import { BUILTIN_TOOLS, TOOL_GROUPS, type ToolMeta } from "@/ai/tools";
+import {
+  BUILTIN_TOOLS,
+  TOOL_GROUPS,
+  type ToolCapabilities,
+  type ToolMeta,
+} from "@/ai/tools";
 import {
   McpToolEditorModal,
   type McpEditorMode,
@@ -342,6 +347,7 @@ function BuiltinToolRow({ tool }: { tool: ToolMeta }) {
         <ToolIdentity
           name={t(`builtin.tools.${tool.id}.name`, { defaultValue: tool.name })}
           description={t(`builtin.tools.${tool.id}.description`, { defaultValue: tool.description })}
+          badges={capabilityBadges(t, tool.capabilities)}
         />
         <div className="flex items-center gap-3">
           <Switch
@@ -706,6 +712,7 @@ function ToolGroupRow({
                   <ToolIdentity
                     name={t(`builtin.tools.${tool.id}.name`, { defaultValue: tool.name })}
                     description={t(`builtin.tools.${tool.id}.description`, { defaultValue: tool.description })}
+                    badges={capabilityBadges(t, tool.capabilities)}
                   />
                 </div>
                 <Switch
@@ -719,4 +726,26 @@ function ToolGroupRow({
       ) : null}
     </div>
   );
+}
+
+function capabilityBadges(
+  t: (key: string) => string,
+  capabilities?: ToolCapabilities,
+): string[] {
+  if (!capabilities) return [];
+  const badges: string[] = [];
+  if (capabilities.supportsProgress) badges.push(t("capabilities.progress"));
+  if (capabilities.supportsCancel) badges.push(t("capabilities.cancel"));
+  if (capabilities.supportsBackground) badges.push(t("capabilities.background"));
+  if (capabilities.estimatedDuration && capabilities.estimatedDuration !== "short") {
+    badges.push(t(`capabilities.duration.${capabilities.estimatedDuration}`));
+  }
+  if (
+    capabilities.resultDisplay === "artifact" ||
+    capabilities.resultDisplay === "widget" ||
+    capabilities.resultDisplay === "audio"
+  ) {
+    badges.push(t(`capabilities.result.${capabilities.resultDisplay}`));
+  }
+  return badges;
 }

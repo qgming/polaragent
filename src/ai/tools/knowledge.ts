@@ -9,6 +9,7 @@ import { queryKnowledge } from "@/lib/knowledge";
 import { useConfigStore } from "@/stores/config-store";
 import { CACHE_TTL as CACHE_TTL_CONSTANTS } from "@/config/constants";
 import { text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 // 查询缓存：缓存键 -> { 结果, 时间戳 }
 const queryCache = new Map<string, { results: any[]; timestamp: number }>();
@@ -75,7 +76,13 @@ export function searchKnowledgeTool(
       "在已启用的知识库中检索相关文档片段。用于获取项目文档、技术规范、历史资料等上下文信息。",
     parameters: searchKnowledgeParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchKnowledgeParams>) => {
+    execute: async (_id, params: Static<typeof searchKnowledgeParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
+      progressUpdate(onUpdate, {
+        phase: "validating",
+        summary: `准备检索知识库：${params.query}`,
+        query: params.query,
+      });
       const settings = useConfigStore.getState().settings;
       const knowledgeConfig = settings.knowledge;
 
@@ -96,6 +103,7 @@ export function searchKnowledgeTool(
 
       const topK = params.topK ?? knowledgeConfig.retrieval.topK;
       const threshold = knowledgeConfig.retrieval.threshold;
+      throwIfAborted(signal);
 
       // 生成缓存键（包含过滤参数，避免不同过滤条件命中相同缓存）
       const cacheKey = `${params.query}:${kbIds.sort().join(",")}:${topK}:${threshold}:${
@@ -116,11 +124,17 @@ export function searchKnowledgeTool(
           content: text(
             `找到 ${cached.results.length} 条相关内容（缓存）：\n\n${markdown}`,
           ),
-          details: { results: cached.results, cached: true },
+          details: withDuration({ results: cached.results, cached: true }, startedAt),
         };
       }
 
       try {
+        progressUpdate(onUpdate, {
+          phase: "fetching",
+          summary: `正在检索 ${kbIds.length} 个知识库...`,
+          knowledgeBaseIds: kbIds,
+          topK,
+        });
         // 跨库检索并合并结果（受控并发，避免多个 embedding 请求同时打满）
         const allResults = await pMap(
           kbIds,
@@ -136,6 +150,7 @@ export function searchKnowledgeTool(
             }).catch(() => ({ results: [] })), // 部分失败不影响其他库
           { concurrency: REMOTE_CONCURRENCY },
         );
+        throwIfAborted(signal);
 
         let merged = allResults
           .flatMap((r: any) => r.results)
@@ -162,7 +177,7 @@ export function searchKnowledgeTool(
         if (merged.length === 0) {
           return {
             content: text(`未找到与「${params.query}」相关的内容。`),
-            details: { results: [] },
+            details: withDuration({ results: [] }, startedAt),
           };
         }
 
@@ -181,14 +196,14 @@ export function searchKnowledgeTool(
           content: text(
             `找到 ${merged.length} 条相关内容：\n\n${markdown}`,
           ),
-          details: { results: merged },
+          details: withDuration({ results: merged }, startedAt),
         };
       } catch (error) {
         return {
           content: text(
             `检索失败: ${error instanceof Error ? error.message : "未知错误"}`,
           ),
-          details: { error: String(error) },
+          details: withDuration({ error: String(error) }, startedAt),
         };
       }
     },

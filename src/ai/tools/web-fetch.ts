@@ -20,6 +20,7 @@ import {
   type WebFetchLink,
   type WebFetchTable,
 } from "./web-fetch-core";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 // 默认与上限正文字符数（防止模型给出过大值压垮上下文）
 const DEFAULT_MAX_CHARS = 8_000;
@@ -212,11 +213,18 @@ export function readWebPageTool(
       "或 mode=anchor_range 以关键词为中心截取附近内容。适合在搜索后深入阅读某个页面。",
     parameters: readWebPageParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readWebPageParams>) => {
+    execute: async (_id, params: Static<typeof readWebPageParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
       const mode: WebFetchMode =
         params.mode === "heading_range" || params.mode === "anchor_range"
           ? params.mode
           : "full";
+      progressUpdate(onUpdate, {
+        phase: "fetching",
+        summary: `正在读取网页：${params.url}`,
+        url: params.url,
+        mode,
+      });
 
       const options: WebFetchExtractOptions = {
         mode,
@@ -230,6 +238,7 @@ export function readWebPageTool(
         occurrence: params.occurrence,
       };
 
+      throwIfAborted(signal);
       const result = await fetchWebPage(
         params.url,
         typeof params.maxChars === "number" && Number.isFinite(params.maxChars)
@@ -237,6 +246,7 @@ export function readWebPageTool(
           : DEFAULT_MAX_CHARS,
         options,
       );
+      throwIfAborted(signal);
 
       if (!result.success) {
         return {
@@ -244,13 +254,13 @@ export function readWebPageTool(
             `网页读取失败：${result.error ?? "未知错误"}。请确认 URL 含 http(s) 且可公开访问；` +
               "可先用 web_search 重新查找链接，或改用 mode=full 重试。",
           ),
-          details: { url: result.url, error: result.error, mode },
+          details: withDuration({ url: result.url, error: result.error, mode }, startedAt),
         };
       }
 
       return {
         content: text(`${formatSummary(result)}\n\n${result.content}`),
-        details: {
+        details: withDuration({
           success: true,
           url: result.url,
           title: result.title,
@@ -262,7 +272,7 @@ export function readWebPageTool(
           selectedBlockCount: result.selectedBlockCount,
           links: result.links,
           tables: result.tables,
-        },
+        }, startedAt),
       };
     },
   };

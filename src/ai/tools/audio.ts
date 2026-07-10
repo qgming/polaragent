@@ -13,6 +13,7 @@ import {
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 const speechRecognitionParams = Type.Object({
   audioPath: Type.String({ description: "音频文件路径，相对工作目录或绝对路径；支持 mp3/wav/m4a/webm/ogg 等" }),
@@ -79,7 +80,13 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
       "将音频文件转写为文字。使用设置 > 音频设置中的 ASR 配置；" +
       "支持常见音频格式（mp3/wav/m4a/webm/ogg 等），返回识别的文本。",
     parameters: speechRecognitionParams,
-    execute: async (_id, params: SpeechRecognitionParams) => {
+    execute: async (_id, params: SpeechRecognitionParams, signal, onUpdate) => {
+      const startedAt = nowMs();
+      progressUpdate(onUpdate, {
+        phase: "validating",
+        summary: "正在准备语音识别...",
+        audioPath: params.audioPath,
+      });
       const settings = useConfigStore.getState().settings.audio;
       const asrConfig = settings?.asr;
       if (!asrConfig?.provider) throw new Error("ASR 接口未配置");
@@ -90,7 +97,14 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
 
       const audioPath = resolvePath(ctx, params.audioPath);
       const language = params.language?.trim() || activeConfig.language?.trim() || undefined;
+      throwIfAborted(signal);
 
+      progressUpdate(onUpdate, {
+        phase: "processing",
+        summary: `正在识别 ${fileName(audioPath)}...`,
+        audioPath,
+        language,
+      });
       const result = await openAiTranscription({
         apiKey: activeConfig.apiKey.trim(),
         baseURL: activeConfig.baseURL,
@@ -99,15 +113,16 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
         language,
         responseFormat: "json",
       });
+      throwIfAborted(signal);
 
       return {
         content: text(result.text || "（识别结果为空）"),
-        details: {
+        details: withDuration({
           audioPath,
           language,
           model: activeConfig.model,
           text: result.text,
-        },
+        }, startedAt),
       };
     },
   };
@@ -121,7 +136,13 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
       "将文字合成为语音并保存到工作目录。使用设置 > 音频设置中的 TTS 配置；" +
       "支持指定音色、语速、格式等参数，返回保存的音频文件路径并登记为产物。",
     parameters: speechSynthesisParams,
-    execute: async (_id, params: SpeechSynthesisParams) => {
+    execute: async (_id, params: SpeechSynthesisParams, signal, onUpdate) => {
+      const startedAt = nowMs();
+      progressUpdate(onUpdate, {
+        phase: "validating",
+        summary: "正在准备语音合成...",
+        textLength: params.text.length,
+      });
       const settings = useConfigStore.getState().settings.audio;
       const ttsConfig = settings?.tts;
       if (!ttsConfig?.provider) throw new Error("TTS 接口未配置");
@@ -142,9 +163,17 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
       const voice = params.voice ?? voiceConfig.voice;
       const speed = params.speed ?? voiceConfig.speed;
       const responseFormat = params.responseFormat ?? voiceConfig.format;
+      throwIfAborted(signal);
 
       // 根据 provider 调用不同接口
       let result;
+      progressUpdate(onUpdate, {
+        phase: "processing",
+        summary: `正在调用语音合成模型 ${activeConfig.model.trim()}...`,
+        provider: ttsConfig.provider,
+        voice,
+        format: responseFormat,
+      });
       if (ttsConfig.provider === "chat") {
         result = await mimoSpeech({
           apiKey: activeConfig.apiKey.trim(),
@@ -167,18 +196,24 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
           responseFormat,
         });
       }
+      throwIfAborted(signal);
 
       const extension = result.extension || responseFormat;
       const target = resolvePath(
         ctx,
         safeAudioFileName(params.fileName, "synthesized-speech", extension),
       );
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: `正在保存音频：${fileName(target)}`,
+        path: target,
+      });
       await writeBase64File(target, result.base64, { securityMode: ctx.permissionMode });
       addAudioArtifact(ctx, target);
 
       return {
         content: text(`已合成语音并保存为：${fileName(target)}`),
-        details: {
+        details: withDuration({
           path: target,
           name: fileName(target),
           voice,
@@ -188,7 +223,7 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
           provider: ttsConfig.provider,
           audioPath: target,
           duration: Math.ceil(params.text.length / 10),
-        },
+        }, startedAt),
       };
     },
   };

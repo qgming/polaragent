@@ -38,6 +38,20 @@
   "common": {
     "noDescription": "No description"
   },
+  "capabilities": {
+    "progress": "Progress",
+    "cancel": "Cancelable",
+    "background": "Background",
+    "duration": {
+      "medium": "Medium",
+      "long": "Long"
+    },
+    "result": {
+      "artifact": "Artifact",
+      "widget": "Widget",
+      "audio": "Audio"
+    }
+  },
   "mcp": {
     "requiresConfig": "Requires config",
     "expandTools": "Expand tool list",
@@ -117,9 +131,17 @@
         "name": "Office creation",
         "description": "Generate Word, PPT, and PDF files"
       },
+      "project": {
+        "name": "Project",
+        "description": "List and read historical conversations in the current project"
+      },
       "knowledge": {
         "name": "Knowledge base",
         "description": "Search knowledge base documents for relevant context"
+      },
+      "memory": {
+        "name": "Long-term memory",
+        "description": "Search, write, and forget user preferences and project context"
       },
       "image": {
         "name": "Image tools",
@@ -140,6 +162,10 @@
       "interaction": {
         "name": "User interaction",
         "description": "Ask the user for input and collect choices"
+      },
+      "widget": {
+        "name": "Widget",
+        "description": "Render interactive UI widgets"
       },
       "subagent": {
         "name": "Subagent collaboration",
@@ -251,6 +277,14 @@
         "name": "Fill form",
         "description": "Fill form input fields."
       },
+      "browser_drag": {
+        "name": "Drag element",
+        "description": "Simulate dragging a source element to a target element on the page."
+      },
+      "browser_upload": {
+        "name": "Upload file",
+        "description": "Upload local files through a file input."
+      },
       "browser_execute": {
         "name": "Execute script",
         "description": "Run JavaScript code on the page."
@@ -271,9 +305,45 @@
         "name": "Update todos",
         "description": "Maintain the current task todo list and sync progress with a complete list."
       },
+      "list_agents": {
+        "name": "List assistants",
+        "description": "List installed and built-in assistants with names, descriptions, types, and tags."
+      },
       "delegate_task": {
         "name": "Delegate to subagent",
-        "description": "Call another assistant as a subagent for a clear subtask and return the result for the current assistant to integrate."
+        "description": "Defaults to default/Cowork; after listing assistants it can target an installed assistant, or create a temporary subagent for a clear subtask."
+      },
+      "schedule_task": {
+        "name": "Create scheduled task",
+        "description": "Create a background scheduled task for one-off, recurring, or Cron-based Agent runs."
+      },
+      "list_schedule_tasks": {
+        "name": "List scheduled tasks",
+        "description": "List existing background tasks with task ID, name, enabled state, and next run time."
+      },
+      "update_schedule_task": {
+        "name": "Edit scheduled task",
+        "description": "Modify an existing scheduled task by task ID or name."
+      },
+      "delete_schedule_task": {
+        "name": "Delete scheduled task",
+        "description": "Delete an existing scheduled task by task ID or name."
+      },
+      "start_background_task": {
+        "name": "Start background task",
+        "description": "Run a long asynchronous task in an independent background Agent session and immediately return a jobId."
+      },
+      "list_background_tasks": {
+        "name": "List background tasks",
+        "description": "List in-app background Agent jobs with jobId, name, status, creation time, and completion time."
+      },
+      "get_background_task": {
+        "name": "Get background task",
+        "description": "Inspect a background task's status, progress events, error, or final result."
+      },
+      "cancel_background_task": {
+        "name": "Cancel background task",
+        "description": "Cancel a background Agent task that is still running."
       },
       "ask_user": {
         "name": "Ask user",
@@ -290,6 +360,10 @@
       "read_skill_file": {
         "name": "Read skill file",
         "description": "Read files under references, examples, and other subfolders in an available skill directory."
+      },
+      "write_skill": {
+        "name": "Write skill",
+        "description": "Create, edit, patch, or delete custom skills."
       },
       "read_file": {
         "name": "Read file",
@@ -315,9 +389,29 @@
         "name": "List directory",
         "description": "List files and subdirectories under the workspace or a specified directory."
       },
+      "move_file": {
+        "name": "Move/rename",
+        "description": "Move or rename files and directories across or within folders."
+      },
+      "copy_file": {
+        "name": "Copy file",
+        "description": "Copy a file or directory to a target location."
+      },
+      "search_files": {
+        "name": "Search files",
+        "description": "Search files and directories with Glob patterns."
+      },
       "create_office_document": {
         "name": "Create office document",
         "description": "Generate Word, PPT, or PDF files and save them as previewable artifacts."
+      },
+      "list_project_conversations": {
+        "name": "List project conversations",
+        "description": "List other conversations in the current project with title, ID, and update time."
+      },
+      "read_project_conversation": {
+        "name": "Read project conversation",
+        "description": "Read recent messages from a specified historical conversation in the current project."
       },
       "web_search": {
         "name": "Web search",
@@ -350,6 +444,22 @@
       "search_knowledge": {
         "name": "Search knowledge base",
         "description": "Search enabled knowledge bases for relevant document snippets and project context."
+      },
+      "search_memory": {
+        "name": "Search memory",
+        "description": "Search long-term memory for preferences, corrections, and project context."
+      },
+      "remember_memory": {
+        "name": "Remember memory",
+        "description": "Write long-term memory when the user asks to remember something or corrects a durable preference."
+      },
+      "forget_memory": {
+        "name": "Forget memory",
+        "description": "Disable or delete long-term memories."
+      },
+      "render_widget": {
+        "name": "Render widget",
+        "description": "Render an interactive UI widget in the conversation."
       }
     }
   }

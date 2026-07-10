@@ -485,6 +485,9 @@ function summarizeToolResultContent(toolName: string, details: unknown): string 
     if (toolName === "update_todos" && Array.isArray(record.todos)) {
       return `已更新待办 ${record.todos.length} 项`;
     }
+    if (toolName === "delegate_task" && typeof record.agentName === "string") {
+      return `子代理 ${record.agentName} 已完成`;
+    }
     if (toolName === "write_file" && typeof record.path === "string") {
       return `已写入 ${String(record.path).split(/[\\/]/).pop()}`;
     }

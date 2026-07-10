@@ -38,6 +38,20 @@
   "common": {
     "noDescription": "暂无描述"
   },
+  "capabilities": {
+    "progress": "进度",
+    "cancel": "可取消",
+    "background": "后台",
+    "duration": {
+      "medium": "中耗时",
+      "long": "长耗时"
+    },
+    "result": {
+      "artifact": "产物",
+      "widget": "Widget",
+      "audio": "音频"
+    }
+  },
   "mcp": {
     "requiresConfig": "需要配置",
     "expandTools": "展开工具清单",
@@ -117,9 +131,17 @@
         "name": "办公创作",
         "description": "生成 Word、PPT、PDF 办公文件"
       },
+      "project": {
+        "name": "项目",
+        "description": "列出和读取当前项目中的历史会话"
+      },
       "knowledge": {
         "name": "知识库",
         "description": "检索知识库文档，获取相关内容"
+      },
+      "memory": {
+        "name": "长期记忆",
+        "description": "检索、写入和遗忘用户偏好与项目上下文"
       },
       "image": {
         "name": "图片工具",
@@ -140,6 +162,10 @@
       "interaction": {
         "name": "用户交互",
         "description": "向用户请求输入，收集选择反馈"
+      },
+      "widget": {
+        "name": "Widget",
+        "description": "渲染交互式 UI Widget"
       },
       "subagent": {
         "name": "子代理协作",
@@ -251,6 +277,14 @@
         "name": "填充表单",
         "description": "填充表单输入框。"
       },
+      "browser_drag": {
+        "name": "拖拽元素",
+        "description": "在页面中模拟拖拽操作，将源元素拖动到目标元素。"
+      },
+      "browser_upload": {
+        "name": "上传文件",
+        "description": "通过文件输入控件上传本地文件。"
+      },
       "browser_execute": {
         "name": "执行脚本",
         "description": "在页面中执行 JavaScript 代码。"
@@ -271,9 +305,45 @@
         "name": "更新待办",
         "description": "维护当前任务的待办清单，用完整列表同步任务进度。"
       },
+      "list_agents": {
+        "name": "列出助手",
+        "description": "列出当前用户已安装及内置的助手名称、介绍、类型和标签。"
+      },
       "delegate_task": {
         "name": "调用子代理",
-        "description": "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。"
+        "description": "默认调用 default/Cowork；也可在读取助手清单后选择已安装助手，或临时创建子代理完成明确子任务。"
+      },
+      "schedule_task": {
+        "name": "创建定时任务",
+        "description": "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。"
+      },
+      "list_schedule_tasks": {
+        "name": "列出定时任务",
+        "description": "列出当前已有的后台定时任务，返回任务 ID、名称、启用状态和下次执行时间。"
+      },
+      "update_schedule_task": {
+        "name": "编辑定时任务",
+        "description": "按任务 ID 或名称修改已有定时任务。"
+      },
+      "delete_schedule_task": {
+        "name": "删除定时任务",
+        "description": "按任务 ID 或名称删除已有定时任务。"
+      },
+      "start_background_task": {
+        "name": "启动后台任务",
+        "description": "把耗时较长、可异步完成的任务放到独立后台 Agent 会话执行，并立即返回 jobId。"
+      },
+      "list_background_tasks": {
+        "name": "列出后台任务",
+        "description": "列出当前应用内后台 Agent 任务，包含 jobId、名称、状态、创建时间和完成时间。"
+      },
+      "get_background_task": {
+        "name": "查看后台任务",
+        "description": "查看后台任务状态、执行过程、错误或最终结果。"
+      },
+      "cancel_background_task": {
+        "name": "取消后台任务",
+        "description": "取消仍在运行的后台 Agent 任务。"
       },
       "ask_user": {
         "name": "询问用户",
@@ -290,6 +360,10 @@
       "read_skill_file": {
         "name": "读取技能文件",
         "description": "读取可用技能目录内 references、examples 等子文件。"
+      },
+      "write_skill": {
+        "name": "写入技能",
+        "description": "创建、编辑、精确替换或删除自定义技能。"
       },
       "read_file": {
         "name": "读取文件",
@@ -315,9 +389,29 @@
         "name": "列出目录",
         "description": "列出工作目录或指定目录下的文件与子目录。"
       },
+      "move_file": {
+        "name": "移动/重命名",
+        "description": "移动或重命名文件/目录，支持跨目录移动和同目录重命名。"
+      },
+      "copy_file": {
+        "name": "复制文件",
+        "description": "复制文件或目录到指定位置。"
+      },
+      "search_files": {
+        "name": "搜索文件",
+        "description": "使用 Glob 模式搜索文件与目录。"
+      },
       "create_office_document": {
         "name": "创建办公文档",
         "description": "生成 Word、PPT 或 PDF 文件，保存后出现在产物面板并可用独立预览窗口打开。"
+      },
+      "list_project_conversations": {
+        "name": "列出项目会话",
+        "description": "列出当前项目中的其他会话，返回标题、ID 和更新时间。"
+      },
+      "read_project_conversation": {
+        "name": "读取项目会话",
+        "description": "读取当前项目中指定历史会话的最近消息。"
       },
       "web_search": {
         "name": "网络搜索",
@@ -350,6 +444,22 @@
       "search_knowledge": {
         "name": "检索知识库",
         "description": "在已启用的知识库中检索相关文档片段，获取项目文档、技术规范等上下文信息。"
+      },
+      "search_memory": {
+        "name": "检索记忆",
+        "description": "检索长期记忆，获取用户偏好、历史纠正和项目上下文。"
+      },
+      "remember_memory": {
+        "name": "写入记忆",
+        "description": "在用户明确要求记住或需要修正长期偏好/项目约定时写入记忆。"
+      },
+      "forget_memory": {
+        "name": "忘记记忆",
+        "description": "关闭或删除长期记忆。"
+      },
+      "render_widget": {
+        "name": "渲染 Widget",
+        "description": "在对话中渲染交互式 UI Widget。"
       }
     }
   }

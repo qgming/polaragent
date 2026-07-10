@@ -30,6 +30,7 @@ import { TIMEOUTS } from "@/config/constants";
 import { useConfigStore } from "@/stores/config-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
 import { fileName, resolvePath, text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 const IMAGE_REQUEST_TIMEOUT_MS = TIMEOUTS.IMAGE_GENERATION;
 const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -553,14 +554,28 @@ export function generateImageTool(ctx: ToolContext): AgentTool<any> {
     label: "生成图片",
     description: `根据提示词生成图片。${IMAGE_PARAM_HINT}生成图片会保存到工作目录并登记为产物。`,
     parameters,
-    execute: async (_id, rawParams) => {
+    execute: async (_id, rawParams, signal, onUpdate) => {
+      const startedAt = nowMs();
       const params = rawParams as GenParams;
       const resolved = resolveImageConfig("生成");
       const n = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
+      progressUpdate(onUpdate, {
+        phase: "preparing",
+        summary: `准备生成 ${n} 张图片...`,
+        provider: resolved.provider,
+        count: n,
+      });
 
       let items: ImageResponseItem[] = [];
       let endpoint = "";
 
+      throwIfAborted(signal);
+      progressUpdate(onUpdate, {
+        phase: "processing",
+        summary: "正在调用图片生成模型...",
+        provider: resolved.provider,
+        count: n,
+      });
       if (resolved.provider === "gemini") {
         const { gemini } = resolved;
         endpoint = ":generateContent";
@@ -600,8 +615,14 @@ export function generateImageTool(ctx: ToolContext): AgentTool<any> {
         });
       }
 
+      throwIfAborted(signal);
       if (items.length === 0) throw new Error("图片生成接口未返回图片数据");
 
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: "正在保存生成图片...",
+        count: items.length,
+      });
       const imageResult = await saveImageResponseItems({
         ctx,
         fileName: params.fileName,
@@ -611,11 +632,11 @@ export function generateImageTool(ctx: ToolContext): AgentTool<any> {
 
       return {
         content: text(imageResultLines("生成", imageResult).join("\n\n")),
-        details: {
+        details: withDuration({
           provider: resolved.provider,
           endpoint,
           ...imageResult,
-        },
+        }, startedAt),
       };
     },
   };
@@ -630,15 +651,30 @@ export function editImageTool(ctx: ToolContext): AgentTool<any> {
     label: "编辑图片",
     description: `编辑已有图片。${IMAGE_PARAM_HINT}openai-images 标准支持可选 mask 蒙版。`,
     parameters,
-    execute: async (_id, rawParams) => {
+    execute: async (_id, rawParams, signal, onUpdate) => {
+      const startedAt = nowMs();
       const params = rawParams as EditParams;
       const resolved = resolveImageConfig("编辑");
       const imagePath = resolvePath(ctx, params.imagePath);
       const n = Math.min(Math.max(Math.trunc(params.n ?? 1), 1), 4);
+      progressUpdate(onUpdate, {
+        phase: "preparing",
+        summary: `准备编辑图片 ${fileName(imagePath)}...`,
+        provider: resolved.provider,
+        imagePath,
+        count: n,
+      });
 
       let items: ImageResponseItem[] = [];
       let endpoint = "";
 
+      throwIfAborted(signal);
+      progressUpdate(onUpdate, {
+        phase: "processing",
+        summary: "正在调用图片编辑模型...",
+        provider: resolved.provider,
+        imagePath,
+      });
       if (resolved.provider === "gemini") {
         const { gemini } = resolved;
         endpoint = ":generateContent";
@@ -681,8 +717,14 @@ export function editImageTool(ctx: ToolContext): AgentTool<any> {
         items = Array.isArray(payload.data) ? payload.data : [];
       }
 
+      throwIfAborted(signal);
       if (items.length === 0) throw new Error("图片编辑接口未返回图片数据");
 
+      progressUpdate(onUpdate, {
+        phase: "saving",
+        summary: "正在保存编辑后的图片...",
+        count: items.length,
+      });
       const imageResult = await saveImageResponseItems({
         ctx,
         fileName: params.fileName,
@@ -692,12 +734,12 @@ export function editImageTool(ctx: ToolContext): AgentTool<any> {
 
       return {
         content: text(imageResultLines("编辑", imageResult).join("\n\n")),
-        details: {
+        details: withDuration({
           provider: resolved.provider,
           endpoint,
           source: imagePath,
           ...imageResult,
-        },
+        }, startedAt),
       };
     },
   };

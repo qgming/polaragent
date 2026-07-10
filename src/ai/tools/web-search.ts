@@ -10,6 +10,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { webSearch, type WebSearchRequest } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 const searchWebParams = Type.Object({
   query: Type.String({ description: "搜索关键词，尽量具体（可含时间、版本等）" }),
@@ -28,7 +29,13 @@ export function searchWebTool(
       "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。用于获取最新资讯、核实事实、查找线上资源。",
     parameters: searchWebParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchWebParams>) => {
+    execute: async (_id, params: Static<typeof searchWebParams>, signal, onUpdate) => {
+      const startedAt = nowMs();
+      progressUpdate(onUpdate, {
+        phase: "validating",
+        summary: `准备搜索：${params.query}`,
+        query: params.query,
+      });
       const settings = useConfigStore.getState().settings;
       const webSearchConfig = settings.webSearch;
 
@@ -41,6 +48,7 @@ export function searchWebTool(
 
       const provider = webSearchConfig.provider;
       const providerConfig = webSearchConfig[provider];
+      throwIfAborted(signal);
 
       // 构建请求参数
       const request: WebSearchRequest = {
@@ -124,12 +132,20 @@ export function searchWebTool(
       }
 
       try {
+        progressUpdate(onUpdate, {
+          phase: "fetching",
+          summary: `正在使用 ${provider} 搜索...`,
+          provider,
+          query: params.query,
+          limit: params.limit ?? 5,
+        });
         const response = await webSearch(request);
+        throwIfAborted(signal);
 
         if (!response.success || response.results.length === 0) {
           return {
             content: text("未检索到结果。"),
-            details: { query: params.query, provider },
+            details: withDuration({ query: params.query, provider, count: 0 }, startedAt),
           };
         }
 
@@ -186,23 +202,22 @@ export function searchWebTool(
 
         return {
           content: text(formatted),
-          details: {
+          details: withDuration({
             query: params.query,
             provider: response.provider,
             instance: response.instance,
             count: response.results.length,
             results: response.results,
             answer: response.answer,
-          },
+          }, startedAt),
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         return {
           content: text(`搜索失败：${errorMessage}`),
-          details: { query: params.query, provider, error: errorMessage },
+          details: withDuration({ query: params.query, provider, error: errorMessage }, startedAt),
         };
       }
     },
   };
 }
-

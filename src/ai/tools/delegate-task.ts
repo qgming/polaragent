@@ -3,6 +3,7 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
+import { throwIfAborted } from "./tool-progress";
 
 const delegateTaskParams = Type.Object({
   task: Type.String({
@@ -16,7 +17,17 @@ const delegateTaskParams = Type.Object({
   ),
   agentName: Type.Optional(
     Type.String({
-      description: "目标助手名称或关键词。不提供时自动选择一个非当前助手。",
+      description: "目标助手名称或关键词。需要选择专业助手时，应先调用 list_agents 查看清单再填写。不提供时使用默认助手 default/Cowork。",
+    }),
+  ),
+  temporaryAgentName: Type.Optional(
+    Type.String({
+      description: "临时子代理名称。需要创建临时子代理时填写，例如“代码审查专家”“资料调研员”。",
+    }),
+  ),
+  temporarySystemPrompt: Type.Optional(
+    Type.String({
+      description: "临时子代理的角色、能力边界、工作方式和输出要求。提供该字段时会创建临时子代理，而不是只从已安装助手中选择。",
     }),
   ),
   context: Type.Optional(
@@ -31,9 +42,10 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
     name: "delegate_task",
     label: "调用子代理",
     description:
-      "在普通对话中调用另一个助手作为子代理处理一个明确子任务。适合调研、代码审查、方案对比、测试验证、文案润色、专业判断等可并行或需要第二视角的工作。子代理完成后返回结果，最终回复仍由当前助手整合。",
+      "在普通对话中调用另一个助手作为子代理处理一个明确子任务。未指定目标时使用默认助手 default/Cowork；需要专业助手时先调用 list_agents 查看清单再通过 agentId/agentName 选择；也可提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。适合调研、代码审查、方案对比、测试验证、文案润色、专业判断等可并行或需要第二视角的工作。子代理完成后返回结果，最终回复仍由当前助手整合。",
     parameters: delegateTaskParams,
-    execute: async (_id, params: Static<typeof delegateTaskParams>) => {
+    execute: async (_id, params: Static<typeof delegateTaskParams>, signal, onUpdate) => {
+      throwIfAborted(signal);
       if (ctx.isSubagent) {
         return {
           content: text("当前已经在子代理中，不能再次调用子代理。请直接完成当前任务并返回结果。"),
@@ -42,29 +54,55 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
       }
 
       const agents = useConfigStore.getState().agents;
-      if (agents.length === 0) {
+      const requesterId = ctx.requester?.id;
+      const temporarySystemPrompt = params.temporarySystemPrompt?.trim();
+      const useTemporary = Boolean(temporarySystemPrompt);
+      const hasExplicitInstalledTarget = Boolean(params.agentId?.trim() || params.agentName?.trim());
+      const installedTarget = useTemporary
+        ? undefined
+        : hasExplicitInstalledTarget
+          ? findAgentById(agents, params.agentId) ?? findAgentByName(agents, params.agentName)
+          : findDefaultCoworkAgent(agents);
+      const temporaryName =
+        params.temporaryAgentName?.trim() ||
+        params.agentName?.trim() ||
+        "临时子代理";
+
+      if (!useTemporary && agents.length === 0) {
         return {
-          content: text("当前没有可用助手，无法调用子代理。"),
+          content: text("当前没有可用助手，无法调用子代理。可提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。"),
           details: { error: "no_agents" },
         };
       }
 
-      const requesterId = ctx.requester?.id;
-      const target =
-        findAgentById(agents, params.agentId) ??
-        findAgentByName(agents, params.agentName) ??
-        agents.find((agent) => agent.id !== requesterId) ??
-        agents[0];
-
-      if (!target) {
+      if (!useTemporary && !installedTarget) {
         return {
-          content: text("没有找到可调用的子代理。"),
-          details: { error: "agent_not_found" },
+          content: text(
+            hasExplicitInstalledTarget
+              ? "没有找到指定的子代理。请先调用 list_agents 查看可用助手清单，或提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。"
+              : "没有找到默认子代理 default/Cowork。请先调用 list_agents 查看可用助手清单并显式选择，或提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。",
+          ),
+          details: {
+            error: hasExplicitInstalledTarget ? "agent_not_found" : "default_agent_not_found",
+          },
         };
       }
 
       const parentThreadId = ctx.parentThreadId ?? ctx.threadId;
-      const childSessionId = makeChildSessionId(parentThreadId, target.id);
+      const target = useTemporary
+        ? {
+            id: requesterId || "default",
+            name: temporaryName,
+            kind: "temporary" as const,
+            systemPrompt: temporarySystemPrompt,
+          }
+        : {
+            id: installedTarget!.id,
+            name: installedTarget!.name,
+            kind: "installed" as const,
+            systemPrompt: undefined,
+          };
+      const childSessionId = makeChildSessionId(parentThreadId, `${target.kind}_${target.name}_${target.id}`);
       const prompt = buildSubagentPrompt({
         task: params.task,
         context: params.context,
@@ -73,7 +111,19 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
       });
 
       try {
+        throwIfAborted(signal);
+        onUpdate?.({
+          content: text(`正在调用子代理 ${target.name}...`),
+          details: {
+            agentId: target.id,
+            agentName: target.name,
+            agentKind: target.kind,
+            phase: "starting",
+          },
+        });
+
         const { agentManager } = await import("@/ai/agent-manager");
+        throwIfAborted(signal);
         const harness = await agentManager.getOrCreateHarness(parentThreadId, target.id, {
           workingDir: ctx.workingDir,
           permissionMode: ctx.permissionMode,
@@ -85,28 +135,53 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
             parentAgentId: requesterId ?? "",
             sessionId: childSessionId,
             task: params.task,
+            agentName: target.name,
+            systemPrompt: target.systemPrompt,
           },
         });
+        const abortSubagent = () => harness.abort();
+        signal?.addEventListener("abort", abortSubagent, { once: true });
 
-        const response = await harness.prompt(prompt);
-        await harness.waitForIdle();
-        const resultText = assistantMessageText(response) || "子代理已完成，但没有返回可提取的文本内容。";
-        const content = [
-          `子代理 ${target.name} 已完成任务。`,
-          "",
-          resultText,
-        ].join("\n");
+        try {
+          throwIfAborted(signal);
+          onUpdate?.({
+            content: text(`子代理 ${target.name} 正在执行任务...`),
+            details: {
+              agentId: target.id,
+              agentName: target.name,
+              agentKind: target.kind,
+              childSessionId,
+              phase: "running",
+            },
+          });
 
-        return {
-          content: text(content),
-          details: {
-            agentId: target.id,
-            agentName: target.name,
-            childSessionId,
-            result: resultText,
-          },
-        };
+          const response = await harness.prompt(prompt);
+          await harness.waitForIdle();
+          throwIfAborted(signal);
+          const resultText = assistantMessageText(response) || "子代理已完成，但没有返回可提取的文本内容。";
+          const content = [
+            `子代理 ${target.name} 已完成任务。`,
+            "",
+            resultText,
+          ].join("\n");
+
+          return {
+            content: text(content),
+            details: {
+              agentId: target.id,
+              agentName: target.name,
+              agentKind: target.kind,
+              childSessionId,
+              result: resultText,
+            },
+          };
+        } finally {
+          signal?.removeEventListener("abort", abortSubagent);
+        }
       } catch (error) {
+        if (signal?.aborted) {
+          throw error instanceof Error ? error : new Error("工具执行已取消");
+        }
         const message = error instanceof Error ? error.message : String(error);
         return {
           content: text(`子代理 ${target.name} 执行失败：${message}`),
@@ -114,6 +189,7 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
             error: "subagent_failed",
             agentId: target.id,
             agentName: target.name,
+            agentKind: target.kind,
             childSessionId,
             message,
           },
@@ -129,6 +205,15 @@ function findAgentById(
 ) {
   if (!agentId?.trim()) return undefined;
   return agents.find((agent) => agent.id === agentId.trim());
+}
+
+function findDefaultCoworkAgent(
+  agents: ReturnType<typeof useConfigStore.getState>["agents"],
+) {
+  return (
+    agents.find((agent) => agent.id === "default") ??
+    agents.find((agent) => agent.name.trim().toLocaleLowerCase() === "cowork")
+  );
 }
 
 function findAgentByName(

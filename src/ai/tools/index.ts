@@ -57,6 +57,7 @@ import {
 // ===== 任务管理 =====
 import { updateTodosTool } from "./update-todos";
 import { delegateTaskTool } from "./delegate-task";
+import { listAgentsTool } from "./agents";
 
 // ===== 网络工具 =====
 import { searchWebTool } from "./web-search";
@@ -107,6 +108,12 @@ import {
   listScheduleTasksTool,
   updateScheduleTaskTool,
 } from "./schedule-management";
+import {
+  cancelBackgroundTaskTool,
+  getBackgroundTaskTool,
+  listBackgroundTasksTool,
+  startBackgroundTaskTool,
+} from "./background-tasks";
 
 // ===== MCP 集成 =====
 import { buildMcpTools, mcpToolLabels } from "./mcp";
@@ -129,6 +136,15 @@ interface ToolEntry {
   factory: (ctx: ToolContext) => AgentTool<any>;
   isAvailable?: (ctx: ToolContext) => boolean;
   group?: string; // 所属分组 key（不填表示不分组，直接平铺显示）
+  capabilities?: ToolCapabilities;
+}
+
+export interface ToolCapabilities {
+  supportsProgress?: boolean;
+  supportsCancel?: boolean;
+  supportsBackground?: boolean;
+  estimatedDuration?: "short" | "medium" | "long";
+  resultDisplay?: "inline" | "collapsed" | "artifact" | "widget" | "audio";
 }
 
 /** 按组创建工具注册项的辅助函数 */
@@ -282,11 +298,16 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
-  subagent("delegate_task", "调用子代理", "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
+  subagent("list_agents", "列出助手", "列出当前用户已安装及内置的助手名称、介绍、类型和标签，便于选择合适的子代理。", listAgentsTool, (ctx) => !ctx.isBackground),
+  subagent("delegate_task", "调用子代理", "默认调用 default/Cowork，也可在读取助手清单后选择已安装助手，或临时创建子代理完成明确子任务。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
   schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
   schedule("list_schedule_tasks", "列出定时任务", "列出当前已有的后台定时任务，返回 taskId、名称、启用状态、下次执行时间等信息。", listScheduleTasksTool),
   schedule("update_schedule_task", "编辑定时任务", "按 taskId 或名称修改已有定时任务，可更新启用状态、调度方式和执行内容。", updateScheduleTaskTool),
   schedule("delete_schedule_task", "删除定时任务", "按 taskId 或名称删除已有定时任务；删除前必须 confirm=true。", deleteScheduleTaskTool),
+  schedule("start_background_task", "启动后台任务", "把耗时较长、可异步完成的任务放到独立后台 Agent 会话执行，并立即返回 jobId。", startBackgroundTaskTool, (ctx) => !ctx.isBackground),
+  schedule("list_background_tasks", "列出后台任务", "列出当前应用内后台 Agent 任务，包含 jobId、名称、状态、创建时间和完成时间。", listBackgroundTasksTool, (ctx) => !ctx.isBackground),
+  schedule("get_background_task", "查看后台任务", "查看后台任务状态、执行过程、错误或最终结果。", getBackgroundTaskTool, (ctx) => !ctx.isBackground),
+  schedule("cancel_background_task", "取消后台任务", "取消仍在运行的后台 Agent 任务。", cancelBackgroundTaskTool, (ctx) => !ctx.isBackground),
   interaction("ask_user", "询问用户", "向用户请求 input 输入、single 单选或 multiple 多选；问题支持 Markdown，选项模式自动追加自定义输入项。", askUserTool),
   skill("list_skills", "列出技能", "列出当前助手可用的技能名称与适用场景。", listSkillsTool),
   skill("read_skill", "读取技能", "读取当前上下文中某个可用技能的完整 SKILL.md 说明和目录树。", readSkillTool),
@@ -319,6 +340,66 @@ const TOOL_REGISTRY: ToolEntry[] = [
   widget("render_widget", "渲染 Widget", "在对话中渲染交互式 UI Widget，支持内联 HTML 或 skills 目录下 .html 模板。", renderWidgetTool),
 ];
 
+const TOOL_CAPABILITIES: Record<string, ToolCapabilities> = {
+  system_info: { estimatedDuration: "short", resultDisplay: "inline" },
+  update_todos: { estimatedDuration: "short", resultDisplay: "inline" },
+  schedule_task: { estimatedDuration: "short", resultDisplay: "inline" },
+  list_schedule_tasks: { estimatedDuration: "short", resultDisplay: "inline" },
+  update_schedule_task: { estimatedDuration: "short", resultDisplay: "inline" },
+  delete_schedule_task: { estimatedDuration: "short", resultDisplay: "inline" },
+  start_background_task: { supportsBackground: true, estimatedDuration: "short", resultDisplay: "inline" },
+  list_background_tasks: { estimatedDuration: "short", resultDisplay: "inline" },
+  get_background_task: { estimatedDuration: "short", resultDisplay: "collapsed" },
+  cancel_background_task: { estimatedDuration: "short", resultDisplay: "inline" },
+  ask_user: { estimatedDuration: "long", resultDisplay: "inline" },
+  list_skills: { estimatedDuration: "short", resultDisplay: "inline" },
+  read_skill: { estimatedDuration: "short", resultDisplay: "collapsed" },
+  read_skill_file: { estimatedDuration: "short", resultDisplay: "collapsed" },
+  write_skill: { estimatedDuration: "medium", resultDisplay: "collapsed" },
+  web_search: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
+  web_fetch: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
+  image_generation: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "artifact" },
+  image_edit: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "artifact" },
+  create_office_document: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "artifact" },
+  speech_recognition: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "inline" },
+  speech_synthesis: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "audio" },
+  search_knowledge: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
+  run_bash: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
+  delegate_task: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "collapsed" },
+  list_agents: { supportsProgress: false, supportsCancel: false, estimatedDuration: "short", resultDisplay: "inline" },
+  read_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "collapsed" },
+  write_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "artifact" },
+  edit_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "artifact" },
+  list_directory: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "inline" },
+  search_files: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
+  create_directory: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "inline" },
+  delete_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "inline" },
+  move_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "inline" },
+  copy_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "inline" },
+  list_project_conversations: { estimatedDuration: "short", resultDisplay: "inline" },
+  read_project_conversation: { estimatedDuration: "short", resultDisplay: "collapsed" },
+  search_memory: { estimatedDuration: "short", resultDisplay: "collapsed" },
+  remember_memory: { estimatedDuration: "short", resultDisplay: "inline" },
+  forget_memory: { estimatedDuration: "short", resultDisplay: "inline" },
+  render_widget: { supportsProgress: false, supportsCancel: false, estimatedDuration: "short", resultDisplay: "widget" },
+};
+
+function defaultToolCapabilities(entry: ToolEntry): ToolCapabilities {
+  if (entry.group === "computeruse") {
+    return {
+      estimatedDuration: entry.id === "windows_wait" || entry.id === "windows_batch" ? "medium" : "short",
+      resultDisplay: entry.id === "windows_snapshot" ? "artifact" : "collapsed",
+    };
+  }
+  if (entry.group === "browseruse") {
+    return {
+      estimatedDuration: entry.id === "browser_scan" || entry.id === "browser_network" ? "medium" : "short",
+      resultDisplay: entry.id === "browser_screenshot" ? "artifact" : "collapsed",
+    };
+  }
+  return { estimatedDuration: "short", resultDisplay: "inline" };
+}
+
 // 工具名 -> 中文展示标签（供监控面板与步骤轨迹复用）
 export const TOOL_LABELS: Record<string, string> = Object.fromEntries(
   TOOL_REGISTRY.map((tool) => [tool.id, tool.name]),
@@ -340,11 +421,18 @@ export interface ToolMeta {
   name: string;
   description: string;
   group?: string; // 所属分组 key
+  capabilities?: ToolCapabilities;
 }
 
 // 内置工具目录（工具页展示用）——逐个列出真实可执行的工具
 export const BUILTIN_TOOLS: ToolMeta[] = TOOL_REGISTRY.map(
-  ({ id, name, description, group }) => ({ id, name, description, group }),
+  (entry) => ({
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    group: entry.group,
+    capabilities: entry.capabilities ?? TOOL_CAPABILITIES[entry.id] ?? defaultToolCapabilities(entry),
+  }),
 );
 
 /**

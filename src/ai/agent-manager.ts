@@ -44,6 +44,8 @@ export interface SubagentContext {
   parentAgentId: string;
   sessionId: string;
   task: string;
+  agentName?: string;
+  systemPrompt?: string;
 }
 
 export interface ScheduleContext {
@@ -109,6 +111,8 @@ function runtimeConfigSignature(agentId: string, subagentContext?: SubagentConte
     memoryEnabled: state.settings.memory?.enabled ?? false,
     projectMemoryEnabled: state.settings.memory?.projectMemoryEnabled ?? false,
     subagent: Boolean(subagentContext),
+    subagentName: subagentContext?.agentName ?? "",
+    subagentSystemPrompt: subagentContext?.systemPrompt ?? "",
   });
 }
 
@@ -261,7 +265,7 @@ export class AgentManager {
 
     const subagentContext = options?.subagentContext;
     const scheduleContext = options?.scheduleContext;
-    const requesterName = agentConfig?.name ?? "助手";
+    const requesterName = subagentContext?.agentName ?? agentConfig?.name ?? "助手";
 
     // 渐进式披露：把该 Agent 启用的技能转成 pi 的 Skill，
     // 在系统提示里仅列「清单 + 文件位置」（不塞全文），
@@ -318,7 +322,7 @@ export class AgentManager {
       ),
     ]);
 
-    const basePrompt = agentConfig?.config.systemPrompt ?? "";
+    const basePrompt = subagentContext?.systemPrompt?.trim() || agentConfig?.config.systemPrompt || "";
     const skillsBlock = [
       formatSkillsForSystemPrompt(skills),
       skills.length > 0
@@ -334,11 +338,11 @@ export class AgentManager {
     const projectPrompt = options?.projectSystemPrompt?.trim() || "";
     const delegationBlock = subagentContext
       ? [
-          `你是由主对话助手临时调用的子代理。主会话 ID：${subagentContext.parentThreadId}。`,
+          `你是由主对话助手临时调用的子代理${subagentContext.agentName ? `「${subagentContext.agentName}」` : ""}。主会话 ID：${subagentContext.parentThreadId}。`,
           `你的任务：${subagentContext.task}`,
           "专注完成该任务，给出可直接交给主助手使用的结论、证据、变更摘要或风险点。不要再次调用 delegate_task。",
         ].join("\n")
-      : "当用户任务包含多步骤调研、代码审查、方案对比、实现拆分、测试验证或需要专业视角时，你应主动调用 delegate_task 委派给合适的子代理。主助手保留最终答复权，整合子代理结果后再回复用户；简单闲聊或单步问题不必委派。";
+      : "当用户任务包含多步骤调研、代码审查、方案对比、实现拆分、测试验证或需要专业视角时，你应主动调用 delegate_task 委派给合适的子代理。未指定目标时 delegate_task 会使用默认助手 default/Cowork；若需要专业助手，先调用 list_agents 查看清单再显式传 agentId/agentName；若清单里没有合适角色，传 temporaryAgentName 与 temporarySystemPrompt 创建临时子代理。主助手保留最终答复权，整合子代理结果后再回复用户；简单闲聊或单步问题不必委派。";
     const promptParts = [delegationBlock, basePrompt, projectPrompt, skillsBlock, memoryBlock];
     const systemPrompt = promptParts
       .map((part) => part?.trim())
@@ -453,6 +457,55 @@ export class AgentManager {
           accepted += 1;
         } catch {
           // steer() requires a running harness; idle or already-settled harnesses are ignored.
+        }
+      },
+      { concurrency: LOCAL_IO_CONCURRENCY },
+    );
+    return accepted;
+  }
+
+  /**
+   * 向指定线程当前正在运行的 harness 追加后续消息。
+   * followUp 会在当前 run 没有更多工具与 steering 消息后执行，适合“做完当前任务后继续处理这句”。
+   */
+  async followUpThread(threadId: string, text: string): Promise<number> {
+    const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
+      harnessBelongsToThread(key, threadId),
+    );
+    let accepted = 0;
+    await pMap(
+      targets,
+      async ([, cached]) => {
+        try {
+          const harness = await cached.promise;
+          await harness.followUp(text);
+          accepted += 1;
+        } catch {
+          // followUp() requires a running harness; idle or already-settled harnesses are ignored.
+        }
+      },
+      { concurrency: LOCAL_IO_CONCURRENCY },
+    );
+    return accepted;
+  }
+
+  /**
+   * 排队下一轮附加用户消息。nextTurn 可在 idle 时调用，下一次 prompt 会先注入队列内容。
+   */
+  async nextTurnThread(threadId: string, text: string): Promise<number> {
+    const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
+      harnessBelongsToThread(key, threadId),
+    );
+    let accepted = 0;
+    await pMap(
+      targets,
+      async ([, cached]) => {
+        try {
+          const harness = await cached.promise;
+          await harness.nextTurn(text);
+          accepted += 1;
+        } catch {
+          // Ignore disposed or failed harnesses.
         }
       },
       { concurrency: LOCAL_IO_CONCURRENCY },

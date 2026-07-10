@@ -6,6 +6,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { callMcpTool } from "@/lib/mcp";
 import type { McpDiscoveredTool, McpToolConfig } from "@/lib/mcp";
 import { text, type ToolContext } from "./tool-context";
+import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 export function buildMcpTools(
   _ctx: ToolContext,
@@ -24,7 +25,7 @@ export function mcpToolLabels(config: McpToolConfig): Record<string, string> {
       .filter((remoteTool) => !disabled.has(remoteTool.name))
       .map((remoteTool) => [
         mcpPiToolName(config.id, remoteTool.name),
-        remoteTool.title || remoteTool.name,
+        `${config.name || config.id} · ${remoteTool.title || remoteTool.name}`,
       ]),
   );
 }
@@ -38,18 +39,26 @@ function buildSingleMcpTool(
 
   return {
     name: piToolName,
-    label: remoteTool.title || remoteTool.name,
+    label: `${config.name || config.id} · ${remoteTool.title || remoteTool.name}`,
     description:
       remoteTool.description ||
       `调用 MCP server「${config.name || config.id}」的 ${remoteTool.name} 工具。`,
     parameters,
-    execute: async (_id: string, params: unknown) => {
+    execute: async (_id: string, params: unknown, signal, onUpdate) => {
+      const startedAt = nowMs();
       const argumentsObject =
         params && typeof params === "object" && !Array.isArray(params)
           ? (params as Record<string, unknown>)
           : {};
 
       // 在调用远端 MCP server 前校验输入参数（会就地做 string/number 自动转换）
+      progressUpdate(onUpdate, {
+        phase: "validating",
+        summary: `正在校验 MCP 参数：${config.name || config.id} · ${remoteTool.name}`,
+        serverId: config.id,
+        serverName: config.name || config.id,
+        remoteToolName: remoteTool.name,
+      });
       const validationError = validateMcpInput(
         remoteTool.inputSchema,
         argumentsObject,
@@ -59,26 +68,38 @@ function buildSingleMcpTool(
           content: text(`参数校验失败: ${validationError}。请检查参数后重试。`),
           details: {
             serverId: config.id,
+            serverName: config.name || config.id,
             remoteToolName: remoteTool.name,
             validationError,
           },
         };
       }
 
+      throwIfAborted(signal);
+      progressUpdate(onUpdate, {
+        phase: "executing",
+        summary: `正在调用 MCP：${config.name || config.id} · ${remoteTool.name}`,
+        serverId: config.id,
+        serverName: config.name || config.id,
+        remoteToolName: remoteTool.name,
+      });
       const result = await callMcpTool({
         server: config.server,
         toolName: remoteTool.name,
         arguments: argumentsObject,
       });
+      throwIfAborted(signal);
 
       const resultText = formatMcpResult(result);
       return {
         content: text(resultText),
-        details: {
+        details: withDuration({
           serverId: config.id,
+          serverName: config.name || config.id,
+          toolLabel: remoteTool.title || remoteTool.name,
           remoteToolName: remoteTool.name,
           result,
-        },
+        }, startedAt),
       };
     },
   };

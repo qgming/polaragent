@@ -57,6 +57,18 @@ export interface AgentResult {
   providerCacheHit?: boolean;
 }
 
+interface ToolResultSummary {
+  label: string;
+  isError: boolean;
+  pending?: boolean;
+  resultText?: string;
+  todos?: Array<{
+    content: string;
+    status: "pending" | "in_progress" | "completed";
+  }>;
+  details?: Record<string, unknown>;
+}
+
 export interface AgentHandlers {
   // 流式合批更新：每帧最多一次，携带本帧待追加文本与最新有序段
   onStreamUpdate: (update: { appendDelta?: string; segments?: Segment[] }) => void;
@@ -283,20 +295,8 @@ export async function promptAgent(
   let settled = false;
   // Provider 响应缓存命中标记（由 after_provider_response 事件填充）
   let providerCacheHit = false;
-  // 收集本轮工具结果摘要：toolCallId -> { label, isError, resultText, todos?, details? }
-  const toolResults = new Map<
-    string,
-    {
-      label: string;
-      isError: boolean;
-      resultText?: string;
-      todos?: Array<{
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      }>;
-      details?: Record<string, unknown>;
-    }
-  >();
+  // 收集本轮工具结果摘要：toolCallId -> label/status/result/details
+  const toolResults = new Map<string, ToolResultSummary>();
 
   // —— rAF 合批：流式 token 高频到达，若每个 token 都写 store 会把主线程打满
   // （多会话并行时尤甚）。这里用 createRafBatcher 按帧合并：缓存待追加的文本与最新 segments，
@@ -506,12 +506,21 @@ export async function promptAgent(
               monitor.updateStep(options.threadId, event.toolCallId, {
                 label: partialLabel,
               });
+              if (event.toolName === "delegate_task") {
+                toolResults.set(event.toolCallId, {
+                  label: partialLabel,
+                  isError: false,
+                  pending: true,
+                  details: extractToolDetails(partial),
+                });
+                emitSegments();
+              }
             }
             break;
           }
 
           case "tool_execution_end": {
-            const label = summarizeToolResult(event.toolName, event.result);
+            const label = summarizeToolResult(event.toolName, event.result, event.isError);
             const resultDetails = extractToolDetails(event.result);
             toolResults.set(event.toolCallId, {
               label,
@@ -687,16 +696,7 @@ function buildAgentEndResult(
   >,
   assistantText: string,
   runtimeModelId: string,
-  toolResults: Map<
-    string,
-    {
-      label: string;
-      isError: boolean;
-      resultText?: string;
-      todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
-      details?: Record<string, unknown>;
-    }
-  >,
+  toolResults: Map<string, ToolResultSummary>,
   providerCacheHit: boolean,
 ): AgentResult | null {
   // 从 runItems 中提取 assistant 消息
@@ -792,19 +792,7 @@ function buildAgentEndResult(
  */
 function extractSegments(
   message: AgentMessage & { role: "assistant" },
-  toolResults: Map<
-    string,
-    {
-      label: string;
-      isError: boolean;
-      resultText?: string;
-      todos?: Array<{
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      }>;
-      details?: Record<string, unknown>;
-    }
-  >,
+  toolResults: Map<string, ToolResultSummary>,
 ): Segment[] {
   const segments: Segment[] = [];
 
@@ -830,7 +818,7 @@ function extractSegments(
         toolName: block.name,
         label: result?.label ?? toolDisplayName(block.name),
         // 结果未到位 = 仍在执行（流式中显示旋转图标）；到位后按成功/出错定状态
-        status: result ? (result.isError ? "error" : "done") : "running",
+        status: result ? (result.pending ? "running" : result.isError ? "error" : "done") : "running",
         resultText: result?.resultText,
         todos: result?.todos,
         details: result?.details,
@@ -923,9 +911,17 @@ function summarizePartialResult(toolName: string, partial: unknown): string | un
   if (!partial || typeof partial !== "object") return undefined;
   const details = (partial as { details?: Record<string, unknown> }).details;
   if (details) {
+    if (typeof details.summary === "string" && details.summary.trim()) {
+      return details.summary.trim();
+    }
     // bash 执行中：显示 phase
     if (toolName === "run_bash" && typeof details.phase === "string") {
       return details.phase === "executing" ? "正在执行命令..." : undefined;
+    }
+    if (toolName === "delegate_task" && typeof details.agentName === "string") {
+      return details.phase === "running"
+        ? `子代理 ${details.agentName} 正在执行任务...`
+        : `正在调用子代理 ${details.agentName}...`;
     }
     // 其他工具的中间进度：如果有 content 文本，取前 60 字符
     const content = (partial as { content?: unknown[] }).content;
@@ -944,38 +940,89 @@ function summarizePartialResult(toolName: string, partial: unknown): string | un
 }
 
 // 工具结果 -> 步骤面板里的单行摘要
-function summarizeToolResult(toolName: string, result: unknown): string {
+function summarizeToolResult(toolName: string, result: unknown, isError = false): string {
   const base = toolDisplayName(toolName);
   if (result && typeof result === "object") {
     const details = (result as { details?: Record<string, unknown> }).details;
     if (details) {
+      const suffix = formatDurationSuffix(details.durationMs);
       if (toolName === "update_todos" && Array.isArray(details.todos)) {
-        return `已更新待办 ${details.todos.length} 项`;
+        return `已更新待办 ${details.todos.length} 项${suffix}`;
+      }
+      if (toolName === "list_agents" && Array.isArray(details.agents)) {
+        return `列出 ${details.agents.length} 个助手${suffix}`;
+      }
+      if (toolName === "start_background_task" && typeof details.jobId === "string") {
+        return `后台任务已启动：${details.jobId}${suffix}`;
+      }
+      if (toolName === "list_background_tasks" && typeof details.count === "number") {
+        return `列出 ${details.count} 个后台任务${suffix}`;
+      }
+      if (
+        (toolName === "get_background_task" || toolName === "cancel_background_task") &&
+        typeof details.status === "string"
+      ) {
+        return `后台任务状态：${details.status}${suffix}`;
+      }
+      if (toolName === "delegate_task" && typeof details.agentName === "string") {
+        return isError ? `子代理 ${details.agentName} 执行失败${suffix}` : `子代理 ${details.agentName} 已完成${suffix}`;
+      }
+      if (toolName === "web_search" && typeof details.count === "number") {
+        return `搜索到 ${details.count} 条结果${suffix}`;
+      }
+      if (toolName === "web_fetch" && typeof details.title === "string") {
+        return `已读取网页《${details.title || "未命名网页"}》${suffix}`;
+      }
+      if (toolName === "search_knowledge" && Array.isArray(details.results)) {
+        return `检索到 ${details.results.length} 条知识库结果${suffix}`;
+      }
+      if ((toolName === "image_generation" || toolName === "image_edit") && Array.isArray(details.saved)) {
+        return `已保存 ${details.saved.length} 张图片${suffix}`;
+      }
+      if (toolName === "speech_recognition" && typeof details.audioPath === "string") {
+        return `已识别 ${String(details.audioPath).split(/[\\/]/).pop()}${suffix}`;
+      }
+      if (toolName === "speech_synthesis" && typeof details.name === "string") {
+        return `已合成 ${details.name}${suffix}`;
+      }
+      if (toolName.startsWith("mcp_") && typeof details.serverName === "string" && typeof details.remoteToolName === "string") {
+        return `已调用 MCP：${details.serverName} · ${details.remoteToolName}${suffix}`;
       }
       if (toolName === "write_file" && typeof details.path === "string") {
-        return `已写入 ${String(details.path).split(/[\\/]/).pop()}`;
+        return `已写入 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
       if (toolName === "create_office_document" && typeof details.path === "string") {
-        return `已创建 ${String(details.path).split(/[\\/]/).pop()}`;
+        return `已创建 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
       if (toolName === "edit_file" && typeof details.path === "string") {
         const name = String(details.path).split(/[\\/]/).pop();
         const replaced =
           typeof details.replaced === "number" ? details.replaced : 1;
-        return `已编辑 ${name}（替换 ${replaced} 处）`;
+        return `已编辑 ${name}（替换 ${replaced} 处）${suffix}`;
       }
       if (toolName === "create_directory" && typeof details.path === "string") {
-        return `已创建目录 ${String(details.path).split(/[\\/]/).pop()}`;
+        return `已创建目录 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
       if (toolName === "delete_file" && typeof details.path === "string") {
-        return `已删除 ${String(details.path).split(/[\\/]/).pop()}`;
+        return `已删除 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
       if (toolName === "list_directory" && Array.isArray(details.entries)) {
-        return `列出 ${details.entries.length} 个条目`;
+        return `列出 ${details.entries.length} 个条目${suffix}`;
+      }
+      if (toolName === "search_files" && Array.isArray(details.results)) {
+        return `找到 ${details.results.length} 个文件匹配${suffix}`;
       }
     }
   }
   return base;
+}
+
+function formatDurationSuffix(durationMs: unknown): string {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+    return "";
+  }
+  if (durationMs < 1000) return `（${Math.round(durationMs)}ms）`;
+  return `（${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s）`;
 }
 
 // 工具结果 -> 完整可读文本（供步骤项点击展开查看）
@@ -1055,6 +1102,28 @@ export async function steerAgentThread(
   text: string,
 ): Promise<boolean> {
   const accepted = await agentManager.steerThread(threadId, text);
+  return accepted > 0;
+}
+
+/**
+ * 在当前运行结束前排入 follow-up。pi-agent 会在没有更多工具调用与 steering 后消费。
+ */
+export async function followUpAgentThread(
+  threadId: string,
+  text: string,
+): Promise<boolean> {
+  const accepted = await agentManager.followUpThread(threadId, text);
+  return accepted > 0;
+}
+
+/**
+ * 排入下一轮消息。可用于把用户输入放到后续 prompt 前，而不自建应用层队列。
+ */
+export async function nextTurnAgentThread(
+  threadId: string,
+  text: string,
+): Promise<boolean> {
+  const accepted = await agentManager.nextTurnThread(threadId, text);
   return accepted > 0;
 }
 
