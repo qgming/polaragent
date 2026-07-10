@@ -187,6 +187,7 @@ const dev = reg("dev");
 const skill = reg("skill");
 const interaction = reg("interaction");
 const widget = reg("widget");
+const subagent = reg("subagent");
 const schedule = reg("task");
 
 // ASR 接口是否已配置（provider、apiKey、model 齐全）
@@ -231,18 +232,19 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   computeruse: { name: "Computer Use", description: "控制 Windows 桌面应用程序", order: 1 },
   browseruse: { name: "Browser Use", description: "控制 Chrome 浏览器,操作网页", order: 2 },
   task: { name: "任务管理", description: "维护待办清单,跟踪任务进展", order: 3 },
-  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 4 },
-  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 5 },
-  office: { name: "办公创作", description: "生成 Word、PPT、PDF 办公文件", order: 6 },
-  project: { name: "项目", description: "列出和读取当前项目中的历史会话", order: 7 },
-  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 8 },
-  memory: { name: "长期记忆", description: "检索、写入和遗忘用户偏好与项目上下文", order: 9 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 10 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 11 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 12 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 13 },
-  widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 14 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 15 },
+  subagent: { name: "子代理协作", description: "调用其他助手处理明确子任务", order: 4 },
+  network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 5 },
+  file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 6 },
+  office: { name: "办公创作", description: "生成 Word、PPT、PDF 办公文件", order: 7 },
+  project: { name: "项目", description: "列出和读取当前项目中的历史会话", order: 8 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 9 },
+  memory: { name: "长期记忆", description: "检索、写入和遗忘用户偏好与项目上下文", order: 10 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 11 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 12 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 13 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 14 },
+  widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 15 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 16 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -280,7 +282,7 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
-  task("delegate_task", "调用子代理", "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
+  subagent("delegate_task", "调用子代理", "调用另一个助手作为子代理完成明确子任务，并把结果返回给当前助手整合。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
   schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
   schedule("list_schedule_tasks", "列出定时任务", "列出当前已有的后台定时任务，返回 taskId、名称、启用状态、下次执行时间等信息。", listScheduleTasksTool),
   schedule("update_schedule_task", "编辑定时任务", "按 taskId 或名称修改已有定时任务，可更新启用状态、调度方式和执行内容。", updateScheduleTaskTool),

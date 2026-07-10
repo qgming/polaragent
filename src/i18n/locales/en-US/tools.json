@@ -140,6 +140,10 @@
       "interaction": {
         "name": "User interaction",
         "description": "Ask the user for input and collect choices"
+      },
+      "subagent": {
+        "name": "Subagent collaboration",
+        "description": "Call other assistants to handle clear subtasks"
       }
     },
     "tools": {

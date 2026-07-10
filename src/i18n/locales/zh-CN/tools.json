@@ -140,6 +140,10 @@
       "interaction": {
         "name": "用户交互",
         "description": "向用户请求输入，收集选择反馈"
+      },
+      "subagent": {
+        "name": "子代理协作",
+        "description": "调用其他助手处理明确子任务"
       }
     },
     "tools": {
