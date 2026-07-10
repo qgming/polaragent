@@ -201,6 +201,7 @@ export class AgentManager {
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
       scheduleContext?: ScheduleContext;
+      projectId?: string;
       projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
@@ -213,6 +214,7 @@ export class AgentManager {
       dir: normalizeWorkingDir(options?.workingDir),
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
       knowledgeBaseIds: [...(options?.knowledgeBaseIds ?? [])].sort(),
+      projectId: options?.projectId ?? "",
       projectSystemPrompt: options?.projectSystemPrompt ?? "",
     });
 
@@ -273,6 +275,7 @@ export class AgentManager {
       knowledgeBaseIds?: string[];
       teamContext?: TeamContext;
       scheduleContext?: ScheduleContext;
+      projectId?: string;
       projectSystemPrompt?: string;
     },
   ): Promise<AgentHarness> {
@@ -319,6 +322,7 @@ export class AgentManager {
     // 装配工具（全局工具，受工具页开关过滤;团队投票工具仅团队上下文可见）。
     const toolCtx: ToolContext = {
       threadId,
+      projectId: options?.projectId,
       workingDir: options?.workingDir,
       permissionMode: options?.permissionMode ?? DEFAULT_TOOL_PERMISSION_MODE,
       isTeam: !!teamContext,

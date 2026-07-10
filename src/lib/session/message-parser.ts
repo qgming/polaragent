@@ -423,6 +423,7 @@ function stripSkillBlocks(text: string): string {
     .replace(/<skill_files\b[^>]*>[\s\S]*?<\/skill_files>\s*/g, "")
     .replace(/<file\b[^>]*>[\s\S]*?<\/file>\s*/g, "")
     .replace(/<image\b[^>]*>[\s\S]*?<\/image>\s*/g, "")
+    .replace(/<project_context\b[^>]*>[\s\S]*?<\/project_context>\s*/g, "")
     .trim();
 }
 

@@ -31,6 +31,7 @@ export interface GoalExchangeParams {
   threadId: string;
   agentId: string;
   userInput: string;
+  projectId?: string;
   workingDir?: string;
   attachments?: ChatAttachment[];
   permissionMode?: ToolPermissionMode;
@@ -150,6 +151,7 @@ async function runSingleRound(
         attachments,
         permissionMode: params.permissionMode,
         knowledgeBaseIds: params.knowledgeBaseIds,
+        projectId: params.projectId,
       },
     );
   });
@@ -561,6 +563,7 @@ export async function runGoalExchange(params: GoalExchangeParams): Promise<void>
 export async function startGoal(
   threadId: string,
   agentId: string,
+  projectId?: string,
   workingDir?: string,
   permissionMode?: ToolPermissionMode,
   knowledgeBaseIds?: string[],
@@ -572,6 +575,7 @@ export async function startGoal(
     threadId,
     agentId,
     userInput: goal.goalText,
+    projectId,
     workingDir,
     permissionMode,
     knowledgeBaseIds,
@@ -584,6 +588,7 @@ export async function startGoal(
 export async function resumeGoal(
   threadId: string,
   agentId: string,
+  projectId?: string,
   workingDir?: string,
   permissionMode?: ToolPermissionMode,
   knowledgeBaseIds?: string[],
@@ -595,6 +600,7 @@ export async function resumeGoal(
     threadId,
     agentId,
     userInput: goal.lastContinuePrompt || goal.goalText,
+    projectId,
     workingDir,
     permissionMode,
     knowledgeBaseIds,

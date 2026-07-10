@@ -181,6 +181,7 @@ function App() {
     const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
     if (thread?.projectId) {
       setProjectChatView({ projectId: thread.projectId, threadId });
+      setActivePage("chat");
     } else {
       setProjectChatView(null);
       setActivePage("chat");
@@ -272,6 +273,7 @@ function App() {
     const threadId = createThread(undefined, undefined, undefined, projectId);
     setTeamChatView(null);
     setProjectChatView({ projectId, threadId });
+    setActivePage("chat");
   };
 
   // 清空某项目内的全部会话
@@ -371,9 +373,14 @@ function App() {
           onOpenTutorial={() => setTutorialOpen(true)}
           onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
           showPanelToggle={
-            teamChatView ? true : activePage === "chat" && !!activeThreadId
+            teamChatView
+              ? true
+              : projectChatView
+                ? true
+                : activePage === "chat" && !!activeThreadId
           }
           sidebarCollapsed={sidebarCollapsed}
+          statsThreadId={projectChatView?.threadId}
           teamPanelThreadId={teamChatView?.threadId}
         />
 

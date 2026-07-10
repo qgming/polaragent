@@ -113,6 +113,7 @@ export function GoalSection({
     void startGoal(
       threadId,
       agentId,
+      thread?.projectId,
       workingDir,
       thread?.permissionMode,
       thread?.knowledgeBaseIds,
@@ -125,6 +126,7 @@ export function GoalSection({
     void resumeGoal(
       threadId,
       agentId,
+      thread?.projectId,
       workingDir,
       thread?.permissionMode,
       thread?.knowledgeBaseIds,

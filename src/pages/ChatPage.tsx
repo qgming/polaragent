@@ -349,6 +349,7 @@ export function ChatPage({
         attachments: sendAttachments,
         permissionMode,
         knowledgeBaseIds,
+        projectId: currentProjectId,
         skillIds: sendSkillIds,
         skillRefs: sendSkillRefs,
         filePaths: sendFilePaths,
@@ -391,6 +392,7 @@ export function ChatPage({
         attachments: sendAttachments,
         permissionMode,
         knowledgeBaseIds,
+        projectId: currentProjectId,
         projectSystemPrompt,
       },
     );

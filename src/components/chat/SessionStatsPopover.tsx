@@ -17,11 +17,11 @@ function formatNumber(value: number): string {
 // 无活跃会话时的稳定空数组，避免每次渲染产生新引用击穿 useMemo
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
-export function SessionStatsPopover() {
+export function SessionStatsPopover({ threadId }: { threadId?: string }) {
   const { t } = useTranslation("chat");
   // 只订阅当前活跃会话对象：其它后台会话的流式更新不会触发本组件重渲染
   const activeThread = useChatStore((state) =>
-    state.threads.find((thread) => thread.id === state.activeThreadId),
+    state.threads.find((thread) => thread.id === (threadId ?? state.activeThreadId)),
   );
   const providers = useConfigStore((state) => state.providers);
 

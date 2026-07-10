@@ -62,6 +62,7 @@ export function TitleBar({
   onToggleSidebar,
   showPanelToggle,
   sidebarCollapsed,
+  statsThreadId,
   teamPanelThreadId,
 }: {
   onOpenAbout: () => void;
@@ -70,6 +71,7 @@ export function TitleBar({
   onToggleSidebar: () => void;
   showPanelToggle: boolean;
   sidebarCollapsed: boolean;
+  statsThreadId?: string;
   teamPanelThreadId?: string;
 }) {
   const { t } = useTranslation();
@@ -111,7 +113,7 @@ export function TitleBar({
       <div className="flex h-full items-center">
         {showPanelToggle ? (
           <>
-            <SessionStatsButton />
+            <SessionStatsButton threadId={statsThreadId} />
             <PanelToggleButton teamThreadId={teamPanelThreadId} />
             {/* 与窗口控制按钮之间的小竖分割线 */}
             <div className="mx-1 h-5 w-px bg-border" />
@@ -244,7 +246,7 @@ function AppMenu({ onOpenAbout }: { onOpenAbout: () => void }) {
 }
 
 // 顶部栏右侧：会话用量统计按钮
-function SessionStatsButton() {
+function SessionStatsButton({ threadId }: { threadId?: string }) {
   const { t } = useTranslation();
   return (
     <Popover>
@@ -259,7 +261,7 @@ function SessionStatsButton() {
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" side="bottom" sideOffset={6} className="w-80 p-0">
-        <SessionStatsPopover />
+        <SessionStatsPopover threadId={threadId} />
       </PopoverContent>
     </Popover>
   );

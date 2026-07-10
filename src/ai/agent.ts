@@ -86,6 +86,8 @@ export interface PromptOptions {
   teamContext?: TeamContext;
   // 定时任务后台模式：使用独立 schedule 会话仓库，并限制前台交互类工具。
   scheduleContext?: ScheduleContext;
+  // 当前会话所属项目。存在时会装配项目会话读取工具。
+  projectId?: string;
   // 项目级别的系统提示词（当对话属于某项目时注入）
   projectSystemPrompt?: string;
 }
@@ -311,6 +313,7 @@ export async function promptAgent(
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
         scheduleContext: options.scheduleContext,
+        projectId: options.projectId,
         projectSystemPrompt: options.projectSystemPrompt,
       });
     } catch (error) {
@@ -322,6 +325,7 @@ export async function promptAgent(
         knowledgeBaseIds: options.knowledgeBaseIds,
         teamContext: options.teamContext,
         scheduleContext: options.scheduleContext,
+        projectId: options.projectId,
         projectSystemPrompt: options.projectSystemPrompt,
       });
     }

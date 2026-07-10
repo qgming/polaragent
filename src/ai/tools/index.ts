@@ -80,6 +80,12 @@ import { createOfficeDocumentTool } from "./office";
 // ===== 知识库 =====
 import { searchKnowledgeTool } from "./knowledge";
 
+// ===== 项目会话 =====
+import {
+  listProjectConversationsTool,
+  readProjectConversationTool,
+} from "./project-conversations";
+
 // ===== 长期记忆 =====
 import { forgetMemoryTool, rememberMemoryTool, searchMemoryTool } from "./memory";
 
@@ -175,6 +181,7 @@ const task = reg("task");
 const network = reg("network");
 const file = reg("file");
 const office = reg("office");
+const project = reg("project");
 const knowledge = reg("knowledge");
 const memory = reg("memory");
 const image = reg("image");
@@ -231,15 +238,16 @@ export const TOOL_GROUPS: Record<string, { name: string; description: string; or
   network: { name: "网络工具", description: "搜索互联网信息,读取网页内容", order: 4 },
   file: { name: "文件操作", description: "读写编辑文件,管理目录结构", order: 5 },
   office: { name: "办公创作", description: "生成 Word、PPT、PDF 办公文件", order: 6 },
-  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 7 },
-  memory: { name: "长期记忆", description: "检索、写入和遗忘用户偏好与项目上下文", order: 8 },
-  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 9 },
-  audio: { name: "音频工具", description: "语音识别与语音合成", order: 10 },
-  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 11 },
-  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 12 },
-  widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 13 },
-  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 14 },
-  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 15 },
+  project: { name: "项目", description: "列出和读取当前项目中的历史会话", order: 7 },
+  knowledge: { name: "知识库", description: "检索知识库文档,获取相关内容", order: 8 },
+  memory: { name: "长期记忆", description: "检索、写入和遗忘用户偏好与项目上下文", order: 9 },
+  image: { name: "图片工具", description: "生成图片并保存为会话产物", order: 10 },
+  audio: { name: "音频工具", description: "语音识别与语音合成", order: 11 },
+  dev: { name: "开发工具", description: "执行 shell 命令,运行项目脚本", order: 12 },
+  skill: { name: "技能", description: "查看并读取当前助手可用技能", order: 13 },
+  widget: { name: "Widget", description: "渲染交互式 UI Widget（图表、表单、表格等）", order: 14 },
+  interaction: { name: "用户交互", description: "向用户请求输入,收集选择反馈", order: 15 },
+  team: { name: "团队协作", description: "控制协作流程,发起和参与投票", order: 16 },
 };
 
 // 全部真实内置工具。默认可用于普通会话；带 isAvailable 的工具只在对应上下文里装配。
@@ -299,6 +307,8 @@ const TOOL_REGISTRY: ToolEntry[] = [
   file("copy_file", "复制文件", "复制文件或目录到指定位置。", copyFileTool),
   file("search_files", "搜索文件", "使用 Glob 模式搜索文件与目录。", searchFilesTool),
   office("create_office_document", "创建办公文档", "生成 Word、PPT 或 PDF 文件，保存后出现在产物面板并可用独立预览窗口打开。", createOfficeDocumentTool),
+  project("list_project_conversations", "列出项目会话", "列出当前项目中的其他会话，返回标题、ID 和更新时间。", listProjectConversationsTool, (ctx) => Boolean(ctx.projectId)),
+  project("read_project_conversation", "读取项目会话", "读取当前项目中指定历史会话的最近消息。", readProjectConversationTool, (ctx) => Boolean(ctx.projectId)),
   network("web_search", "网络搜索", "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。", searchWebTool),
   network("web_fetch", "网页读取", "读取网页正文并提取主要文本，支持按标题或锚点分段提取与链接、表格抽取。", readWebPageTool),
   image("image_generation", "生成图片", "调用图片生成模型，根据提示词生成图片并保存到工作目录。", generateImageTool, () => imageGenerationAvailable()),

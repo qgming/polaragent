@@ -11,6 +11,7 @@ import type { ToolPermissionMode } from "@/types/permissions";
 // 工具执行时的会话上下文：把产物/待办归属到正确的会话与工作目录
 export interface ToolContext {
   threadId: string;
+  projectId?: string;
   workingDir?: string;
   permissionMode: ToolPermissionMode;
   isTeam?: boolean;
