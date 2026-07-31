@@ -29,9 +29,7 @@
     "voiceAutoSend": "Auto-send After Voice Recognition",
     "voiceAutoSendDesc": "Automatically send the message after voice recognition. When text refinement is also enabled, it sends after the text is polished.",
     "voiceRefineText": "Voice Recognition Text Refinement",
-    "voiceRefineTextDesc": "After recognition, use AI to clean up the text — removing filler words and hesitation to make it clearer and more formal.",
-    "skillsApiKeyTitle": "SkillsMP API Key",
-    "skillsApiKeyDesc": "Skills marketplace powered by SkillsMP. Search works without a key (anonymous quota is lower); adding a key increases your daily quota."
+    "voiceRefineTextDesc": "After recognition, use AI to clean up the text — removing filler words and hesitation to make it clearer and more formal."
   },
   "nav": {
     "general": "General",

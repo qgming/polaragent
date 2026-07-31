@@ -29,9 +29,7 @@
     "voiceAutoSend": "语音识别后自动发送",
     "voiceAutoSendDesc": "语音识别完成后自动发送消息；与口语优化同时开启时，将在文本整理完成后发送。",
     "voiceRefineText": "语音识别文本优化",
-    "voiceRefineTextDesc": "识别完成后调用 AI 对文本进行整理，去除口头语与语气词，使表达更清晰、正式。",
-    "skillsApiKeyTitle": "SkillsMP API Key",
-    "skillsApiKeyDesc": "技能广场来自 SkillsMP。不填也能搜索（匿名额度较低）；填写后可提升每日配额。"
+    "voiceRefineTextDesc": "识别完成后调用 AI 对文本进行整理，去除口头语与语气词，使表达更清晰、正式。"
   },
   "nav": {
     "general": "通用",

@@ -1,7 +1,7 @@
 {
   "name": "polaragent",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.5.3",
   "productName": "PolarAgent",
   "description": "PolarAgent desktop AI workspace",
   "author": {
@@ -16,9 +16,10 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite --config vite.renderer.config.ts",
-    "start": "electron .",
+    "start": "node scripts/launch-electron.cjs .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "build": "npm run typecheck && vite build --config vite.renderer.config.ts",
+    "test": "vitest run",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "sync:builtin": "node scripts/sync-builtin-resources.cjs",
@@ -77,6 +78,7 @@
     "electron-builder": "^26.15.3",
     "typescript": "~7.0.2",
     "vite": "^8.2.0",
-    "vite-plugin-electron": "^1.1.0"
+    "vite-plugin-electron": "^1.1.0",
+    "vitest": "^4.1.10"
   }
 }

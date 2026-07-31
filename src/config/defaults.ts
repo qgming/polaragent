@@ -30,7 +30,6 @@ export const defaultSettings: Settings = {
     closeToTray: true, // 默认关闭到托盘保留后台运行
   },
   dataDirectory: "", // 运行时设置
-  skillsApiKey: "", // SkillsMP 技能广场 API Key（留空走匿名额度）
   webSearch: {
     // 默认服务商：Tavily（免费 1000 次/月，专为 AI 设计）
     provider: "tavily",

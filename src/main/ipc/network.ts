@@ -314,28 +314,6 @@ async function openaiImageEdit(request) {
   return parseImageResponse(response);
 }
 
-// 技能广场搜索（skillsmp.com）
-async function skillsMarketSearch(request) {
-  const query = String(request.query || "").trim();
-  if (!query) throw new Error("缺少搜索关键词。");
-  const page = Math.max(Number(request.page || 1), 1);
-  const limit = Math.min(Math.max(Number(request.limit || 30), 1), 100);
-  const sortBy = request.sortBy || "stars";
-  const url = new URL("https://skillsmp.com/api/v1/skills/search");
-  url.searchParams.set("q", query);
-  url.searchParams.set("page", String(page));
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("sortBy", sortBy);
-  if (request.category) url.searchParams.set("category", request.category);
-  if (request.occupation) url.searchParams.set("occupation", request.occupation);
-  const headers: Record<string, string> = {};
-  if (String(request.apiKey || "").trim()) headers.Authorization = `Bearer ${request.apiKey.trim()}`;
-  const response = await electronRequest(url, { headers, timeoutMs: 30000 });
-  const body = responseText(response);
-  if (response.status < 200 || response.status >= 300) throw new Error(`技能广场请求失败（${response.status}）：${body}`);
-  return body;
-}
-
 // 读取助手广场分类索引（不含 prompt，体积极小）
 async function fetchAgentIndex() {
   const source = projectResourcePath("resources", "market", "agents", "index.json");
@@ -825,7 +803,6 @@ function audioExtensionFromContentType(contentType, responseFormat) {
 
 function register(ipcMain) {
   ipcMain.handle("network:cors-fetch", (_event, { request }) => corsFetch(request));
-  ipcMain.handle("network:skills-market-search", (_event, { request }) => skillsMarketSearch(request));
   ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
   ipcMain.handle("network:fetch-agent-category", (_event, { fileName }) => fetchAgentCategory(fileName));
   ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));

@@ -4,7 +4,6 @@
 import { useConfigStore } from "@/stores/config-store";
 import { useChatStore } from "@/stores/chat-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
-import { useSkillsMarketStore } from "@/stores/skills/skills-market-store";
 import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
 import { useScheduleStore } from "@/stores/schedule-store";
@@ -45,10 +44,7 @@ export async function initializeApp() {
         .then(() => console.log("✓ 知识库列表加载完成")),
     ]).catch((error) => console.error("侧边栏加载失败:", error));
 
-    // 紧随侧边栏发起广场 hydrate（不阻塞启动），提前到 MCP 之前发起，
-    // 使索引和默认分类更早就绪，用户进入广场页时多半已加载完成。
-    // 技能广场：读盘缓存 + 超 24 小时后台刷新；助手广场为内置静态数据，仅读索引。
-    void useSkillsMarketStore.getState().hydrate();
+    // 助手广场为内置静态数据，提前读取索引但不阻塞启动。
     void useAgentsMarketStore.getState().hydrate();
 
     // 3. 技能 / 助手 / 工具（MCP）—— 排在会话之后。

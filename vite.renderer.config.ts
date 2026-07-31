@@ -14,11 +14,6 @@ export default defineConfig(async () => ({
         entry: {
           main: "src/main/index.ts",
         },
-        vite: {
-          build: {
-            emptyOutDir: true,
-          },
-        },
         onstart: async ({ startup }) => {
           const env = { ...process.env };
           delete env.ELECTRON_RUN_AS_NODE;

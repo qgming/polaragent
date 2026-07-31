@@ -10,7 +10,6 @@
  */
 
 import path from "node:path";
-import os from "node:os";
 import blockedPatterns from "./blocked-patterns.json";
 
 // 共享黑名单：渲染侧与主进程的唯一事实来源
@@ -22,7 +21,7 @@ let _runtimeMode = null;
 // 仅用于校验渲染层通过 IPC setSecurityMode 同步过来的模式字符串是否
 // 在四档合法范围内；绝不能用于接受 per-call 的覆盖。
 // 保留导出仅为兼容旧 import，无其他调用点读它做覆盖用途。
-function normalizeSecurityMode(mode) {
+function normalizeSecurityMode(mode: unknown) {
   return mode === "readonly" || mode === "safe" || mode === "ai_review" || mode === "full"
     ? mode
     : null;
@@ -32,8 +31,12 @@ function normalizeSecurityMode(mode) {
  * 设置运行时安全模式（由前端 IPC 调用）
  * @param {'readonly' | 'safe' | 'ai_review' | 'full'} mode
  */
-function setSecurityMode(mode) {
-  _runtimeMode = mode;
+function setSecurityMode(mode: unknown) {
+  const normalized = normalizeSecurityMode(mode);
+  if (!normalized) {
+    throw new Error(`无效的安全模式: ${String(mode)}`);
+  }
+  _runtimeMode = normalized;
 }
 
 /**
@@ -49,11 +52,12 @@ function setSecurityMode(mode) {
  */
 function getSecurityMode(_modeOverrideIgnored?: unknown) {
   // 显式忽略 _modeOverrideIgnored：渲染层不可越权提升安全模式
-  return (
-    _runtimeMode ||
-    process.env.POLARAGENT_SECURITY_MODE ||
-    "ai_review"
-  );
+  return _runtimeMode || normalizeSecurityMode(process.env.POLARAGENT_SECURITY_MODE) || "ai_review";
+}
+
+function isSamePathOrDescendant(targetPath: string, parentPath: string) {
+  const normalizedParent = path.normalize(parentPath).toLowerCase().replace(/[\\/]+$/, "");
+  return targetPath === normalizedParent || targetPath.startsWith(`${normalizedParent}${path.sep}`);
 }
 
 /**
@@ -81,7 +85,7 @@ function isSystemCriticalPath(targetPath) {
       return true;
     }
     
-    return systemPaths.some(sp => normalized.startsWith(sp.toLowerCase()));
+    return systemPaths.some((systemPath) => isSamePathOrDescendant(normalized, systemPath));
   }
   
   // Unix/Linux/macOS 系统路径
@@ -106,7 +110,7 @@ function isSystemCriticalPath(targetPath) {
     return true;
   }
   
-  return unixSystemPaths.some(sp => normalized.startsWith(sp));
+  return unixSystemPaths.some((systemPath) => isSamePathOrDescendant(normalized, systemPath));
 }
 
 /**

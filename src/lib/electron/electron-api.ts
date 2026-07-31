@@ -196,47 +196,10 @@ export function writeConfig(fileName: string, content: any): Promise<void> {
   return api().config.write(fileName, JSON.stringify(content, null, 2));
 }
 
-export interface MarketSkill {
-  id: string;
-  name: string;
-  description: string;
-  installs?: number;
-  stars?: number;
-  source?: string;
-  repoUrl?: string;
-  category?: string;
-  icon?: string;
-}
-
-export interface MarketSearchResult {
-  skills: MarketSkill[];
-  total?: number;
-  page?: number;
-  hasMore?: boolean;
-}
-
-export interface MarketSearchParams {
-  query: string;
-  apiKey?: string;
-  page?: number;
-  limit?: number;
-  sortBy?: "stars" | "recent";
-  category?: string;
-  occupation?: string;
-}
-
 function pickString(obj: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = obj[key];
     if (typeof value === "string" && value.trim()) return value;
-  }
-  return undefined;
-}
-
-function pickNumber(obj: Record<string, unknown>, keys: string[]) {
-  for (const key of keys) {
-    const value = obj[key];
-    if (typeof value === "number") return value;
   }
   return undefined;
 }
@@ -257,52 +220,6 @@ function extractArray(payload: unknown): unknown[] {
     }
   }
   return [];
-}
-
-function normalizeSkill(raw: unknown, index: number): MarketSkill | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const name = pickString(obj, ["name", "title", "displayName", "slug"]) ?? "未命名技能";
-  const id = pickString(obj, ["id", "slug", "fullName", "repo"]) ?? `${name}-${index}`;
-  const repoUrl = pickString(obj, ["repoUrl", "repository", "url", "githubUrl", "html_url"]);
-  return {
-    id,
-    name,
-    description: pickString(obj, ["description", "summary", "desc"]) ?? "",
-    installs: pickNumber(obj, ["installs", "installCount", "downloads"]),
-    stars: pickNumber(obj, ["stars", "stargazers", "starCount"]),
-    source:
-      pickString(obj, ["source", "fullName", "owner", "repo"]) ??
-      (repoUrl ? repoUrl.replace(/^https?:\/\/github\.com\//, "") : undefined),
-    repoUrl,
-    category: pickString(obj, ["category", "categorySlug"]),
-    icon: pickString(obj, ["icon", "emoji"]),
-  };
-}
-
-export async function searchMarketSkills(params: MarketSearchParams): Promise<MarketSearchResult> {
-  const payload = JSON.parse(
-    await api().network.skillsMarketSearch({
-      apiKey: params.apiKey || undefined,
-      query: params.query,
-      page: params.page,
-      limit: params.limit,
-      sortBy: params.sortBy,
-      category: params.category,
-      occupation: params.occupation,
-    }),
-  ) as unknown;
-  const skills = extractArray(payload)
-    .map((item, index) => normalizeSkill(item, index))
-    .filter((skill): skill is MarketSkill => skill !== null);
-  const obj = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  const pagination = (obj.pagination as Record<string, unknown> | undefined) ?? obj;
-  return {
-    skills,
-    total: pickNumber(pagination, ["total", "totalCount", "count"]),
-    page: pickNumber(pagination, ["page", "currentPage"]),
-    hasMore: typeof pagination.hasMore === "boolean" ? pagination.hasMore : undefined,
-  };
 }
 
 export interface MarketAgent {

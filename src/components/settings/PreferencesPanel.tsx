@@ -1,10 +1,7 @@
-// 偏好设置面板（主题/对话字体/字号 + 语言 + SkillsMP API Key）
+// 偏好设置面板（主题/对话字体/字号 + 语言）
 // src/components/settings/PreferencesPanel.tsx
 
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Eye, EyeOff, KeyRound, Loader2, Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Settings } from "@/types/config";
 import { defaultSettings } from "@/config/defaults";
@@ -114,8 +111,6 @@ export function PreferencesPanel({
       <WindowBehaviorCard settings={settings} onUpdate={onUpdate} />
 
       <VoiceInputCard settings={settings} onUpdate={onUpdate} />
-
-      <SkillsApiKeyCard settings={settings} onUpdate={onUpdate} />
     </section>
   );
 }
@@ -215,76 +210,6 @@ function VoiceInputCard({
           />
         }
       />
-    </div>
-  );
-}
-
-// SkillsMP 技能广场 API Key 设置卡片
-function SkillsApiKeyCard({
-  settings,
-  onUpdate,
-}: {
-  settings: Settings;
-  onUpdate: (updates: Partial<Settings>) => Promise<void>;
-}) {
-  const { t } = useTranslation("settings");
-
-  const [value, setValue] = useState(settings.skillsApiKey ?? "");
-  const [show, setShow] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
-    "idle",
-  );
-
-  useEffect(() => {
-    setValue(settings.skillsApiKey ?? "");
-  }, [settings.skillsApiKey]);
-
-  const handleSave = async () => {
-    setSaveState("saving");
-    await onUpdate({ skillsApiKey: value.trim() });
-    setSaveState("saved");
-    setTimeout(() => setSaveState("idle"), 1500);
-  };
-
-  return (
-    <div className="mt-6 rounded-xl border border-border bg-card">
-      <div className="px-5 py-5">
-        <div className="flex items-center gap-2">
-          <KeyRound className="size-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold">{t("preferences.skillsApiKeyTitle")}</h3>
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("preferences.skillsApiKeyDesc")}
-        </p>
-        <div className="mt-4 flex items-center gap-2">
-          <div className="relative flex-1">
-            <input
-              type={show ? "text" : "password"}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="sk_live_..."
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm outline-none focus:border-ring"
-            />
-            <button
-              type="button"
-              onClick={() => setShow((current) => !current)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            >
-              {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-            </button>
-          </div>
-          <Button onClick={() => void handleSave()} disabled={saveState === "saving"}>
-            {saveState === "saving" ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : saveState === "saved" ? (
-              <Check className="size-4" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            {t("common:save")}
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -4,17 +4,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AlertCircle,
-  Check,
-  Download,
-  ExternalLink,
   FolderOpen,
-  Loader2,
   Pencil,
   Plus,
   RefreshCw,
   Search,
-  Star,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -24,22 +18,15 @@ import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/hooks/useToast";
 import { useSkillsStore } from "@/stores/skills/skills-store";
-import {
-  MARKET_CATEGORIES,
-  useSkillsMarketStore,
-} from "@/stores/skills/skills-market-store";
 import { SkillDetailModal } from "@/components/skill/SkillDetailModal";
 import { PageHero } from "@/components/PageHero";
 import { SkillInstallDialog } from "@/components/skill/SkillInstallDialog";
+import { SkillProviderDiscovery } from "@/components/skill/SkillProviderDiscovery";
 import type { SkillConfig } from "@/types/config";
-import { ensureDataDir, type MarketSkill } from "@/lib/electron/electron-api";
+import { ensureDataDir, openExternal } from "@/lib/electron/electron-api";
 import { cn } from "@/lib/utils";
 
-type SkillTab = "market" | "builtin" | "custom" | "global";
-
-function normalizeSkillKey(value: string): string {
-  return value.toLowerCase().replace(/[\s-_]+/g, "");
-}
+type SkillTab = "discover" | "builtin" | "custom" | "global";
 
 export function SkillsPage() {
   const { t } = useTranslation("skills");
@@ -50,7 +37,7 @@ export function SkillsPage() {
   const setSkillsEnabled = useSkillsStore((state) => state.setSkillsEnabled);
   const uninstallSkill = useSkillsStore((state) => state.uninstallSkill);
 
-  const [activeTab, setActiveTab] = useState<SkillTab>("market");
+  const [activeTab, setActiveTab] = useState<SkillTab>("discover");
   const [search, setSearch] = useState("");
   const [showInstallDialog, setShowInstallDialog] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillConfig | null>(null);
@@ -79,34 +66,15 @@ export function SkillsPage() {
   const allGlobalEnabled = globalSkills.length > 0 && globalSkills.every((skill) => skill.enabled);
   const enabledGlobalCount = globalSkills.filter((skill) => skill.enabled).length;
 
-  // 已安装技能名集合（用于技能广场标记「已安装」）
-  const installedNames = useMemo(
-    () => {
-      const keys = new Set<string>();
-      for (const skill of skills) {
-        keys.add(normalizeSkillKey(skill.id));
-        if (skill.name) keys.add(normalizeSkillKey(skill.name));
-      }
-      return keys;
-    },
-    [skills],
-  );
-
-  // 搜索框回车时，若在技能广场则触发云端搜索
-  const searchMarket = useSkillsMarketStore((state) => state.searchByQuery);
-  const refreshMarket = useSkillsMarketStore((state) => state.refreshAll);
-  const handleSearchSubmit = () => {
-    if (activeTab === "market" && search.trim().length >= 2) {
-      void searchMarket(search.trim());
-    }
+  const handleRefresh = () => {
+    void ensureDataDir().then(() => loadSkills());
   };
 
-  // 刷新：技能广场页强制全量刷新云端，其余页重载本地技能
-  const handleRefresh = () => {
-    if (activeTab === "market") {
-      void refreshMarket(true);
-    } else {
-      void ensureDataDir().then(() => loadSkills());
+  const handleOpenUrl = async (url: string) => {
+    try {
+      await openExternal(url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("discover.openFailed"));
     }
   };
 
@@ -127,10 +95,10 @@ export function SkillsPage() {
     <div className="app-scrollbar h-full overflow-y-auto bg-background">
       <div className="mx-auto w-full max-w-[1100px] px-6 py-6">
         <TopToolbar
+          showSearch={activeTab !== "discover"}
           isLoading={isLoading}
           onInstall={() => setShowInstallDialog(true)}
           onRefresh={handleRefresh}
-          onSearchSubmit={handleSearchSubmit}
           search={search}
           setSearch={setSearch}
         />
@@ -146,7 +114,7 @@ export function SkillsPage() {
 
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SkillTab)}>
           <TabsList className="mt-3 h-9 bg-transparent p-0">
-            <TabTrigger value="market">{t("tabs.market")}</TabTrigger>
+            <TabTrigger value="discover">{t("tabs.discover")}</TabTrigger>
             <TabTrigger value="builtin">{t("tabs.builtin")}</TabTrigger>
             <TabTrigger value="custom">
               {t("tabs.installed")}
@@ -163,11 +131,8 @@ export function SkillsPage() {
           </TabsList>
         </Tabs>
 
-        {activeTab === "market" ? (
-          <MarketView
-            installedNames={installedNames}
-            onInstalled={() => void loadSkills()}
-          />
+        {activeTab === "discover" ? (
+          <SkillProviderDiscovery onOpenUrl={(url) => void handleOpenUrl(url)} />
         ) : null}
 
         {activeTab === "builtin" ? (
@@ -293,276 +258,48 @@ export function SkillsPage() {
   );
 }
 
-// ===== 技能广场视图 =====
-
-function MarketView({
-  installedNames,
-  onInstalled,
-}: {
-  installedNames: Set<string>;
-  onInstalled: () => void;
-}) {
-  const { t } = useTranslation("skills");
-  const byCategory = useSkillsMarketStore((state) => state.byCategory);
-  const searchResults = useSkillsMarketStore((state) => state.searchResults);
-  const isLoading = useSkillsMarketStore((state) => state.isLoading);
-  const isRefreshing = useSkillsMarketStore((state) => state.isRefreshing);
-  const error = useSkillsMarketStore((state) => state.error);
-  const activeCategory = useSkillsMarketStore((state) => state.activeCategory);
-  const installingIds = useSkillsMarketStore((state) => state.installingIds);
-  const loadCategory = useSkillsMarketStore((state) => state.loadCategory);
-  const installSkill = useSkillsMarketStore((state) => state.installSkill);
-  const toast = useToast();
-
-  // 首次进入：默认选中第一个分类（数据来自启动时的缓存/后台刷新）
-  useEffect(() => {
-    if (!activeCategory && searchResults === null) {
-      void loadCategory(MARKET_CATEGORIES[0].id);
-    }
-    // 仅在挂载时触发一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 当前展示的列表：自定义搜索优先，否则按分类取缓存
-  const isSearching = searchResults !== null;
-  const results = isSearching
-    ? searchResults ?? []
-    : byCategory[activeCategory] ?? [];
-
-  const handleInstall = async (skill: MarketSkill) => {
-    const ok = await installSkill(skill);
-    if (ok) {
-      toast.success(t("market.installSuccess", { name: skill.name }));
-      onInstalled();
-    } else {
-      toast.error(t("market.installFailed", { name: skill.name }));
-    }
-  };
-
-  const isInstalled = (skill: MarketSkill) =>
-    installedNames.has(normalizeSkillKey(skill.name || skill.id));
-
-  // 等待态：当前分类暂无缓存且正在加载/后台刷新
-  const waiting = isLoading || (results.length === 0 && isRefreshing);
-
-  return (
-    <div className="mt-3">
-      {/* 分类 chip */}
-      <div className="flex flex-wrap gap-2">
-        {MARKET_CATEGORIES.map((category) => (
-          <button
-            key={category.id}
-            type="button"
-            onClick={() => void loadCategory(category.id)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm transition-colors",
-              !isSearching && activeCategory === category.id
-                ? "border-transparent bg-[#f1eafb] text-[#5b3a9e]"
-                : "border-border bg-card text-muted-foreground hover:border-[#9b6fe0]/30 hover:text-foreground",
-            )}
-          >
-            <span>{category.icon}</span>
-            {t(`market.categories.${category.id}`, { defaultValue: category.label })}
-          </button>
-        ))}
-      </div>
-
-      {/* 内容区 */}
-      {error && results.length === 0 ? (
-        <MarketError message={error} />
-      ) : waiting ? (
-        <SkillGrid>
-          {Array.from({ length: 6 }).map((_, index) => (
-            <SkillCardSkeleton key={index} />
-          ))}
-        </SkillGrid>
-      ) : results.length > 0 ? (
-        <SkillGrid>
-          {results.map((skill) => (
-            <MarketSkillCard
-              key={skill.id}
-              skill={skill}
-              installed={isInstalled(skill)}
-              installing={installingIds.includes(skill.id)}
-              onInstall={() => void handleInstall(skill)}
-            />
-          ))}
-        </SkillGrid>
-      ) : (
-        <EmptyCloudState
-          title={t("empty.marketTitle")}
-          description={t("empty.marketDesc")}
-        />
-      )}
-    </div>
-  );
-}
-
-function SkillGrid({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {children}
-    </div>
-  );
-}
-
-function MarketSkillCard({
-  skill,
-  installed,
-  installing,
-  onInstall,
-}: {
-  skill: MarketSkill;
-  installed: boolean;
-  installing: boolean;
-  onInstall: () => void;
-}) {
-  const { t } = useTranslation("skills");
-  return (
-    <div className="flex flex-col rounded-xl border border-border bg-card p-4 transition-all hover:border-[#9b6fe0]/30 hover:shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold">{skill.name}</h3>
-          {skill.source ? (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              {skill.source}
-            </p>
-          ) : null}
-        </div>
-        {skill.repoUrl ? (
-          <a
-            href={skill.repoUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            title={t("market.repo")}
-          >
-            <ExternalLink className="size-4" />
-          </a>
-        ) : null}
-      </div>
-
-      <p className="mt-3 line-clamp-2 min-h-[40px] text-sm leading-5 text-muted-foreground">
-        {skill.description || t("empty.noDescription")}
-      </p>
-
-      <div className="mt-4 flex items-center justify-between">
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {typeof skill.stars === "number" ? (
-            <span className="flex items-center gap-1">
-              <Star className="size-3.5" />
-              {formatCount(skill.stars)}
-            </span>
-          ) : null}
-          {typeof skill.installs === "number" ? (
-            <span className="flex items-center gap-1">
-              <Download className="size-3.5" />
-              {formatCount(skill.installs)}
-            </span>
-          ) : null}
-        </div>
-        {installed ? (
-          <Button variant="outline" size="sm" disabled>
-            <Check className="size-4" />
-            {t("market.installed")}
-          </Button>
-        ) : (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onInstall}
-            disabled={installing}
-          >
-            {installing ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Download className="size-4" />
-            )}
-            {t("market.install")}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SkillCardSkeleton() {
-  return (
-    <div className="flex flex-col rounded-xl border border-border bg-card p-4">
-      <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
-      <div className="mt-2 h-3 w-1/3 animate-pulse rounded bg-muted" />
-      <div className="mt-3 space-y-2">
-        <div className="h-3 w-full animate-pulse rounded bg-muted" />
-        <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
-      </div>
-      <div className="mt-4 flex items-center justify-between">
-        <div className="h-3 w-16 animate-pulse rounded bg-muted" />
-        <div className="h-8 w-16 animate-pulse rounded bg-muted" />
-      </div>
-    </div>
-  );
-}
-
-function MarketError({ message }: { message: string }) {
-  const { t } = useTranslation("skills");
-  return (
-    <div className="mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-destructive/40 bg-destructive/5 px-6 py-12 text-center">
-      <AlertCircle className="size-9 text-destructive" />
-      <h3 className="mt-4 text-base font-semibold">{t("market.loadFailed")}</h3>
-      <p className="mt-2 max-w-[460px] text-sm leading-6 text-muted-foreground">
-        {message}
-      </p>
-      <p className="mt-3 text-xs text-muted-foreground">
-        {t("market.quotaHint")}
-      </p>
-    </div>
-  );
-}
-
-function formatCount(value: number): string {
-  if (value >= 10000) return `${(value / 1000).toFixed(1)}k`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-  return String(value);
-}
-
 // ===== 公共组件 =====
 
 function TopToolbar({
+  showSearch,
   isLoading,
   onInstall,
   onRefresh,
-  onSearchSubmit,
   search,
   setSearch,
 }: {
+  showSearch: boolean;
   isLoading: boolean;
   onInstall: () => void;
   onRefresh: () => void;
-  onSearchSubmit: () => void;
   search: string;
   setSearch: (value: string) => void;
 }) {
   const { t } = useTranslation("skills");
   return (
     <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
-      <Button variant="ghost" size="icon" onClick={onRefresh} disabled={isLoading}>
-        <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
-      </Button>
-      <div className="relative w-[300px] max-w-full">
-        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              onSearchSubmit();
-            }
-          }}
-          className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring"
-          placeholder={t("page.searchPlaceholder")}
-        />
-      </div>
+      {showSearch ? (
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onRefresh}
+            disabled={isLoading}
+            title={t("page.refresh")}
+          >
+            <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
+          </Button>
+          <div className="relative w-[300px] max-w-full">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="h-9 w-full rounded-full border border-border bg-card pl-9 pr-3 text-sm outline-none focus:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              placeholder={t("page.searchPlaceholder")}
+            />
+          </div>
+        </>
+      ) : null}
       <Button onClick={onInstall}>
         <Plus className="size-4" />
         {t("page.install")}

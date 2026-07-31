@@ -270,8 +270,6 @@ export interface Settings {
     closeToTray: boolean; // 关闭时最小化到托盘保留后台运行
   };
   dataDirectory: string;
-  // SkillsMP 技能广场 API Key（可选，匿名亦可搜索但额度低）
-  skillsApiKey?: string;
   // 网络搜索配置
   webSearch?: WebSearchConfig;
   // 图片生成配置

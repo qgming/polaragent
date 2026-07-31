@@ -94,7 +94,6 @@ interface Window {
         body?: string;
         timeoutMs?: number;
       }) => Promise<unknown>;
-      skillsMarketSearch: (request: unknown) => Promise<string>;
       fetchAgentIndex: () => Promise<string>;
       fetchAgentCategory: (fileName: string) => Promise<string>;
       webSearch: (request: {

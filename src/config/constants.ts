@@ -12,6 +12,4 @@ export const TIMEOUTS = {
 export const CACHE_TTL = {
   /** 知识库查询缓存 */
   KNOWLEDGE: 5 * 60 * 1000,
-  /** 技能市场缓存 */
-  SKILLS_MARKET: 24 * 60 * 60 * 1000,
 } as const;
