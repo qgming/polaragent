@@ -8,7 +8,6 @@
     "types": ["node"]
   },
   "include": [
-    "vite.renderer.config.ts",
-    "vitest.config.ts"
+    "vite.renderer.config.ts"
   ]
 }

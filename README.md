@@ -226,7 +226,6 @@ PolarAgent 使用 Vite 8 构建 renderer、主进程和 preload，并由 Electro
 | `npm run build` | 类型检查并构建 renderer、主进程与 preload |
 | `npm run pack` | 生成 `release/` 下的可运行应用目录 |
 | `npm run dist` | 生成当前平台安装包 |
-| `npm run test` | 运行测试 |
 | `npm run preview` | 预览构建产物 |
 
 ---
