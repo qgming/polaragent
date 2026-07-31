@@ -5,7 +5,7 @@ const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 
-const { APP_NAME } = require("../electron/lib/constants.cjs");
+const { productName: APP_NAME } = require("../package.json");
 
 const repoRoot = path.resolve(__dirname, "..");
 const dryRun = process.argv.includes("--dry-run");

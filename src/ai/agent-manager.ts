@@ -20,7 +20,6 @@ import {
 import { buildAgentTools, type ToolContext } from "./tools";
 import { openOrCreateSession } from "@/lib/session/personal";
 import { openOrCreateScheduleSession } from "@/lib/session/schedule";
-import { getExecutionEnv } from "@/lib/session/session-repo";
 import { useConfigStore } from "@/stores/config-store";
 import { useToolsStore } from "@/stores/tools-store";
 import { useChatStore } from "@/stores/chat-store";
@@ -312,11 +311,10 @@ export class AgentManager {
     const tools = buildAgentTools(toolCtx);
 
     const scopedSessionId = subagentContext?.sessionId ?? scheduleContext?.sessionId ?? threadId;
-    const [session, env, models] = await Promise.all([
+    const [session, models] = await Promise.all([
       scheduleContext
           ? openOrCreateScheduleSession(scopedSessionId)
           : openOrCreateSession(scopedSessionId),
-      getExecutionEnv(),
       Promise.resolve(
         buildModelsFromConfigs(useConfigStore.getState().providers.providers),
       ),
@@ -350,7 +348,6 @@ export class AgentManager {
       .join("\n\n");
 
     const harness = new AgentHarness({
-      env,
       session,
       models,
       model: model as Model<any>,

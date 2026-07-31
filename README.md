@@ -8,9 +8,9 @@
 把对话、知识库、工具调用、Browser Use、Computer Use 和多 Agent 协作放进一个安静、可控、面向真实工作的桌面应用。
 
   <p>
-    <img alt="Electron" src="https://img.shields.io/badge/Electron-42-47848F?style=flat-square&logo=electron&logoColor=white" />
+    <img alt="Electron" src="https://img.shields.io/badge/Electron-43-47848F?style=flat-square&logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=111" />
-    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6-3178C6?style=flat-square&logo=typescript&logoColor=white" />
+    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Vite" src="https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white" />
     <img alt="Local First" src="https://img.shields.io/badge/Local--First-Yes-16A34A?style=flat-square" />
   </p>
@@ -170,10 +170,13 @@ npm install
 # 启动开发环境
 npm run dev
 
-# 类型检查与前端构建
+# 类型检查并构建全部进程
 npm run build
 
-# 打包桌面应用
+# 生成可运行应用目录
+npm run pack
+
+# 生成当前平台安装包
 npm run dist
 ```
 
@@ -189,11 +192,11 @@ npm run dist
 
 ## 发布与更新
 
-PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Releases 分发版本。
+PolarAgent 使用 Vite 8 构建 renderer、主进程和 preload，并由 Electron Builder 打包及发布桌面应用。
 
-- Windows：支持 NSIS 安装包，并提供 Squirrel 产物用于 Electron 官方自动更新服务。
-- macOS：提供 Apple Silicon arm64 ZIP，用于下载安装和 Electron 官方自动更新服务。
-- Linux：支持 AppImage、deb、rpm 和 tar.gz。
+- Windows：使用 NSIS 安装包，并支持 `electron-updater` 应用内更新。
+- macOS：提供 Apple Silicon arm64 ZIP。
+- Linux：提供 AppImage、deb、rpm 和 tar.gz。
 - 应用内「关于软件」页面可检查更新，并通过更新弹窗查看新版本日志和下载入口。
 - 每个版本的更新日志存放在 `changelogs/vX.Y.Z.md`，发布 workflow 会自动写入 GitHub Release 正文。
 
@@ -203,7 +206,7 @@ PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Rele
 
 | 类别 | 技术 |
 | --- | --- |
-| 桌面框架 | Electron |
+| 桌面框架 | Electron、Electron Builder、vite-plugin-electron |
 | 前端框架 | React、TypeScript、Vite |
 | 样式与交互 | Tailwind CSS、Radix UI、lucide-react、motion |
 | Agent 能力 | `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai` |
@@ -218,10 +221,11 @@ PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Rele
 | 命令 | 说明 |
 | --- | --- |
 | `npm run dev` | 启动开发环境 |
-| `npm run build` | 类型检查并构建前端产物 |
-| `npm run start` | 启动已构建应用 |
-| `npm run pack` | 生成未压缩的应用目录 |
-| `npm run dist` | 生成安装包 |
+| `npm run start` | 启动已构建的 Electron 应用 |
+| `npm run typecheck` | 检查 renderer、主进程与 preload 类型 |
+| `npm run build` | 类型检查并构建 renderer、主进程与 preload |
+| `npm run pack` | 生成 `release/` 下的可运行应用目录 |
+| `npm run dist` | 生成当前平台安装包 |
 | `npm run test` | 运行测试 |
 | `npm run preview` | 预览构建产物 |
 
@@ -232,15 +236,17 @@ PolarAgent 使用 Electron Builder 打包桌面端应用，并通过 GitHub Rele
 ```text
 polaragent/
 ├── changelogs/        # 每个版本的 GitHub Release 更新日志
-├── electron/          # Electron 主进程、IPC、自动化桥接
 ├── resources/         # 内置技能、内置助手、市场资源、浏览器扩展
 ├── src/
 │   ├── ai/            # Agent 运行时、工具定义、团队协作
 │   ├── components/    # UI 组件
 │   ├── lib/           # Electron API、知识库、会话、MCP 等逻辑
+│   ├── main/          # Electron 主进程、IPC 与系统能力
 │   ├── pages/         # 对话、团队、工具、知识库、设置等页面
+│   ├── preload/       # contextBridge 安全桥接
 │   └── stores/        # 本地状态管理
 ├── build/             # 应用图标和打包资源
+├── electron-builder.yml # 安装包、平台目标与发布配置
 └── public/            # 静态资源
 ```
 
