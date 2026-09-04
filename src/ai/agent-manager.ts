@@ -7,7 +7,12 @@
 // 另外保留各 Agent 的「运行时配置」(provider/model/systemPrompt 等)，
 // 供标题生成等不走 harness 的轻量场景查询。
 
-import { AgentHarness } from "@earendil-works/pi-agent-core";
+import {
+  AgentHarness,
+  BACKGROUND_CONTEXT,
+  type AgentHarnessTool,
+  type AgentTool,
+} from "@earendil-works/pi-agent-core";
 import { formatSkillsForSystemPrompt } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "@/types/config";
@@ -115,6 +120,20 @@ function runtimeConfigSignature(agentId: string, subagentContext?: SubagentConte
   });
 }
 
+// 0.85.0: AgentTool.execute 签名 (toolCallId, params, signal?, onUpdate?)
+// 已变为 AgentHarnessTool.execute 签名 (toolCallId, params, onUpdate, toolContext, invocation, context)。
+// 此适配器将旧签名工具包装为新签名，从 context 中提取 abort signal 传给旧 execute。
+function toHarnessTool(tool: AgentTool<any>): AgentHarnessTool<object | undefined> {
+  const { execute, ...rest } = tool;
+  return {
+    ...rest,
+    execute: async (toolCallId, params, onUpdate, _toolContext, _invocation, context) => {
+      const signal = context?.abortSignal ?? undefined;
+      return execute(toolCallId, params, signal, (partial) => onUpdate(partial));
+    },
+  };
+}
+
 /**
  * Agent 管理器
  */
@@ -129,7 +148,12 @@ export class AgentManager {
   /** 清空所有缓存的 harness 与配置（重新初始化运行时时调用）。 */
   clear() {
     for (const cached of this.harnesses.values()) {
-      void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+      void cached.promise
+        .then(async (harness) => {
+          const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+          await lane.abort(BACKGROUND_CONTEXT);
+        })
+        .catch(() => undefined);
     }
     this.harnesses.clear();
     this.pendingCreations.clear(); // 清理正在创建中的Promise，防止泄漏
@@ -204,12 +228,17 @@ export class AgentManager {
         return cached.promise;
       }
 
-      // 模型配置、工具目录或工作目录已经变化。旧 harness 的 model / 工具上下文是创建时固定的；
+// 模型配置、工具目录或工作目录已经变化。旧 harness 的 model / 工具上下文是创建时固定的；
       // 重新打开同一个 pi Session 可保留历史并装配最新运行时配置。
       // 仅在该会话当前无在途 run 时才 abort 旧 harness：若正在响应中直接 abort 会让
       // 在途请求抛错且无 UI 反馈，这里只移除缓存引用，让在途 run 自然结束后被 GC。
       if (!isThreadRunning(threadId)) {
-        void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+        void cached.promise
+          .then(async (harness) => {
+            const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+            await lane.abort(BACKGROUND_CONTEXT);
+          })
+          .catch(() => undefined);
       }
       this.harnesses.delete(key);
     }
@@ -347,53 +376,58 @@ export class AgentManager {
       .filter((part): part is string => !!part)
       .join("\n\n");
 
-    const harness = new AgentHarness({
+    // 0.85.0: AgentHarness 构造函数为 private，必须通过静态 create 创建。
+    // create 返回 { harness, open }，会话必须传 Session 实例（而非 sessionId），
+    // 且需传入 Context（无环境上下文时用 BACKGROUND_CONTEXT）。
+    // tools 需从 AgentTool 适配为 AgentHarnessTool（execute 签名已变化）。
+    const { harness } = await AgentHarness.create({
       session,
       models,
       model: model as Model<any>,
-      tools,
+      tools: tools.map(toHarnessTool),
       resources: { skills },
       systemPrompt,
-    });
+    }, BACKGROUND_CONTEXT);
 
-    // 启用 Prompt Caching
-    harness.setStreamOptions({
+    // 启用 Prompt Caching（0.84.4 起 setStreamOptions 为异步方法，0.85.0 需传 context）
+    await harness.setStreamOptions({
       cacheRetention: "short",
       metadata: {
         sessionId: scopedSessionId,
       },
-    });
+    }, BACKGROUND_CONTEXT);
 
-    harness.on("tool_call", async (event) => {
+    // 0.84.4: 旧 harness.on("tool_call") 权限钩子被 harness.hooks.on("before_tool") 取代。
+    // 0.85.0: before_tool 钩子载荷类型固定为 { toolCallId, toolName, args, lane, runId }，
+    // 返回 { block: { reason } } 阻止（block 为对象而非布尔）。
+    harness.hooks.on("before_tool", async (event) => {
       const decision = await reviewToolPermission({
         agentId,
         requesterName,
         threadId,
         toolName: event.toolName,
-        input: event.input,
+        input: event.args as Record<string, unknown>,
         permissionMode: toolCtx.permissionMode,
         workingDir: options?.workingDir,
       });
       return decision.allow
         ? undefined
         : {
-            block: true,
-            reason: decision.reason ?? "工具调用未通过权限审查。",
+            block: {
+              reason: decision.reason ?? "工具调用未通过权限审查。",
+            },
           };
     });
 
-    // 监听压缩事件：压缩完成时记录日志（0.79.10+ 新增 fromHook 标识）
-    harness.on("session_compact", (event) => {
-      const entry = event.compactionEntry;
-      const source = event.fromHook ? "hook" : "auto";
+    // 0.84.4: 旧的 session_compact 完成事件已移除，且无法获得压缩完成后的
+    // compactionEntry 信息；改用 before_compaction 钩子在压缩前记录日志。
+    // 0.85.0: before_compaction 载荷为 { reason, preparation, customInstructions?, lane, runId }。
+    harness.hooks.on("before_compaction", (event) => {
       console.log(
-        `[压缩] 会话 ${scopedSessionId} 压缩完成`,
+        `[压缩] 会话 ${scopedSessionId} 即将压缩`,
         {
-          source,
-          tokensBefore: entry.tokensBefore,
-          summaryLength: entry.summary?.length ?? 0,
-          firstKeptEntryId: entry.firstKeptEntryId,
-          timestamp: new Date(entry.timestamp).toISOString(),
+          source: event.reason === "manual" ? "manual" : "auto",
+          tokensBefore: event.preparation?.tokensBefore,
         },
       );
       return undefined;
@@ -416,7 +450,12 @@ export class AgentManager {
   disposeThread(threadId: string): void {
     for (const [key, cached] of this.harnesses.entries()) {
       if (harnessBelongsToThread(key, threadId)) {
-        void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+        void cached.promise
+          .then(async (harness) => {
+            const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+            await lane.abort(BACKGROUND_CONTEXT);
+          })
+          .catch(() => undefined);
         this.harnesses.delete(key);
         // 同时清理可能正在创建中的Promise
         this.pendingCreations.delete(key);
@@ -431,7 +470,12 @@ export class AgentManager {
   abortThread(threadId: string): void {
     for (const [key, cached] of this.harnesses.entries()) {
       if (harnessBelongsToThread(key, threadId)) {
-        void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+        void cached.promise
+          .then(async (harness) => {
+            const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+            await lane.abort(BACKGROUND_CONTEXT);
+          })
+          .catch(() => undefined);
       }
     }
   }
@@ -440,7 +484,7 @@ export class AgentManager {
    * 向指定线程当前正在运行的 harness 插入 steering 消息。
    * 返回实际接收消息的 harness 数量；idle harness 会被跳过。
    */
-  async steerThread(threadId: string, text: string): Promise<number> {
+async steerThread(threadId: string, text: string): Promise<number> {
     const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
       harnessBelongsToThread(key, threadId),
     );
@@ -450,7 +494,8 @@ export class AgentManager {
       async ([, cached]) => {
         try {
           const harness = await cached.promise;
-          await harness.steer(text);
+          const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+          await lane.steer(text, undefined, BACKGROUND_CONTEXT);
           accepted += 1;
         } catch {
           // steer() requires a running harness; idle or already-settled harnesses are ignored.
@@ -465,7 +510,7 @@ export class AgentManager {
    * 向指定线程当前正在运行的 harness 追加后续消息。
    * followUp 会在当前 run 没有更多工具与 steering 消息后执行，适合“做完当前任务后继续处理这句”。
    */
-  async followUpThread(threadId: string, text: string): Promise<number> {
+async followUpThread(threadId: string, text: string): Promise<number> {
     const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
       harnessBelongsToThread(key, threadId),
     );
@@ -475,7 +520,8 @@ export class AgentManager {
       async ([, cached]) => {
         try {
           const harness = await cached.promise;
-          await harness.followUp(text);
+          const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+          await lane.followUp(text, undefined, BACKGROUND_CONTEXT);
           accepted += 1;
         } catch {
           // followUp() requires a running harness; idle or already-settled harnesses are ignored.
@@ -489,7 +535,7 @@ export class AgentManager {
   /**
    * 排队下一轮附加用户消息。nextTurn 可在 idle 时调用，下一次 prompt 会先注入队列内容。
    */
-  async nextTurnThread(threadId: string, text: string): Promise<number> {
+async nextTurnThread(threadId: string, text: string): Promise<number> {
     const targets = Array.from(this.harnesses.entries()).filter(([key]) =>
       harnessBelongsToThread(key, threadId),
     );
@@ -499,7 +545,9 @@ export class AgentManager {
       async ([, cached]) => {
         try {
           const harness = await cached.promise;
-          await harness.nextTurn(text);
+          const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+          // 0.84.4: nextTurn 已更名为 nextRun（为下一次 prompt 排队消息）
+          await lane.nextRun(text, undefined, BACKGROUND_CONTEXT);
           accepted += 1;
         } catch {
           // Ignore disposed or failed harnesses.
@@ -513,7 +561,12 @@ export class AgentManager {
   /** 中止所有线程当前正在运行的 harness。 */
   abortAll(): void {
     for (const cached of this.harnesses.values()) {
-      void cached.promise.then((harness) => harness.abort()).catch(() => undefined);
+      void cached.promise
+        .then(async (harness) => {
+          const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+          await lane.abort(BACKGROUND_CONTEXT);
+        })
+        .catch(() => undefined);
     }
   }
 

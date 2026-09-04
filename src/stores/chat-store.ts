@@ -31,6 +31,13 @@ import {
   getLastAssistantUsage,
   shouldCompact,
 } from "@/lib/session/compaction";
+import {
+  BACKGROUND_CONTEXT,
+  createBranchSummaryMessage,
+  createCompactionSummaryMessage,
+  type AgentMessage,
+  type Entry,
+} from "@earendil-works/pi-agent-core";
 import { agentManager } from "@/ai/agent-manager";
 import { useConfigStore } from "@/stores/config-store";
 import type {
@@ -108,6 +115,51 @@ async function restoreThreadAgentId(threadId: string): Promise<void> {
 // 应用运行期内已做过"打开时压缩检查"的会话，防止压缩后强制重载造成重入
 const compactCheckedThreads = new Set<string>();
 
+// 0.85.0: buildSessionContext 不再从包根导出，这里按官方实现复刻「压缩截断 + 转消息」逻辑，
+// 仅用于打开会话时的上下文 token 估算。
+// 官方逻辑：保留最后一个 compaction 条目及其后的条目，逐条转成 AgentMessage[]。
+function isContextMessage(message: AgentMessage): boolean {
+  return (
+    message.role !== "assistant" ||
+    (message.stopReason !== "error" &&
+      message.stopReason !== "aborted" &&
+      message.stopReason !== "deferred")
+  );
+}
+
+function buildLocalSessionContext(entries: Entry[]): AgentMessage[] {
+  // 找最后一个 compaction 条目
+  let compactionIndex = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i]?.type === "compaction") {
+      compactionIndex = i;
+      break;
+    }
+  }
+  const kept =
+    compactionIndex === -1
+      ? [...entries]
+      : [entries[compactionIndex], ...entries.slice(compactionIndex + 1)];
+
+  const messages: AgentMessage[] = [];
+  for (const entry of kept) {
+    if (entry.type === "message") {
+      if (isContextMessage(entry.message)) messages.push(entry.message);
+    } else if (entry.type === "compaction") {
+      messages.push(
+        createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
+      );
+      for (const tail of entry.retainedTail) {
+        if (isContextMessage(tail)) messages.push(tail);
+      }
+    } else if (entry.type === "branch_summary" && entry.summary) {
+      messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
+    }
+    // custom 条目在无 entryProjectors 时官方逻辑同样跳过
+  }
+  return messages;
+}
+
 // 打开会话时检查是否需要自动压缩上下文
 async function checkAndCompactOnOpen(threadId: string): Promise<void> {
   if (compactCheckedThreads.has(threadId)) return;
@@ -118,7 +170,7 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
 
   try {
     const session = await openOrCreateSession(threadId);
-    const branch = await session.getBranch();
+    const branch = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT);
 
     // 最后一个 compaction 条目之后若没有新的有效 assistant usage，
     // 说明会话刚被压缩过：旧 usage 反映的是压缩前的上下文，无法可靠估算，
@@ -132,10 +184,10 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
     }
     if (!getLastAssistantUsage(branch.slice(lastCompactionIndex + 1))) return;
 
-    // buildContext 按 compaction 条目截断历史，得到当前真实有效上下文
-    const context = await session.buildContext();
-    if (context.messages.length === 0) return;
-    const contextTokens = estimateContextTokens(context.messages).tokens;
+    // 按 compaction 条目截断历史，得到当前真实有效上下文（0.85.0: 本地复刻 buildSessionContext）
+    const context = buildLocalSessionContext(branch);
+    if (context.length === 0) return;
+    const contextTokens = estimateContextTokens(context).tokens;
 
     const agentId = await getSessionAgentId(threadId);
     if (!agentId) return;
@@ -156,7 +208,8 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
 
     try {
       const harness = await agentManager.getOrCreateHarness(threadId, agentId);
-      await harness.compact();
+      const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+      await lane.compact(undefined, BACKGROUND_CONTEXT);
 
       // loadThreadMessages 对已加载会话是 no-op，必须先重置 loaded 再重载
       useChatStore.setState((state) => ({

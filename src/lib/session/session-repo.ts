@@ -1,5 +1,9 @@
 // 会话仓库接线层：JsonlSessionRepo + ElectronExecutionEnv 的延迟初始化与共享状态。
-import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import {
+  BACKGROUND_CONTEXT,
+  JsonlSessionRepo,
+  type Session,
+} from "@earendil-works/pi-agent-core";
 import { getDataDir } from "@/lib/electron/electron-api";
 import { ElectronExecutionEnv } from "@/lib/electron/electron-fs";
 import { resetTitleIndexCache } from "./title-index";
@@ -44,8 +48,8 @@ export async function getRepo(): Promise<JsonlSessionRepo> {
       const env = await getExecutionEnv();
       const sessionsRoot = await getSessionsRoot();
       // 确保根目录存在，避免首次 list/create 失败
-      await env.createDir(sessionsRoot, { recursive: true });
-      return new JsonlSessionRepo({ fs: env, sessionsRoot });
+      await env.createDir(sessionsRoot, { recursive: true }, BACKGROUND_CONTEXT);
+      return new JsonlSessionRepo({ fileSystem: env, sessionsRoot });
     })();
   }
   return repoPromise;
@@ -58,8 +62,8 @@ export async function getScheduleRepo(): Promise<JsonlSessionRepo> {
     scheduleRepoPromise = (async () => {
       const env = await getExecutionEnv();
       const sessionsRoot = await getScheduleSessionsRoot();
-      await env.createDir(sessionsRoot, { recursive: true });
-      return new JsonlSessionRepo({ fs: env, sessionsRoot });
+      await env.createDir(sessionsRoot, { recursive: true }, BACKGROUND_CONTEXT);
+      return new JsonlSessionRepo({ fileSystem: env, sessionsRoot });
     })();
   }
   return scheduleRepoPromise;

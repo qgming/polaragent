@@ -1,6 +1,6 @@
 // 会话元数据辅助：在同 id 多条 jsonl 中挑选「最优」一条，及自定义条目读取。
 // 历史并发竞态可能遗留同 id 的多个文件（一条带标题、一条带消息），这里统一处理。
-import { JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, JsonlSessionRepo, type Session } from "@earendil-works/pi-agent-core";
 import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 import { getExecutionEnv } from "./session-repo";
 
@@ -12,7 +12,7 @@ export type SessionMeta = Awaited<ReturnType<JsonlSessionRepo["list"]>>[number];
 async function metaMessageCount(meta: SessionMeta): Promise<number> {
   try {
     const env = await getExecutionEnv();
-    const result = await env.readTextFile(meta.path);
+    const result = await env.readTextFile(meta.path, BACKGROUND_CONTEXT);
     if (!result.ok) return 0;
     let count = 0;
     for (const line of result.value.split("\n")) {
@@ -40,7 +40,7 @@ export async function pickBestMeta(metas: SessionMeta[]): Promise<SessionMeta> {
     async (meta) => ({
       meta,
       count: await metaMessageCount(meta),
-      createdAt: Date.parse(meta.createdAt) || 0,
+      createdAt: meta.createdAt || 0,
     }),
     { concurrency: LOCAL_IO_CONCURRENCY },
   );
@@ -52,7 +52,7 @@ export async function pickBestMeta(metas: SessionMeta[]): Promise<SessionMeta> {
 
 // 从会话条目里取最后一条指定 customType 的某个字符串字段值（后写覆盖先写）。
 export function readLastCustomEntryString(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
   customType: string,
   field: string,
 ): string | undefined {

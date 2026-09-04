@@ -1,6 +1,6 @@
 // 会话历史回读与解析：把 jsonl 的 message/toolResult/custom 条目重建为 UI 用的
 // ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
-import { JsonlSessionRepo } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { calculateContextTokens } from "@/lib/session/compaction";
 import { skillLoader } from "@/lib/skill";
@@ -28,7 +28,7 @@ export async function loadThreadMonitor(
 ): Promise<{ todos: TodoItem[]; artifacts: ArtifactItem[] }> {
   try {
     const session = await openOrCreateSession(sessionId);
-    const branch = await session.getBranch().catch(() => []);
+    const branch = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT).catch(() => []);
 
     let todos: TodoItem[] = [];
     // 路径 -> 产物，保留插入顺序由下方数组维护
@@ -129,14 +129,14 @@ async function loadChatMessagesImpl(
   repoGetter: () => Promise<JsonlSessionRepo>,
 ): Promise<ChatMessage[]> {
   const repo = await repoGetter();
-  const metas = await repo.list().catch(() => []);
+  const metas = await repo.list(undefined, BACKGROUND_CONTEXT).catch(() => []);
   const hits = metas.filter((meta) => meta.id === sessionId);
   if (hits.length === 0) return [];
 
   // 同 id 多条时读「内容最多」的那条，确保回读到有消息的会话而非空壳
   const best = await pickBestMeta(hits);
-  const session = await repo.open(best);
-  const branch = await session.getBranch().catch(() => []);
+  const session = await repo.open(best, BACKGROUND_CONTEXT);
+  const branch = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT).catch(() => []);
 
   // 先收集所有 toolResult，按 toolCallId 建索引，供 assistant 的 tool segment 回填
   const toolResults = new Map<
@@ -226,7 +226,7 @@ async function loadChatMessagesImpl(
           createdAt:
             typeof data.createdAt === "number"
               ? data.createdAt
-              : Date.parse(entry.timestamp) || 0,
+              : entry.timestamp || 0,
         });
       }
       continue;
@@ -234,7 +234,7 @@ async function loadChatMessagesImpl(
 
     if (entry.type !== "message") continue;
     const message = entry.message;
-    const timestamp = Date.parse(entry.timestamp) || message.timestamp || 0;
+    const timestamp = entry.timestamp || message.timestamp || 0;
 
     if (message.role === "user") {
       const text = userMessageText(message);

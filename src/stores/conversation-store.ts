@@ -71,7 +71,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         id: session.id,
         title: session.title || "新对话",
         // 优先用索引里的 updatedAt（反映重命名/清空等活动），缺失则回退创建时间
-        updatedAt: session.updatedAt ?? (Date.parse(session.createdAt) || 0),
+        updatedAt: session.updatedAt ?? (session.createdAt || 0),
         projectId: session.projectId,
       }));
       set({ conversations });

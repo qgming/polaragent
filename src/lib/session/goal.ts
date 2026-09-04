@@ -5,6 +5,10 @@
 // 回读时取最后一条 goal_config + 最后一条 goal_event 还原 GoalState。
 
 import {
+  BACKGROUND_CONTEXT,
+  type JsonValue,
+} from "@earendil-works/pi-agent-core";
+import {
   DEFAULT_GOAL_MAX_TURNS,
   type GoalConfig,
   type GoalEvent,
@@ -21,14 +25,16 @@ export async function appendGoalConfig(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(GOAL_CONFIG_ENTRY, {
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(GOAL_CONFIG_ENTRY, {
       goalText: config.goalText,
       successCriteria: config.successCriteria ?? "",
       constraints: config.constraints ?? "",
-      maxTurns: config.maxTurns,
-      maxTokens: config.maxTokens,
-      maxRuntimeMinutes: config.maxRuntimeMinutes,
-    });
+      maxTurns: config.maxTurns ?? null,
+      maxTokens: config.maxTokens ?? null,
+      maxRuntimeMinutes: config.maxRuntimeMinutes ?? null,
+    } satisfies JsonValue, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入目标配置失败 ${sessionId}:`, error);
   }
@@ -41,7 +47,10 @@ export async function appendGoalEvent(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(GOAL_EVENT_ENTRY, event);
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    // GoalEvent 是应用层结构，appendCustomEntry 要求 JsonValue；直接序列化存储
+    await branch.appendCustomEntry(GOAL_EVENT_ENTRY, event as unknown as JsonValue, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入目标事件失败 ${sessionId}:`, error);
   }
@@ -56,7 +65,7 @@ export async function readGoalState(
 ): Promise<GoalState | null> {
   try {
     const session = await openOrCreateSession(sessionId);
-    const entries = await session.getEntries();
+    const entries = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT);
 
     return replayGoalStateFromEntries(entries);
   } catch (error) {

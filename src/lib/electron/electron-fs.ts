@@ -3,9 +3,14 @@ import {
   FileError,
   err,
   ok,
+  truncateTail,
+  type Context,
   type ExecutionEnv,
   type FileInfo,
   type Result,
+  type ShellExecOptions,
+  type ShellExecResult,
+  type ShellOutputTruncation,
 } from "@earendil-works/pi-agent-core";
 
 function toFileError(error: unknown, path?: string): FileError {
@@ -39,17 +44,20 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     this.cwd = cwd.replace(/\\/g, "/");
   }
 
-  async absolutePath(path: string): Promise<Result<string, FileError>> {
+  async absolutePath(path: string, context: Context): Promise<Result<string, FileError>> {
+    void context;
     const normalized = path.replace(/\\/g, "/");
     const isAbsolute = /^([a-zA-Z]:)?\//.test(normalized);
     return ok(normalizePath(isAbsolute ? normalized : `${this.cwd}/${normalized}`));
   }
 
-  async joinPath(parts: string[]): Promise<Result<string, FileError>> {
+  async joinPath(parts: string[], context: Context): Promise<Result<string, FileError>> {
+    void context;
     return ok(normalizePath(parts.join("/")));
   }
 
-  async readTextFile(path: string): Promise<Result<string, FileError>> {
+  async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
+    void context;
     try {
       return ok(await window.polaragent.fs.readFile(path));
     } catch (error) {
@@ -57,7 +65,12 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async readTextLines(path: string, options?: { maxLines?: number }): Promise<Result<string[], FileError>> {
+  async readTextLines(
+    path: string,
+    options: { maxLines?: number } | undefined,
+    context: Context,
+  ): Promise<Result<string[], FileError>> {
+    void context;
     try {
       const lines = (await window.polaragent.fs.readFile(path)).split("\n");
       return ok(options?.maxLines != null ? lines.slice(0, options.maxLines) : lines);
@@ -66,7 +79,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async readBinaryFile(path: string): Promise<Result<Uint8Array, FileError>> {
+  async readBinaryFile(path: string, context: Context): Promise<Result<Uint8Array, FileError>> {
+    void context;
     try {
       const base64 = await window.polaragent.fs.readBinaryFile(path);
       // base64 → Uint8Array
@@ -81,7 +95,12 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async writeFile(path: string, content: string | Uint8Array): Promise<Result<void, FileError>> {
+  async writeFile(
+    path: string,
+    content: string | Uint8Array,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
+    void context;
     try {
       if (typeof content !== "string") {
         return err(new FileError("not_supported", "仅支持写入文本内容", path));
@@ -95,7 +114,12 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async appendFile(path: string, content: string | Uint8Array): Promise<Result<void, FileError>> {
+  async appendFile(
+    path: string,
+    content: string | Uint8Array,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
+    void context;
     try {
       if (typeof content !== "string") {
         return err(new FileError("not_supported", "仅支持追加文本内容", path));
@@ -107,7 +131,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async fileInfo(path: string): Promise<Result<FileInfo, FileError>> {
+  async fileInfo(path: string, context: Context): Promise<Result<FileInfo, FileError>> {
+    void context;
     try {
       const info = await window.polaragent.fs.stat(path);
       const name = path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "";
@@ -123,7 +148,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async listDir(path: string): Promise<Result<FileInfo[], FileError>> {
+  async listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>> {
+    void context;
     try {
       const base = path.replace(/\\/g, "/").replace(/\/$/, "");
       const entries = await window.polaragent.fs.listDirectoryEntries(path);
@@ -141,11 +167,12 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async canonicalPath(path: string): Promise<Result<string, FileError>> {
-    return this.absolutePath(path);
+  async canonicalPath(path: string, context: Context): Promise<Result<string, FileError>> {
+    return this.absolutePath(path, context);
   }
 
-  async exists(path: string): Promise<Result<boolean, FileError>> {
+  async exists(path: string, context: Context): Promise<Result<boolean, FileError>> {
+    void context;
     try {
       return ok(await window.polaragent.fs.exists(path));
     } catch (error) {
@@ -155,9 +182,11 @@ export class ElectronExecutionEnv implements ExecutionEnv {
 
   async createDir(
     path: string,
-    options?: { recursive?: boolean },
+    options: { recursive?: boolean } | undefined,
+    context: Context,
   ): Promise<Result<void, FileError>> {
     void options;
+    void context;
     try {
       await window.polaragent.fs.createDirectory(path);
       return ok(undefined);
@@ -166,7 +195,12 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async remove(path: string, options?: { force?: boolean }): Promise<Result<void, FileError>> {
+  async remove(
+    path: string,
+    options: { force?: boolean } | undefined,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
+    void context;
     try {
       await window.polaragent.fs.deletePath(path);
       return ok(undefined);
@@ -176,7 +210,8 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async createTempDir(prefix?: string): Promise<Result<string, FileError>> {
+  async createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
+    void context;
     try {
       const dir = await window.polaragent.fs.createTempDir(prefix ?? "polaragent-");
       return ok(dir);
@@ -185,10 +220,11 @@ export class ElectronExecutionEnv implements ExecutionEnv {
     }
   }
 
-  async createTempFile(options?: {
-    prefix?: string;
-    suffix?: string;
-  }): Promise<Result<string, FileError>> {
+  async createTempFile(
+    options: { prefix?: string; suffix?: string } | undefined,
+    context: Context,
+  ): Promise<Result<string, FileError>> {
+    void context;
     try {
       const filePath = await window.polaragent.fs.createTempFile({
         prefix: options?.prefix ?? "",
@@ -202,8 +238,9 @@ export class ElectronExecutionEnv implements ExecutionEnv {
 
   async exec(
     command: string,
-    options?: { cwd?: string; timeout?: number },
-  ): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
+    options: ShellExecOptions | undefined,
+    context: Context,
+  ): Promise<Result<ShellExecResult, ExecutionError>> {
     try {
       // 安全说明：AI 内部 harness 执行 shell 命令不允许覆盖 securityMode。
       // 必须走用户当前权限模式，绝不能自行升权到 full。
@@ -215,15 +252,54 @@ export class ElectronExecutionEnv implements ExecutionEnv {
       if (result.blocked) {
         return err(new ExecutionError("unknown", `命令被安全策略拦截：${result.error ?? ""}`));
       }
+      const stdout = result.stdout ?? "";
+      const stderr = result.stderr ?? "";
+      const output = stdout + (stderr ? `\n${stderr}` : "");
+      // 0.85.0：ShellExecResult 不再携带 stdout/stderr，输出改为经 onUpdate 流式交付，
+      // 返回值只含 exitCode 与截断元数据。
+      const truncated = truncateTail(output);
+      const truncation: ShellOutputTruncation = {
+        truncated: truncated.truncated,
+        truncatedBy: truncated.truncatedBy,
+        totalLines: truncated.totalLines,
+        totalBytes: truncated.totalBytes,
+        outputLines: truncated.outputLines,
+        outputBytes: truncated.outputBytes,
+        lastLinePartial: truncated.lastLinePartial,
+        firstLineExceedsLimit: truncated.firstLineExceedsLimit,
+        maxLines: truncated.maxLines,
+        maxBytes: truncated.maxBytes,
+      };
+      if (options?.onUpdate) {
+        options.onUpdate(
+          { kind: "replace", output: { text: output, truncation } },
+          context,
+        );
+      }
       return ok({
-        stdout: result.stdout,
-        stderr: result.stderr,
         exitCode: result.exitCode ?? -1,
+        truncation,
       });
     } catch (error) {
       return err(new ExecutionError("unknown", error instanceof Error ? error.message : String(error)));
     }
   }
 
-  async cleanup(): Promise<void> {}
+  async renameFile(
+    sourcePath: string,
+    destinationPath: string,
+    context: Context,
+  ): Promise<Result<void, FileError>> {
+    void context;
+    try {
+      await window.polaragent.fs.rename(sourcePath, destinationPath);
+      return ok(undefined);
+    } catch (error) {
+      return err(toFileError(error, sourcePath));
+    }
+  }
+
+  async cleanup(context: Context): Promise<void> {
+    void context;
+  }
 }

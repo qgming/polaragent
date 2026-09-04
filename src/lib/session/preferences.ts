@@ -1,4 +1,4 @@
-import type { Session } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT, type Session } from "@earendil-works/pi-agent-core";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -17,7 +17,7 @@ export async function getSessionWorkingDir(
 ): Promise<string | undefined> {
   try {
     const session = await openOrCreateSession(sessionId);
-    return readWorkingDirFromEntries(await session.getEntries());
+    return readWorkingDirFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
   } catch (error) {
     console.error(`读取会话工作目录失败 ${sessionId}:`, error);
     return undefined;
@@ -30,7 +30,9 @@ export async function setSessionWorkingDir(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(WORKING_DIR_ENTRY, { dir });
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(WORKING_DIR_ENTRY, { dir }, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入会话工作目录失败 ${sessionId}:`, error);
   }
@@ -41,7 +43,7 @@ export async function getSessionToolPermissionMode(
 ): Promise<ToolPermissionMode> {
   try {
     const session = await openOrCreateSession(sessionId);
-    return readToolPermissionModeFromEntries(await session.getEntries());
+    return readToolPermissionModeFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
   } catch (error) {
     console.error(`读取会话工具权限失败 ${sessionId}:`, error);
     return DEFAULT_TOOL_PERMISSION_MODE;
@@ -54,14 +56,16 @@ export async function setSessionToolPermissionMode(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode });
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(TOOL_PERMISSION_MODE_ENTRY, { mode }, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入会话工具权限失败 ${sessionId}:`, error);
   }
 }
 
 function readWorkingDirFromEntries(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
 ): string | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -77,7 +81,7 @@ function readWorkingDirFromEntries(
 }
 
 function readToolPermissionModeFromEntries(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
 ): ToolPermissionMode {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -97,7 +101,7 @@ export async function getSessionKnowledgeBaseIds(
 ): Promise<string[]> {
   try {
     const session = await openOrCreateSession(sessionId);
-    return readKnowledgeBaseIdsFromEntries(await session.getEntries());
+    return readKnowledgeBaseIdsFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
   } catch (error) {
     console.error(`读取会话知识库失败 ${sessionId}:`, error);
     return [];
@@ -110,7 +114,9 @@ export async function setSessionKnowledgeBaseIds(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids });
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids }, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入会话知识库失败 ${sessionId}:`, error);
   }
@@ -119,7 +125,7 @@ export async function setSessionKnowledgeBaseIds(
 // --- 会话级助手 ID 持久化 ---
 
 function readAgentIdFromEntries(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
 ): string | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -140,7 +146,7 @@ export async function getSessionAgentId(
 ): Promise<string | undefined> {
   try {
     const session = await openOrCreateSession(sessionId);
-    return readAgentIdFromEntries(await session.getEntries());
+    return readAgentIdFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
   } catch (error) {
     console.error(`读取会话助手 ID 失败 ${sessionId}:`, error);
     return undefined;
@@ -153,14 +159,16 @@ export async function setSessionAgentId(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(AGENT_ID_ENTRY, { agentId });
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(AGENT_ID_ENTRY, { agentId }, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入会话助手 ID 失败 ${sessionId}:`, error);
   }
 }
 
 function readKnowledgeBaseIdsFromEntries(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
 ): string[] {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -180,7 +188,7 @@ export async function getSessionProjectId(
 ): Promise<string | undefined> {
   try {
     const session = await openOrCreateSession(sessionId);
-    return readProjectIdFromEntries(await session.getEntries());
+    return readProjectIdFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
   } catch (error) {
     console.error(`读取会话项目归属失败 ${sessionId}:`, error);
     return undefined;
@@ -193,14 +201,16 @@ export async function setSessionProjectId(
 ): Promise<void> {
   try {
     const session = await openOrCreateSession(sessionId);
-    await session.appendCustomEntry(PROJECT_REF_ENTRY, { projectId });
+    const branch = await session.branch("main", BACKGROUND_CONTEXT);
+    if (!branch) return;
+    await branch.appendCustomEntry(PROJECT_REF_ENTRY, { projectId }, BACKGROUND_CONTEXT);
   } catch (error) {
     console.error(`写入会话项目归属失败 ${sessionId}:`, error);
   }
 }
 
 function readProjectIdFromEntries(
-  entries: Awaited<ReturnType<Session["getEntries"]>>,
+  entries: Awaited<ReturnType<Session["findEntries"]>>,
 ): string | undefined {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];

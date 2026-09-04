@@ -1,5 +1,10 @@
 import { Type, type Static } from "typebox";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  BACKGROUND_CONTEXT,
+  type AgentLane,
+  type AgentMessage,
+  type AgentTool,
+} from "@earendil-works/pi-agent-core";
 
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
@@ -139,7 +144,11 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
             systemPrompt: target.systemPrompt,
           },
         });
-        const abortSubagent = () => harness.abort();
+        // 0.85.0: abort 位于 AgentLane，需先取 lane
+        const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+        const abortSubagent = () => {
+          void lane.abort(BACKGROUND_CONTEXT).catch(() => undefined);
+        };
         signal?.addEventListener("abort", abortSubagent, { once: true });
 
         try {
@@ -155,10 +164,13 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
             },
           });
 
-          const response = await harness.prompt(prompt);
-          await harness.waitForIdle();
+          // 0.85.0: prompt/waitForIdle 位于 AgentLane，需传 context
+          await lane.prompt(prompt, undefined, BACKGROUND_CONTEXT);
+          await lane.waitForIdle(BACKGROUND_CONTEXT);
           throwIfAborted(signal);
-          const resultText = assistantMessageText(response) || "子代理已完成，但没有返回可提取的文本内容。";
+          // 0.85.0: RunResult 不再携带 finalMessage，从 lane 会话转写中取最后一条 assistant 消息
+          const resultText =
+            (await extractFinalAssistantMessage(lane)) || "子代理已完成，但没有返回可提取的文本内容。";
           const content = [
             `子代理 ${target.name} 已完成任务。`,
             "",
@@ -257,6 +269,22 @@ function buildSubagentPrompt({
     "请直接产出可被主助手整合的结果：关键发现、依据、建议、已完成动作、风险或后续步骤。不要询问用户，除非任务本身无法在现有信息下推进。",
   );
   return parts.join("\n\n");
+}
+
+// 0.85.0: RunResult 不再携带 finalMessage，从 lane 的会话转写中反向查找最后一条 assistant 消息，
+// 提取其文本内容作为子代理结果摘要。
+async function extractFinalAssistantMessage(lane: AgentLane): Promise<string> {
+  try {
+    const entries = await lane.findEntries({ order: "newestFirst" }, BACKGROUND_CONTEXT);
+    for (const entry of entries) {
+      if (entry.type === "message" && entry.message.role === "assistant") {
+        return assistantMessageText(entry.message);
+      }
+    }
+  } catch (error) {
+    console.warn("[子代理] 读取最终助手消息失败:", error);
+  }
+  return "";
 }
 
 function assistantMessageText(message: unknown): string {

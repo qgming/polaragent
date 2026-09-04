@@ -1,4 +1,10 @@
-import type { AgentMessage, AgentHarness } from "@earendil-works/pi-agent-core";
+import {
+  BACKGROUND_CONTEXT,
+  type AgentLane,
+  type AgentMessage,
+  type AgentHarness,
+  type HarnessEvent,
+} from "@earendil-works/pi-agent-core";
 
 import type { ToolContext } from "./tools/tool-context";
 
@@ -76,7 +82,11 @@ export function cancelBackgroundJob(id: string): BackgroundJob | undefined {
     job.status = "cancelled";
     job.completedAt = new Date().toISOString();
     job.events.push({ timestamp: job.completedAt, message: "已请求取消后台任务。" });
-    job.harness?.abort();
+    // 0.85.0: abort 位于 AgentLane，需要先取 lane 再中止
+    void job.harness
+      ?.lane("main", BACKGROUND_CONTEXT)
+      .then((lane) => lane.abort(BACKGROUND_CONTEXT))
+      .catch(() => undefined);
   }
   return serializeJob(job);
 }
@@ -101,36 +111,53 @@ async function runBackgroundJob(
       },
     });
     job.harness = harness;
-    const unsubscribe = harness.subscribe((event) => {
-      if (job.status !== "running") return;
-      if (event.type === "tool_execution_start") {
+    // 0.85.0: 事件类型重命名（tool_execution_* → tool_*），监听器携带 context 参数。
+    const lane = await harness.lane("main", BACKGROUND_CONTEXT);
+    const unsubscribers: Array<() => void> = [
+      harness.events.on("tool_start", (event) => {
+        if (job.status !== "running") return;
+        const toolEvent = event as Extract<HarnessEvent, { type: "tool_start" }>;
         job.events.push({
           timestamp: new Date().toISOString(),
-          message: `开始执行工具：${event.toolName}`,
+          message: `开始执行工具：${toolEvent.toolName}`,
         });
-      } else if (event.type === "tool_execution_update") {
-        const summary = extractSummary(event.partialResult);
+      }),
+      harness.events.on("tool_update", (event) => {
+        if (job.status !== "running") return;
+        const toolEvent = event as Extract<HarnessEvent, { type: "tool_update" }>;
+        const summary = extractSummary(toolEvent.partialResult);
         if (summary) {
           job.events.push({
             timestamp: new Date().toISOString(),
             message: summary,
           });
         }
-      } else if (event.type === "tool_execution_end") {
+      }),
+      harness.events.on("tool_end", (event) => {
+        if (job.status !== "running") return;
+        const toolEvent = event as Extract<HarnessEvent, { type: "tool_end" }>;
         job.events.push({
           timestamp: new Date().toISOString(),
-          message: `${event.isError ? "工具失败" : "工具完成"}：${event.toolName}`,
+          message: `${toolEvent.isError ? "工具失败" : "工具完成"}：${toolEvent.toolName}`,
         });
-      }
-    });
+      }),
+    ];
+    const unsubscribe = () => {
+      for (const unsub of unsubscribers) unsub();
+    };
 
     try {
-      const response = await harness.prompt(buildBackgroundPrompt(job, params.context));
-      await harness.waitForIdle();
+      // 0.85.0: prompt/waitForIdle 位于 AgentLane，需传 context
+      await lane.prompt(buildBackgroundPrompt(job, params.context), undefined, BACKGROUND_CONTEXT);
+      await lane.waitForIdle(BACKGROUND_CONTEXT);
       if (job.status === "cancelled") return;
       job.status = "completed";
       job.completedAt = new Date().toISOString();
-      job.result = assistantMessageText(response) || "后台任务已完成，但没有返回可提取的文本内容。";
+      // 0.85.0: RunResult 不再携带 finalMessage，从 lane 会话转写中取最后一条 assistant 消息
+      const finalMessage = await extractFinalAssistantMessage(lane);
+      job.result =
+        assistantMessageText(finalMessage) ||
+        "后台任务已完成，但没有返回可提取的文本内容。";
       job.events.push({ timestamp: job.completedAt, message: "后台任务已完成。" });
     } finally {
       unsubscribe();
@@ -147,8 +174,24 @@ async function runBackgroundJob(
   }
 }
 
-function buildBackgroundPrompt(job: BackgroundJob, context?: string): string {
-  const parts = [
+// 0.85.0: RunResult 不再携带 finalMessage，从 lane 的会话转写中反向查找最后一条 assistant 消息。
+async function extractFinalAssistantMessage(
+  lane: AgentLane,
+): Promise<AgentMessage | undefined> {
+  try {
+    const entries = await lane.findEntries({ order: "newestFirst" }, BACKGROUND_CONTEXT);
+    for (const entry of entries) {
+      if (entry.type === "message" && entry.message.role === "assistant") {
+        return entry.message;
+      }
+    }
+  } catch (error) {
+    console.warn("[后台任务] 读取最终助手消息失败:", error);
+  }
+  return undefined;
+}
+
+function buildBackgroundPrompt(job: BackgroundJob, context?: string): string {  const parts = [
     "请作为后台任务执行以下指令。不要询问用户；如果信息不足，请基于现有上下文产出最有用的结果，并明确说明假设和限制。",
     `任务名称：${job.name}`,
     `任务内容：${job.task}`,
