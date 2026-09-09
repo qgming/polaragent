@@ -23,9 +23,11 @@ const DEFAULT_BROWSER_USE = {
 export function BrowserUsePanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const browserUse = useMemo(
@@ -122,10 +124,14 @@ export function BrowserUsePanel({
 
   return (
     <section>
-      <PageTitle
-        title="Browser Use"
-        description={t("browserUse.description")}
-      />
+      {!embedded ? (
+        <PageTitle
+          title="Browser Use"
+          description={t("browserUse.description")}
+        />
+      ) : (
+        <h3 className="mb-4 text-sm font-semibold text-muted-foreground">Browser Use</h3>
+      )}
 
       {/* 连接状态卡片 */}
       <div className="mt-8 rounded-xl border border-border bg-card">

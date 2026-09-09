@@ -328,29 +328,6 @@ export interface ProvidersConfig {
 }
 
 /**
- * Agent 配置
- */
-export interface AgentConfig {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  type?: "builtin" | "custom";
-  avatar?: string;
-  metadata?: {
-    author?: string;
-    category?: string;
-    tags?: string[];
-  };
-  config: {
-    systemPrompt: string;
-    provider: string;
-    model: string;
-    enabledSkills: string[];
-  };
-}
-
-/**
  * 项目配置（对话分组 + 专属提示词 + 共享工作目录）
  * 项目配置存于 {dataDir}/projects/<id>.json，项目内的对话仍走普通对话仓库。
  */

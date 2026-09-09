@@ -1,4 +1,4 @@
-// 首页：新对话入口（任务输入框 + Agent 选择 + 工作目录）
+// 首页：新对话入口（任务输入框 + 工作目录）
 // src/pages/HomePage.tsx
 
 import { ChevronDown, FolderOpen, SendHorizontal } from "lucide-react";
@@ -15,18 +15,6 @@ import {
   SkillComposerInput,
   type SkillComposerHandle,
 } from "@/components/skill/SkillComposerInput";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { checkProviderConfig } from "@/lib/app-init";
 import {
   ensureSessionFilesDir,
@@ -40,9 +28,7 @@ import type { ChatAttachment, ChatSkillRef, MessageFinishMetadata, Segment } fro
 import { useChatStore } from "@/stores/chat-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
 import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import type { AgentConfig } from "@/types/config";
 import { useAlert } from "@/hooks/useAlert";
-import { useResponsiveWidth } from "@/hooks/useResponsiveWidth";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
@@ -51,20 +37,15 @@ import {
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 
 export function HomePage({
-  activeAgentId,
-  agents,
   applyStreamingUpdate,
   composer,
   createThread,
   failAssistant,
   finishAssistant,
   setRetryAttempt,
-  setActiveAgent,
   setComposer,
   startExchange,
 }: {
-  activeAgentId: string;
-  agents: AgentConfig[];
   applyStreamingUpdate: (
     threadId: string,
     messageId: string,
@@ -72,9 +53,9 @@ export function HomePage({
   ) => void;
   composer: string;
   createThread: (
-    agentId?: string,
     initialText?: string,
     permissionMode?: ToolPermissionMode,
+    projectId?: string,
   ) => string;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
   finishAssistant: (
@@ -84,7 +65,6 @@ export function HomePage({
     metadata?: MessageFinishMetadata,
   ) => void;
   setRetryAttempt: (threadId: string, messageId: string, attempt: number) => void;
-  setActiveAgent: (agentId: string) => void;
   setComposer: (value: string) => void;
   startExchange: (
     userText: string,
@@ -96,8 +76,6 @@ export function HomePage({
   };
 }) {
   const { t } = useTranslation();
-  const activeAgent =
-    agents.find((agent) => agent.id === activeAgentId) ?? agents[0];
   const workingDir = useChatStore((state) => state.workingDir);
   const setWorkingDir = useChatStore((state) => state.setWorkingDir);
   const skills = useSkillsStore((state) => state.skills);
@@ -113,8 +91,6 @@ export function HomePage({
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   // 自定义对话框
   const { alert: showAlert, AlertDialog } = useAlert();
-  // 响应式宽度断点
-  const breakpoint = useResponsiveWidth();
 
   const handlePickDir = async () => {
     const dir = await pickWorkingDirectory();
@@ -154,7 +130,7 @@ export function HomePage({
       return;
     }
 
-    createThread(activeAgent?.id, undefined, permissionMode);
+    createThread(undefined, permissionMode);
     const pendingAttachments = attachments;
     // 捕获本次技能 / 文件后清空输入区（富文本 + 技能 chip + 文件 chip）
     const sendSkillIds = skillIds;
@@ -204,7 +180,6 @@ export function HomePage({
         onError: (message) => failAssistant(threadId, assistantId, message),
         onRetry: (attempt) => setRetryAttempt(threadId, assistantId, attempt),
       },
-      activeAgent?.id || activeAgentId,
       {
         threadId,
         workingDir,
@@ -265,59 +240,6 @@ export function HomePage({
                 mode={permissionMode}
                 onChange={setPermissionMode}
               />
-
-              <DropdownMenu>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        className={
-                          breakpoint === "narrow"
-                            ? "size-7 justify-center p-0 rounded-md bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
-                            : "h-7 gap-1 bg-muted/50 px-2 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
-                        }
-                      >
-                        <span className={breakpoint === "narrow" ? "text-base leading-none" : "text-sm leading-none"}>
-                          {activeAgent?.avatar || "⚡"}
-                        </span>
-                        {breakpoint !== "narrow" ? (
-                          <span className="text-sm">{activeAgent?.name || t("home:defaultAgent")}</span>
-                        ) : null}
-                        {breakpoint !== "narrow" ? <ChevronDown className="size-3" /> : null}
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>{activeAgent?.name || t("home:defaultAgent")}</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="start" className="w-56">
-                  {agents.length > 0 ? (
-                    agents.map((agent) => (
-                      <Tooltip key={agent.id}>
-                        <TooltipTrigger asChild>
-                          <DropdownMenuItem
-                            onSelect={() => setActiveAgent(agent.id)}
-                          >
-                            <span className="text-base leading-none">
-                              {agent.avatar || "⚡"}
-                            </span>
-                            <span className="truncate">{agent.name}</span>
-                          </DropdownMenuItem>
-                        </TooltipTrigger>
-                        {agent.description ? (
-                          <TooltipContent side="right" className="max-w-xs">
-                            {agent.description}
-                          </TooltipContent>
-                        ) : null}
-                      </Tooltip>
-                    ))
-                  ) : (
-                    <DropdownMenuItem disabled>{t("home:noAgents")}</DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
             <div className="flex items-center gap-2">
               <VoiceRecordButton onTranscriptionComplete={handleVoiceTranscription} />

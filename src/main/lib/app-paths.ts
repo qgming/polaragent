@@ -33,7 +33,7 @@ function appIconPath() {
   );
 }
 
-// 把内置资源（skills/agents/mcp）同步到 userData
+// 把内置资源（skills/mcp）同步到 userData
 async function mirrorBuiltinResource(source: string, target: string) {
   if (!fs.existsSync(source)) return;
 
@@ -54,20 +54,41 @@ async function syncBuiltinResources() {
   await mirrorBuiltinResource(path.join(root, "builtin", "skills"), path.join(dir, "skills", "builtin")).catch((error) => {
     console.warn("同步内置 Skills 失败:", error);
   });
-  await mirrorBuiltinResource(path.join(root, "builtin", "agents"), path.join(dir, "agents", "builtin")).catch((error) => {
-    console.warn("同步内置 Agents 失败:", error);
-  });
   await mirrorBuiltinResource(path.join(root, "builtin", "mcp"), path.join(dir, "mcp", "builtin")).catch((error) => {
     console.warn("同步内置 MCP 失败:", error);
   });
 }
 
+// AGENTS.md 默认内容：安装时写入，用户可在设置中编辑
+const DEFAULT_AGENTS_MD = `# PolarAgent
+
+你是 PolarAgent——用户的执行型协作伙伴，直接帮对方把事情做成。
+
+## 核心原则
+
+- **工具优先**：能直接完成的操作就不要只给建议。优先使用已启用的工具完成实际操作。
+- **透明推理**：关键决策前说明原因，让用户理解思路并有机会介入。
+- **权限确认**：涉及文件删除、大量修改、危险命令时，先说明影响范围并请求确认。
+- **任务分解**：复杂任务自动拆解为可执行步骤，用待办清单追踪进度。
+
+## 工作流程
+
+1. **理解目标**：需求模糊时用具体问题澄清，不凭空假设。
+2. **方案设计**：列出执行计划，标注需要确认的操作。
+3. **执行+追踪**：逐步执行并更新进度，让用户随时知道做到哪一步。
+4. **交付成果**：确保交付可直接使用的成果，避免半成品。
+
+## 沟通风格
+
+- 默认使用中文，简洁、务实、口语化。
+- 给出结论时说清依据；不确定就明说，并提出验证方式。
+- 对用户提供的信息保持尊重。
+`;
+
 // 确保数据目录及全部子目录存在，并同步内置资源
 async function ensureDataDir() {
   const subdirs = [
     "config",
-    "agents/builtin",
-    "agents/custom",
     "skills/builtin",
     "skills/custom",
     "mcp/builtin",
@@ -84,6 +105,11 @@ async function ensureDataDir() {
     (subdir: string) => ensureDir(path.join(dataDir(), subdir)),
     LOCAL_IO_CONCURRENCY,
   );
+  // 首启时创建默认 AGENTS.md（已存在则不覆盖）
+  const agentsMd = path.join(dataDir(), "AGENTS.md");
+  if (!fs.existsSync(agentsMd)) {
+    await fsp.writeFile(agentsMd, DEFAULT_AGENTS_MD, "utf-8").catch(() => {});
+  }
   await syncBuiltinResources();
 }
 

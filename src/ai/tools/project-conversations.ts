@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   formatProjectConversationList,
@@ -49,9 +49,7 @@ const readProjectConversationParams = Type.Object({
   ),
 });
 
-export function listProjectConversationsTool(
-  ctx: ToolContext,
-): AgentTool<typeof listProjectConversationsParams> {
+export function listProjectConversationsTool(): AgentHarnessTool<ToolContext, typeof listProjectConversationsParams> {
   return {
     name: "list_project_conversations",
     label: "列出项目会话",
@@ -59,7 +57,8 @@ export function listProjectConversationsTool(
       "项目会话专用工具。需要了解同一项目中有哪些其他对话、寻找可参考的历史会话时使用。返回会话标题、ID 和更新时间。",
     parameters: listProjectConversationsParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof listProjectConversationsParams>) => {
+    execute: async (_id, params: Static<typeof listProjectConversationsParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       if (!ctx.projectId) {
         return {
           content: text("当前会话不属于任何项目，无法列出项目会话。"),
@@ -82,9 +81,7 @@ export function listProjectConversationsTool(
   };
 }
 
-export function readProjectConversationTool(
-  ctx: ToolContext,
-): AgentTool<typeof readProjectConversationParams> {
+export function readProjectConversationTool(): AgentHarnessTool<ToolContext, typeof readProjectConversationParams> {
   return {
     name: "read_project_conversation",
     label: "读取项目会话",
@@ -92,7 +89,8 @@ export function readProjectConversationTool(
       "项目会话专用工具。按 ID 读取同一项目内某个历史会话的最近消息。用于补充上下文、查找用户之前的要求、方案、结论或约定。",
     parameters: readProjectConversationParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readProjectConversationParams>) => {
+    execute: async (_id, params: Static<typeof readProjectConversationParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       if (!ctx.projectId) {
         return {
           content: text("当前会话不属于任何项目，无法读取项目会话。"),

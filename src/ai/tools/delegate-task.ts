@@ -1,12 +1,14 @@
+// delegate_task —— 调用临时子代理处理明确子任务
+// src/ai/tools/delegate-task.ts
+
 import { Type, type Static } from "typebox";
 import {
   BACKGROUND_CONTEXT,
+  type AgentHarnessTool,
   type AgentLane,
   type AgentMessage,
-  type AgentTool,
 } from "@earendil-works/pi-agent-core";
 
-import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
 import { throwIfAborted } from "./tool-progress";
 
@@ -15,24 +17,14 @@ const delegateTaskParams = Type.Object({
     description: "交给子代理完成的清晰任务。应包含目标、范围、期望输出。",
     minLength: 1,
   }),
-  agentId: Type.Optional(
-    Type.String({
-      description: "目标助手 ID。已知精确 ID 时优先提供。",
-    }),
-  ),
-  agentName: Type.Optional(
-    Type.String({
-      description: "目标助手名称或关键词。需要选择专业助手时，应先调用 list_agents 查看清单再填写。不提供时使用默认助手 default/Cowork。",
-    }),
-  ),
   temporaryAgentName: Type.Optional(
     Type.String({
-      description: "临时子代理名称。需要创建临时子代理时填写，例如“代码审查专家”“资料调研员”。",
+      description: "临时子代理名称。例如“代码审查专家”“资料调研员”。",
     }),
   ),
   temporarySystemPrompt: Type.Optional(
     Type.String({
-      description: "临时子代理的角色、能力边界、工作方式和输出要求。提供该字段时会创建临时子代理，而不是只从已安装助手中选择。",
+      description: "临时子代理的角色、能力边界、工作方式和输出要求。",
     }),
   ),
   context: Type.Optional(
@@ -42,14 +34,17 @@ const delegateTaskParams = Type.Object({
   ),
 });
 
-export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTaskParams> {
+export function delegateTaskTool(): AgentHarnessTool<ToolContext, typeof delegateTaskParams> {
   return {
     name: "delegate_task",
     label: "调用子代理",
     description:
-      "在普通对话中调用另一个助手作为子代理处理一个明确子任务。未指定目标时使用默认助手 default/Cowork；需要专业助手时先调用 list_agents 查看清单再通过 agentId/agentName 选择；也可提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。适合调研、代码审查、方案对比、测试验证、文案润色、专业判断等可并行或需要第二视角的工作。子代理完成后返回结果，最终回复仍由当前助手整合。",
+      "在普通对话中调用一个子代理处理明确子任务。可通过 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。适合调研、代码审查、方案对比、测试验证、文案润色、专业判断等可并行或需要第二视角的工作。子代理完成后返回结果，最终回复仍由当前助手整合。",
     parameters: delegateTaskParams,
-    execute: async (_id, params: Static<typeof delegateTaskParams>, signal, onUpdate) => {
+    executionMode: "parallel",
+    execute: async (_id, params: Static<typeof delegateTaskParams>, onUpdate, toolContext, _invocation, context) => {
+      const ctx = toolContext;
+      const signal = context.abortSignal;
       throwIfAborted(signal);
       if (ctx.isSubagent) {
         return {
@@ -58,61 +53,27 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
         };
       }
 
-      const agents = useConfigStore.getState().agents;
-      const requesterId = ctx.requester?.id;
       const temporarySystemPrompt = params.temporarySystemPrompt?.trim();
-      const useTemporary = Boolean(temporarySystemPrompt);
-      const hasExplicitInstalledTarget = Boolean(params.agentId?.trim() || params.agentName?.trim());
-      const installedTarget = useTemporary
-        ? undefined
-        : hasExplicitInstalledTarget
-          ? findAgentById(agents, params.agentId) ?? findAgentByName(agents, params.agentName)
-          : findDefaultCoworkAgent(agents);
-      const temporaryName =
-        params.temporaryAgentName?.trim() ||
-        params.agentName?.trim() ||
-        "临时子代理";
+      const temporaryName = params.temporaryAgentName?.trim() || "临时子代理";
 
-      if (!useTemporary && agents.length === 0) {
+      if (!temporarySystemPrompt) {
         return {
-          content: text("当前没有可用助手，无法调用子代理。可提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。"),
-          details: { error: "no_agents" },
-        };
-      }
-
-      if (!useTemporary && !installedTarget) {
-        return {
-          content: text(
-            hasExplicitInstalledTarget
-              ? "没有找到指定的子代理。请先调用 list_agents 查看可用助手清单，或提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。"
-              : "没有找到默认子代理 default/Cowork。请先调用 list_agents 查看可用助手清单并显式选择，或提供 temporaryAgentName 和 temporarySystemPrompt 创建临时子代理。",
-          ),
-          details: {
-            error: hasExplicitInstalledTarget ? "agent_not_found" : "default_agent_not_found",
-          },
+          content: text("请提供 temporarySystemPrompt 描述子代理的角色与工作方式，以创建临时子代理。"),
+          details: { error: "missing_temporary_system_prompt" },
         };
       }
 
       const parentThreadId = ctx.parentThreadId ?? ctx.threadId;
-      const target = useTemporary
-        ? {
-            id: requesterId || "default",
-            name: temporaryName,
-            kind: "temporary" as const,
-            systemPrompt: temporarySystemPrompt,
-          }
-        : {
-            id: installedTarget!.id,
-            name: installedTarget!.name,
-            kind: "installed" as const,
-            systemPrompt: undefined,
-          };
-      const childSessionId = makeChildSessionId(parentThreadId, `${target.kind}_${target.name}_${target.id}`);
+      const target = {
+        name: temporaryName,
+        kind: "temporary" as const,
+        systemPrompt: temporarySystemPrompt,
+      };
+      const childSessionId = makeChildSessionId(parentThreadId, `${target.kind}_${target.name}`);
       const prompt = buildSubagentPrompt({
         task: params.task,
         context: params.context,
         parentThreadId,
-        requesterName: ctx.requester?.name,
       });
 
       try {
@@ -120,7 +81,6 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
         onUpdate?.({
           content: text(`正在调用子代理 ${target.name}...`),
           details: {
-            agentId: target.id,
             agentName: target.name,
             agentKind: target.kind,
             phase: "starting",
@@ -129,7 +89,7 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
 
         const { agentManager } = await import("@/ai/agent-manager");
         throwIfAborted(signal);
-        const harness = await agentManager.getOrCreateHarness(parentThreadId, target.id, {
+        const harness = await agentManager.getOrCreateHarness(parentThreadId, {
           workingDir: ctx.workingDir,
           permissionMode: ctx.permissionMode,
           knowledgeBaseIds: ctx.knowledgeBaseIds,
@@ -137,7 +97,6 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
           subagentContext: {
             isSubagent: true,
             parentThreadId,
-            parentAgentId: requesterId ?? "",
             sessionId: childSessionId,
             task: params.task,
             agentName: target.name,
@@ -156,7 +115,6 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
           onUpdate?.({
             content: text(`子代理 ${target.name} 正在执行任务...`),
             details: {
-              agentId: target.id,
               agentName: target.name,
               agentKind: target.kind,
               childSessionId,
@@ -180,7 +138,6 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
           return {
             content: text(content),
             details: {
-              agentId: target.id,
               agentName: target.name,
               agentKind: target.kind,
               childSessionId,
@@ -199,7 +156,6 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
           content: text(`子代理 ${target.name} 执行失败：${message}`),
           details: {
             error: "subagent_failed",
-            agentId: target.id,
             agentName: target.name,
             agentKind: target.kind,
             childSessionId,
@@ -211,39 +167,10 @@ export function delegateTaskTool(ctx: ToolContext): AgentTool<typeof delegateTas
   };
 }
 
-function findAgentById(
-  agents: ReturnType<typeof useConfigStore.getState>["agents"],
-  agentId?: string,
-) {
-  if (!agentId?.trim()) return undefined;
-  return agents.find((agent) => agent.id === agentId.trim());
-}
-
-function findDefaultCoworkAgent(
-  agents: ReturnType<typeof useConfigStore.getState>["agents"],
-) {
-  return (
-    agents.find((agent) => agent.id === "default") ??
-    agents.find((agent) => agent.name.trim().toLocaleLowerCase() === "cowork")
-  );
-}
-
-function findAgentByName(
-  agents: ReturnType<typeof useConfigStore.getState>["agents"],
-  agentName?: string,
-) {
-  const needle = agentName?.trim().toLocaleLowerCase();
-  if (!needle) return undefined;
-  return (
-    agents.find((agent) => agent.name.toLocaleLowerCase() === needle) ??
-    agents.find((agent) => agent.name.toLocaleLowerCase().includes(needle))
-  );
-}
-
-function makeChildSessionId(parentThreadId: string, agentId: string): string {
-  const safeAgentId = agentId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48) || "agent";
+function makeChildSessionId(parentThreadId: string, agentKey: string): string {
+  const safeKey = agentKey.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48) || "agent";
   const entropy = Math.random().toString(36).slice(2, 8);
-  return `${parentThreadId}__sub_${safeAgentId}_${Date.now()}_${entropy}`;
+  return `${parentThreadId}__sub_${safeKey}_${Date.now()}_${entropy}`;
 }
 
 function buildSubagentPrompt({

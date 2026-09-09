@@ -7,34 +7,23 @@ import type {
   Settings,
   ProvidersConfig,
   ProviderConfig,
-  AgentConfig,
 } from "@/types/config";
 import {
   getDataDir,
   ensureDataDir,
-  deleteAgentConfig,
-  listAgents,
-  readAgentConfig,
   readConfig,
-  writeAgentConfig,
   writeConfig,
 } from "@/lib/electron/electron-api";
 import {
   defaultSettings,
   defaultProviders,
 } from "@/config/defaults";
-import {
-  ALL_SKILLS_ID,
-  normalizeSkillSelection,
-} from "@/lib/skill";
-import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
 interface ConfigState {
   // 状态
   dataDir: string;
   settings: Settings;
   providers: ProvidersConfig;
-  agents: AgentConfig[];
   isLoading: boolean;
   error: string | null;
 
@@ -58,12 +47,6 @@ interface ConfigState {
   setDefaultProvider: (id: string) => Promise<void>;
   setDefaultModel: (providerId: string, modelId: string) => Promise<void>;
 
-  // Agents 操作
-  loadAgents: () => Promise<void>;
-  addAgent: (agent: AgentConfig) => Promise<void>;
-  updateAgent: (id: string, updates: Partial<AgentConfig>) => Promise<void>;
-  removeAgent: (id: string) => Promise<void>;
-
   // 错误处理
   clearError: () => void;
 }
@@ -75,7 +58,6 @@ export const useConfigStore = create<ConfigState>()(
       dataDir: "",
       settings: defaultSettings,
       providers: defaultProviders,
-      agents: [],
       isLoading: false,
       error: null,
 
@@ -84,29 +66,19 @@ export const useConfigStore = create<ConfigState>()(
         set({ isLoading: true, error: null });
 
         try {
-          // 获取数据目录
           const dataDir = await getDataDir();
           set({ dataDir });
-
-          // 确保目录结构存在
           await ensureDataDir();
-
-          // 加载配置
           await get().loadSettings();
           await get().loadProviders();
-          await get().loadAgents();
-
           console.log("配置初始化完成");
         } catch (error) {
           const message = error instanceof Error ? error.message : "初始化失败";
           set({ error: message });
           console.error("配置初始化失败:", error);
-
-          // 使用默认配置
           set({
             settings: { ...defaultSettings, dataDirectory: get().dataDir },
             providers: defaultProviders,
-            agents: [],
           });
         } finally {
           set({ isLoading: false });
@@ -123,7 +95,6 @@ export const useConfigStore = create<ConfigState>()(
           set({ settings });
         } catch (error) {
           console.warn("无法加载设置，使用默认值");
-          // 保存默认设置
           const settings = { ...defaultSettings, dataDirectory: get().dataDir };
           await writeConfig("settings.json", settings);
           set({ settings });
@@ -149,33 +120,33 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveSettings(settings);
       },
 
-      // 加载模型服务
+      // 加载 Providers
       loadProviders: async () => {
         try {
-          const providers = await readConfig<ProvidersConfig>("providers.json");
-          set({ providers: normalizeProviders(providers) });
+          const providers = normalizeProviders(
+            await readConfig<ProvidersConfig>("providers.json"),
+          );
+          set({ providers });
         } catch (error) {
-          console.warn("无法加载模型服务，使用默认值");
-          // 保存默认配置
-          await writeConfig("providers.json", defaultProviders);
+          console.warn("无法加载 Providers，使用默认值");
           set({ providers: defaultProviders });
         }
       },
 
-      // 保存模型服务
+      // 保存 Providers
       saveProviders: async (providers) => {
         try {
           await writeConfig("providers.json", providers);
           set({ providers });
         } catch (error) {
           const message =
-            error instanceof Error ? error.message : "保存模型服务失败";
+            error instanceof Error ? error.message : "保存 Providers 失败";
           set({ error: message });
           throw error;
         }
       },
 
-      // 添加模型服务
+      // 添加 Provider
       addProvider: async (provider) => {
         const providers = {
           ...get().providers,
@@ -184,7 +155,7 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 更新模型服务
+      // 更新 Provider
       updateProvider: async (id, updates) => {
         const providers = {
           ...get().providers,
@@ -195,27 +166,16 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 删除模型服务
+      // 删除 Provider
       removeProvider: async (id) => {
-        const remaining = get().providers.providers.filter((p) => p.id !== id);
-        const defaultRemoved = get().providers.defaultProvider === id;
-        const nextDefault = defaultRemoved
-          ? remaining.find((p) => p.enabled && p.models.length > 0) ?? remaining[0]
-          : undefined;
         const providers = {
           ...get().providers,
-          providers: remaining,
-          defaultProvider: nextDefault?.id ?? (defaultRemoved ? "" : get().providers.defaultProvider),
-          defaultModel: nextDefault
-            ? nextDefault.config.defaultModel?.trim() || nextDefault.models[0]?.id || ""
-            : defaultRemoved
-              ? ""
-              : get().providers.defaultModel,
+          providers: get().providers.providers.filter((p) => p.id !== id),
         };
         await get().saveProviders(providers);
       },
 
-      // 设置默认模型服务
+      // 设置默认 Provider
       setDefaultProvider: async (id) => {
         const providers = {
           ...get().providers,
@@ -224,7 +184,7 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 设置默认路由模型（模型服务 + 模型 二元组）
+      // 设置默认模型
       setDefaultModel: async (providerId, modelId) => {
         const providers = {
           ...get().providers,
@@ -234,49 +194,6 @@ export const useConfigStore = create<ConfigState>()(
         await get().saveProviders(providers);
       },
 
-      // 加载 Agents —— 完全以本地文件为准（builtin/agents 由 Rust 启动时同步到数据目录）
-      loadAgents: async () => {
-        try {
-          const agentIds = await listAgents();
-          const loadedAgents = await pMap(
-            agentIds,
-            (agentId) => readAgentConfig<AgentConfig>(agentId),
-            { concurrency: LOCAL_IO_CONCURRENCY },
-          );
-          // 仅做结构归一化（补缺失的可选字段），不写回磁盘、不注入代码内容
-          set({ agents: loadedAgents.map(normalizeAgent) });
-        } catch (error) {
-          console.warn("无法加载 Agents", error);
-          set({ agents: [] });
-        }
-      },
-
-      // 添加 Agent
-      addAgent: async (agent) => {
-        const agents = [...get().agents, agent];
-        await writeAgentConfig(agent.id, agent);
-        set({ agents });
-      },
-
-      // 更新 Agent
-      updateAgent: async (id, updates) => {
-        const agents = get().agents.map((a) =>
-          a.id === id ? { ...a, ...updates } : a,
-        );
-        const agent = agents.find((a) => a.id === id);
-        if (agent) {
-          await writeAgentConfig(id, agent);
-        }
-        set({ agents });
-      },
-
-      // 删除 Agent
-      removeAgent: async (id) => {
-        const agents = get().agents.filter((a) => a.id !== id);
-        await deleteAgentConfig(id);
-        set({ agents });
-      },
-
       // 清除错误
       clearError: () => {
         set({ error: null });
@@ -284,7 +201,6 @@ export const useConfigStore = create<ConfigState>()(
     }),
     {
       name: "polaragent-config",
-      // 只持久化部分状态
       partialize: (state) => ({
         dataDir: state.dataDir,
       }),
@@ -292,26 +208,7 @@ export const useConfigStore = create<ConfigState>()(
   ),
 );
 
-// 结构归一化：仅补齐缺失的可选字段，不覆盖磁盘上的任何内容
-function normalizeAgent(agent: AgentConfig): AgentConfig {
-  const type = agent.type ?? (agent.id === "default" ? "builtin" : "custom");
-  const enabledSkills = normalizeSkillSelection(agent.config.enabledSkills);
-  const shouldUseAllSkills =
-    agent.id === "default" && type === "builtin" && enabledSkills.length === 0;
-
-  return {
-    ...agent,
-    type,
-    config: {
-      ...agent.config,
-      model: agent.config.model ?? "",
-      enabledSkills: shouldUseAllSkills ? [ALL_SKILLS_ID] : enabledSkills,
-    },
-  };
-}
-
-// 归一化 providers 配置：补齐旧版 providers.json 可能缺失的 defaultProvider/defaultModel
-// 字段，避免 checkProviderConfig 等处对 defaultModel.trim() 在 undefined 上崩溃。
+// 归一化 providers 配置
 function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
   return {
     providers: Array.isArray(providers?.providers) ? providers.providers : [],
@@ -320,7 +217,7 @@ function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
   };
 }
 
-// 归一化图片生成配置：开发阶段只支持当前结构，缺失字段补默认值。
+// 归一化图片生成配置
 function normalizeImageGeneration(
   current: Settings["imageGeneration"],
   fallback: NonNullable<Settings["imageGeneration"]>,

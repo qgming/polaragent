@@ -47,7 +47,6 @@ import { useToast } from "@/hooks/useToast";
 import { openPath } from "@/lib/electron/electron-api";
 import { splitEveryMs, parseCronPreset } from "@/lib/schedule/presets";
 import { cn } from "@/lib/utils";
-import { useConfigStore } from "@/stores/config-store";
 import { useScheduleStore } from "@/stores/schedule-store";
 import type {
   CreateScheduledTaskRequest,
@@ -62,7 +61,6 @@ type ScheduleTab = "tasks" | "logs";
 
 interface GlobalScheduleLogItem extends ScheduleLogEntry {
   taskName: string;
-  agentName: string;
 }
 
 const INPUT_CLASS =
@@ -140,16 +138,6 @@ function getTriggeredByLabel(
   return t(`logs.triggeredByLabels.${triggeredBy}`);
 }
 
-function getAgentDisplayName(
-  agentId: string | undefined,
-  agents: Array<{ id: string; name: string }>,
-): string {
-  const normalizedId = (agentId || "default").trim() || "default";
-  const agent = agents.find((item) => item.id === normalizedId);
-  if (!agent) return normalizedId;
-  return agent.name || agent.id;
-}
-
 export function SchedulePage() {
   const { t, i18n } = useTranslation("schedule");
   const tasks = useScheduleStore((state) => state.tasks);
@@ -163,15 +151,7 @@ export function SchedulePage() {
   const toggleTask = useScheduleStore((state) => state.toggleTask);
   const runTaskNow = useScheduleStore((state) => state.runTaskNow);
   const logsByTask = useScheduleStore((state) => state.logsByTask);
-  const agents = useConfigStore((state) => state.agents);
   const toast = useToast();
-  const agentDisplayNames = useMemo(() => {
-    const entries: Array<[string, string]> = agents.map((agent) => [
-      agent.id,
-      getAgentDisplayName(agent.id, agents),
-    ]);
-    return new Map<string, string>(entries);
-  }, [agents]);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
@@ -211,8 +191,6 @@ export function SchedulePage() {
         task.name,
         task.description,
         task.payload.message,
-        task.payload.agentId,
-        agentDisplayNames.get(task.payload.agentId || "default"),
         task.payload.workingDir,
       ]
         .filter(Boolean)
@@ -221,22 +199,20 @@ export function SchedulePage() {
 
       return haystack.includes(query);
     });
-  }, [agentDisplayNames, runtimeStates, taskSearchQuery, taskStatusFilter, tasks]);
+  }, [runtimeStates, taskSearchQuery, taskStatusFilter, tasks]);
 
   const allLogs = useMemo<GlobalScheduleLogItem[]>(() => (
     Object.entries(logsByTask)
       .flatMap(([taskId, logs]) => {
         const task = taskById.get(taskId);
         const taskName = task?.name || taskId;
-        const agentName = agentDisplayNames.get(task?.payload.agentId || "default") || (task?.payload.agentId || "default");
         return logs.map((log) => ({
           ...log,
           taskName,
-          agentName,
         }));
       })
       .sort((a, b) => b.runAt - a.runAt)
-  ), [agentDisplayNames, logsByTask, taskById]);
+  ), [logsByTask, taskById]);
 
   const filteredLogs = useMemo(() => {
     const fromTs = parseDateFilter(logFromValue, false);
@@ -316,7 +292,7 @@ export function SchedulePage() {
   };
 
   return (
-    <div className="app-scrollbar h-full overflow-y-auto bg-background">
+    <div className="app-scrollbar h-full overflow-y-auto bg-white dark:bg-background">
       <div className="mx-auto w-full max-w-[1120px] px-6 py-6">
         <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
           <IconActionButton label={t("toolbar.refresh")} onClick={() => void loadTasks()} disabled={isLoading} variant="ghost" size="icon">
@@ -441,7 +417,6 @@ export function SchedulePage() {
         ) : (
           <section className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {filteredTasks.map((task) => {
-              const agentDisplayName = agentDisplayNames.get(task.payload.agentId || "default") || (task.payload.agentId || "default");
               return (
                 <div
                   key={task.id}
@@ -500,7 +475,7 @@ export function SchedulePage() {
                     <div className="mt-3.5 border-t border-border/80 pt-2.5">
                       <div
                         className="inline-flex max-w-full items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground"
-                        title={`${describeSchedule(task, t, i18n.language)}${agentDisplayName ? ` · ${String(agentDisplayName)}` : ""}`}
+                        title={describeSchedule(task, t, i18n.language)}
                       >
                         <Clock3 className="size-4 shrink-0" />
                         <span className="truncate">{describeSchedule(task, t, i18n.language)}</span>
@@ -538,7 +513,7 @@ export function SchedulePage() {
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-foreground">{log.taskName}</div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {log.agentName} · {getTriggeredByLabel(log.triggeredBy, t)}
+                    {getTriggeredByLabel(log.triggeredBy, t)}
                   </div>
                 </div>
                 <div>
@@ -556,7 +531,6 @@ export function SchedulePage() {
       <ScheduleEditorModal
         open={editorOpen}
         task={editingTask}
-        agents={agents}
         onClose={() => {
           setEditorOpen(false);
           setEditingTask(null);
@@ -643,7 +617,6 @@ function ScheduleLogDetailModal({
                 <DetailMetaCard label={t("task.logs")} value={getLogStatusLabel(log.status, t)} />
                 <DetailMetaCard label={t("logs.duration")} value={`${log.duration}ms`} />
                 <DetailMetaCard label={t("logs.triggeredBy")} value={getTriggeredByLabel(log.triggeredBy, t)} />
-                <DetailMetaCard label={t("editor.agentId")} value={log.agentName} />
               </div>
 
               <div className="grid gap-3 rounded-xl border border-border bg-card p-4 md:grid-cols-2">

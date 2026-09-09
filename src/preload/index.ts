@@ -74,15 +74,13 @@ contextBridge.exposeInMainWorld("polaragent", {
   config: {
     read: (fileName: string) => invoke("config:read", { fileName }),
     write: (fileName: string, content: string) => invoke("config:write", { fileName, content }),
-    listAgents: () => invoke("config:list-agents"),
-    readAgent: (agentId: string) => invoke("config:read-agent", { agentId }),
-    writeAgent: (agentId: string, content: string) => invoke("config:write-agent", { agentId, content }),
-    deleteAgent: (agentId: string) => invoke("config:delete-agent", { agentId }),
     listMcp: () => invoke("config:list-mcp"),
     readMcp: (mcpId: string) => invoke("config:read-mcp", { mcpId }),
     writeMcp: (mcpId: string, content: string) => invoke("config:write-mcp", { mcpId, content }),
     deleteMcp: (mcpId: string) => invoke("config:delete-mcp", { mcpId }),
     fetchBuiltinMcpConfigs: () => invoke("config:fetch-builtin-mcp"),
+    readAgentsMd: () => invoke("config:read-agents-md"),
+    writeAgentsMd: (content: string) => invoke("config:write-agents-md", { content }),
   },
   llm: {
     chatCompletion: (request: unknown) => invoke("llm:chat-completion", { request }),
@@ -96,8 +94,6 @@ contextBridge.exposeInMainWorld("polaragent", {
   },
   network: {
     corsFetch: (request: unknown) => invoke("network:cors-fetch", { request }),
-    fetchAgentIndex: () => invoke("network:fetch-agent-index"),
-    fetchAgentCategory: (fileName: string) => invoke("network:fetch-agent-category", { fileName }),
     webSearch: (request: unknown) => invoke("network:web-search", { request }),
     downloadUrlAsBase64: (request: unknown) => invoke("network:download-url-as-base64", { request }),
     openaiImageEdit: (request: unknown) => invoke("network:openai-image-edit", { request }),

@@ -19,7 +19,6 @@ export interface BackgroundJob {
   id: string;
   name: string;
   task: string;
-  agentId: string;
   parentThreadId: string;
   sessionId: string;
   status: BackgroundJobStatus;
@@ -37,7 +36,6 @@ export interface StartBackgroundJobParams {
   name?: string;
   task: string;
   context?: string;
-  agentId?: string;
 }
 
 export function startBackgroundJob(
@@ -46,12 +44,10 @@ export function startBackgroundJob(
 ): BackgroundJob {
   const id = makeJobId();
   const parentThreadId = ctx.parentThreadId ?? ctx.threadId;
-  const agentId = params.agentId?.trim() || ctx.requester?.id || "default";
   const job: BackgroundJob & { harness?: AgentHarness } = {
     id,
     name: params.name?.trim() || `后台任务 ${id}`,
     task: params.task.trim(),
-    agentId,
     parentThreadId,
     sessionId: `${parentThreadId}__bg_${id}`,
     status: "running",
@@ -100,7 +96,7 @@ async function runBackgroundJob(
   job.events.push({ timestamp: job.startedAt, message: "后台任务已启动。" });
   try {
     const { agentManager } = await import("./agent-manager");
-    const harness = await agentManager.getOrCreateHarness(job.parentThreadId, job.agentId, {
+    const harness = await agentManager.getOrCreateHarness(job.parentThreadId, {
       workingDir: ctx.workingDir,
       permissionMode: ctx.permissionMode,
       knowledgeBaseIds: ctx.knowledgeBaseIds,

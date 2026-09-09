@@ -44,7 +44,6 @@ interface ConversationState {
   saveMessage: (
     conversationId: string,
     message: ChatMessage,
-    agentId: string,
   ) => Promise<void>;
   createNewConversation: (
     id: string,

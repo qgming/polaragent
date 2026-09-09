@@ -14,7 +14,6 @@ import {
 import type { ToolPermissionMode } from "@/types/permissions";
 
 export interface ToolPermissionRequest {
-  agentId: string;
   requesterName: string;
   threadId: string;
   toolName: string;
@@ -291,11 +290,11 @@ async function reviewWithAi(
   request: ToolPermissionRequest,
   _mode: ToolPermissionMode,
 ): Promise<ToolPermissionDecision> {
-  const service = resolveModelService(request.agentId);
+  const service = resolveModelService();
   if (!service) {
     return {
       allow: false,
-      reason: "AI 自动审查需要可用模型，但当前助手没有可用模型服务，已拒绝执行。",
+      reason: "AI 自动审查需要可用模型，但当前没有可用模型服务，已拒绝执行。",
     };
   }
 

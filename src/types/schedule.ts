@@ -29,7 +29,6 @@ export interface AgentTurnPayload {
   kind: "agentTurn";
   message: string;
   contextDirs?: string[];
-  agentId?: string;
   workingDir?: string;
   permissionMode?: ToolPermissionMode;
 }

@@ -323,7 +323,6 @@ class ScheduleRuntime {
               resolve();
             },
           },
-          task.payload.agentId || "default",
           {
             threadId,
             workingDir: scheduledWorkingDir,

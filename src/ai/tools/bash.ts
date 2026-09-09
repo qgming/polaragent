@@ -6,7 +6,7 @@
 // 渲染侧在这里先做一次黑名单预检，提前拦截明显的高危命令。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { runShell } from "@/lib/electron/electron-api";
 import { text, type ToolContext } from "./tool-context";
@@ -52,7 +52,7 @@ const runBashParams = Type.Object({
   ),
 });
 
-export function runBashTool(ctx: ToolContext): AgentTool<typeof runBashParams> {
+export function runBashTool(): AgentHarnessTool<ToolContext, typeof runBashParams> {
   return {
     name: "run_bash",
     label: "运行命令",
@@ -61,7 +61,8 @@ export function runBashTool(ctx: ToolContext): AgentTool<typeof runBashParams> {
       "高危命令（rm -rf /、shutdown、mkfs、format 等）会被拦截。" +
       "长输出会被截断，请用具体命令避免无意义的大量输出。",
     parameters: runBashParams,
-    execute: async (_id, params: Static<typeof runBashParams>, _signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof runBashParams>, onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const command = params.command.trim();
       if (!command) {
         return {

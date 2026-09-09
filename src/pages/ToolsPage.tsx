@@ -136,7 +136,7 @@ export function ToolsPage() {
   };
 
   return (
-    <div className="app-scrollbar h-full overflow-y-auto bg-background">
+    <div className="app-scrollbar h-full overflow-y-auto bg-white dark:bg-background">
       <div className="mx-auto w-full max-w-[1120px] px-6 py-6">
         <TopToolbar
           onCreate={() =>
@@ -503,7 +503,7 @@ function RemoteToolList({
   }
 
   return (
-    <div className="border-t border-border bg-background">
+    <div className="border-t border-border bg-white dark:bg-background">
       <div>
         {tools.map((remoteTool) => (
           <div
@@ -701,7 +701,7 @@ function ToolGroupRow({
         </div>
       </ToolRowShell>
       {expanded ? (
-        <div className="border-t border-border bg-background">
+        <div className="border-t border-border bg-white dark:bg-background">
           {tools.map((tool) => (
             <div
               key={tool.id}

@@ -29,7 +29,6 @@ const createId = () =>
 
 export interface GoalExchangeParams {
   threadId: string;
-  agentId: string;
   userInput: string;
   projectId?: string;
   workingDir?: string;
@@ -141,7 +140,6 @@ async function runSingleRound(
           resolve({ result: null, error: message });
         },
       },
-      params.agentId,
       {
         threadId: params.threadId,
         workingDir: params.workingDir,
@@ -446,7 +444,6 @@ async function evaluateLatestAssistant(
       maxRuntimeMinutes: goal.maxRuntimeMinutes,
       runtimeMinutes: elapsedMinutes,
     },
-    params.agentId,
   );
 
   if (!evaluation) {
@@ -562,7 +559,6 @@ export async function runGoalExchange(params: GoalExchangeParams): Promise<void>
  */
 export async function startGoal(
   threadId: string,
-  agentId: string,
   projectId?: string,
   workingDir?: string,
   permissionMode?: ToolPermissionMode,
@@ -573,7 +569,6 @@ export async function startGoal(
 
   await runGoalExchange({
     threadId,
-    agentId,
     userInput: goal.goalText,
     projectId,
     workingDir,
@@ -587,7 +582,6 @@ export async function startGoal(
  */
 export async function resumeGoal(
   threadId: string,
-  agentId: string,
   projectId?: string,
   workingDir?: string,
   permissionMode?: ToolPermissionMode,
@@ -598,7 +592,6 @@ export async function resumeGoal(
 
   const params: GoalExchangeParams = {
     threadId,
-    agentId,
     userInput: goal.lastContinuePrompt || goal.goalText,
     projectId,
     workingDir,

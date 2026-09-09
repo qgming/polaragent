@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   htmlToPptx,
@@ -135,9 +135,7 @@ const createOfficeDocumentParams = Type.Object({
   ),
 });
 
-export function createOfficeDocumentTool(
-  ctx: ToolContext,
-): AgentTool<typeof createOfficeDocumentParams> {
+export function createOfficeDocumentTool(): AgentHarnessTool<ToolContext, typeof createOfficeDocumentParams> {
   return {
     name: "create_office_document",
     label: "创建办公文档",
@@ -151,7 +149,9 @@ export function createOfficeDocumentTool(
       "pdfStyle 支持 14 种：executive/data/proposal/whitepaper/academic/minimal/classic/modern/magazine/report/bento/letter/tech/notebook；不指定时按内容自动匹配。" +
       "无需外部 Office 或 OfficeCLI，生成后用户可在独立预览窗口查看。",
     parameters: createOfficeDocumentParams,
-    execute: async (_id, params: Static<typeof createOfficeDocumentParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof createOfficeDocumentParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const kind = params.format as OfficeKind;
       progressUpdate(onUpdate, {

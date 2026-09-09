@@ -1,4 +1,4 @@
-import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult, AgentHarnessToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 import { text } from "./tool-context";
 
@@ -33,7 +33,7 @@ export function throwIfAborted(signal?: AbortSignal): void {
 }
 
 export function progressUpdate(
-  onUpdate: AgentToolUpdateCallback<ToolProgressDetails> | undefined,
+  onUpdate: AgentHarnessToolUpdateCallback<ToolProgressDetails> | undefined,
   details: ToolProgressDetails,
 ): void {
   onUpdate?.({

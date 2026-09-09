@@ -315,24 +315,6 @@ async function openaiImageEdit(request: Record<string, any>) {
   return parseImageResponse(response);
 }
 
-// 读取助手广场分类索引（不含 prompt，体积极小）
-async function fetchAgentIndex() {
-  const source = projectResourcePath("resources", "market", "agents", "index.json");
-  if (!source) throw new Error("未找到助手广场索引：resources/market/agents/index.json");
-  return readText(source);
-}
-
-// 按分类文件名读取该分类下的全部助手
-// fileName 形如 "cat-编程.json"，来自索引，这里仍做白名单校验防止路径穿越
-async function fetchAgentCategory(fileName: string) {
-  if (typeof fileName !== "string" || !/^cat-[^\\/]+\.json$/.test(fileName)) {
-    throw new Error(`非法的助手分类文件名：${fileName}`);
-  }
-  const source = projectResourcePath("resources", "market", "agents", fileName);
-  if (!source) throw new Error(`未找到助手分类文件：resources/market/agents/${fileName}`);
-  return readText(source);
-}
-
 // 网络搜索统一路由 - 根据 provider 选择不同的服务商
 async function webSearch(request: Record<string, any>) {
   const provider = String(request.provider || "tavily");
@@ -804,8 +786,6 @@ function audioExtensionFromContentType(contentType: string, responseFormat?: str
 
 function register(ipcMain: IpcMain) {
   ipcMain.handle("network:cors-fetch", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => corsFetch(request));
-  ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
-  ipcMain.handle("network:fetch-agent-category", (_event: IpcMainInvokeEvent, { fileName }: { fileName: string }) => fetchAgentCategory(fileName));
   ipcMain.handle("network:web-search", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => webSearch(request));
   ipcMain.handle("network:download-url-as-base64", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => downloadUrlAsBase64(request));
   ipcMain.handle("network:openai-image-edit", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => openaiImageEdit(request));

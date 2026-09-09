@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { useScheduleStore } from "@/stores/schedule-store";
 import { text, type ToolContext } from "./tool-context";
@@ -31,7 +31,6 @@ const scheduleTaskParams = Type.Object({
   payload: Type.Object({
     message: Type.String({ description: "到时交给 Agent 执行的自然语言指令" }),
     contextDirs: Type.Optional(Type.Array(Type.String(), { description: "可选上下文目录列表" })),
-    agentId: Type.Optional(Type.String({ description: "可选 Agent ID，默认 default" })),
     workingDir: Type.Optional(Type.String({ description: "可选工作目录" })),
     permissionMode: Type.Optional(Type.Union([...SCHEDULE_PERMISSION_MODES])),
   }),
@@ -46,7 +45,7 @@ const scheduleTaskParams = Type.Object({
   run_now: Type.Optional(Type.Boolean({ description: "创建后是否立即执行一次" })),
 });
 
-export function scheduleTaskTool(_ctx: ToolContext): AgentTool<typeof scheduleTaskParams> {
+export function scheduleTaskTool(): AgentHarnessTool<ToolContext, typeof scheduleTaskParams> {
   return {
     name: "schedule_task",
     label: "创建定时任务",
@@ -54,7 +53,7 @@ export function scheduleTaskTool(_ctx: ToolContext): AgentTool<typeof scheduleTa
       "创建一个后台定时任务，让 Agent 在指定时间自动执行指令。支持 at / every / cron 三种调度方式，" +
       "可选立即执行一次。",
     parameters: scheduleTaskParams,
-    execute: async (_id, params: Static<typeof scheduleTaskParams>) => {
+    execute: async (_id, params: Static<typeof scheduleTaskParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await useScheduleStore.getState().initialize();
       const task = await useScheduleStore.getState().createTask({
         name: params.name,
@@ -65,7 +64,6 @@ export function scheduleTaskTool(_ctx: ToolContext): AgentTool<typeof scheduleTa
           kind: "agentTurn",
           message: params.payload.message,
           contextDirs: params.payload.contextDirs,
-          agentId: params.payload.agentId,
           workingDir: params.payload.workingDir,
           permissionMode: params.payload.permissionMode,
         },

@@ -5,7 +5,7 @@
 // 为 AI 提供上下文感知能力，无需通过 bash 命令间接获取。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { text, type ToolContext } from "./tool-context";
 
@@ -448,7 +448,7 @@ function formatOutput(data: any, categories: string[]): string {
   return sections.join("\n\n");
 }
 
-export function systemInfoTool(ctx: ToolContext): AgentTool<typeof systemInfoParams> {
+export function systemInfoTool(): AgentHarnessTool<ToolContext, typeof systemInfoParams> {
   return {
     name: "system_info",
     label: "系统信息",
@@ -457,7 +457,8 @@ export function systemInfoTool(ctx: ToolContext): AgentTool<typeof systemInfoPar
       "支持 GPS 定位（需要用户授权）：经纬度、精度、海拔、速度、方向等信息。" +
       "可用于时间感知、地理位置判断、系统兼容性检查等场景。",
     parameters: systemInfoParams,
-    execute: async (_id, params: SystemInfoParams) => {
+    execute: async (_id, params: SystemInfoParams, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       try {
         const categories = params.categories || ["all"];
         const hasAll = categories.includes("all");

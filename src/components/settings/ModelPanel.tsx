@@ -19,6 +19,7 @@ export function ModelPanel({
   onUpdateProvider,
   onRemoveProvider,
   onSetDefaultModel,
+  embedded,
 }: {
   providers: ProvidersConfig;
   onAddProvider: (provider: ProviderConfig) => Promise<void>;
@@ -28,6 +29,7 @@ export function ModelPanel({
   ) => Promise<void>;
   onRemoveProvider: (id: string) => Promise<void>;
   onSetDefaultModel: (providerId: string, modelId: string) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const [adding, setAdding] = useState(false);
@@ -35,10 +37,14 @@ export function ModelPanel({
 
   return (
     <section>
-      <PageTitle
-        title={t("models.title")}
-        description={t("models.description")}
-      />
+      {!embedded ? (
+        <PageTitle
+          title={t("models.title")}
+          description={t("models.description")}
+        />
+      ) : (
+        <h3 className="mb-4 text-sm font-semibold text-muted-foreground">{t("models.title")}</h3>
+      )}
 
       <DefaultModelCard
         providers={providers}

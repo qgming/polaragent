@@ -70,15 +70,13 @@ interface Window {
     config: {
       read: (fileName: string) => Promise<string>;
       write: (fileName: string, content: string) => Promise<void>;
-      listAgents: () => Promise<string[]>;
-      readAgent: (agentId: string) => Promise<string>;
-      writeAgent: (agentId: string, content: string) => Promise<void>;
-      deleteAgent: (agentId: string) => Promise<void>;
       listMcp: () => Promise<string[]>;
       readMcp: (mcpId: string) => Promise<string>;
       writeMcp: (mcpId: string, content: string) => Promise<void>;
       deleteMcp: (mcpId: string) => Promise<void>;
       fetchBuiltinMcpConfigs: () => Promise<string>;
+      readAgentsMd: () => Promise<string>;
+      writeAgentsMd: (content: string) => Promise<void>;
     };
     llm: {
       chatCompletion: (request: import("@/lib/electron/electron-api").LlmChatCompletionRequest) => Promise<import("@/lib/electron/electron-api").LlmChatCompletionResponse>;
@@ -94,8 +92,6 @@ interface Window {
         body?: string;
         timeoutMs?: number;
       }) => Promise<unknown>;
-      fetchAgentIndex: () => Promise<string>;
-      fetchAgentCategory: (fileName: string) => Promise<string>;
       webSearch: (request: {
         provider: string;
         query: string;

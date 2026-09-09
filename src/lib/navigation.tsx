@@ -1,7 +1,7 @@
 // 导航相关的共享类型与常量
 // src/lib/navigation.tsx
 
-import { AlarmClock, Blocks, BookOpen, Bot, Plus, Settings, Wrench, Zap } from "lucide-react";
+import { AlarmClock, Blocks, BookOpen, Plus, Wrench, Zap } from "lucide-react";
 import type { ComponentType } from "react";
 
 export type IconComponent = ComponentType<{
@@ -13,10 +13,8 @@ export type PageId =
   | "chat"
   | "skills"
   | "tools"
-  | "agent"
   | "knowledge"
-  | "schedule"
-  | "settings";
+  | "schedule";
 
 // 各页面的图标（标题与描述已迁移到 nav.json 翻译文件，按 pageId 查 t("nav:pages.<id>.title")）
 export const pages: Record<
@@ -26,10 +24,8 @@ export const pages: Record<
   chat: { icon: Plus },
   skills: { icon: Zap },
   tools: { icon: Wrench },
-  agent: { icon: Bot },
   knowledge: { icon: BookOpen },
   schedule: { icon: AlarmClock },
-  settings: { icon: Settings },
 };
 
 export type NavItem = {
@@ -48,7 +44,7 @@ export const secondaryNav: NavItem[] = [
   { id: "schedule", icon: AlarmClock },
 ];
 
-// 「扩展」折叠分组：收纳技能 / 工具 / 助手
+// 「扩展」折叠分组：收纳技能 / 工具
 export const extensionNav: {
   icon: IconComponent;
   items: NavItem[];
@@ -57,6 +53,5 @@ export const extensionNav: {
   items: [
     { id: "skills", icon: Zap },
     { id: "tools", icon: Wrench },
-    { id: "agent", icon: Bot },
   ],
 };

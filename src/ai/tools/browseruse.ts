@@ -4,7 +4,7 @@
 // 基于 Chrome 扩展桥接实现浏览器的观察与操作
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { text, type ToolContext } from "./tool-context";
 
@@ -20,13 +20,13 @@ const tabsParams = Type.Object({
   profile: Type.Optional(Type.String({ description: "Chrome Profile ID 或 label" })),
 });
 
-export function browserTabsTool(_ctx: ToolContext): AgentTool<typeof tabsParams> {
+export function browserTabsTool(): AgentHarnessTool<ToolContext, typeof tabsParams> {
   return {
     name: "browser_tabs",
     label: "列出标签页",
     description: "列出当前所有浏览器标签页",
     parameters: tabsParams,
-    execute: async (_toolCallId, params: Static<typeof tabsParams>) => {
+    execute: async (_toolCallId, params: Static<typeof tabsParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const tabs = await callBrowserUse("tabs", params);
       return {
         content: text(`找到 ${tabs.length} 个标签页:\n${JSON.stringify(tabs, null, 2)}`),
@@ -42,13 +42,13 @@ const openParams = Type.Object({
   profile: Type.Optional(Type.String({ description: "Chrome Profile ID 或 label" })),
 });
 
-export function browserOpenTool(_ctx: ToolContext): AgentTool<typeof openParams> {
+export function browserOpenTool(): AgentHarnessTool<ToolContext, typeof openParams> {
   return {
     name: "browser_open",
     label: "打开标签页",
     description: "打开新的浏览器标签页",
     parameters: openParams,
-    execute: async (_toolCallId, params: Static<typeof openParams>) => {
+    execute: async (_toolCallId, params: Static<typeof openParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("open", params);
       return {
         content: text(`已打开标签页: ${result.tabId}`),
@@ -63,13 +63,13 @@ const closeParams = Type.Object({
   tabId: Type.Number({ description: "标签页 ID" }),
 });
 
-export function browserCloseTool(_ctx: ToolContext): AgentTool<typeof closeParams> {
+export function browserCloseTool(): AgentHarnessTool<ToolContext, typeof closeParams> {
   return {
     name: "browser_close",
     label: "关闭标签页",
     description: "关闭指定的浏览器标签页",
     parameters: closeParams,
-    execute: async (_toolCallId, params: Static<typeof closeParams>) => {
+    execute: async (_toolCallId, params: Static<typeof closeParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await callBrowserUse("close", params);
       return {
         content: text(`已关闭标签页 ${params.tabId}`),
@@ -85,13 +85,13 @@ const scanParams = Type.Object({
   textOnly: Type.Optional(Type.Boolean({ description: "仅返回纯文本", default: true })),
 });
 
-export function browserScanTool(_ctx: ToolContext): AgentTool<typeof scanParams> {
+export function browserScanTool(): AgentHarnessTool<ToolContext, typeof scanParams> {
   return {
     name: "browser_scan",
     label: "扫描页面",
     description: "扫描页面内容,获取文本或结构化信息",
     parameters: scanParams,
-    execute: async (_toolCallId, params: Static<typeof scanParams>) => {
+    execute: async (_toolCallId, params: Static<typeof scanParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("scan", params);
       return {
         content: text(typeof result === "string" ? result : JSON.stringify(result, null, 2)),
@@ -108,13 +108,13 @@ const snapshotParams = Type.Object({
   offset: Type.Optional(Type.Number({ description: "偏移量", default: 0 })),
 });
 
-export function browserSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapshotParams> {
+export function browserSnapshotTool(): AgentHarnessTool<ToolContext, typeof snapshotParams> {
   return {
     name: "browser_snapshot",
     label: "页面快照",
     description: "获取页面可操作元素快照,生成 @e 引用用于后续点击或填充",
     parameters: snapshotParams,
-    execute: async (_toolCallId, params: Static<typeof snapshotParams>) => {
+    execute: async (_toolCallId, params: Static<typeof snapshotParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("snapshot", params);
       const elements = result.elements
         .map((el: any, i: number) => {
@@ -146,13 +146,13 @@ const clickParams = Type.Object({
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
-export function browserClickTool(_ctx: ToolContext): AgentTool<typeof clickParams> {
+export function browserClickTool(): AgentHarnessTool<ToolContext, typeof clickParams> {
   return {
     name: "browser_click",
     label: "点击元素",
     description: "点击页面元素,支持 CSS 选择器或 @e 引用。可通过 action 指定单击、双击、右键菜单、鼠标按下/释放",
     parameters: clickParams,
-    execute: async (_toolCallId, params: Static<typeof clickParams>) => {
+    execute: async (_toolCallId, params: Static<typeof clickParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await callBrowserUse("click", params);
       return {
         content: text(`已${params.action ?? "点击"}元素: ${params.target}`),
@@ -177,13 +177,13 @@ const fillParams = Type.Object({
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
-export function browserFillTool(_ctx: ToolContext): AgentTool<typeof fillParams> {
+export function browserFillTool(): AgentHarnessTool<ToolContext, typeof fillParams> {
   return {
     name: "browser_fill",
     label: "填充表单",
     description: "填充表单输入框；当目标为 <select> 下拉框时，可按 value、text 或 index 选择选项",
     parameters: fillParams,
-    execute: async (_toolCallId, params: Static<typeof fillParams>) => {
+    execute: async (_toolCallId, params: Static<typeof fillParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await callBrowserUse("fill", params);
       return {
         content: text(`已填充 ${params.target}: ${params.value}`),
@@ -201,13 +201,13 @@ const dragParams = Type.Object({
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
-export function browserDragTool(_ctx: ToolContext): AgentTool<typeof dragParams> {
+export function browserDragTool(): AgentHarnessTool<ToolContext, typeof dragParams> {
   return {
     name: "browser_drag",
     label: "拖拽元素",
     description: "在页面中模拟拖拽操作，将源元素拖动到目标元素",
     parameters: dragParams,
-    execute: async (_toolCallId, params: Static<typeof dragParams>) => {
+    execute: async (_toolCallId, params: Static<typeof dragParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await callBrowserUse("drag", params);
       return {
         content: text(`已拖拽从 ${params.source} 到 ${params.target}`),
@@ -225,13 +225,14 @@ const uploadParams = Type.Object({
   snapshotId: Type.Optional(Type.String({ description: "用于解析 @e 引用的快照 ID" })),
 });
 
-export function browserUploadTool(ctx: ToolContext): AgentTool<typeof uploadParams> {
+export function browserUploadTool(): AgentHarnessTool<ToolContext, typeof uploadParams> {
   return {
     name: "browser_upload",
     label: "上传文件",
     description: "通过 input[type=file] 元素上传本地文件",
     parameters: uploadParams,
-    execute: async (_toolCallId, params: Static<typeof uploadParams>) => {
+    execute: async (_toolCallId, params: Static<typeof uploadParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       await callBrowserUse("upload", { ...params, workDir: ctx.workingDir });
       return {
         content: text(`已上传文件到 ${params.selector}: ${params.filePath}`),
@@ -247,13 +248,13 @@ const executeParams = Type.Object({
   script: Type.String({ description: "要执行的 JavaScript 代码，可模拟键盘组合键等操作" }),
 });
 
-export function browserExecuteTool(_ctx: ToolContext): AgentTool<typeof executeParams> {
+export function browserExecuteTool(): AgentHarnessTool<ToolContext, typeof executeParams> {
   return {
     name: "browser_execute",
     label: "执行脚本",
     description: "在页面中执行 JavaScript 代码。需要键盘组合键时可用 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true })) 等方式模拟",
     parameters: executeParams,
-    execute: async (_toolCallId, params: Static<typeof executeParams>) => {
+    execute: async (_toolCallId, params: Static<typeof executeParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("exec", params);
       return {
         content: text(`执行结果:\n${JSON.stringify(result, null, 2)}`),
@@ -271,13 +272,14 @@ const screenshotParams = Type.Object({
   snapshotId: Type.Optional(Type.String({ description: "browser_snapshot 返回的 snapshotId，用于解析 @e 引用" })),
 });
 
-export function browserScreenshotTool(ctx: ToolContext): AgentTool<typeof screenshotParams> {
+export function browserScreenshotTool(): AgentHarnessTool<ToolContext, typeof screenshotParams> {
   return {
     name: "browser_screenshot",
     label: "浏览器截图",
     description: "截取页面截图",
     parameters: screenshotParams,
-    execute: async (_toolCallId, params: Static<typeof screenshotParams>) => {
+    execute: async (_toolCallId, params: Static<typeof screenshotParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const result = await callBrowserUse("screenshot", { ...params, workDir: ctx.workingDir });
       return {
         content: text(`截图已保存到: ${result.path}\n文件名: ${result.filename}`),
@@ -307,13 +309,13 @@ const consoleParams = Type.Object({
   limit: Type.Optional(Type.Number({ description: "返回数量上限", default: 100 })),
 });
 
-export function browserNetworkTool(_ctx: ToolContext): AgentTool<typeof networkParams> {
+export function browserNetworkTool(): AgentHarnessTool<ToolContext, typeof networkParams> {
   return {
     name: "browser_network",
     label: "网络监控",
     description: "监控网络请求",
     parameters: networkParams,
-    execute: async (_toolCallId, params: Static<typeof networkParams>) => {
+    execute: async (_toolCallId, params: Static<typeof networkParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("network", params);
       return {
         content: text(JSON.stringify(result, null, 2)),
@@ -323,13 +325,13 @@ export function browserNetworkTool(_ctx: ToolContext): AgentTool<typeof networkP
   };
 }
 
-export function browserConsoleTool(_ctx: ToolContext): AgentTool<typeof consoleParams> {
+export function browserConsoleTool(): AgentHarnessTool<ToolContext, typeof consoleParams> {
   return {
     name: "browser_console",
     label: "控制台日志",
     description: "监听并读取浏览器页面 console 与异常日志",
     parameters: consoleParams,
-    execute: async (_toolCallId, params: Static<typeof consoleParams>) => {
+    execute: async (_toolCallId, params: Static<typeof consoleParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const result = await callBrowserUse("console", params);
       return {
         content: text(JSON.stringify(result, null, 2)),

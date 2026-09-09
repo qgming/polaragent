@@ -92,7 +92,7 @@ export function SkillsPage() {
   };
 
   return (
-    <div className="app-scrollbar h-full overflow-y-auto bg-background">
+    <div className="app-scrollbar h-full overflow-y-auto bg-white dark:bg-background">
       <div className="mx-auto w-full max-w-[1100px] px-6 py-6">
         <TopToolbar
           showSearch={activeTab !== "discover"}

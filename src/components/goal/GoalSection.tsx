@@ -34,10 +34,8 @@ import { cn } from "@/lib/utils";
 
 export function GoalSection({
   threadId,
-  agentId,
 }: {
   threadId: string;
-  agentId: string;
 }) {
   const { t } = useTranslation("common");
   const goal = useGoalStore((s) => s.getGoal(threadId));
@@ -112,7 +110,6 @@ export function GoalSection({
     const workingDir = useTaskMonitorStore.getState().getMonitor(threadId).workingDir;
     void startGoal(
       threadId,
-      agentId,
       thread?.projectId,
       workingDir,
       thread?.permissionMode,
@@ -125,7 +122,6 @@ export function GoalSection({
     const workingDir = useTaskMonitorStore.getState().getMonitor(threadId).workingDir;
     void resumeGoal(
       threadId,
-      agentId,
       thread?.projectId,
       workingDir,
       thread?.permissionMode,

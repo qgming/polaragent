@@ -2,7 +2,7 @@
 // 调用 OpenAI / OpenAI 兼容的 /audio/transcriptions 与 /audio/speech 接口。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   openAiTranscription,
@@ -72,7 +72,7 @@ function addAudioArtifact(ctx: ToolContext, path: string) {
   useTaskMonitorStore.getState().addArtifact(ctx.threadId, artifact);
 }
 
-export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speechRecognitionParams> {
+export function speechRecognitionTool(): AgentHarnessTool<ToolContext, typeof speechRecognitionParams> {
   return {
     name: "speech_recognition",
     label: "语音识别",
@@ -80,7 +80,9 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
       "将音频文件转写为文字。使用设置 > 音频设置中的 ASR 配置；" +
       "支持常见音频格式（mp3/wav/m4a/webm/ogg 等），返回识别的文本。",
     parameters: speechRecognitionParams,
-    execute: async (_id, params: SpeechRecognitionParams, signal, onUpdate) => {
+    execute: async (_id, params: SpeechRecognitionParams, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       progressUpdate(onUpdate, {
         phase: "validating",
@@ -128,7 +130,7 @@ export function speechRecognitionTool(ctx: ToolContext): AgentTool<typeof speech
   };
 }
 
-export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSynthesisParams> {
+export function speechSynthesisTool(): AgentHarnessTool<ToolContext, typeof speechSynthesisParams> {
   return {
     name: "speech_synthesis",
     label: "语音合成",
@@ -136,7 +138,9 @@ export function speechSynthesisTool(ctx: ToolContext): AgentTool<typeof speechSy
       "将文字合成为语音并保存到工作目录。使用设置 > 音频设置中的 TTS 配置；" +
       "支持指定音色、语速、格式等参数，返回保存的音频文件路径并登记为产物。",
     parameters: speechSynthesisParams,
-    execute: async (_id, params: SpeechSynthesisParams, signal, onUpdate) => {
+    execute: async (_id, params: SpeechSynthesisParams, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       progressUpdate(onUpdate, {
         phase: "validating",

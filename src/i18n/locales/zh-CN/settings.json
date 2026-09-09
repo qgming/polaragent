@@ -32,19 +32,20 @@
     "voiceRefineTextDesc": "识别完成后调用 AI 对文本进行整理，去除口头语与语气词，使表达更清晰、正式。"
   },
   "nav": {
+    "title": "设置",
+    "groupGeneral": "通用",
+    "groupCapability": "能力",
+    "groupAutomation": "自动化",
+    "groupAbout": "关于",
     "general": "通用",
-    "advanced": "高级",
-    "aboutGroup": "关于",
-    "preferences": "偏好设置",
-    "models": "模型设置",
-    "image": "图片设置",
-    "audio": "音频设置",
+    "models": "模型",
     "webSearch": "网络搜索",
-    "knowledge": "嵌入配置",
     "memory": "全局记忆",
-    "data": "数据管理",
-    "about": "关于软件",
-    "backToApp": "返回应用"
+    "personal": "个性化",
+    "automation": "自动化",
+    "about": "关于",
+    "searchPlaceholder": "搜索设置",
+    "noResults": "无匹配项"
   },
   "models": {
     "title": "模型设置",
@@ -331,5 +332,15 @@
     "upToDate": "当前已是最新版本",
     "checkFailed": "检查更新失败",
     "noUpdate": "未找到可用更新"
+  },
+  "agentsMd": {
+    "title": "AGENTS.md",
+    "description": "全局 Agent 指令文件，作为系统级提示注入每次对话。文件位于数据目录下的 AGENTS.md。",
+    "content": "文件内容",
+    "contentDesc": "编辑 AGENTS.md 正文。保存后立即对新对话生效。",
+    "contentPlaceholder": "在此编写全局 Agent 指令…",
+    "save": "保存内容",
+    "saved": "内容已保存",
+    "saveFailed": "保存失败，请检查文件权限"
   }
 }

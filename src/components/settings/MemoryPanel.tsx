@@ -40,9 +40,11 @@ const MEMORY_TYPES: MemoryType[] = [
 export function MemoryPanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const memory = settings.memory ?? defaultSettings.memory!;
@@ -102,7 +104,11 @@ export function MemoryPanel({
 
   return (
     <section>
-      <PageTitle title={t("memory.title")} description={t("memory.description")} />
+      {!embedded ? (
+
+        <PageTitle title={t("memory.title")} description={t("memory.description")} />
+
+      ) : null}
 
       <div className="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
         <SettingRow

@@ -10,9 +10,11 @@ import { PageTitle, SettingDropdown, SettingRow } from "./settings-shared";
 export function PreferencesPanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
 
@@ -26,9 +28,11 @@ export function PreferencesPanel({
 
   return (
     <section>
-      <PageTitle title={t("preferences.title")} description={t("preferences.description")} />
+      {!embedded ? (
+        <PageTitle title={t("preferences.title")} description={t("preferences.description")} />
+      ) : null}
 
-      <div className="mt-8 divide-y divide-border rounded-xl border border-border bg-card">
+      <div className={embedded ? "divide-y divide-border/50 rounded-xl border border-border/60 bg-card" : "mt-8 divide-y divide-border/50 rounded-xl border border-border/60 bg-card"}>
         <SettingRow
           title={t("preferences.language")}
           description={t("preferences.languageDesc")}
@@ -134,7 +138,7 @@ function WindowBehaviorCard({
     });
 
   return (
-    <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
+    <div className="mt-6 divide-y divide-border/50 rounded-xl border border-border/60 bg-card">
       <SettingRow
         title={t("preferences.closeToTray")}
         description={t("preferences.closeToTrayDesc")}
@@ -189,7 +193,7 @@ function VoiceInputCard({
   };
 
   return (
-    <div className="mt-6 divide-y divide-border rounded-xl border border-border bg-card">
+    <div className="mt-6 divide-y divide-border/50 rounded-xl border border-border/60 bg-card">
       <SettingRow
         title={t("preferences.voiceAutoSend")}
         description={t("preferences.voiceAutoSendDesc")}

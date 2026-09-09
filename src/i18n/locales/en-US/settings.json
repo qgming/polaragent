@@ -32,19 +32,20 @@
     "voiceRefineTextDesc": "After recognition, use AI to clean up the text — removing filler words and hesitation to make it clearer and more formal."
   },
   "nav": {
+    "title": "Settings",
+    "groupGeneral": "General",
+    "groupCapability": "Capabilities",
+    "groupAutomation": "Automation",
+    "groupAbout": "About",
     "general": "General",
-    "advanced": "Advanced",
-    "aboutGroup": "About",
-    "preferences": "Preferences",
     "models": "Models",
-    "image": "Image",
-    "audio": "Audio",
     "webSearch": "Web Search",
-    "knowledge": "Embedding",
     "memory": "Global Memory",
-    "data": "Data",
+    "personal": "Personalization",
+    "automation": "Automation",
     "about": "About",
-    "backToApp": "Back to App"
+    "searchPlaceholder": "Search settings",
+    "noResults": "No results"
   },
   "models": {
     "title": "Model Settings",
@@ -331,5 +332,15 @@
     "upToDate": "You're up to date",
     "checkFailed": "Update check failed",
     "noUpdate": "No updates available"
+  },
+  "agentsMd": {
+    "title": "AGENTS.md",
+    "description": "Global agent instructions file, injected as system-level prompt into every conversation. Located at AGENTS.md in the data directory.",
+    "content": "File content",
+    "contentDesc": "Edit the AGENTS.md body. Saved content applies to new conversations immediately.",
+    "contentPlaceholder": "Write global agent instructions here…",
+    "save": "Save content",
+    "saved": "Content saved",
+    "saveFailed": "Save failed. Check file permissions."
   }
 }

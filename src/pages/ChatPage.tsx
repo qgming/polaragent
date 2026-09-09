@@ -10,7 +10,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -36,12 +35,6 @@ import {
 import { TaskMonitorPanel } from "@/components/TaskMonitorPanel";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -57,7 +50,6 @@ import {
   useThreadMessages,
   useThreadPermissionMode,
   useThreadKnowledgeBaseIds,
-  useThreadAgentId,
 } from "@/stores/chat-store";
 import type { ChatAttachment, ChatSkillRef, MessageFinishMetadata, Segment } from "@/lib/chat";
 import { useSkillsStore } from "@/stores/skills/skills-store";
@@ -72,8 +64,6 @@ import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
 import type { ToolPermissionMode } from "@/types/permissions";
 
 export function ChatPage({
-  activeThreadTitle,
-  agentId,
   applyStreamingUpdate,
   composer,
   failAssistant,
@@ -81,11 +71,8 @@ export function ChatPage({
   setComposer,
   startExchange,
   threadId,
-  subtitle,
   hideWorkingDirPicker = false,
 }: {
-  activeThreadTitle: string;
-  agentId: string;
   applyStreamingUpdate: (
     threadId: string,
     messageId: string,
@@ -109,8 +96,6 @@ export function ChatPage({
     threadId: string;
   };
   threadId: string;
-  // 副标题：项目名 · 会话名（项目聊天页专用）
-  subtitle?: string;
   // 隐藏工作目录选择按钮（项目聊天页专用，目录由项目绑定）
   hideWorkingDirPicker?: boolean;
 }) {
@@ -120,9 +105,6 @@ export function ChatPage({
   const skills = useSkillsStore((state) => state.skills);
   const permissionMode = useThreadPermissionMode(threadId);
   const knowledgeBaseIds = useThreadKnowledgeBaseIds(threadId);
-  // 助手列表和当前会话的助手 ID
-  const agents = useConfigStore((state) => state.agents);
-  const threadAgentId = useThreadAgentId(threadId) || agentId;
   // 当前对话所属项目的系统提示词
   const projects = useProjectsStore((state) => state.projects);
   const currentProjectId = useChatStore(
@@ -208,10 +190,6 @@ export function ChatPage({
           .catch((err) => console.error("更新项目工作目录失败:", err));
       }
     }
-  };
-
-  const handleAgentChange = (newAgentId: string) => {
-    useChatStore.getState().setThreadAgentId(threadId, newAgentId);
   };
 
   const handleKnowledgeChange = (ids: string[]) => {
@@ -343,7 +321,6 @@ export function ChatPage({
     ) {
       void runGoalExchange({
         threadId: exchangeThreadId,
-        agentId,
         userInput: input,
         workingDir,
         attachments: sendAttachments,
@@ -382,7 +359,6 @@ export function ChatPage({
         onError: (message) => failAssistant(exchangeThreadId, assistantId, message),
         onRetry: (attempt) => setRetryAttempt(exchangeThreadId, assistantId, attempt),
       },
-      agentId,
       {
         threadId: exchangeThreadId,
         workingDir,
@@ -417,8 +393,6 @@ export function ChatPage({
     <>
       <div className="flex h-full min-w-0">
         <section className="relative flex h-full min-w-0 flex-1 flex-col">
-          <PageHeader title={subtitle || activeThreadTitle || t("chat:newChat")} />
-
           <div
             ref={scrollAreaRef}
             className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
@@ -457,9 +431,6 @@ export function ChatPage({
             knowledgeBaseIds={knowledgeBaseIds}
             onKnowledgeChange={handleKnowledgeChange}
             hideWorkingDirPicker={hideWorkingDirPicker}
-            agents={agents}
-            currentAgentId={threadAgentId}
-            onAgentChange={handleAgentChange}
           />
         </section>
 
@@ -469,22 +440,12 @@ export function ChatPage({
               key="task-monitor-panel"
               threadId={threadId}
               sessionFilesDir={sessionFilesDir}
-              agentId={agentId}
             />
           ) : null}
         </AnimatePresence>
       </div>
       <AlertDialog />
     </>
-  );
-}
-
-function PageHeader({ action, title }: { action?: ReactNode; title: string }) {
-  return (
-    <header className="flex h-[52px] shrink-0 items-center justify-between bg-background px-5">
-      <h1 className="min-w-0 truncate text-sm font-normal">{title}</h1>
-      {action ? <div className="ml-4 shrink-0">{action}</div> : null}
-    </header>
   );
 }
 
@@ -509,9 +470,6 @@ function Composer({
   knowledgeBaseIds,
   onKnowledgeChange,
   hideWorkingDirPicker = false,
-  agents,
-  currentAgentId,
-  onAgentChange,
 }: {
   composerRef: RefObject<SkillComposerHandle | null>;
   isResponding: boolean;
@@ -534,17 +492,11 @@ function Composer({
   onKnowledgeChange: (ids: string[]) => void;
   // 隐藏工作目录选择按钮（项目对话页专用，目录由项目绑定）
   hideWorkingDirPicker?: boolean;
-  // 助手列表和切换（会话级，不影响其他会话）
-  agents: { id: string; name: string; avatar?: string }[];
-  currentAgentId: string;
-  onAgentChange: (agentId: string) => void;
 }) {
   const { t } = useTranslation();
   const audioRecorder = useAudioRecorder();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-  // 追踪助手下拉菜单开关，打开时隐藏 Tooltip 避免重叠
-  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   // 响应式宽度断点
   const breakpoint = useResponsiveWidth();
 
@@ -705,48 +657,6 @@ function Composer({
               mode={permissionMode}
               onChange={onPermissionModeChange}
             />
-            {/* 会话级助手切换：切换仅影响当前会话，不影响其他会话 */}
-            <DropdownMenu onOpenChange={setAgentMenuOpen}>
-              <Tooltip open={agentMenuOpen ? false : undefined}>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      className={
-                        breakpoint === "narrow"
-                          ? "size-7 justify-center rounded-md p-0 bg-muted/50 text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
-                          : "h-7 min-w-0 gap-1.5 bg-muted/50 px-2 text-xs text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
-                      }
-                      type="button"
-                      variant="ghost"
-                    >
-                      <span className="text-sm leading-none">
-                        {agents.find((a) => a.id === currentAgentId)?.avatar || "⚡"}
-                      </span>
-                      {breakpoint !== "narrow" ? (
-                        <span className="truncate">
-                          {agents.find((a) => a.id === currentAgentId)?.name || ""}
-                        </span>
-                      ) : null}
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {agents.find((a) => a.id === currentAgentId)?.name || currentAgentId}
-                </TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="start" className="w-56">
-                {agents.map((agent) => (
-                  <DropdownMenuItem
-                    key={agent.id}
-                    onSelect={() => onAgentChange(agent.id)}
-                    className={agent.id === currentAgentId ? "font-medium" : ""}
-                  >
-                    <span className="mr-1.5 text-sm leading-none">{agent.avatar || "⚡"}</span>
-                    <span className="truncate">{agent.name}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
             {!hideWorkingDirPicker && (
             <Tooltip>
               <TooltipTrigger asChild>

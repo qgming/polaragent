@@ -293,7 +293,6 @@ function createRafBatcher(handler: (update: { appendDelta?: string; segments?: S
 export async function promptAgent(
   input: string,
   handlers: AgentHandlers,
-  agentId: string,
   options: PromptOptions,
 ) {
   let settled = false;
@@ -310,7 +309,7 @@ export async function promptAgent(
   try {
     let harness: AgentHarness;
     try {
-      harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
+      harness = await agentManager.getOrCreateHarness(options.threadId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
@@ -322,7 +321,7 @@ export async function promptAgent(
     } catch (error) {
       // 运行时未初始化时兜底重建一次
       initializeAiRuntime();
-      harness = await agentManager.getOrCreateHarness(options.threadId, agentId, {
+      harness = await agentManager.getOrCreateHarness(options.threadId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
         knowledgeBaseIds: options.knowledgeBaseIds,
@@ -333,7 +332,7 @@ export async function promptAgent(
       });
     }
 
-    const runtimeModelId = agentManager.getRuntimeModelId(agentId);
+    const runtimeModelId = agentManager.getRuntimeModelId();
     const monitor = useTaskMonitorStore.getState();
     let assistantText = "";
     // 本次 run 内按真实顺序产生的可渲染过程：assistant 轮次 + 中途引导状态。
@@ -956,9 +955,6 @@ function summarizeToolResult(toolName: string, result: unknown, isError = false)
       const suffix = formatDurationSuffix(details.durationMs);
       if (toolName === "update_todos" && Array.isArray(details.todos)) {
         return `已更新待办 ${details.todos.length} 项${suffix}`;
-      }
-      if (toolName === "list_agents" && Array.isArray(details.agents)) {
-        return `列出 ${details.agents.length} 个助手${suffix}`;
       }
       if (toolName === "start_background_task" && typeof details.jobId === "string") {
         return `后台任务已启动：${details.jobId}${suffix}`;

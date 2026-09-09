@@ -17,5 +17,3 @@ export const GOAL_CONFIG_ENTRY = "goal_config";
 export const GOAL_EVENT_ENTRY = "goal_event";
 // 项目会话归属：把会话所属的 projectId 落为一条会话条目
 export const PROJECT_REF_ENTRY = "project_ref";
-// 会话级助手 ID：把会话当前使用的 agentId 落为一条会话条目
-export const AGENT_ID_ENTRY = "agent_id";

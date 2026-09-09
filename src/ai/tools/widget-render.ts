@@ -5,7 +5,7 @@
 // 实际渲染由前端组件完成，工具仅负责验证参数并返回 widget 元数据。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { getDataDir, readFile } from "@/lib/electron/electron-api";
 import { text, type ToolContext } from "./tool-context";
@@ -200,9 +200,7 @@ function getWidgetHtml(
   return Promise.reject(new Error("widget_code 和 widget_path 都为空，无法生成 HTML"));
 }
 
-export function renderWidgetTool(
-  _ctx: ToolContext,
-): AgentTool<typeof renderWidgetParams> {
+export function renderWidgetTool(): AgentHarnessTool<ToolContext, typeof renderWidgetParams> {
   return {
     name: "render_widget",
     label: "渲染 Widget",
@@ -212,7 +210,7 @@ export function renderWidgetTool(
       "实际渲染由前端组件处理，工具仅验证参数并返回 widget 元数据。",
     parameters: renderWidgetParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof renderWidgetParams>) => {
+    execute: async (_id, params: Static<typeof renderWidgetParams>, _onUpdate, _toolContext, _invocation, _context) => {
       // 验证参数：至少提供 widget_code 或 widget_path 之一
       const validation = validateWidgetSource(params.widget_code, params.widget_path);
       if (!validation.valid) {

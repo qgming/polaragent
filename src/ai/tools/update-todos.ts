@@ -2,7 +2,7 @@
 // src/ai/tools/update-todos.ts
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   useTaskMonitorStore,
@@ -55,9 +55,7 @@ const updateTodosParams = Type.Object({
   ),
 });
 
-export function updateTodosTool(
-  ctx: ToolContext,
-): AgentTool<typeof updateTodosParams> {
+export function updateTodosTool(): AgentHarnessTool<ToolContext, typeof updateTodosParams> {
   return {
     name: "update_todos",
     label: "更新待办",
@@ -65,7 +63,8 @@ export function updateTodosTool(
       "管理任务待办清单。支持增量操作：add 追加、update 修改、delete 删除、complete 标记完成、replace 完整覆盖（默认）。" +
       "在开始多步骤任务前先列出待办，完成一步就把对应项标记为 completed，正在做的标记 in_progress。",
     parameters: updateTodosParams,
-    execute: async (_id, params: Static<typeof updateTodosParams>) => {
+    execute: async (_id, params: Static<typeof updateTodosParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const action = params.action || "replace";
       const currentTodos = useTaskMonitorStore.getState().getMonitor(ctx.threadId).todos || [];
 

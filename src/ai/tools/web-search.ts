@@ -5,7 +5,7 @@
 // 每个服务商有独立的配置（API Key、特定参数），由 Electron 主进程统一调用。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { webSearch, type WebSearchRequest } from "@/lib/electron/electron-api";
 import { useConfigStore } from "@/stores/config-store";
@@ -19,9 +19,7 @@ const searchWebParams = Type.Object({
   ),
 });
 
-export function searchWebTool(
-  _ctx: ToolContext,
-): AgentTool<typeof searchWebParams> {
+export function searchWebTool(): AgentHarnessTool<ToolContext, typeof searchWebParams> {
   return {
     name: "web_search",
     label: "网络搜索",
@@ -29,7 +27,8 @@ export function searchWebTool(
       "在互联网上检索信息，返回若干条结果（标题、链接、摘要）。用于获取最新资讯、核实事实、查找线上资源。",
     parameters: searchWebParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchWebParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof searchWebParams>, onUpdate, _toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
       const startedAt = nowMs();
       progressUpdate(onUpdate, {
         phase: "validating",

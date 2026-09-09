@@ -2,7 +2,7 @@
 // src/ai/tools/knowledge.ts
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { pMap, REMOTE_CONCURRENCY } from "@/lib/concurrency";
 import { queryKnowledge } from "@/lib/knowledge";
@@ -66,9 +66,7 @@ const searchKnowledgeParams = Type.Object({
   ),
 });
 
-export function searchKnowledgeTool(
-  ctx: ToolContext,
-): AgentTool<typeof searchKnowledgeParams> {
+export function searchKnowledgeTool(): AgentHarnessTool<ToolContext, typeof searchKnowledgeParams> {
   return {
     name: "search_knowledge",
     label: "检索知识库",
@@ -76,7 +74,9 @@ export function searchKnowledgeTool(
       "在已启用的知识库中检索相关文档片段。用于获取项目文档、技术规范、历史资料等上下文信息。",
     parameters: searchKnowledgeParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchKnowledgeParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof searchKnowledgeParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       progressUpdate(onUpdate, {
         phase: "validating",

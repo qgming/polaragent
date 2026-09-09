@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { useScheduleStore } from "@/stores/schedule-store";
 import type {
@@ -29,7 +29,6 @@ const scheduleConfigSchema = Type.Union([
 const schedulePayloadSchema = Type.Object({
   message: Type.String({ description: "到时交给 Agent 执行的自然语言指令" }),
   contextDirs: Type.Optional(Type.Array(Type.String(), { description: "可选上下文目录列表" })),
-  agentId: Type.Optional(Type.String({ description: "可选 Agent ID，默认 default" })),
   workingDir: Type.Optional(Type.String({ description: "可选工作目录" })),
   permissionMode: Type.Optional(Type.Union([...SCHEDULE_PERMISSION_MODES])),
 });
@@ -123,7 +122,6 @@ function buildUpdateRequest(
       kind: "agentTurn",
       message: params.payload.message,
       contextDirs: params.payload.contextDirs,
-      agentId: params.payload.agentId,
       workingDir: params.payload.workingDir,
       permissionMode: params.payload.permissionMode,
     } satisfies CreateScheduledTaskRequest["payload"];
@@ -132,7 +130,7 @@ function buildUpdateRequest(
   return request;
 }
 
-export function listScheduleTasksTool(_ctx: ToolContext): AgentTool<typeof listScheduleTasksParams> {
+export function listScheduleTasksTool(): AgentHarnessTool<ToolContext, typeof listScheduleTasksParams> {
   return {
     name: "list_schedule_tasks",
     label: "列出定时任务",
@@ -164,13 +162,13 @@ export function listScheduleTasksTool(_ctx: ToolContext): AgentTool<typeof listS
   };
 }
 
-export function updateScheduleTaskTool(_ctx: ToolContext): AgentTool<typeof updateScheduleTaskParams> {
+export function updateScheduleTaskTool(): AgentHarnessTool<ToolContext, typeof updateScheduleTaskParams> {
   return {
     name: "update_schedule_task",
     label: "编辑定时任务",
     description: "按 taskId 或名称编辑已有定时任务，可修改名称、说明、启用状态、调度方式、执行内容等；需要时也可以停止当前正在执行的这一轮。",
     parameters: updateScheduleTaskParams,
-    execute: async (_id, params: Static<typeof updateScheduleTaskParams>) => {
+    execute: async (_id, params: Static<typeof updateScheduleTaskParams>, _onUpdate, _toolContext, _invocation, _context) => {
       await useScheduleStore.getState().initialize();
       const task = resolveTaskOrThrow({ taskId: params.taskId, name: params.taskName });
 
@@ -192,13 +190,13 @@ export function updateScheduleTaskTool(_ctx: ToolContext): AgentTool<typeof upda
   };
 }
 
-export function deleteScheduleTaskTool(_ctx: ToolContext): AgentTool<typeof deleteScheduleTaskParams> {
+export function deleteScheduleTaskTool(): AgentHarnessTool<ToolContext, typeof deleteScheduleTaskParams> {
   return {
     name: "delete_schedule_task",
     label: "删除定时任务",
     description: "按 taskId 或名称删除已有定时任务。删除前必须 confirm=true；如任务正在执行，可同时停止当前运行。",
     parameters: deleteScheduleTaskParams,
-    execute: async (_id, params: Static<typeof deleteScheduleTaskParams>) => {
+    execute: async (_id, params: Static<typeof deleteScheduleTaskParams>, _onUpdate, _toolContext, _invocation, _context) => {
       if (params.confirm !== true) {
         throw new Error("删除定时任务前必须将 confirm 设为 true。");
       }

@@ -4,7 +4,6 @@
 import { useConfigStore } from "@/stores/config-store";
 import { useChatStore } from "@/stores/chat-store";
 import { useSkillsStore } from "@/stores/skills/skills-store";
-import { useAgentsMarketStore } from "@/stores/agents-market-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
 import { useScheduleStore } from "@/stores/schedule-store";
 import { useToolsStore } from "@/stores/tools-store";
@@ -44,16 +43,13 @@ export async function initializeApp() {
         .then(() => console.log("✓ 知识库列表加载完成")),
     ]).catch((error) => console.error("侧边栏加载失败:", error));
 
-    // 助手广场为内置静态数据，提前读取索引但不阻塞启动。
-    void useAgentsMarketStore.getState().hydrate();
-
-    // 3. 技能 / 助手 / 工具（MCP）—— 排在会话之后。
+    // 3. 技能 / 工具（MCP）—— 排在会话之后。
     // 3.1 初始化 Skills（loadSkills 内部会执行 skillLoader.initialize()，
     //     既填充 skillLoader 单例，也填充 skills-store 供 UI 订阅）
     await useSkillsStore.getState().loadSkills();
     console.log("✓ Skills 初始化完成");
 
-    // 3.2 初始化模型服务 / Agents
+    // 3.2 初始化模型服务
     initializeAiRuntime();
 
     // 3.3 加载并刷新 MCP。内置 MCP 来自 {dataDir}/mcp/builtin，
@@ -62,7 +58,7 @@ export async function initializeApp() {
     await useToolsStore.getState().refreshBuiltinMcpTools();
     await useToolsStore.getState().loadInstalledMcpTools();
     await useToolsStore.getState().refreshInstalledMcpTools();
-    console.log("✓ 技能/助手/工具加载完成");
+    console.log("✓ 技能/工具加载完成");
 
     // 3.4 初始化定时任务运行时。依赖配置、技能、Agent 运行时与工具目录，
     // 放在它们之后，确保恢复任务时可直接调用 promptAgent。
@@ -106,18 +102,8 @@ export function initializeAiRuntime() {
   const providersConfig = useConfigStore.getState().providers;
   providerManager.initialize(providersConfig);
   console.log("✓ 模型服务初始化完成");
-
-  const agents = useConfigStore.getState().agents;
-
   agentManager.clear();
-  for (const agentConfig of agents) {
-    try {
-      agentManager.registerAgentConfig(agentConfig);
-    } catch (error) {
-      console.error(`Agent 初始化失败: ${agentConfig.name}`, error);
-    }
-  }
-  console.log("✓ Agents 初始化完成");
+  console.log("✓ Agent 运行时已重置");
 }
 
 /**

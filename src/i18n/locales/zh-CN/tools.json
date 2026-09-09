@@ -305,13 +305,9 @@
         "name": "更新待办",
         "description": "维护当前任务的待办清单，用完整列表同步任务进度。"
       },
-      "list_agents": {
-        "name": "列出助手",
-        "description": "列出当前用户已安装及内置的助手名称、介绍、类型和标签。"
-      },
       "delegate_task": {
         "name": "调用子代理",
-        "description": "默认调用 default/Cowork；也可在读取助手清单后选择已安装助手，或临时创建子代理完成明确子任务。"
+        "description": "创建临时子代理完成明确子任务，需提供 temporarySystemPrompt 定义角色。"
       },
       "schedule_task": {
         "name": "创建定时任务",

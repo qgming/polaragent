@@ -50,7 +50,6 @@ import {
   type EveryUnit,
 } from "@/lib/schedule/presets";
 import { cn } from "@/lib/utils";
-import type { AgentConfig } from "@/types/config";
 import type {
   CreateScheduledTaskRequest,
   ScheduledTask,
@@ -76,13 +75,11 @@ interface EditorState {
   cronExpr: string;
   message: string;
   workingDir: string;
-  agentId: string;
 }
 
 interface ScheduleEditorModalProps {
   open: boolean;
   task?: ScheduledTask | null;
-  agents: AgentConfig[];
   onClose: () => void;
   onSave: (request: CreateScheduledTaskRequest | UpdateScheduledTaskRequest) => Promise<void> | void;
 }
@@ -139,7 +136,6 @@ function createEmptyEditor(): EditorState {
     cronExpr: "0 9 * * *",
     message: "",
     workingDir: "",
-    agentId: "default",
   };
 }
 
@@ -155,7 +151,6 @@ function editorFromTask(task: ScheduledTask): EditorState {
       runAt: formatDateTimeInput(task.schedule.at),
       message: task.payload.message,
       workingDir: task.payload.workingDir || "",
-      agentId: task.payload.agentId || "default",
     };
   }
 
@@ -170,7 +165,6 @@ function editorFromTask(task: ScheduledTask): EditorState {
       repeatUnit: every.unit,
       message: task.payload.message,
       workingDir: task.payload.workingDir || "",
-      agentId: task.payload.agentId || "default",
     };
   }
 
@@ -188,7 +182,6 @@ function editorFromTask(task: ScheduledTask): EditorState {
     cronExpr: cronPreset.expr,
     message: task.payload.message,
     workingDir: task.payload.workingDir || "",
-    agentId: task.payload.agentId || "default",
   };
 }
 
@@ -280,7 +273,6 @@ function toRequest(editor: EditorState, t: (key: string, options?: Record<string
       kind: "agentTurn",
       message: editor.message.trim(),
       ...(editor.workingDir.trim() ? { workingDir: editor.workingDir.trim() } : {}),
-      ...(editor.agentId.trim() ? { agentId: editor.agentId.trim() } : {}),
       permissionMode: "ai_review",
     },
     missedRunPolicy: "run_latest",
@@ -290,7 +282,6 @@ function toRequest(editor: EditorState, t: (key: string, options?: Record<string
 export function ScheduleEditorModal({
   open,
   task,
-  agents,
   onClose,
   onSave,
 }: ScheduleEditorModalProps) {
@@ -309,16 +300,7 @@ export function ScheduleEditorModal({
     }
   }, [open]);
 
-  const selectedAgent = agents.find((agent) => agent.id === editor.agentId) || null;
   const schedulePlan = getSchedulePlan(editor);
-
-  const agentOptions = useMemo(
-    () => agents.map((agent) => ({
-      value: agent.id,
-      label: `${agent.avatar || ""} ${agent.name}`.trim() || agent.id,
-    })),
-    [agents],
-  );
 
   const repeatUnitOptions = useMemo(
     () => REPEAT_UNIT_OPTIONS.map((unit) => ({
@@ -379,18 +361,6 @@ export function ScheduleEditorModal({
                 value={editor.name}
                 onChange={(event) => setEditor((state) => ({ ...state, name: event.target.value }))}
                 placeholder={t("editor.namePlaceholder")}
-              />
-            </FieldBlock>
-          </section>
-
-          <section className="space-y-3">
-            <FieldBlock label={t("editor.agentId")}>
-              <SettingDropdown
-                value={editor.agentId}
-                onChange={(value) => setEditor((state) => ({ ...state, agentId: value }))}
-                options={agentOptions}
-                placeholder={selectedAgent ? `${selectedAgent.avatar || ""} ${selectedAgent.name}`.trim() : editor.agentId || "default"}
-                className={DROPDOWN_TRIGGER_CLASS}
               />
             </FieldBlock>
           </section>

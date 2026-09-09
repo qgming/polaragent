@@ -1,7 +1,7 @@
 // ask_user —— 对话流程中的用户输入工具
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { initiateAskUser, type AskUserMode } from "@/ai/ask-user";
 import { text, type ToolContext } from "./tool-context";
@@ -41,9 +41,7 @@ const askUserParams = Type.Object({
   ),
 });
 
-export function askUserTool(
-  ctx: ToolContext,
-): AgentTool<typeof askUserParams> {
+export function askUserTool(): AgentHarnessTool<ToolContext, typeof askUserParams> {
   return {
     name: "ask_user",
     label: "询问用户",
@@ -51,7 +49,8 @@ export function askUserTool(
       "暂停当前流程，向用户请求补充信息或选择。" +
       "支持 input 自由输入、single 单选、multiple 多选；单选/多选会在最后提供一个自定义输入选项供用户补充。prompt 支持 Markdown。用户提交后工具返回结构化答案，你再继续推理。",
     parameters: askUserParams,
-    execute: async (_id, params: Static<typeof askUserParams>) => {
+    execute: async (_id, params: Static<typeof askUserParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const prompt = params.prompt.trim();
       if (!prompt) {
         throw new Error("prompt 不能为空");
@@ -77,8 +76,6 @@ export function askUserTool(
 
       const result = await initiateAskUser({
         threadId: ctx.threadId,
-        requesterId: ctx.requester?.id,
-        requesterName: ctx.requester?.name,
         prompt,
         mode,
         options,

@@ -305,13 +305,9 @@
         "name": "Update todos",
         "description": "Maintain the current task todo list and sync progress with a complete list."
       },
-      "list_agents": {
-        "name": "List assistants",
-        "description": "List installed and built-in assistants with names, descriptions, types, and tags."
-      },
       "delegate_task": {
         "name": "Delegate to subagent",
-        "description": "Defaults to default/Cowork; after listing assistants it can target an installed assistant, or create a temporary subagent for a clear subtask."
+        "description": "Create a temporary subagent for a clear subtask; temporarySystemPrompt is required to define its role."
       },
       "schedule_task": {
         "name": "Create scheduled task",

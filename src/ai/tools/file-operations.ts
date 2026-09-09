@@ -4,7 +4,7 @@
 // 隶属 file-operations 技能。write_file 写入成功后会登记到产物面板。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   appendFile,
@@ -26,14 +26,16 @@ const readFileParams = Type.Object({
   path: Type.String({ description: "文件路径，相对工作目录或绝对路径" }),
 });
 
-export function readFileTool(ctx: ToolContext): AgentTool<typeof readFileParams> {
+export function readFileTool(): AgentHarnessTool<ToolContext, typeof readFileParams> {
   return {
     name: "read_file",
     label: "读取文件",
     description: "读取工作目录下指定文件的文本内容。",
     parameters: readFileParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof readFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       progressUpdate(onUpdate, {
@@ -68,16 +70,16 @@ const writeFileParams = Type.Object({
   ),
 });
 
-export function writeFileTool(
-  ctx: ToolContext,
-): AgentTool<typeof writeFileParams> {
+export function writeFileTool(): AgentHarnessTool<ToolContext, typeof writeFileParams> {
   return {
     name: "write_file",
     label: "写入文件",
     description:
       "把内容写入工作目录下的文件。默认覆盖写入，append 为 true 时追加到文件末尾。写入成功后该文件会出现在产物面板。",
     parameters: writeFileParams,
-    execute: async (_id, params: Static<typeof writeFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof writeFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       const content = params.content;
@@ -142,7 +144,7 @@ const editFileParams = Type.Object({
   ),
 });
 
-export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams> {
+export function editFileTool(): AgentHarnessTool<ToolContext, typeof editFileParams> {
   return {
     name: "edit_file",
     label: "编辑文件",
@@ -152,7 +154,9 @@ export function editFileTool(ctx: ToolContext): AgentTool<typeof editFileParams>
       "支持正则替换模式（regex=true），oldString 将作为正则表达式处理。" +
       "适合定点修改，无需重写整个文件。编辑成功后该文件会出现在产物面板。",
     parameters: editFileParams,
-    execute: async (_id, params: Static<typeof editFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof editFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       progressUpdate(onUpdate, {
@@ -275,16 +279,16 @@ const createDirectoryParams = Type.Object({
   }),
 });
 
-export function createDirectoryTool(
-  ctx: ToolContext,
-): AgentTool<typeof createDirectoryParams> {
+export function createDirectoryTool(): AgentHarnessTool<ToolContext, typeof createDirectoryParams> {
   return {
     name: "create_directory",
     label: "新建目录",
     description:
       "创建工作目录下的指定目录。会自动创建必要的父目录，适合先搭建项目结构再写入文件。",
     parameters: createDirectoryParams,
-    execute: async (_id, params: Static<typeof createDirectoryParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof createDirectoryParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       progressUpdate(onUpdate, {
@@ -310,16 +314,16 @@ const deleteFileParams = Type.Object({
   }),
 });
 
-export function deleteFileTool(
-  ctx: ToolContext,
-): AgentTool<typeof deleteFileParams> {
+export function deleteFileTool(): AgentHarnessTool<ToolContext, typeof deleteFileParams> {
   return {
     name: "delete_file",
     label: "删除路径",
     description:
       "删除工作目录下的指定文件或目录。目录会递归删除其内部文件；删除成功后会从产物面板移除对应路径下的文件。",
     parameters: deleteFileParams,
-    execute: async (_id, params: Static<typeof deleteFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof deleteFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path);
       progressUpdate(onUpdate, {
@@ -349,16 +353,16 @@ const listDirectoryParams = Type.Object({
   ),
 });
 
-export function listDirectoryTool(
-  ctx: ToolContext,
-): AgentTool<typeof listDirectoryParams> {
+export function listDirectoryTool(): AgentHarnessTool<ToolContext, typeof listDirectoryParams> {
   return {
     name: "list_directory",
     label: "列出目录",
     description: "列出工作目录或指定目录下的文件与子目录。",
     parameters: listDirectoryParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof listDirectoryParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof listDirectoryParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const target = resolvePath(ctx, params.path || ".");
       progressUpdate(onUpdate, {
@@ -384,14 +388,16 @@ const moveFileParams = Type.Object({
   }),
 });
 
-export function moveFileTool(ctx: ToolContext): AgentTool<typeof moveFileParams> {
+export function moveFileTool(): AgentHarnessTool<ToolContext, typeof moveFileParams> {
   return {
     name: "move_file",
     label: "移动/重命名",
     description:
       "移动或重命名工作目录下的文件/目录。支持跨目录移动、同目录重命名以及跨分区回退。",
     parameters: moveFileParams,
-    execute: async (_id, params: Static<typeof moveFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof moveFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
@@ -429,13 +435,15 @@ const copyFileParams = Type.Object({
   }),
 });
 
-export function copyFileTool(ctx: ToolContext): AgentTool<typeof copyFileParams> {
+export function copyFileTool(): AgentHarnessTool<ToolContext, typeof copyFileParams> {
   return {
     name: "copy_file",
     label: "复制文件",
     description: "复制工作目录下的文件或目录到指定位置。",
     parameters: copyFileParams,
-    execute: async (_id, params: Static<typeof copyFileParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof copyFileParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const src = resolvePath(ctx, params.source);
       const dest = resolvePath(ctx, params.destination);
@@ -552,9 +560,7 @@ async function globSearch(
   return results;
 }
 
-export function searchFilesTool(
-  ctx: ToolContext,
-): AgentTool<typeof searchFilesParams> {
+export function searchFilesTool(): AgentHarnessTool<ToolContext, typeof searchFilesParams> {
   return {
     name: "search_files",
     label: "搜索文件",
@@ -562,7 +568,9 @@ export function searchFilesTool(
       "使用 Glob 模式在工作目录或指定目录下搜索文件与目录，支持 *、?、** 与 {a,b} 语法。",
     parameters: searchFilesParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchFilesParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof searchFilesParams>, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const basePath = resolvePath(ctx, params.path || ".");
       const maxResults = Math.min(params.maxResults || 100, 500);

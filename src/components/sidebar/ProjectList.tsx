@@ -110,15 +110,6 @@ export function ProjectList({
           runningThreadIds={runningThreadIds}
         />
       ))}
-      {/* 新建项目按钮 */}
-      <button
-        type="button"
-        onClick={onNewProject}
-        className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        <Plus className="size-3.5 shrink-0" />
-        <span className="truncate">{t("sidebar.newProject")}</span>
-      </button>
     </div>
   );
 }

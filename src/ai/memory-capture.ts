@@ -18,7 +18,6 @@ const threadLastCaptureTokens = new Map<string, number>();
 
 interface CaptureParams {
   threadId: string;
-  agentId: string;
   threadTitle?: string;
   workingDir?: string;
   userText: string;
@@ -74,7 +73,7 @@ export async function captureMemoriesFromExchange(
   const config = memoryApiConfigFromSettings(settings);
   if (!config) return;
 
-  const service = resolveModelService(params.agentId) ?? firstModelService();
+  const service = resolveModelService() ?? firstModelService();
   if (!service) return;
 
   const projectKey = projectKeyFromWorkingDir(params.workingDir);

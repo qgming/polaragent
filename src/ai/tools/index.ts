@@ -6,7 +6,7 @@
 // 被全局关闭的工具完全不构造、不传给 AI；启用的工具对所有 Agent 可用。
 // 部分工具只在特定上下文里装配，例如后台任务或项目会话。
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { useToolsStore } from "@/stores/tools-store";
 import { useConfigStore } from "@/stores/config-store";
@@ -57,7 +57,6 @@ import {
 // ===== 任务管理 =====
 import { updateTodosTool } from "./update-todos";
 import { delegateTaskTool } from "./delegate-task";
-import { listAgentsTool } from "./agents";
 
 // ===== 网络工具 =====
 import { searchWebTool } from "./web-search";
@@ -133,7 +132,7 @@ interface ToolEntry {
   id: string;
   name: string;
   description: string;
-  factory: (ctx: ToolContext) => AgentTool<any>;
+  factory: () => AgentHarnessTool<ToolContext, any, any>;
   isAvailable?: (ctx: ToolContext) => boolean;
   group?: string; // 所属分组 key（不填表示不分组，直接平铺显示）
   capabilities?: ToolCapabilities;
@@ -153,7 +152,7 @@ function reg(group: string) {
     id: string,
     name: string,
     description: string,
-    factory: (ctx: ToolContext) => AgentTool<any>,
+    factory: () => AgentHarnessTool<ToolContext, any, any>,
     isAvailable?: (ctx: ToolContext) => boolean,
   ): ToolEntry => ({
     id, name, description, factory, group, ...(isAvailable ? { isAvailable } : {}),
@@ -166,7 +165,7 @@ const cu = (
   id: string,
   name: string,
   description: string,
-  factory: (ctx: ToolContext) => AgentTool<any>,
+  factory: () => AgentHarnessTool<ToolContext, any, any>,
 ) =>
   reg("computeruse")(
     id,
@@ -180,7 +179,7 @@ const bu = (
   id: string,
   name: string,
   description: string,
-  factory: (ctx: ToolContext) => AgentTool<any>,
+  factory: () => AgentHarnessTool<ToolContext, any, any>,
 ) =>
   reg("browseruse")(
     id,
@@ -298,8 +297,7 @@ const TOOL_REGISTRY: ToolEntry[] = [
   bu("browser_network", "网络监控", "监控网络请求。", browserNetworkTool),
   bu("browser_console", "控制台日志", "监听并读取页面 console 与异常日志。", browserConsoleTool),
   task("update_todos", "更新待办", "维护当前任务的待办清单，用完整列表同步任务进度。", updateTodosTool),
-  subagent("list_agents", "列出助手", "列出当前用户已安装及内置的助手名称、介绍、类型和标签，便于选择合适的子代理。", listAgentsTool, (ctx) => !ctx.isBackground),
-  subagent("delegate_task", "调用子代理", "默认调用 default/Cowork，也可在读取助手清单后选择已安装助手，或临时创建子代理完成明确子任务。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
+  subagent("delegate_task", "调用子代理", "创建临时子代理完成明确子任务，需提供 temporarySystemPrompt 定义角色。", delegateTaskTool, (ctx) => !ctx.isSubagent && !ctx.isBackground),
   schedule("schedule_task", "创建定时任务", "创建后台定时任务，让 Agent 在指定时间自动执行一次性、周期性或 Cron 指令。", scheduleTaskTool),
   schedule("list_schedule_tasks", "列出定时任务", "列出当前已有的后台定时任务，返回 taskId、名称、启用状态、下次执行时间等信息。", listScheduleTasksTool),
   schedule("update_schedule_task", "编辑定时任务", "按 taskId 或名称修改已有定时任务，可更新启用状态、调度方式和执行内容。", updateScheduleTaskTool),
@@ -366,7 +364,6 @@ const TOOL_CAPABILITIES: Record<string, ToolCapabilities> = {
   search_knowledge: { supportsProgress: true, supportsCancel: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
   run_bash: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "medium", resultDisplay: "collapsed" },
   delegate_task: { supportsProgress: true, supportsCancel: true, supportsBackground: true, estimatedDuration: "long", resultDisplay: "collapsed" },
-  list_agents: { supportsProgress: false, supportsCancel: false, estimatedDuration: "short", resultDisplay: "inline" },
   read_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "collapsed" },
   write_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "artifact" },
   edit_file: { supportsProgress: true, supportsCancel: true, estimatedDuration: "short", resultDisplay: "artifact" },
@@ -439,8 +436,9 @@ export const BUILTIN_TOOLS: ToolMeta[] = TOOL_REGISTRY.map(
  * 为某个会话构建工具集。
  * 工具是全局的：内置工具和 MCP 都由工具页开关控制；上下文专用工具只在可用上下文中装配。
  * 被全局关闭的工具完全不构造，不会出现在传给 AI 的工具列表里。
+ * ctx 仅用于条件过滤（决定注册哪些工具），不再传入工厂函数。
  */
-export function buildAgentTools(ctx: ToolContext): AgentTool<any>[] {
+export function buildAgentTools(ctx: ToolContext): AgentHarnessTool<ToolContext, any, any>[] {
   const {
     builtinMcpTools,
     customTools,
@@ -448,23 +446,23 @@ export function buildAgentTools(ctx: ToolContext): AgentTool<any>[] {
     isMcpServerEnabled,
   } = useToolsStore.getState();
 
-  const tools: AgentTool<any>[] = [];
+  const tools: AgentHarnessTool<ToolContext, any, any>[] = [];
 
   for (const entry of TOOL_REGISTRY) {
     if (!isBuiltinToolEnabled(entry.id)) continue;
     if (ctx.isBackground && entry.id === "ask_user") continue;
     if (entry.isAvailable && !entry.isAvailable(ctx)) continue;
-    tools.push(entry.factory(ctx));
+    tools.push(entry.factory());
   }
 
   for (const mcpTool of builtinMcpTools) {
     if (!isMcpServerEnabled(mcpTool.id)) continue;
-    tools.push(...buildMcpTools(ctx, mcpTool));
+    tools.push(...buildMcpTools(mcpTool));
   }
 
   for (const mcpTool of customTools) {
     if (!isMcpServerEnabled(mcpTool.id)) continue;
-    tools.push(...buildMcpTools(ctx, mcpTool));
+    tools.push(...buildMcpTools(mcpTool));
   }
 
   return tools;

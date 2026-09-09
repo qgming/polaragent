@@ -9,8 +9,6 @@ import {
   setSessionProjectId,
   setSessionToolPermissionMode,
   setSessionWorkingDir,
-  setSessionAgentId,
-  getSessionAgentId,
   openOrCreateSession,
 } from "@/lib/session/personal";
 import { readGoalState } from "@/lib/session/goal";
@@ -103,15 +101,6 @@ async function restoreThreadKnowledgeBaseIds(threadId: string): Promise<void> {
   });
 }
 
-async function restoreThreadAgentId(threadId: string): Promise<void> {
-  const agentId = await getSessionAgentId(threadId);
-  if (agentId) {
-    useChatStore.getState().setThreadAgentId(threadId, agentId, {
-      persist: false,
-    });
-  }
-}
-
 // 应用运行期内已做过"打开时压缩检查"的会话，防止压缩后强制重载造成重入
 const compactCheckedThreads = new Set<string>();
 
@@ -189,11 +178,8 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
     if (context.length === 0) return;
     const contextTokens = estimateContextTokens(context).tokens;
 
-    const agentId = await getSessionAgentId(threadId);
-    if (!agentId) return;
-
-    // 上下文窗口取该会话所用模型的配置，未配置时保守回退 128k
-    const modelId = agentManager.getRuntimeModelId(agentId);
+    // 上下文窗口取当前运行时模型的配置，未配置时保守回退 128k
+    const modelId = agentManager.getRuntimeModelId();
     const contextWindow =
       useConfigStore
         .getState()
@@ -207,7 +193,7 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
     );
 
     try {
-      const harness = await agentManager.getOrCreateHarness(threadId, agentId);
+      const harness = await agentManager.getOrCreateHarness(threadId);
       const lane = await harness.lane("main", BACKGROUND_CONTEXT);
       await lane.compact(undefined, BACKGROUND_CONTEXT);
 
@@ -250,7 +236,6 @@ interface ChatState {
   // 正在后台运行（响应中）的会话 id 列表。多会话可并行运行、互不关联。
   // 用数组而非 Set，便于 zustand 浅比较与序列化。
   runningThreadIds: string[];
-  activeAgentId: string; // 当前使用的 Agent
   workingDir: string; // 当前工作目录（新会话默认沿用）
   setWorkingDir: (dir: string) => void;
   appendAssistantDelta: (
@@ -273,7 +258,6 @@ interface ChatState {
   clearActiveThread: () => void;
   clearThread: (threadId: string) => void;
   createThread: (
-    agentId?: string,
     initialText?: string,
     permissionMode?: ToolPermissionMode,
     projectId?: string,
@@ -301,11 +285,6 @@ interface ChatState {
     ids: string[],
     options?: { persist?: boolean },
   ) => void;
-  setThreadAgentId: (
-    threadId: string,
-    agentId: string,
-    options?: { persist?: boolean },
-  ) => void;
   startExchange: (
     userText: string,
     attachments?: ChatAttachment[],
@@ -315,7 +294,6 @@ interface ChatState {
   markRunning: (threadId: string) => void;
   // 结束某会话的运行态（完成/出错/手动停止时调用）
   stopResponding: (threadId: string) => void;
-  setActiveAgent: (agentId: string) => void;
   saveThreadToFile: (threadId: string) => Promise<void>;
   hydrateThreads: () => Promise<void>;
   loadThreadMessages: (threadId: string) => Promise<void>;
@@ -336,7 +314,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   composer: "",
   runningThreadIds: [],
   threads: [],
-  activeAgentId: "default", // 默认 Agent
   workingDir: "",
 
   setWorkingDir: (dir) => {
@@ -453,7 +430,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   createThread: (
-    agentId?: string,
     initialText?: string,
     permissionMode = DEFAULT_TOOL_PERMISSION_MODE,
     projectId?: string,
@@ -476,7 +452,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       subtitle: "对话",
       messages: userMessage ? [userMessage] : [],
       updatedAt: Date.now(),
-      agentId: agentId || get().activeAgentId, // 关联当前 Agent
       permissionMode,
       knowledgeBaseIds: [], // 初始化知识库 ID 列表
       loaded: true, // 新建会话，内存即权威，无需从磁盘回读
@@ -503,13 +478,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void setSessionWorkingDir(id, projectConfig.workingDir);
       }
     }
-    // 持久化会话级助手 ID，使重启后不回退到全局默认
-    void setSessionAgentId(id, agentId || get().activeAgentId);
-
     if (userMessage) {
       void useConversationStore
         .getState()
-        .saveMessage(id, userMessage, agentId || get().activeAgentId);
+        .saveMessage(id, userMessage);
     }
 
     return id;
@@ -539,14 +511,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   failAssistant: (threadId, messageId, error) => {
     let failedMessage: ChatMessage | undefined;
-    let failedAgentId = "default";
 
     set((state) => ({
       runningThreadIds: state.runningThreadIds.filter((id) => id !== threadId),
       threads: state.threads.map((thread) =>
         thread.id === threadId
           ? (() => {
-              failedAgentId = thread.agentId || "default";
               return {
                 ...thread,
                 messages: thread.messages.map((message) =>
@@ -582,7 +552,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ) {
       void useConversationStore
         .getState()
-        .saveMessage(threadId, failedMessage, failedAgentId);
+        .saveMessage(threadId, failedMessage);
     }
   },
 
@@ -612,14 +582,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       useTaskMonitorStore.getState().getMonitor(threadId).workingDir ||
       get().workingDir;
     let completedMessage: ChatMessage | undefined;
-    let completedAgentId = "default";
 
     set((state) => ({
       runningThreadIds: state.runningThreadIds.filter((id) => id !== threadId),
       threads: state.threads.map((thread) =>
         thread.id === threadId
           ? (() => {
-              completedAgentId = thread.agentId || "default";
               return {
                 ...thread,
                 messages: thread.messages.map((message) =>
@@ -652,7 +620,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (completedMessage) {
       void useConversationStore
         .getState()
-        .saveMessage(threadId, completedMessage, completedAgentId);
+        .saveMessage(threadId, completedMessage);
     }
 
     // 用户与 AI 各回复两次后（累计 4 条完成消息），基于前 4 条历史自动生成标题
@@ -667,7 +635,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       void captureMemoriesFromExchange({
         threadId,
-        agentId: completedAgentId,
         threadTitle: sourceThread?.title,
         workingDir,
         userText: lastUserMessage.content,
@@ -693,7 +660,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void restoreThreadMonitor(threadId);
     void restoreThreadPermissionMode(threadId);
     void restoreThreadKnowledgeBaseIds(threadId);
-    void restoreThreadAgentId(threadId);
     void restoreGoalState(threadId);
   },
 
@@ -747,17 +713,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setThreadAgentId: (threadId, agentId, options) => {
-    set((state) => ({
-      threads: state.threads.map((thread) =>
-        thread.id === threadId ? { ...thread, agentId } : thread,
-      ),
-    }));
-    if (options?.persist !== false) {
-      void setSessionAgentId(threadId, agentId);
-    }
-  },
-
   startExchange: (userText, attachments = [], skillRefs = []) => {
     const threadId = get().activeThreadId;
     const assistantId = createId();
@@ -798,12 +753,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     // 保存用户消息
-    const thread = get().threads.find((t) => t.id === threadId);
-    if (thread) {
-      void useConversationStore
-        .getState()
-        .saveMessage(threadId, userMessage, thread.agentId || "default");
-    }
+    void useConversationStore
+      .getState()
+      .saveMessage(threadId, userMessage);
 
     return { assistantId, threadId };
   },
@@ -822,10 +774,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  setActiveAgent: (agentId: string) => {
-    set({ activeAgentId: agentId });
-  },
-
   saveThreadToFile: async (threadId: string) => {
     const thread = get().threads.find((t) => t.id === threadId);
     if (!thread) return;
@@ -836,7 +784,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
           await useConversationStore
             .getState()
-            .saveMessage(threadId, message, thread.agentId || "default");
+            .saveMessage(threadId, message);
         } catch (error) {
           console.error("保存消息失败:", error);
         }
@@ -1001,13 +949,6 @@ export function useThreadMessages(threadId: string): ChatMessage[] {
 export function useThreadTitle(threadId: string): string {
   return useChatStore(
     (state) => state.threads.find((t) => t.id === threadId)?.title ?? "新对话",
-  );
-}
-
-/** 订阅单个会话关联的 agentId（标量）。 */
-export function useThreadAgentId(threadId: string): string | undefined {
-  return useChatStore(
-    (state) => state.threads.find((t) => t.id === threadId)?.agentId,
   );
 }
 

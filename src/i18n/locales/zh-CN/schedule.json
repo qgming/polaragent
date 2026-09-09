@@ -87,8 +87,6 @@
     "workingDirPlaceholder": "点击选择任务工作目录",
     "openWorkingDir": "在文件资源管理器中打开工作目录",
     "clearWorkingDir": "清除工作目录",
-    "agentId": "助手",
-    "agentMenuTitle": "选择执行助手",
     "schedulePlan": "计划时间",
     "emptyValue": "未设置",
     "planOptions": {

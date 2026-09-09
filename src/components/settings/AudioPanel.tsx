@@ -28,9 +28,11 @@ function deriveState(config: AudioConfig) {
 export function AudioPanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const initial = deriveState(settings.audio ?? audioDefaults());
@@ -153,10 +155,14 @@ export function AudioPanel({
 
   return (
     <section>
-      <PageTitle
+      {!embedded ? (
+
+        <PageTitle
         title={t("audio.title")}
         description={t("audio.description")}
       />
+
+      ) : null}
 
       {/* TTS 接口标准选择 */}
       <div className="mt-8 rounded-xl border border-border bg-card">

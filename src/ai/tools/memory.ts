@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   archiveMemory,
@@ -268,7 +268,7 @@ function formatMemoryContent(content: string): string {
   return `${content}\n结构化数据:\n${formattedPairs}`;
 }
 
-export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemoryParams> {
+export function searchMemoryTool(): AgentHarnessTool<ToolContext, typeof searchMemoryParams> {
   return {
     name: "search_memory",
     label: "检索记忆",
@@ -276,7 +276,8 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
       "检索长期记忆。需要了解用户偏好、身份、长期目标、历史纠正或当前项目约定时使用。",
     parameters: searchMemoryParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof searchMemoryParams>) => {
+    execute: async (_id, params: Static<typeof searchMemoryParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const runtime = memoryRuntime(ctx);
       if ("error" in runtime) {
         const message = runtime.error ?? "记忆不可用";
@@ -347,7 +348,7 @@ export function searchMemoryTool(ctx: ToolContext): AgentTool<typeof searchMemor
   };
 }
 
-export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberMemoryParams> {
+export function rememberMemoryTool(): AgentHarnessTool<ToolContext, typeof rememberMemoryParams> {
   return {
     name: "remember_memory",
     label: "写入记忆",
@@ -355,7 +356,8 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
       "在用户明确要求记住，或需要修正长期偏好/项目约定时写入记忆。不要写入密码、密钥、验证码等敏感信息。",
     parameters: rememberMemoryParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof rememberMemoryParams>) => {
+    execute: async (_id, params: Static<typeof rememberMemoryParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const runtime = memoryRuntime(ctx);
       if ("error" in runtime) {
         const message = runtime.error ?? "记忆不可用";
@@ -442,7 +444,7 @@ export function rememberMemoryTool(ctx: ToolContext): AgentTool<typeof rememberM
   };
 }
 
-export function forgetMemoryTool(ctx: ToolContext): AgentTool<typeof forgetMemoryParams> {
+export function forgetMemoryTool(): AgentHarnessTool<ToolContext, typeof forgetMemoryParams> {
   return {
     name: "forget_memory",
     label: "忘记记忆",
@@ -450,7 +452,8 @@ export function forgetMemoryTool(ctx: ToolContext): AgentTool<typeof forgetMemor
       "关闭或删除长期记忆。优先先用 search_memory 找到准确 memoryId，再调用本工具。",
     parameters: forgetMemoryParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof forgetMemoryParams>) => {
+    execute: async (_id, params: Static<typeof forgetMemoryParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const runtime = memoryRuntime(ctx);
       if ("error" in runtime) {
         const message = runtime.error ?? "记忆不可用";

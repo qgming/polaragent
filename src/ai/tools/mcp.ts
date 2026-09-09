@@ -1,7 +1,7 @@
 // MCP 工具适配：把已发现的 MCP tools 直接注册为 pi-agent 工具
 // src/ai/tools/mcp.ts
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { callMcpTool } from "@/lib/mcp";
 import type { McpDiscoveredTool, McpToolConfig } from "@/lib/mcp";
@@ -9,9 +9,8 @@ import { text, type ToolContext } from "./tool-context";
 import { progressUpdate, throwIfAborted, withDuration, nowMs } from "./tool-progress";
 
 export function buildMcpTools(
-  _ctx: ToolContext,
   config: McpToolConfig,
-): AgentTool<any>[] {
+): AgentHarnessTool<ToolContext, any, any>[] {
   const disabled = new Set(config.disabledToolNames ?? []);
   return (config.discoveredTools ?? [])
     .filter((remoteTool) => !disabled.has(remoteTool.name))
@@ -33,7 +32,7 @@ export function mcpToolLabels(config: McpToolConfig): Record<string, string> {
 function buildSingleMcpTool(
   config: McpToolConfig,
   remoteTool: McpDiscoveredTool,
-): AgentTool<any> {
+): AgentHarnessTool<ToolContext, any, any> {
   const parameters = normalizeInputSchema(remoteTool.inputSchema);
   const piToolName = mcpPiToolName(config.id, remoteTool.name);
 
@@ -44,7 +43,15 @@ function buildSingleMcpTool(
       remoteTool.description ||
       `调用 MCP server「${config.name || config.id}」的 ${remoteTool.name} 工具。`,
     parameters,
-    execute: async (_id: string, params: unknown, signal, onUpdate) => {
+    execute: async (
+      _id: string,
+      params: unknown,
+      onUpdate,
+      _toolContext,
+      _invocation,
+      context,
+    ) => {
+      const signal = context.abortSignal;
       const startedAt = nowMs();
       const argumentsObject =
         params && typeof params === "object" && !Array.isArray(params)

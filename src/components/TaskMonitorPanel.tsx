@@ -27,11 +27,9 @@ import {
 export function TaskMonitorPanel({
   threadId,
   sessionFilesDir,
-  agentId,
 }: {
   threadId: string;
   sessionFilesDir?: string;
-  agentId: string;
 }) {
   const { t } = useTranslation("chat");
   const monitor = useTaskMonitorStore((state) =>
@@ -59,7 +57,7 @@ export function TaskMonitorPanel({
         <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
           {/* 目标 */}
           <Section title={t("monitor.sections.goal")}>
-            <GoalSection threadId={threadId} agentId={agentId} />
+            <GoalSection threadId={threadId} />
           </Section>
 
           {/* 待办 */}

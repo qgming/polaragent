@@ -25,9 +25,11 @@ const DEFAULT_COMPUTER_USE = {
 export function ComputerUsePanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const computerUse = useMemo(
@@ -109,10 +111,14 @@ export function ComputerUsePanel({
 
   return (
     <section>
-      <PageTitle
-        title="Computer Use"
-        description={t("computerUse.description")}
-      />
+      {!embedded ? (
+        <PageTitle
+          title="Computer Use"
+          description={t("computerUse.description")}
+        />
+      ) : (
+        <h3 className="mb-4 text-sm font-semibold text-muted-foreground">Computer Use</h3>
+      )}
 
       <div className="mt-8 rounded-xl border border-border bg-card">
         <div className="border-b border-border px-5 py-4">

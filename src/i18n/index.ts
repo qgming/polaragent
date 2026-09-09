@@ -11,11 +11,9 @@ import zhCN_settings from "./locales/zh-CN/settings.json";
 import zhCN_nav from "./locales/zh-CN/nav.json";
 import zhCN_chat from "./locales/zh-CN/chat.json";
 import zhCN_home from "./locales/zh-CN/home.json";
-import zhCN_agents from "./locales/zh-CN/agents.json";
 import zhCN_knowledge from "./locales/zh-CN/knowledge.json";
 import zhCN_skills from "./locales/zh-CN/skills.json";
 import zhCN_tools from "./locales/zh-CN/tools.json";
-import zhCN_tutorial from "./locales/zh-CN/tutorial.json";
 import zhCN_schedule from "./locales/zh-CN/schedule.json";
 
 import enUS_common from "./locales/en-US/common.json";
@@ -23,11 +21,9 @@ import enUS_settings from "./locales/en-US/settings.json";
 import enUS_nav from "./locales/en-US/nav.json";
 import enUS_chat from "./locales/en-US/chat.json";
 import enUS_home from "./locales/en-US/home.json";
-import enUS_agents from "./locales/en-US/agents.json";
 import enUS_knowledge from "./locales/en-US/knowledge.json";
 import enUS_skills from "./locales/en-US/skills.json";
 import enUS_tools from "./locales/en-US/tools.json";
-import enUS_tutorial from "./locales/en-US/tutorial.json";
 import enUS_schedule from "./locales/en-US/schedule.json";
 
 /** 语言资源表：key 为 BCP 47 语言代码，value 为各命名空间翻译 */
@@ -38,11 +34,9 @@ const resources = {
     nav: zhCN_nav,
     chat: zhCN_chat,
     home: zhCN_home,
-    agents: zhCN_agents,
     knowledge: zhCN_knowledge,
     skills: zhCN_skills,
     tools: zhCN_tools,
-    tutorial: zhCN_tutorial,
     schedule: zhCN_schedule,
   },
   "en-US": {
@@ -51,11 +45,9 @@ const resources = {
     nav: enUS_nav,
     chat: enUS_chat,
     home: enUS_home,
-    agents: enUS_agents,
     knowledge: enUS_knowledge,
     skills: enUS_skills,
     tools: enUS_tools,
-    tutorial: enUS_tutorial,
     schedule: enUS_schedule,
   },
 };
@@ -73,7 +65,7 @@ function getInitialLanguage(): string {
   } catch (e) {
     console.warn("无法读取 localStorage:", e);
   }
-  
+
   const nav = navigator.language.toLowerCase();
   if (nav.startsWith("zh")) return "zh-CN";
   return "en-US";

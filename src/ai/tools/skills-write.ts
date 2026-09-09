@@ -5,7 +5,7 @@
 // 所有修改都会先自动备份到 .bak 目录（保留最多 10 个版本）。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 import {
   writeSkill as apiWriteSkill,
   patchSkill as apiPatchSkill,
@@ -83,9 +83,7 @@ function failResult(message: string): never {
   throw new Error(message);
 }
 
-export function writeSkillTool(
-  _ctx: ToolContext,
-): AgentTool<typeof writeSkillParams> {
+export function writeSkillTool(): AgentHarnessTool<ToolContext, typeof writeSkillParams> {
   return {
     name: "write_skill",
     label: "写入技能",
@@ -97,7 +95,7 @@ export function writeSkillTool(
       "delete: 删除整个技能目录（需 confirm=true）。" +
       "每次修改前会自动备份（保留最多 10 个版本）。",
     parameters: writeSkillParams,
-    execute: async (_id, params: Static<typeof writeSkillParams>) => {
+    execute: async (_id, params: Static<typeof writeSkillParams>, _onUpdate, _toolContext, _invocation, _context) => {
       const { action, name } = params;
 
       // 校验技能名

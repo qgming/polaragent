@@ -11,9 +11,11 @@ import { PageTitle } from "./settings-shared";
 export function KnowledgePanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const config = settings.knowledge ?? defaultSettings.knowledge!;
@@ -77,10 +79,14 @@ export function KnowledgePanel({
 
   return (
     <section>
-      <PageTitle
+      {!embedded ? (
+
+        <PageTitle
         title={t("knowledge.title")}
         description={t("knowledge.description")}
       />
+
+      ) : null}
 
       <div className="mt-8 space-y-6">
         <div className="rounded-xl border border-border bg-card p-6">

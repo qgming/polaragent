@@ -22,8 +22,10 @@ export function PageTitle({
 }) {
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-normal">{title}</h1>
-      <p className="mt-3 text-sm text-muted-foreground">{description}</p>
+      <h1 className="text-[22px] font-semibold tracking-tight text-foreground">{title}</h1>
+      {description ? (
+        <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">{description}</p>
+      ) : null}
     </div>
   );
 }
@@ -40,7 +42,7 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+      <span className="mb-2 flex items-center gap-2 text-[13px] font-medium text-muted-foreground">
         <Icon className="size-4" />
         {label}
       </span>
@@ -49,7 +51,7 @@ export function Field({
   );
 }
 
-// 偏好设置中的单行：左侧标题+描述，右侧控件
+// 设置单行：左侧标题+描述，右侧控件
 export function SettingRow({
   title,
   description,
@@ -60,18 +62,19 @@ export function SettingRow({
   control: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3.5">
+    <div className="flex items-center justify-between gap-6 px-6 py-4">
       <div className="min-w-0">
-        <h3 className="text-sm font-medium">{title}</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        <h3 className="text-[13px] font-medium text-foreground">{title}</h3>
+        {description ? (
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+        ) : null}
       </div>
       <div className="shrink-0">{control}</div>
     </div>
   );
 }
 
-// 通用下拉选择器：触发器显示当前值，点击弹出单选列表
-// label 支持 ReactNode，便于在选项前展示图标（如比例小框）。
+// 通用下拉选择器
 export function SettingDropdown({
   value,
   onChange,
@@ -96,23 +99,23 @@ export function SettingDropdown({
           type="button"
           disabled={disabled}
           className={cn(
-            "flex h-9 min-w-[96px] items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-colors hover:bg-muted focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50",
+            "flex h-9 min-w-[100px] items-center justify-between gap-2 rounded-xl border border-border/60 bg-background px-3.5 text-[13px] outline-none transition-colors hover:bg-muted/50 focus-visible:border-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
             className,
           )}
         >
           <span className={cn("flex min-w-0 items-center gap-2 truncate", !current && "text-muted-foreground")}>
             {current?.label ?? placeholder ?? value}
           </span>
-          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground/60" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="min-w-[var(--radix-dropdown-menu-trigger-width)]"
+        className="min-w-[var(--radix-dropdown-menu-trigger-width)] rounded-xl"
       >
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
           {options.map((option) => (
-            <DropdownMenuRadioItem key={option.value} value={option.value}>
+            <DropdownMenuRadioItem key={option.value} value={option.value} className="rounded-lg text-[13px]">
               <span className="flex items-center gap-2">{option.label}</span>
             </DropdownMenuRadioItem>
           ))}

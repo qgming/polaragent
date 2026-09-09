@@ -4,7 +4,7 @@
 // 基于 Windows UI Automation 实现桌面应用的观察与操作
 
 import { Type, type Static, type TSchema } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { useConfigStore } from "@/stores/config-store";
 import { text, type ToolContext } from "./tool-context";
@@ -363,12 +363,13 @@ function createSimpleComputerUseTool<T extends TSchema>(
     /** 自定义错误处理（返回 null 使用默认处理） */
     handleError?: (error: Error, params: Static<T>) => ReturnType<typeof text> | null;
   },
-): AgentTool<T> {
+): AgentHarnessTool<ToolContext, T> {
   return {
     name,
     label,
     description,
     parameters: params,
+    // 简单 Computer Use 工具不依赖 toolContext / abortSignal / 进度回调
     execute: async (_id, rawParams: Static<T>) => {
       // 前置校验
       const validationError = options?.validate?.(rawParams);
@@ -406,7 +407,7 @@ function createSimpleComputerUseTool<T extends TSchema>(
 // 自定义实现工具（有复杂特殊逻辑）
 // ============================================================
 
-export function windowsSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapshotParams> {
+export function windowsSnapshotTool(): AgentHarnessTool<ToolContext, typeof snapshotParams> {
   return {
     name: "windows_snapshot",
     label: "Windows 截图",
@@ -416,7 +417,7 @@ export function windowsSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
       "使用获取的 elementId 可以直接操作 UI 元素。" +
       "建议先调用此工具获取窗口状态，再使用其他 Computer Use 工具进行操作。",
     parameters: snapshotParams,
-    execute: async (_id, params: Static<typeof snapshotParams>) => {
+    execute: async (_id, params: Static<typeof snapshotParams>, _onUpdate, _toolContext, _invocation, _context) => {
       try {
         const defaults = computerUseDefaults();
         const result = await window.polaragent.computeruse.snapshot({
@@ -476,14 +477,14 @@ export function windowsSnapshotTool(_ctx: ToolContext): AgentTool<typeof snapsho
   };
 }
 
-export function windowsClickTool(_ctx: ToolContext): AgentTool<typeof clickParams> {
+export function windowsClickTool(): AgentHarnessTool<ToolContext, typeof clickParams> {
   return {
     name: "windows_click",
     label: "Windows 点击",
     description:
       "在 Windows 应用中点击指定坐标或 UI 元素。可以通过屏幕坐标 (x, y) 或通过 windows_snapshot 获取的元素 ID 来定位。",
     parameters: clickParams,
-    execute: async (_id, params: Static<typeof clickParams>) => {
+    execute: async (_id, params: Static<typeof clickParams>, _onUpdate, _toolContext, _invocation, _context) => {
       if (!hasPointOrElement(params)) {
         return {
           content: text("必须提供坐标 (x, y) 或元素 ID (elementId)"),
@@ -548,14 +549,14 @@ export function windowsClickTool(_ctx: ToolContext): AgentTool<typeof clickParam
   };
 }
 
-export function windowsTypeTool(_ctx: ToolContext): AgentTool<typeof typeTextParams> {
+export function windowsTypeTool(): AgentHarnessTool<ToolContext, typeof typeTextParams> {
   return {
     name: "windows_type",
     label: "Windows 输入",
     description:
       "在 Windows 应用的当前焦点控件中输入文本。会自动保存并恢复剪贴板内容，支持 Unicode 字符。",
     parameters: typeTextParams,
-    execute: async (_id, params: Static<typeof typeTextParams>) => {
+    execute: async (_id, params: Static<typeof typeTextParams>, _onUpdate, _toolContext, _invocation, _context) => {
       try {
         const result = await window.polaragent.computeruse.type({
           text: params.text,
@@ -588,7 +589,7 @@ export function windowsTypeTool(_ctx: ToolContext): AgentTool<typeof typeTextPar
   };
 }
 
-export function windowsKeypressTool(_ctx: ToolContext): AgentTool<typeof keypressParams> {
+export function windowsKeypressTool(): AgentHarnessTool<ToolContext, typeof keypressParams> {
   return {
     name: "windows_keypress",
     label: "Windows 按键",
@@ -598,7 +599,7 @@ export function windowsKeypressTool(_ctx: ToolContext): AgentTool<typeof keypres
       "常用组合键: Ctrl+C (复制), Ctrl+V (粘贴), Ctrl+S (保存), Alt+F4 (关闭窗口)。" +
       "⚠️ 不支持 Windows 键（Win）。使用 Ctrl+Esc 打开开始菜单，Alt+Tab 切换窗口。",
     parameters: keypressParams,
-    execute: async (_id, params: Static<typeof keypressParams>) => {
+    execute: async (_id, params: Static<typeof keypressParams>, _onUpdate, _toolContext, _invocation, _context) => {
       // 前置检查：拦截 Windows 键
       const hasWindowsKey = params.keys.some(
         key => {
@@ -678,14 +679,14 @@ export function windowsKeypressTool(_ctx: ToolContext): AgentTool<typeof keypres
   };
 }
 
-export function windowsFindTool(_ctx: ToolContext): AgentTool<typeof findParams> {
+export function windowsFindTool(): AgentHarnessTool<ToolContext, typeof findParams> {
   return {
     name: "windows_find",
     label: "Windows 查找",
     description:
       "在 Windows 应用中查找 UI 元素。根据名称、自动化 ID、类名或控件类型进行模糊匹配，返回匹配的元素列表。",
     parameters: findParams,
-    execute: async (_id, params: Static<typeof findParams>) => {
+    execute: async (_id, params: Static<typeof findParams>, _onUpdate, _toolContext, _invocation, _context) => {
       try {
         const defaults = computerUseDefaults();
         const result = await window.polaragent.computeruse.find({
@@ -740,14 +741,14 @@ export function windowsFindTool(_ctx: ToolContext): AgentTool<typeof findParams>
   };
 }
 
-export function windowsListWindowsTool(_ctx: ToolContext): AgentTool<typeof listWindowsParams> {
+export function windowsListWindowsTool(): AgentHarnessTool<ToolContext, typeof listWindowsParams> {
   return {
     name: "windows_list_windows",
     label: "列出窗口",
     description:
       "列出所有顶级桌面窗口。返回窗口标题、进程ID、窗口句柄等信息，用于选择目标窗口。",
     parameters: listWindowsParams,
-    execute: async (_id, params: Static<typeof listWindowsParams>) => {
+    execute: async (_id, params: Static<typeof listWindowsParams>, _onUpdate, _toolContext, _invocation, _context) => {
       try {
         const result = await window.polaragent.computeruse.listWindows({
           maxWindows: params.maxWindows || 50,
@@ -789,16 +790,14 @@ export function windowsListWindowsTool(_ctx: ToolContext): AgentTool<typeof list
   };
 }
 
-export function windowsAccessibilityTreeTool(
-  _ctx: ToolContext,
-): AgentTool<typeof accessibilityTreeParams> {
+export function windowsAccessibilityTreeTool(): AgentHarnessTool<ToolContext, typeof accessibilityTreeParams> {
   return {
     name: "windows_accessibility_tree",
     label: "获取可访问性树",
     description:
       "获取 UI Automation 树结构，不包含截图。比 snapshot 更快，适合频繁读取 UI 状态的场景。",
     parameters: accessibilityTreeParams,
-    execute: async (_id, params: Static<typeof accessibilityTreeParams>) => {
+    execute: async (_id, params: Static<typeof accessibilityTreeParams>, _onUpdate, _toolContext, _invocation, _context) => {
       try {
         const defaults = computerUseDefaults();
         const result = await window.polaragent.computeruse.tree({
@@ -846,7 +845,7 @@ export function windowsAccessibilityTreeTool(
 // 使用工厂函数简化的工具
 // ============================================================
 
-export function windowsFocusTool(_ctx: ToolContext): AgentTool<typeof focusParams> {
+export function windowsFocusTool(): AgentHarnessTool<ToolContext, typeof focusParams> {
   return createSimpleComputerUseTool(
     "windows_focus",
     "聚焦元素",
@@ -856,7 +855,7 @@ export function windowsFocusTool(_ctx: ToolContext): AgentTool<typeof focusParam
   );
 }
 
-export function windowsInvokeTool(_ctx: ToolContext): AgentTool<typeof invokeParams> {
+export function windowsInvokeTool(): AgentHarnessTool<ToolContext, typeof invokeParams> {
   return createSimpleComputerUseTool(
     "windows_invoke",
     "调用元素",
@@ -870,7 +869,7 @@ export function windowsInvokeTool(_ctx: ToolContext): AgentTool<typeof invokePar
   );
 }
 
-export function windowsSetValueTool(_ctx: ToolContext): AgentTool<typeof setValueParams> {
+export function windowsSetValueTool(): AgentHarnessTool<ToolContext, typeof setValueParams> {
   return createSimpleComputerUseTool(
     "windows_set_value",
     "设置元素值",
@@ -888,7 +887,7 @@ export function windowsSetValueTool(_ctx: ToolContext): AgentTool<typeof setValu
   );
 }
 
-export function windowsActivateWindowTool(_ctx: ToolContext): AgentTool<typeof activateWindowParams> {
+export function windowsActivateWindowTool(): AgentHarnessTool<ToolContext, typeof activateWindowParams> {
   return createSimpleComputerUseTool(
     "windows_activate_window",
     "激活窗口",
@@ -907,7 +906,7 @@ export function windowsActivateWindowTool(_ctx: ToolContext): AgentTool<typeof a
   );
 }
 
-export function windowsWaitTool(_ctx: ToolContext): AgentTool<typeof waitParams> {
+export function windowsWaitTool(): AgentHarnessTool<ToolContext, typeof waitParams> {
   return createSimpleComputerUseTool(
     "windows_wait",
     "等待",
@@ -921,7 +920,7 @@ export function windowsWaitTool(_ctx: ToolContext): AgentTool<typeof waitParams>
   );
 }
 
-export function windowsDragTool(_ctx: ToolContext): AgentTool<typeof dragParams> {
+export function windowsDragTool(): AgentHarnessTool<ToolContext, typeof dragParams> {
   return createSimpleComputerUseTool(
     "windows_drag",
     "Windows 拖拽",
@@ -936,7 +935,7 @@ export function windowsDragTool(_ctx: ToolContext): AgentTool<typeof dragParams>
   );
 }
 
-export function windowsElementInfoTool(_ctx: ToolContext): AgentTool<typeof elementInfoParams> {
+export function windowsElementInfoTool(): AgentHarnessTool<ToolContext, typeof elementInfoParams> {
   return createSimpleComputerUseTool(
     "windows_element_info",
     "元素信息",
@@ -950,7 +949,7 @@ export function windowsElementInfoTool(_ctx: ToolContext): AgentTool<typeof elem
   );
 }
 
-export function windowsMoveTool(_ctx: ToolContext): AgentTool<typeof moveParams> {
+export function windowsMoveTool(): AgentHarnessTool<ToolContext, typeof moveParams> {
   return createSimpleComputerUseTool(
     "windows_move",
     "Windows 移动鼠标",
@@ -967,7 +966,7 @@ export function windowsMoveTool(_ctx: ToolContext): AgentTool<typeof moveParams>
   );
 }
 
-export function windowsDoubleClickTool(_ctx: ToolContext): AgentTool<typeof doubleClickParams> {
+export function windowsDoubleClickTool(): AgentHarnessTool<ToolContext, typeof doubleClickParams> {
   return createSimpleComputerUseTool(
     "windows_double_click",
     "Windows 双击",
@@ -985,7 +984,7 @@ export function windowsDoubleClickTool(_ctx: ToolContext): AgentTool<typeof doub
   );
 }
 
-export function windowsScrollTool(_ctx: ToolContext): AgentTool<typeof scrollParams> {
+export function windowsScrollTool(): AgentHarnessTool<ToolContext, typeof scrollParams> {
   return createSimpleComputerUseTool(
     "windows_scroll",
     "Windows 滚动",
@@ -1008,14 +1007,14 @@ export function windowsScrollTool(_ctx: ToolContext): AgentTool<typeof scrollPar
   );
 }
 
-export function windowsBatchTool(_ctx: ToolContext): AgentTool<typeof batchParams> {
+export function windowsBatchTool(): AgentHarnessTool<ToolContext, typeof batchParams> {
   return {
     name: "windows_batch",
     label: "Windows 批量操作",
     description:
       "按顺序执行多个 Computer Use 动作，复用常驻 Worker，减少多轮工具调用开销。适合连续的聚焦、设置值、调用、等待、再观察流程。",
     parameters: batchParams,
-    execute: async (_id, params: Static<typeof batchParams>) => {
+    execute: async (_id, params: Static<typeof batchParams>, _onUpdate, _toolContext, _invocation, _context) => {
       if (!params.actions.length) {
         return { content: text("至少需要 1 个批量动作"), details: { error: "缺少 actions" } };
       }

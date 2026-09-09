@@ -43,9 +43,11 @@ function deriveState(config: ImageGenerationConfig) {
 export function ImageGenerationPanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const initial = deriveState(settings.imageGeneration ?? imageGenerationDefaults());
@@ -119,10 +121,14 @@ export function ImageGenerationPanel({
 
   return (
     <section>
-      <PageTitle
+      {!embedded ? (
+
+        <PageTitle
         title={t("image.title")}
         description={t("image.description")}
       />
+
+      ) : null}
 
       {/* 接口标准选择（下拉，与网络搜索一致） */}
       <div className="mt-8 rounded-xl border border-border bg-card">

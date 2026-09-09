@@ -1,7 +1,7 @@
 // 技能读取工具 —— list_skills / read_skill
 
 import { Type, type Static } from "typebox";
-import type { AgentTool, Skill } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool, Skill } from "@earendil-works/pi-agent-core";
 import { formatSkillInvocation } from "@earendil-works/pi-agent-core";
 
 import { listDirectoryEntries, readFile } from "@/lib/electron/electron-api";
@@ -122,9 +122,7 @@ export async function formatSkillInvocationWithFiles(skill: Skill): Promise<stri
   return `${formatSkillInvocation(skill)}\n\n<skill_files root="${root}">\n${treeText}${truncatedHint}\n</skill_files>\n\n可调用 read_skill_file({ name: "${skill.name}", path: "相对路径" }) 读取 references 或其他子文件。`;
 }
 
-export function listSkillsTool(
-  ctx: ToolContext,
-): AgentTool<typeof listSkillsParams> {
+export function listSkillsTool(): AgentHarnessTool<ToolContext, typeof listSkillsParams> {
   return {
     name: "list_skills",
     label: "列出技能",
@@ -132,7 +130,8 @@ export function listSkillsTool(
       "列出当前助手可用的技能。遇到任务可能匹配某个技能时，先调用此工具查看技能名称和适用场景，再用 read_skill 读取具体说明。",
     parameters: listSkillsParams,
     executionMode: "parallel",
-    execute: async () => {
+    execute: async (_id, _params, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const skills = availableSkills(ctx);
       if (skills.length === 0) {
         return {
@@ -158,9 +157,7 @@ export function listSkillsTool(
   };
 }
 
-export function readSkillTool(
-  ctx: ToolContext,
-): AgentTool<typeof readSkillParams> {
+export function readSkillTool(): AgentHarnessTool<ToolContext, typeof readSkillParams> {
   return {
     name: "read_skill",
     label: "读取技能",
@@ -168,7 +165,8 @@ export function readSkillTool(
       "读取当前上下文中某个可用技能的完整 SKILL.md 说明。只能读取 list_skills 列出的技能，用于在执行匹配任务前加载具体流程、约束和参考资料位置。",
     parameters: readSkillParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readSkillParams>) => {
+    execute: async (_id, params: Static<typeof readSkillParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const skill = findSkill(ctx, params.name);
       if (!skill) {
         const names = availableSkills(ctx).map((item) => item.name).join(", ");
@@ -197,16 +195,15 @@ export function readSkillTool(
   };
 }
 
-export function readSkillFileTool(
-  ctx: ToolContext,
-): AgentTool<typeof readSkillFileParams> {
+export function readSkillFileTool(): AgentHarnessTool<ToolContext, typeof readSkillFileParams> {
   return {
     name: "read_skill_file",
     label: "读取技能文件",
     description:
       "读取某个可用技能目录内的子文件，例如 references、examples、scripts 下的说明文件。路径必须是 read_skill 返回目录树中的相对路径，不能越过技能目录。",
     parameters: readSkillFileParams,
-    execute: async (_id, params: Static<typeof readSkillFileParams>) => {
+    execute: async (_id, params: Static<typeof readSkillFileParams>, _onUpdate, toolContext, _invocation, _context) => {
+      const ctx = toolContext;
       const skill = findSkill(ctx, params.name);
       if (!skill) {
         const names = availableSkills(ctx).map((item) => item.name).join(", ");

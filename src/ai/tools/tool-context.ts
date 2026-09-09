@@ -15,13 +15,8 @@ export interface ToolContext {
   permissionMode: ToolPermissionMode;
   isSubagent?: boolean;
   parentThreadId?: string;
-  parentAgentId?: string;
   isBackground?: boolean;
-  requester?: {
-    id: string;
-    name: string;
-  };
-  // 当前助手上下文允许使用的技能。技能工具只能读取这里列出的技能。
+  // 当前上下文允许使用的技能。技能工具只能读取这里列出的技能。
   skills?: Skill[];
   // 当前会话选中的知识库 ID 列表
   knowledgeBaseIds?: string[];

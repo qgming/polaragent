@@ -95,9 +95,8 @@ function buildUserPrompt(ctx: EvaluationContext): string {
 
 export async function evaluateGoal(
   ctx: EvaluationContext,
-  agentId = "default",
 ): Promise<GoalEvaluation | null> {
-  const service = resolveModelService(agentId) ?? firstModelService();
+  const service = resolveModelService() ?? firstModelService();
   if (!service) return null;
   const userPrompt = buildUserPrompt(ctx);
   try {

@@ -92,8 +92,6 @@
     "contextEmpty": "No context directories added yet",
     "addContextDir": "Add directory",
     "clearContextDirs": "Clear all",
-    "agentId": "Agent",
-    "agentMenuTitle": "Choose an Agent",
     "projectTemplate": "Project shortcut",
     "projectTemplateHint": "If this task belongs to a project, pull in its directory with one click.",
     "projectTemplatePlaceholder": "Optional: fill from a project",

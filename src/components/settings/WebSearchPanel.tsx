@@ -15,9 +15,11 @@ import { BraveConfigCard } from "./web-search/BraveConfigCard";
 export function WebSearchPanel({
   settings,
   onUpdate,
+  embedded,
 }: {
   settings: Settings;
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
+  embedded?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const webSearch = settings.webSearch ?? {
@@ -39,10 +41,14 @@ export function WebSearchPanel({
 
   return (
     <section>
-      <PageTitle
+      {!embedded ? (
+
+        <PageTitle
         title={t("webSearch.title")}
         description={t("webSearch.description")}
       />
+
+      ) : null}
 
       <div className="mt-8 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between gap-4 px-5 py-3.5">

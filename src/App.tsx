@@ -3,12 +3,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence } from "motion/react";
+import { useTranslation } from "react-i18next";
 
 import { abortAgentThread, resetAgent } from "@/ai/agent";
 import { AppSidebar } from "@/components/sidebar/AppSidebar";
 import { AskUserModal } from "@/components/AskUserModal";
+import { ContentTopBar } from "@/components/ContentTopBar";
 import { GlobalSessionSearch } from "@/components/GlobalSessionSearch";
-import { TitleBar } from "@/components/TitleBar";
 import { ToastContainer } from "@/components/ToastContainer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AutoUpdateHandler } from "@/components/updates/AutoUpdateHandler";
@@ -19,45 +20,37 @@ import { initializeApp } from "@/lib/app-init";
 import { type PageId } from "@/lib/navigation";
 import { ProjectEditorModal } from "@/components/project/ProjectEditorModal";
 import type { ProjectConfig } from "@/types/config";
-import { AgentsPage } from "@/pages/AgentsPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { HomePage } from "@/pages/HomePage";
 import { KnowledgePage } from "@/pages/KnowledgePage";
 import { SchedulePage } from "@/pages/SchedulePage";
-import { SettingsPage } from "@/pages/SettingsPage";
+import { SettingsModal } from "@/components/settings/SettingsModal";
 import { SkillsPage } from "@/pages/SkillsPage";
 import { ToolsPage } from "@/pages/ToolsPage";
-import { TutorialPage } from "@/pages/TutorialPage";
 import {
   useChatStore,
-  useThreadAgentId,
   useThreadSummaries,
   useThreadTitle,
 } from "@/stores/chat-store";
 import { useConversationStore } from "@/stores/conversation-store";
 import { useConfigStore } from "@/stores/config-store";
 import { useProjectsStore } from "@/stores/project/projects-store";
-import type { SettingsSection } from "@/pages/SettingsPage";
 
 function App() {
+  const { t } = useTranslation();
   const [activePage, setActivePage] = useState<PageId>("chat");
-  const [settingsSection, setSettingsSection] =
-    useState<SettingsSection>("preferences");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"tasks" | "project">("tasks");
   // 项目聊天视图：非空时主区域用 ChatPage 渲染（传入 subtitle + hideWorkingDirPicker）。
   const [projectChatView, setProjectChatView] = useState<{
     projectId: string;
     threadId: string;
   } | null>(null);
-  // 侧边栏只订阅轻量摘要；当前会话的 title/agentId 单独按标量订阅。
+  // 侧边栏只订阅轻量摘要；当前会话的 title 单独按标量订阅。
   // 避免订阅整个 threads——否则任一后台会话吐 token 都会触发整个 App 重渲染。
   const threadSummaries = useThreadSummaries();
   const activeThreadId = useChatStore((state) => state.activeThreadId);
   const activeThreadTitle = useThreadTitle(activeThreadId);
-  const activeThreadAgentId = useThreadAgentId(activeThreadId);
   const composer = useChatStore((state) => state.composer);
   const applyStreamingUpdate = useChatStore(
     (state) => state.applyStreamingUpdate,
@@ -75,15 +68,12 @@ function App() {
   const setComposer = useChatStore((state) => state.setComposer);
   const showHome = useChatStore((state) => state.showHome);
   const startExchange = useChatStore((state) => state.startExchange);
-  const activeAgentId = useChatStore((state) => state.activeAgentId);
-  const setActiveAgent = useChatStore((state) => state.setActiveAgent);
   const chatFont = useConfigStore(
     (state) => state.settings.appearance.chatFont,
   );
   const chatFontSize = useConfigStore(
     (state) => state.settings.appearance.chatFontSize,
   );
-  const agents = useConfigStore((state) => state.agents);
 
   // 项目相关：列表 + 编辑弹窗状态
   const projects = useProjectsStore((state) => state.projects);
@@ -136,12 +126,6 @@ function App() {
     setActivePage(page);
   };
 
-  const openSettingsSection = (section: SettingsSection) => {
-    setSettingsSection(section);
-    setProjectChatView(null);
-    setActivePage("settings");
-  };
-
   const handleSelectThread = (threadId: string) => {
     selectThread(threadId);
     // 项目会话走 projectChatView 独立视图
@@ -176,7 +160,7 @@ function App() {
 
   // 在项目内新建对话：传入 projectId 关联项目，切换到项目聊天视图
   const handleNewProjectThread = (projectId: string) => {
-    const threadId = createThread(undefined, undefined, undefined, projectId);
+    const threadId = createThread(undefined, undefined, projectId);
     setProjectChatView({ projectId, threadId });
     setActivePage("chat");
   };
@@ -271,36 +255,7 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-        <TitleBar
-          onOpenAbout={() => openSettingsSection("about")}
-          onOpenSearch={() => setSearchOpen(true)}
-          onOpenTutorial={() => setTutorialOpen(true)}
-          onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
-          showPanelToggle={
-            projectChatView
-                ? true
-                : activePage === "chat" && !!activeThreadId
-          }
-          sidebarCollapsed={sidebarCollapsed}
-          statsThreadId={projectChatView?.threadId}
-        />
-
-        {activePage === "settings" ? (
-          <main className="min-h-0 flex-1 bg-background">
-            <SettingsPage
-              initialSection={settingsSection}
-              onBack={() => setActivePage("chat")}
-            />
-          </main>
-        ) : tutorialOpen ? (
-          <main className="min-h-0 flex-1 bg-background">
-            <TutorialPage
-              onBack={() => setTutorialOpen(false)}
-            />
-          </main>
-        ) : (
-          <div className="flex min-h-0 flex-1">
+      <div className="flex h-screen overflow-hidden bg-white text-foreground dark:bg-background">
             <AnimatePresence initial={false}>
               {!sidebarCollapsed ? (
                 <AppSidebar
@@ -312,90 +267,85 @@ function App() {
                   onOpenPage={openPage}
                   onRenameThread={renameThread}
                   onSelectThread={handleSelectThread}
-	                  // 项目相关
-	                  onNewProjectThread={handleNewProjectThread}
-	                  onEditProject={handleEditProject}
-	                  onDeleteProject={handleDeleteProject}
-	                  onClearProjectChats={handleClearProjectChats}
-	                  onNewProject={handleNewProject}
-	                  runningThreadIds={runningThreadIds}
-	                  sidebarTab={sidebarTab}
-                  setSidebarTab={setSidebarTab}
+                  onToggleSidebar={() => setSidebarCollapsed(true)}
+                  onOpenSearch={() => setSearchOpen(true)}
+                  onNewProjectThread={handleNewProjectThread}
+                  onEditProject={handleEditProject}
+                  onDeleteProject={handleDeleteProject}
+                  onClearProjectChats={handleClearProjectChats}
+                  onNewProject={handleNewProject}
+                  runningThreadIds={runningThreadIds}
                   threads={orphanThreads}
                 />
               ) : null}
             </AnimatePresence>
 
-            <main className="min-w-0 flex-1 bg-background">
-              {projectChatView ? (
-                <ChatPage
-                  activeThreadTitle={activeThreadTitle}
-                  agentId={activeThreadAgentId || activeAgentId}
-                  applyStreamingUpdate={applyStreamingUpdate}
-                  composer={composer}
-                  failAssistant={failAssistant}
-                  finishAssistant={finishAssistant}
-                  setComposer={setComposer}
-                  startExchange={startExchange}
-                  threadId={projectChatView.threadId}
-                  subtitle={
-                    (() => {
-                      const projectName = projects.find((p) => p.id === projectChatView.projectId)?.name;
-                      return projectName && activeThreadTitle
-                        ? `${projectName} · ${activeThreadTitle}`
-                        : projectName || activeThreadTitle;
-                    })()
+            <div className="flex min-w-0 flex-1 flex-col">
+              <ContentTopBar
+                title={(() => {
+                  if (projectChatView) {
+                    const projectName = projects.find((p) => p.id === projectChatView.projectId)?.name;
+                    return projectName && activeThreadTitle
+                      ? `${projectName} · ${activeThreadTitle}`
+                      : projectName || activeThreadTitle || "";
                   }
-                  hideWorkingDirPicker
-                />
-              ) : (
-                <>
-              {activePage === "chat" && activeThreadId ? (
-                <ChatPage
-                  activeThreadTitle={activeThreadTitle}
-                  agentId={activeThreadAgentId || activeAgentId}
-                  applyStreamingUpdate={applyStreamingUpdate}
-                  composer={composer}
-                  failAssistant={failAssistant}
-                  finishAssistant={finishAssistant}
-                  setComposer={setComposer}
-                  startExchange={startExchange}
-                  threadId={activeThreadId}
-                />
-              ) : null}
-              {activePage === "chat" && !activeThreadId ? (
-                <HomePage
-                  activeAgentId={activeAgentId}
-                  agents={agents}
-                  applyStreamingUpdate={applyStreamingUpdate}
-                  composer={composer}
-                  createThread={createThread}
-                  failAssistant={failAssistant}
-                  finishAssistant={finishAssistant}
-                  setRetryAttempt={setRetryAttempt}
-                  setActiveAgent={setActiveAgent}
-                  setComposer={setComposer}
-                  startExchange={startExchange}
-                />
-              ) : null}
-              {activePage === "skills" ? <SkillsPage /> : null}
-              {activePage === "tools" ? <ToolsPage /> : null}
-              {activePage === "knowledge" ? <KnowledgePage /> : null}
-              {activePage === "schedule" ? <SchedulePage /> : null}
-              {activePage === "agent" ? (
-                <AgentsPage
-                  onStartChat={(agentId) => {
-                    setActiveAgent(agentId);
-                    createThread(agentId);
-                    setActivePage("chat");
-                  }}
-                />
-              ) : null}
-	                </>
-              )}
-            </main>
-          </div>
-        )}
+                  if (activePage === "chat" && activeThreadId) return activeThreadTitle || "";
+                  return t(`nav:pages.${activePage}.title`, activePage);
+                })()}
+                onOpenSearch={() => setSearchOpen(true)}
+                onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+                showPanelToggle={
+                  Boolean(projectChatView) || (activePage === "chat" && !!activeThreadId)
+                }
+                sidebarCollapsed={sidebarCollapsed}
+                statsThreadId={projectChatView?.threadId ?? activeThreadId}
+              />
+
+              <main className="min-h-0 min-w-0 flex-1 bg-white dark:bg-background">
+                {projectChatView ? (
+                  <ChatPage
+                    applyStreamingUpdate={applyStreamingUpdate}
+                    composer={composer}
+                    failAssistant={failAssistant}
+                    finishAssistant={finishAssistant}
+                    setComposer={setComposer}
+                    startExchange={startExchange}
+                    threadId={projectChatView.threadId}
+                    hideWorkingDirPicker
+                  />
+                ) : (
+                  <>
+                    {activePage === "chat" && activeThreadId ? (
+                      <ChatPage
+                        applyStreamingUpdate={applyStreamingUpdate}
+                        composer={composer}
+                        failAssistant={failAssistant}
+                        finishAssistant={finishAssistant}
+                        setComposer={setComposer}
+                        startExchange={startExchange}
+                        threadId={activeThreadId}
+                      />
+                    ) : null}
+                    {activePage === "chat" && !activeThreadId ? (
+                      <HomePage
+                        applyStreamingUpdate={applyStreamingUpdate}
+                        composer={composer}
+                        createThread={createThread}
+                        failAssistant={failAssistant}
+                        finishAssistant={finishAssistant}
+                        setRetryAttempt={setRetryAttempt}
+                        setComposer={setComposer}
+                        startExchange={startExchange}
+                      />
+                    ) : null}
+                    {activePage === "skills" ? <SkillsPage /> : null}
+                    {activePage === "tools" ? <ToolsPage /> : null}
+                    {activePage === "knowledge" ? <KnowledgePage /> : null}
+                    {activePage === "schedule" ? <SchedulePage /> : null}
+                  </>
+                )}
+              </main>
+            </div>
 
         {/* 新建/编辑项目弹窗 */}
         {projectEditorOpen ? (
@@ -413,6 +363,7 @@ function App() {
           onOpenThread={handleSelectThread}
           open={searchOpen}
         />
+        <SettingsModal />
         <AskUserModal />
         <AutoUpdateHandler />
         <ToastContainer toasts={toasts} onClose={removeToast} />

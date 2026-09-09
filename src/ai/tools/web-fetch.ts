@@ -9,7 +9,7 @@
 // 可选附带页面链接与表格的结构化抽取。请求与超时由主进程统一处理。
 
 import { Type, type Static } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import { corsFetch } from "@/lib/electron/electron-api";
 import { text, type ToolContext } from "./tool-context";
@@ -202,9 +202,7 @@ const readWebPageParams = Type.Object({
   ),
 });
 
-export function readWebPageTool(
-  _ctx: ToolContext,
-): AgentTool<typeof readWebPageParams> {
+export function readWebPageTool(): AgentHarnessTool<ToolContext, typeof readWebPageParams> {
   return {
     name: "web_fetch",
     label: "网页读取",
@@ -213,7 +211,8 @@ export function readWebPageTool(
       "或 mode=anchor_range 以关键词为中心截取附近内容。适合在搜索后深入阅读某个页面。",
     parameters: readWebPageParams,
     executionMode: "parallel",
-    execute: async (_id, params: Static<typeof readWebPageParams>, signal, onUpdate) => {
+    execute: async (_id, params: Static<typeof readWebPageParams>, onUpdate, _toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
       const startedAt = nowMs();
       const mode: WebFetchMode =
         params.mode === "heading_range" || params.mode === "anchor_range"

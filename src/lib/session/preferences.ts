@@ -8,7 +8,6 @@ import {
   WORKING_DIR_ENTRY,
   KNOWLEDGE_BASE_IDS_ENTRY,
   PROJECT_REF_ENTRY,
-  AGENT_ID_ENTRY,
 } from "./entries";
 import { openOrCreateSession } from "./lifecycle";
 
@@ -122,50 +121,6 @@ export async function setSessionKnowledgeBaseIds(
   }
 }
 
-// --- 会话级助手 ID 持久化 ---
-
-function readAgentIdFromEntries(
-  entries: Awaited<ReturnType<Session["findEntries"]>>,
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.type === "custom" && entry.customType === AGENT_ID_ENTRY) {
-      const data = entry.data as { agentId?: unknown } | undefined;
-      if (data && typeof data.agentId === "string" && data.agentId.trim()) {
-        return data.agentId;
-      }
-      // 当前条目数据无效，继续向前查找更早的有效条目
-      continue;
-    }
-  }
-  return undefined;
-}
-
-export async function getSessionAgentId(
-  sessionId: string,
-): Promise<string | undefined> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    return readAgentIdFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
-  } catch (error) {
-    console.error(`读取会话助手 ID 失败 ${sessionId}:`, error);
-    return undefined;
-  }
-}
-
-export async function setSessionAgentId(
-  sessionId: string,
-  agentId: string,
-): Promise<void> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    const branch = await session.branch("main", BACKGROUND_CONTEXT);
-    if (!branch) return;
-    await branch.appendCustomEntry(AGENT_ID_ENTRY, { agentId }, BACKGROUND_CONTEXT);
-  } catch (error) {
-    console.error(`写入会话助手 ID 失败 ${sessionId}:`, error);
-  }
-}
 
 function readKnowledgeBaseIdsFromEntries(
   entries: Awaited<ReturnType<Session["findEntries"]>>,

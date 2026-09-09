@@ -6,7 +6,7 @@
 // 不支持编辑的标准（openai-chat）下，image_edit 工具不会被注册（见 tools/index.ts）。
 
 import { Type, type TProperties } from "typebox";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
 
 import {
   corsFetch,
@@ -546,7 +546,7 @@ const IMAGE_PARAM_HINT =
   "可用参数：prompt、aspectRatio（比例 1:1/16:9/9:16/4:3/3:4/2:3/3:2/21:9）、" +
   "resolution（分辨率 1K/2K/4K）、n、fileName。比例与分辨率均为可选，省略时不发送该参数，交给模型自行决定。";
 
-export function generateImageTool(ctx: ToolContext): AgentTool<any> {
+export function generateImageTool(): AgentHarnessTool<ToolContext, any> {
   const parameters = buildGenerationParams();
 
   return {
@@ -554,7 +554,9 @@ export function generateImageTool(ctx: ToolContext): AgentTool<any> {
     label: "生成图片",
     description: `根据提示词生成图片。${IMAGE_PARAM_HINT}生成图片会保存到工作目录并登记为产物。`,
     parameters,
-    execute: async (_id, rawParams, signal, onUpdate) => {
+    execute: async (_id, rawParams, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const params = rawParams as GenParams;
       const resolved = resolveImageConfig("生成");
@@ -642,7 +644,7 @@ export function generateImageTool(ctx: ToolContext): AgentTool<any> {
   };
 }
 
-export function editImageTool(ctx: ToolContext): AgentTool<any> {
+export function editImageTool(): AgentHarnessTool<ToolContext, any> {
   const provider = currentImageProvider();
   const parameters = buildEditParams(provider);
 
@@ -651,7 +653,9 @@ export function editImageTool(ctx: ToolContext): AgentTool<any> {
     label: "编辑图片",
     description: `编辑已有图片。${IMAGE_PARAM_HINT}openai-images 标准支持可选 mask 蒙版。`,
     parameters,
-    execute: async (_id, rawParams, signal, onUpdate) => {
+    execute: async (_id, rawParams, onUpdate, toolContext, _invocation, context) => {
+      const signal = context.abortSignal;
+      const ctx = toolContext;
       const startedAt = nowMs();
       const params = rawParams as EditParams;
       const resolved = resolveImageConfig("编辑");
