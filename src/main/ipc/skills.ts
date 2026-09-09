@@ -3,23 +3,25 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import JSZip from "jszip";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 
 import { dataDir } from "../lib/app-paths.js";
 import { ensureDir, readText } from "../lib/fs-utils.js";
 
 // 是否受支持的 Git URL
-function supportedGitUrl(input) {
+function supportedGitUrl(input: string): boolean {
   return /^(https?:\/\/|ssh:\/\/|git:\/\/|git@)/.test(input);
 }
 
 // 将任意名称规整为安全 slug
-function sanitizeSlug(input) {
+function sanitizeSlug(input: string): string {
   return String(input).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "skill";
 }
 
 // 在父目录下生成不冲突的子目录路径
-function uniqueChild(parent, slug) {
+function uniqueChild(parent: string, slug: string): string {
   let candidate = path.join(parent, slug);
   let suffix = 1;
   while (fs.existsSync(candidate)) candidate = path.join(parent, `${slug}-${suffix++}`);
@@ -27,7 +29,7 @@ function uniqueChild(parent, slug) {
 }
 
 // 解析 GitHub URL 为 clone 信息（含分支与子目录）
-function parseGithubSource(input) {
+function parseGithubSource(input: string): { cloneUrl: string; branch?: string; subdir?: string } | null {
   const cleaned = input.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
   const match = cleaned.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/(tree|blob)\/([^/]+)(?:\/(.+))?)?$/);
   if (!match) return null;
@@ -39,14 +41,14 @@ function parseGithubSource(input) {
 }
 
 // 通用 Git 源解析（GitHub 优先，否则原样作为 clone URL）
-function gitSource(input) {
+function gitSource(input: string): { cloneUrl: string; branch?: string; subdir?: string } {
   const github = parseGithubSource(input);
   if (github) return github;
   return { cloneUrl: input, branch: undefined, subdir: undefined };
 }
 
 // 运行子进程并收集 stdout/stderr
-async function runProcess(command, args, options = {}) {
+async function runProcess(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, windowsHide: true });
     let stdout = "";
@@ -62,7 +64,7 @@ async function runProcess(command, args, options = {}) {
 }
 
 // 递归收集包含 SKILL.md 的目录（限定深度）
-async function collectSkillRoots(root, depth = 0, matches = []) {
+async function collectSkillRoots(root: string, depth = 0, matches: string[] = []): Promise<string[]> {
   if (depth > 4 || !fs.existsSync(root)) return matches;
   if (fs.existsSync(path.join(root, "SKILL.md"))) {
     matches.push(root);
@@ -79,7 +81,7 @@ async function collectSkillRoots(root, depth = 0, matches = []) {
 }
 
 // 在源目录中定位唯一可安装的 Skill 根目录
-async function installableSkillRoot(root) {
+async function installableSkillRoot(root: string): Promise<string> {
   const matches = await collectSkillRoots(root);
   if (matches.length === 1) return matches[0];
   if (matches.length === 0) throw new Error("未找到 SKILL.md，无法安装为 Skill");
@@ -87,7 +89,7 @@ async function installableSkillRoot(root) {
 }
 
 // 复制 Skill 目录（跳过 .git）
-async function copySkill(source, target) {
+async function copySkill(source: string, target: string): Promise<void> {
   await ensureDir(target);
   const entries = await fsp.readdir(source, { withFileTypes: true });
   for (const entry of entries) {
@@ -103,7 +105,7 @@ async function copySkill(source, target) {
 }
 
 // 从 Git 仓库安装 Skill（浅克隆到临时目录后复制）
-async function installSkillFromGit(repoUrl) {
+async function installSkillFromGit(repoUrl: string): Promise<string> {
   const trimmed = String(repoUrl || "").trim();
   if (!trimmed) throw new Error("缺少 Git 仓库 URL");
   if (!supportedGitUrl(trimmed)) throw new Error("仅支持 http(s)、ssh 或 git 协议的 Git 仓库 URL");
@@ -132,7 +134,7 @@ async function installSkillFromGit(repoUrl) {
 }
 
 // 从本地目录安装 Skill
-async function installSkillFromLocal(sourcePath) {
+async function installSkillFromLocal(sourcePath: string): Promise<string> {
   const source = String(sourcePath || "").trim();
   if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) throw new Error("本地 Skill 源目录不存在");
   const skillRoot = await installableSkillRoot(source);
@@ -144,7 +146,7 @@ async function installSkillFromLocal(sourcePath) {
 }
 
 // 从压缩包安装 Skill（解压到临时目录后复制）
-async function installSkillFromZip(zipPath) {
+async function installSkillFromZip(zipPath: string): Promise<string> {
   if (!JSZip) throw new Error("jszip 模块未安装，无法解压缩包");
   const source = String(zipPath || "").trim();
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error("压缩包文件不存在");
@@ -165,7 +167,7 @@ async function installSkillFromZip(zipPath) {
     const zip = await JSZip.loadAsync(zipData);
 
     // 解压所有文件到临时目录
-    const extractPromises = [];
+    const extractPromises: Promise<void>[] = [];
     zip.forEach((relativePath, zipEntry) => {
       if (zipEntry.dir) return;
       const targetPath = path.join(tempDir, relativePath);
@@ -189,7 +191,7 @@ async function installSkillFromZip(zipPath) {
 }
 
 // 列举 builtin/custom 下的 Agent Skill 目录
-async function listSkills(skillType) {
+async function listSkills(skillType: string): Promise<string[]> {
   const dir = path.join(dataDir(), "skills", skillType === "builtin" ? "builtin" : "custom");
   const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
   return entries
@@ -199,7 +201,7 @@ async function listSkills(skillType) {
 }
 
 // 读取指定 Skill 的 SKILL.md 元数据
-async function readSkillMetadata(skillId) {
+async function readSkillMetadata(skillId: string): Promise<string> {
   for (const type of ["custom", "builtin"]) {
     const file = path.join(dataDir(), "skills", type, skillId, "SKILL.md");
     if (fs.existsSync(file)) return readText(file);
@@ -208,7 +210,7 @@ async function readSkillMetadata(skillId) {
 }
 
 // 删除指定的 Skill（仅支持 custom 类型）
-async function uninstallSkill(skillId) {
+async function uninstallSkill(skillId: string): Promise<boolean> {
   const customDir = path.join(dataDir(), "skills", "custom", skillId);
   const builtinDir = path.join(dataDir(), "skills", "builtin", skillId);
 
@@ -231,7 +233,7 @@ async function uninstallSkill(skillId) {
 // ==================== Write / Patch / Delete Skill Helpers ====================
 
 /** 校验技能名称格式：只能包含小写字母、数字和连字符 */
-function validateSkillName(name) {
+function validateSkillName(name: unknown): string {
   if (!name || typeof name !== "string") {
     throw new Error("技能名称不能为空");
   }
@@ -246,7 +248,7 @@ function validateSkillName(name) {
 }
 
 /** 获取技能在 custom 目录下的真实路径，并校验路径安全 */
-function getCustomSkillDir(name) {
+function getCustomSkillDir(name: string): { skillDir: string; customDir: string } {
   const customDir = path.join(dataDir(), "skills", "custom");
   const skillDir = path.join(customDir, name);
   // 校验路径不越界
@@ -259,7 +261,7 @@ function getCustomSkillDir(name) {
 }
 
 /** 创建备份（保留最多 10 个版本） */
-async function backupSkillMd(skillMdPath) {
+async function backupSkillMd(skillMdPath: string): Promise<void> {
   if (!fs.existsSync(skillMdPath)) return;
   const dir = path.dirname(skillMdPath);
   const bakDir = path.join(dir, ".bak");
@@ -278,7 +280,7 @@ async function backupSkillMd(skillMdPath) {
   // 保留最多 10 个版本，超出则删除最旧的
   while (bakFiles.length >= 10) {
     const oldest = bakFiles.shift();
-    await fsp.unlink(path.join(bakDir, oldest)).catch(() => {});
+    if (oldest) await fsp.unlink(path.join(bakDir, oldest)).catch(() => {});
   }
 
   // 新备份编号为当前最大编号 +1
@@ -289,7 +291,7 @@ async function backupSkillMd(skillMdPath) {
   await fsp.copyFile(skillMdPath, newBakPath);
 }
 
-function validateSkillContent(content, expectedName) {
+function validateSkillContent(content: unknown, expectedName: string): void {
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("SKILL.md 内容不能为空");
   }
@@ -311,7 +313,7 @@ function validateSkillContent(content, expectedName) {
   }
 }
 
-async function writeTextAtomically(targetPath, content, previousContent) {
+async function writeTextAtomically(targetPath: string, content: string, previousContent: string | undefined): Promise<void> {
   const tempPath = `${targetPath}.tmp-${Date.now()}`;
   try {
     await fsp.writeFile(tempPath, content, "utf8");
@@ -328,7 +330,7 @@ async function writeTextAtomically(targetPath, content, previousContent) {
   }
 }
 
-async function backupSkillDirForDeletion(skillDir, name, customDir) {
+async function backupSkillDirForDeletion(skillDir: string, name: string, customDir: string): Promise<string> {
   const deletedRoot = path.join(customDir, ".deleted");
   await ensureDir(deletedRoot);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -338,7 +340,7 @@ async function backupSkillDirForDeletion(skillDir, name, customDir) {
 }
 
 /** 创建或编辑技能（全量写入 SKILL.md） */
-async function writeSkill(name, content) {
+async function writeSkill(name: string, content: string) {
   const validatedName = validateSkillName(name);
   const { skillDir } = getCustomSkillDir(validatedName);
   const skillMdPath = path.join(skillDir, "SKILL.md");
@@ -366,7 +368,7 @@ async function writeSkill(name, content) {
 }
 
 /** 精确替换技能内容 */
-async function patchSkill(name, oldString, newString) {
+async function patchSkill(name: string, oldString: string, newString: string) {
   const validatedName = validateSkillName(name);
   const { skillDir } = getCustomSkillDir(validatedName);
   const skillMdPath = path.join(skillDir, "SKILL.md");
@@ -411,7 +413,7 @@ async function patchSkill(name, oldString, newString) {
 }
 
 /** 删除技能 */
-async function deleteSkill(name) {
+async function deleteSkill(name: string) {
   const validatedName = validateSkillName(name);
   const { skillDir } = getCustomSkillDir(validatedName);
 
@@ -439,19 +441,19 @@ async function deleteSkill(name) {
 
 // ==================== IPC Handlers ====================
 
-function register(ipcMain) {
-  ipcMain.handle("skills:list", (_event, { skillType }) => listSkills(skillType));
-  ipcMain.handle("skills:read-metadata", (_event, { skillId }) => readSkillMetadata(skillId));
-  ipcMain.handle("skills:install-git", (_event, { repoUrl }) => installSkillFromGit(repoUrl));
-  ipcMain.handle("skills:install-local", (_event, { sourcePath }) => installSkillFromLocal(sourcePath));
-  ipcMain.handle("skills:install-zip", (_event, { zipPath }) => installSkillFromZip(zipPath));
-  ipcMain.handle("skills:uninstall", (_event, { skillId }) => uninstallSkill(skillId));
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("skills:list", (_event: IpcMainInvokeEvent, { skillType }: { skillType: string }) => listSkills(skillType));
+  ipcMain.handle("skills:read-metadata", (_event: IpcMainInvokeEvent, { skillId }: { skillId: string }) => readSkillMetadata(skillId));
+  ipcMain.handle("skills:install-git", (_event: IpcMainInvokeEvent, { repoUrl }: { repoUrl: string }) => installSkillFromGit(repoUrl));
+  ipcMain.handle("skills:install-local", (_event: IpcMainInvokeEvent, { sourcePath }: { sourcePath: string }) => installSkillFromLocal(sourcePath));
+  ipcMain.handle("skills:install-zip", (_event: IpcMainInvokeEvent, { zipPath }: { zipPath: string }) => installSkillFromZip(zipPath));
+  ipcMain.handle("skills:uninstall", (_event: IpcMainInvokeEvent, { skillId }: { skillId: string }) => uninstallSkill(skillId));
   // 写入技能（创建或全量编辑）
-  ipcMain.handle("skills:write-skill", (_event, { name, content }) => writeSkill(name, content));
+  ipcMain.handle("skills:write-skill", (_event: IpcMainInvokeEvent, { name, content }: { name: string; content: string }) => writeSkill(name, content));
   // 精确替换技能内容
-  ipcMain.handle("skills:patch-skill", (_event, { name, oldString, newString }) => patchSkill(name, oldString, newString));
+  ipcMain.handle("skills:patch-skill", (_event: IpcMainInvokeEvent, { name, oldString, newString }: { name: string; oldString: string; newString: string }) => patchSkill(name, oldString, newString));
   // 删除技能
-  ipcMain.handle("skills:delete-skill", (_event, { name }) => deleteSkill(name));
+  ipcMain.handle("skills:delete-skill", (_event: IpcMainInvokeEvent, { name }: { name: string }) => deleteSkill(name));
 }
 
 export { register };

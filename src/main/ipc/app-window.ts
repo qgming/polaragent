@@ -1,11 +1,12 @@
 // IPC：应用、窗口、对话框、文件预览窗口
-import { BrowserWindow, dialog, shell, app } from "electron";
+import { BrowserWindow, dialog, shell, app, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { APP_NAME } from "../lib/constants.js";
 import { dataDir, ensureDataDir } from "../lib/app-paths.js";
 import { ensureDir } from "../lib/fs-utils.js";
+import { isSafeExternalUrl } from "../lib/session-security.js";
 import { getMainWindow, createWindow, loadApp } from "../lib/windows.js";
 
 const DOCUMENT_EXTENSIONS = [
@@ -16,10 +17,10 @@ const DOCUMENT_EXTENSIONS = [
 ];
 
 // 已打开的预览窗口：key -> BrowserWindow
-const previewWindows = new Map();
+const previewWindows = new Map<string, BrowserWindow>();
 
 // 由文件路径派生稳定的预览窗口 key（同一文件复用同一窗口）
-function labelForPath(filePath) {
+function labelForPath(filePath: string): string {
   let hash = 5381;
   for (let index = 0; index < filePath.length; index += 1) {
     hash = (hash * 33) ^ filePath.charCodeAt(index);
@@ -27,7 +28,7 @@ function labelForPath(filePath) {
   return `preview-${(hash >>> 0).toString(36)}`;
 }
 
-function register(ipcMain) {
+function register(ipcMain: IpcMain) {
   ipcMain.handle("app:get-data-dir", () => dataDir());
   ipcMain.handle("app:get-home-dir", () => app.getPath("home"));
   ipcMain.handle("app:ensure-data-dir", ensureDataDir);
@@ -35,15 +36,20 @@ function register(ipcMain) {
     await ensureDir(dataDir());
     await shell.openPath(dataDir());
   });
-  ipcMain.handle("app:open-path", async (_event, { path: target }) => shell.openPath(target));
-  ipcMain.handle("app:open-external", async (_event, { url }) => shell.openExternal(url));
-  ipcMain.handle("app:file-url", (_event, { path: target }) => pathToFileURL(target).toString());
+  ipcMain.handle("app:open-path", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => shell.openPath(target));
+  ipcMain.handle("app:open-external", async (_event: IpcMainInvokeEvent, { url }: { url: string }) => {
+    if (!isSafeExternalUrl(url)) {
+      throw new Error(`不允许打开的外部地址: ${String(url)}`);
+    }
+    return shell.openExternal(String(url));
+  });
+  ipcMain.handle("app:file-url", (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => pathToFileURL(target).toString());
   ipcMain.handle("dialog:pick-directory", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), { properties: ["openDirectory"] });
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, { properties: ["openDirectory"] });
     return result.canceled ? null : result.filePaths[0] || null;
   });
   ipcMain.handle("dialog:pick-text-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile"],
       filters: [
         {
@@ -55,7 +61,7 @@ function register(ipcMain) {
     return result.canceled ? null : result.filePaths[0] || null;
   });
   ipcMain.handle("dialog:pick-multiple-files", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile", "multiSelections"],
       filters: [
         {
@@ -67,49 +73,49 @@ function register(ipcMain) {
     return result.canceled ? [] : result.filePaths;
   });
   ipcMain.handle("dialog:pick-image-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile"],
       filters: [{ name: "图片文件", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] }],
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
   ipcMain.handle("dialog:pick-audio-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile"],
       filters: [{ name: "音频文件", extensions: ["mp3", "wav", "m4a", "aac", "ogg", "flac", "webm", "opus"] }],
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
   ipcMain.handle("dialog:pick-document-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile"],
       filters: [{ name: "文档文件", extensions: ["pdf", "docx"] }],
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
   ipcMain.handle("dialog:pick-zip-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow(), {
+    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
       properties: ["openFile"],
       filters: [{ name: "压缩包文件", extensions: ["zip"] }],
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
 
-  ipcMain.handle("window:minimize", (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
-  ipcMain.handle("window:toggle-maximize", (event) => {
+  ipcMain.handle("window:minimize", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.minimize());
+  ipcMain.handle("window:toggle-maximize", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
     return win.isMaximized();
   });
-  ipcMain.handle("window:close", (event) => BrowserWindow.fromWebContents(event.sender)?.close());
-  ipcMain.handle("window:set-title", (event, { title }) => BrowserWindow.fromWebContents(event.sender)?.setTitle(String(title || APP_NAME)));
-  ipcMain.handle("window:is-maximized", (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
-  ipcMain.handle("preview:open", async (_event, { path: filePath }) => {
+  ipcMain.handle("window:close", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.close());
+  ipcMain.handle("window:set-title", (event: IpcMainInvokeEvent, { title }: { title: string }) => BrowserWindow.fromWebContents(event.sender)?.setTitle(String(title || APP_NAME)));
+  ipcMain.handle("window:is-maximized", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
+  ipcMain.handle("preview:open", async (_event: IpcMainInvokeEvent, { path: filePath }: { path: string }) => {
     if (!filePath) return;
 
-    if (/^https?:\/\//i.test(filePath)) {
+    if (isSafeExternalUrl(filePath)) {
       await shell.openExternal(filePath);
       return;
     }

@@ -1,19 +1,22 @@
 // 主进程网络/HTTP 共享工具：URL 归一化、错误处理等。
 
 // 归一化 LLM Base URL：去尾斜杠，确保以 /v1 结尾
-function normalizeBaseUrl(baseUrl) {
+function normalizeBaseUrl(baseUrl: string | null | undefined): string {
   const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
   if (!trimmed) throw new Error("Base URL 不能为空");
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 // 从错误响应体提取人类可读错误信息
-function errorMessage(payload) {
-  return payload?.error?.message || payload?.message || "服务返回错误";
+function errorMessage(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) return "服务返回错误";
+  const obj = payload as { error?: { message?: unknown }; message?: unknown };
+  const msg = obj.error?.message || obj.message;
+  return typeof msg === "string" && msg ? msg : "服务返回错误";
 }
 
 // 归一化用户输入的 Web URL（补 https，仅允许 http/https）
-function normalizeWebUrl(input) {
+function normalizeWebUrl(input: string | null | undefined): string {
   const trimmed = String(input || "").trim();
   if (!trimmed) throw new Error("url 不能为空");
   const url = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;

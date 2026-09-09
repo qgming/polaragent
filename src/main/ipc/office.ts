@@ -1,5 +1,6 @@
 // IPC：内置 Office 导出能力
 import { BrowserWindow } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +16,14 @@ async function htmlToPdf({
   pageSize = "A4",
   landscape = false,
   margins,
+}: {
+  html?: string;
+  targetPath: string;
+  baseDir?: string;
+  sourcePath?: string;
+  pageSize?: string;
+  landscape?: boolean;
+  margins?: Record<string, number>;
 }) {
   if (!String(html || "").trim() && !String(sourcePath || "").trim()) {
     throw new Error("HTML 内容或源文件路径不能为空");
@@ -32,6 +41,8 @@ async function htmlToPdf({
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // 与应用 UI 会话隔离：用户 HTML 可能引用外链样式/图片，不应受主应用 CSP 约束
+      partition: "polaragent-office",
     },
   });
 
@@ -73,7 +84,7 @@ async function htmlToPdf({
   }
 }
 
-function normalizePdfMargins(margins) {
+function normalizePdfMargins(margins: Record<string, number> | undefined) {
   if (!margins || typeof margins !== "object") {
     return { marginType: "default" };
   }
@@ -92,6 +103,11 @@ async function htmlToPptx({
   targetPath,
   baseDir,
   sourcePath,
+}: {
+  html?: string;
+  targetPath: string;
+  baseDir?: string;
+  sourcePath?: string;
 }) {
   if (!String(html || "").trim() && !String(sourcePath || "").trim()) {
     throw new Error("HTML 内容或源文件路径不能为空");
@@ -111,6 +127,7 @@ async function htmlToPptx({
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: "polaragent-office",
     },
   });
 
@@ -163,7 +180,7 @@ async function htmlToPptx({
   }
 }
 
-function injectBaseHref(html, baseDir) {
+function injectBaseHref(html: string, baseDir?: string) {
   if (!baseDir || /<base\s/i.test(html)) return html;
   const href = pathToFileURL(path.resolve(baseDir)).href.replace(/\/?$/, "/");
   const base = `<base href="${escapeHtmlAttr(href)}">`;
@@ -173,7 +190,7 @@ function injectBaseHref(html, baseDir) {
   return `${base}\n${html}`;
 }
 
-async function waitForDeckReady(win, width, height) {
+async function waitForDeckReady(win: BrowserWindow, width: number, height: number) {
   await win.webContents.executeJavaScript(`
     new Promise((resolve) => {
       const done = () => {
@@ -222,7 +239,7 @@ async function waitForDeckReady(win, width, height) {
   win.setSize(width, height);
 }
 
-async function waitForResources(win, timeoutMs = 8000) {
+async function waitForResources(win: BrowserWindow, timeoutMs = 8000) {
   await win.webContents.executeJavaScript(`
     new Promise((resolve) => {
       const delay = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -269,7 +286,7 @@ async function waitForResources(win, timeoutMs = 8000) {
   `);
 }
 
-async function showSlide(win, index) {
+async function showSlide(win: BrowserWindow, index: number) {
   await win.webContents.executeJavaScript(`
     new Promise((resolve) => {
       window.__currentSlideIndex = ${index};
@@ -295,40 +312,40 @@ async function showSlide(win, index) {
   await waitForResources(win);
 }
 
-async function imageSlidesPptx(images, title) {
+async function imageSlidesPptx(images: Buffer[], title: string) {
   const zip = new JSZip();
   zip.file("[Content_Types].xml", pptxImageContentTypes(images.length));
-  zip.folder("_rels").file(".rels", packageRels("ppt/presentation.xml"));
-  zip.folder("docProps").file("core.xml", coreProps(title));
-  zip.folder("docProps").file("app.xml", appProps("PolarAgent Office"));
+  zip.folder("_rels")!.file(".rels", packageRels("ppt/presentation.xml"));
+  zip.folder("docProps")!.file("core.xml", coreProps(title));
+  zip.folder("docProps")!.file("app.xml", appProps("PolarAgent Office"));
 
-  const ppt = zip.folder("ppt");
+  const ppt = zip.folder("ppt")!;
   ppt.file("presentation.xml", pptPresentation(images.length));
-  ppt.folder("_rels").file("presentation.xml.rels", pptPresentationRels(images.length));
-  ppt.folder("theme").file("theme1.xml", pptTheme());
-  ppt.folder("slideMasters").file("slideMaster1.xml", pptSlideMaster());
-  ppt.folder("slideMasters").folder("_rels").file("slideMaster1.xml.rels", pptSlideMasterRels());
-  ppt.folder("slideLayouts").file("slideLayout1.xml", pptSlideLayout());
-  ppt.folder("slideLayouts").folder("_rels").file("slideLayout1.xml.rels", pptSlideLayoutRels());
+  ppt.folder("_rels")!.file("presentation.xml.rels", pptPresentationRels(images.length));
+  ppt.folder("theme")!.file("theme1.xml", pptTheme());
+  ppt.folder("slideMasters")!.file("slideMaster1.xml", pptSlideMaster());
+  ppt.folder("slideMasters")!.folder("_rels")!.file("slideMaster1.xml.rels", pptSlideMasterRels());
+  ppt.folder("slideLayouts")!.file("slideLayout1.xml", pptSlideLayout());
+  ppt.folder("slideLayouts")!.folder("_rels")!.file("slideLayout1.xml.rels", pptSlideLayoutRels());
 
   images.forEach((buffer, index) => {
-    ppt.folder("media").file(`image${index + 1}.png`, buffer);
-    ppt.folder("slides").file(`slide${index + 1}.xml`, pptImageSlideXml(index));
+    ppt.folder("media")!.file(`image${index + 1}.png`, buffer);
+    ppt.folder("slides")!.file(`slide${index + 1}.xml`, pptImageSlideXml(index));
     ppt
-      .folder("slides")
-      .folder("_rels")
+      .folder("slides")!
+      .folder("_rels")!
       .file(`slide${index + 1}.xml.rels`, pptImageSlideRels(index));
   });
 
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
 }
 
-function titleFromHtml(html) {
+function titleFromHtml(html: string): string {
   const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   return decodeHtml(match?.[1] || "HTML PPT");
 }
 
-function pptxImageContentTypes(slideCount) {
+function pptxImageContentTypes(slideCount: number): string {
   const slides = Array.from({ length: slideCount }, (_, index) =>
     `<Override PartName="/ppt/slides/slide${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`,
   ).join("\n  ");
@@ -347,7 +364,7 @@ function pptxImageContentTypes(slideCount) {
 </Types>`;
 }
 
-function packageRels(target) {
+function packageRels(target: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/>
@@ -356,7 +373,7 @@ function packageRels(target) {
 </Relationships>`;
 }
 
-function coreProps(title) {
+function coreProps(title: string): string {
   const now = new Date().toISOString();
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -368,14 +385,14 @@ function coreProps(title) {
 </cp:coreProperties>`;
 }
 
-function appProps(appName) {
+function appProps(appName: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
   <Application>${escapeXml(appName)}</Application>
 </Properties>`;
 }
 
-function pptPresentation(slideCount) {
+function pptPresentation(slideCount: number): string {
   const slideIds = Array.from({ length: slideCount }, (_, index) =>
     `<p:sldId id="${256 + index}" r:id="rId${index + 2}"/>`,
   ).join("\n    ");
@@ -390,7 +407,7 @@ function pptPresentation(slideCount) {
 </p:presentation>`;
 }
 
-function pptPresentationRels(slideCount) {
+function pptPresentationRels(slideCount: number): string {
   const slides = Array.from({ length: slideCount }, (_, index) =>
     `<Relationship Id="rId${index + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${index + 1}.xml"/>`,
   ).join("\n  ");
@@ -432,7 +449,7 @@ function pptSlideLayoutRels() {
 </Relationships>`;
 }
 
-function pptImageSlideRels(index) {
+function pptImageSlideRels(index: number): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
@@ -440,7 +457,7 @@ function pptImageSlideRels(index) {
 </Relationships>`;
 }
 
-function pptImageSlideXml(index) {
+function pptImageSlideXml(index: number): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:cSld>
@@ -468,7 +485,7 @@ function pptTheme() {
 </a:theme>`;
 }
 
-function escapeXml(value) {
+function escapeXml(value: unknown): string {
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -477,11 +494,11 @@ function escapeXml(value) {
     .replace(/'/g, "&apos;");
 }
 
-function escapeHtmlAttr(value) {
+function escapeHtmlAttr(value: string): string {
   return escapeXml(value);
 }
 
-function decodeHtml(value) {
+function decodeHtml(value: string): string {
   return String(value)
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -490,11 +507,11 @@ function decodeHtml(value) {
     .replace(/&amp;/g, "&");
 }
 
-function register(ipcMain) {
-  ipcMain.handle("office:html-to-pdf", (_event, { request }) =>
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("office:html-to-pdf", (_event: IpcMainInvokeEvent, { request }: { request: Parameters<typeof htmlToPdf>[0] }) =>
     htmlToPdf(request),
   );
-  ipcMain.handle("office:html-to-pptx", (_event, { request }) =>
+  ipcMain.handle("office:html-to-pptx", (_event: IpcMainInvokeEvent, { request }: { request: Parameters<typeof htmlToPptx>[0] }) =>
     htmlToPptx(request),
   );
 }

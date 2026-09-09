@@ -1,8 +1,9 @@
 // IPC：CLI 工具检测（检测 lark-cli 等命令行工具是否已安装）
 import { execFileSync } from "node:child_process";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 
 // 检测指定 CLI 命令是否存在
-function detectCli(cliName) {
+function detectCli(cliName: string) {
   try {
     const command = process.platform === "win32" ? "where" : "which";
     execFileSync(command, [cliName], { timeout: 5000, encoding: "utf8" });
@@ -13,7 +14,7 @@ function detectCli(cliName) {
 }
 
 // 获取 CLI 工具版本
-function getCliVersion(cliName) {
+function getCliVersion(cliName: string): string | null {
   try {
     const versionFlag = cliName === "python" || cliName === "python3" ? "--version" : "--version";
     const result = execFileSync(cliName, [versionFlag], {
@@ -28,22 +29,22 @@ function getCliVersion(cliName) {
 }
 
 // 批量检测 CLI 工具列表
-async function detectCliTools(cliNames) {
+async function detectCliTools(cliNames: string[]) {
   return cliNames.map((name) => detectCli(name));
 }
 
 // 批量获取 CLI 工具版本
-async function getCliVersions(cliNames) {
+async function getCliVersions(cliNames: string[]) {
   return cliNames.map((name) => ({
     command: name,
     version: getCliVersion(name)
   }));
 }
 
-function register(ipcMain) {
-  ipcMain.handle("cli:detect", (_event, { cliName }) => detectCli(cliName));
-  ipcMain.handle("cli:detect-batch", (_event, { cliNames }) => detectCliTools(cliNames));
-  ipcMain.handle("cli:get-versions", (_event, { cliNames }) => getCliVersions(cliNames));
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("cli:detect", (_event: IpcMainInvokeEvent, { cliName }: { cliName: string }) => detectCli(cliName));
+  ipcMain.handle("cli:detect-batch", (_event: IpcMainInvokeEvent, { cliNames }: { cliNames: string[] }) => detectCliTools(cliNames));
+  ipcMain.handle("cli:get-versions", (_event: IpcMainInvokeEvent, { cliNames }: { cliNames: string[] }) => getCliVersions(cliNames));
 }
 
 export { register };

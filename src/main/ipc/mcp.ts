@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { app } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 
 import { APP_NAME, MCP_PROTOCOL_VERSION } from "../lib/constants.js";
 import { dataDir } from "../lib/app-paths.js";
@@ -12,7 +13,7 @@ import { dataDir } from "../lib/app-paths.js";
 // 因为启动 .cmd 时我们指定了独立的 cwd（mcp/packages），若只给 "npx.cmd" 这种
 // 裸文件名，cmd.exe 会先在 cwd 下找，导致 npx 误以为 npm 装在 cwd，
 // 报 "Cannot find module ...\\npm\\bin\\npx-cli.js"。解析为绝对路径即可避免。
-function resolveOnPath(fileName) {
+function resolveOnPath(fileName: string): string | null {
   const dirs = String(process.env.PATH || "").split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     const full = path.join(dir, fileName);
@@ -56,7 +57,7 @@ function normalizeCommand(command: string, args: string[] = []) {
 
   // .cmd/.bat：用 cmd.exe /d /s /c 包裹。手动为可执行文件与各参数加引号，
   // 配合 windowsVerbatimArguments 让 Node 原样传递，避免 shell 解释元字符。
-  const quote = (value) => `"${String(value).replace(/"/g, '""')}"`;
+  const quote = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
   const innerCommand = [executable, ...normalizedArgs].map(quote).join(" ");
   return {
     executable: process.env.comspec || "cmd.exe",
@@ -98,9 +99,9 @@ class StdioMcpClient {
       windowsHide: true,
     });
     this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk) => this.onStdout(chunk));
+    this.child.stdout.on("data", (chunk: string) => this.onStdout(chunk));
     this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (chunk) => {
+    this.child.stderr.on("data", (chunk: string) => {
       if (this.stderr.length < 8000) this.stderr += chunk;
     });
     this.child.on("close", () => {
@@ -109,7 +110,7 @@ class StdioMcpClient {
     });
   }
 
-  stderrHint() {
+  stderrHint(): string {
     const trimmed = this.stderr.trim();
     return trimmed ? `，stderr：${trimmed}` : "";
   }
@@ -121,7 +122,7 @@ class StdioMcpClient {
       const line = this.buffer.slice(0, index).trim();
       this.buffer = this.buffer.slice(index + 1);
       if (!line) continue;
-      let message;
+      let message: { id?: number; method?: string; error?: unknown; result?: unknown };
       try {
         message = JSON.parse(line);
       } catch {
@@ -129,7 +130,7 @@ class StdioMcpClient {
       }
       const id = message.id;
       if (id != null && this.pending.has(id)) {
-        const { resolve, reject, timer } = this.pending.get(id);
+        const { resolve, reject, timer } = this.pending.get(id)!;
         clearTimeout(timer);
         this.pending.delete(id);
         if (message.error) reject(new Error(`MCP server 返回错误：${JSON.stringify(message.error)}`));
@@ -140,7 +141,7 @@ class StdioMcpClient {
     }
   }
 
-  write(message: Record<string, any>) {
+  write(message: Record<string, unknown>) {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -175,7 +176,7 @@ class StdioMcpClient {
 }
 
 // 以「初始化—执行—关闭」的方式安全使用一次性 stdio 客户端
-async function withStdioClient(server, run) {
+async function withStdioClient<T>(server: Record<string, any>, run: (client: StdioMcpClient) => Promise<T>): Promise<T> {
   const client = new StdioMcpClient(server);
   try {
     await client.initialize();
@@ -185,11 +186,11 @@ async function withStdioClient(server, run) {
   }
 }
 
-function register(ipcMain) {
-  ipcMain.handle("mcp:stdio-list-tools", (_event, { server }) =>
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("mcp:stdio-list-tools", (_event: IpcMainInvokeEvent, { server }: { server: Record<string, any> }) =>
     withStdioClient(server, async (client) => {
       const result = await client.request("tools/list", {});
-      return (result.tools || []).map((tool) => ({
+      return (result.tools || []).map((tool: { name: string; title?: string; description?: string; inputSchema?: unknown }) => ({
         name: tool.name,
         title: tool.title,
         description: tool.description,
@@ -197,7 +198,7 @@ function register(ipcMain) {
       }));
     }),
   );
-  ipcMain.handle("mcp:stdio-call-tool", (_event, { request }) =>
+  ipcMain.handle("mcp:stdio-call-tool", (_event: IpcMainInvokeEvent, { request }: { request: { server: Record<string, any>; toolName: string; arguments?: Record<string, unknown> } }) =>
     withStdioClient(request.server, (client) =>
       client.request("tools/call", {
         name: request.toolName,

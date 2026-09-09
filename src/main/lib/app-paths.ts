@@ -14,7 +14,7 @@ function dataDir() {
 }
 
 // 在多个候选位置中找到第一个真实存在的资源路径
-function projectResourcePath(...segments) {
+function projectResourcePath(...segments: string[]) {
   const candidates = [
     path.join(process.resourcesPath || "", ...segments),
     path.join(app.getAppPath(), ...segments),
@@ -34,7 +34,7 @@ function appIconPath() {
 }
 
 // 把内置资源（skills/agents/mcp）同步到 userData
-async function mirrorBuiltinResource(source, target) {
+async function mirrorBuiltinResource(source: string, target: string) {
   if (!fs.existsSync(source)) return;
 
   const baseDir = path.resolve(dataDir());
@@ -81,7 +81,7 @@ async function ensureDataDir() {
   await ensureDir(dataDir());
   await pMap(
     subdirs,
-    (subdir) => ensureDir(path.join(dataDir(), subdir)),
+    (subdir: string) => ensureDir(path.join(dataDir(), subdir)),
     LOCAL_IO_CONCURRENCY,
   );
   await syncBuiltinResources();

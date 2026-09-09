@@ -3,13 +3,14 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 
 import { ensureDir, readText } from "../lib/fs-utils.js";
 import { validateFileAccess, setSecurityMode } from "../lib/security.js";
 
-function register(ipcMain) {
+function register(ipcMain: IpcMain) {
   // 读取文件（所有安全模式都允许）
-  ipcMain.handle("fs:read-file", (_event, { path: target }) => {
+  ipcMain.handle("fs:read-file", (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "read");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -17,7 +18,7 @@ function register(ipcMain) {
     return readText(target);
   });
   
-  ipcMain.handle("fs:read-base64-file", async (_event, { path: target }) => {
+  ipcMain.handle("fs:read-base64-file", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "read");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -27,7 +28,7 @@ function register(ipcMain) {
   });
   
   // 读取二进制文件，返回 base64 编码（渲染层再 atob 转 Uint8Array）
-  ipcMain.handle("fs:read-binary-file", async (_event, { path: binaryTarget }) => {
+  ipcMain.handle("fs:read-binary-file", async (_event: IpcMainInvokeEvent, { path: binaryTarget }: { path: string }) => {
     const binaryValidation = validateFileAccess(binaryTarget, "read");
     if (!binaryValidation.allowed) {
       throw new Error(binaryValidation.reason);
@@ -37,7 +38,7 @@ function register(ipcMain) {
   });
   
   // 写入文件（需要权限校验）
-  ipcMain.handle("fs:write-file", async (_event, { path: target, content }) => {
+  ipcMain.handle("fs:write-file", async (_event: IpcMainInvokeEvent, { path: target, content }: { path: string; content: string }) => {
     const validation = validateFileAccess(target, "write");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -46,7 +47,7 @@ function register(ipcMain) {
     await fsp.writeFile(target, content, "utf8");
   });
   
-  ipcMain.handle("fs:write-base64-file", async (_event, { path: target, content }) => {
+  ipcMain.handle("fs:write-base64-file", async (_event: IpcMainInvokeEvent, { path: target, content }: { path: string; content: string }) => {
     const validation = validateFileAccess(target, "write");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -55,7 +56,7 @@ function register(ipcMain) {
     await fsp.writeFile(target, Buffer.from(String(content || ""), "base64"));
   });
   
-  ipcMain.handle("fs:append-file", async (_event, { path: target, content }) => {
+  ipcMain.handle("fs:append-file", async (_event: IpcMainInvokeEvent, { path: target, content }: { path: string; content: string }) => {
     const validation = validateFileAccess(target, "write");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -64,7 +65,7 @@ function register(ipcMain) {
     await fsp.appendFile(target, content, "utf8");
   });
   
-  ipcMain.handle("fs:create-directory", async (_event, { path: target }) => {
+  ipcMain.handle("fs:create-directory", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "write");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -73,7 +74,7 @@ function register(ipcMain) {
   });
   
   // 删除路径（需要权限校验）
-  ipcMain.handle("fs:delete-path", async (_event, { path: target }) => {
+  ipcMain.handle("fs:delete-path", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "delete");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -83,7 +84,7 @@ function register(ipcMain) {
   });
 
   // 重命名/移动路径（源路径需要删除权限，目标路径需要写入权限）
-  ipcMain.handle("fs:rename", async (_event, { src, dest }) => {
+  ipcMain.handle("fs:rename", async (_event: IpcMainInvokeEvent, { src, dest }: { src: string; dest: string }) => {
     const srcValidation = validateFileAccess(src, "delete");
     if (!srcValidation.allowed) {
       throw new Error(srcValidation.reason);
@@ -97,7 +98,7 @@ function register(ipcMain) {
       await fsp.rename(src, dest);
     } catch (err) {
       // 跨分区/设备移动时回退为复制后删除
-      if (err && err.code === "EXDEV") {
+      if (err && typeof err === "object" && "code" in err && (err as NodeJS.ErrnoException).code === "EXDEV") {
         await fsp.cp(src, dest, { recursive: true, force: true });
         const stat = await fsp.stat(src);
         await fsp.rm(src, { recursive: stat.isDirectory(), force: true });
@@ -108,7 +109,7 @@ function register(ipcMain) {
   });
 
   // 复制路径（源路径需要读取权限，目标路径需要写入权限）
-  ipcMain.handle("fs:copy", async (_event, { src, dest }) => {
+  ipcMain.handle("fs:copy", async (_event: IpcMainInvokeEvent, { src, dest }: { src: string; dest: string }) => {
     const srcValidation = validateFileAccess(src, "read");
     if (!srcValidation.allowed) {
       throw new Error(srcValidation.reason);
@@ -122,7 +123,7 @@ function register(ipcMain) {
   });
 
   // 列举目录（读取操作）
-  ipcMain.handle("fs:list-directory", async (_event, { path: target }) => {
+  ipcMain.handle("fs:list-directory", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "read");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -131,7 +132,7 @@ function register(ipcMain) {
     return entries.map((entry) => entry.name);
   });
   
-  ipcMain.handle("fs:list-directory-entries", async (_event, { path: target }) => {
+  ipcMain.handle("fs:list-directory-entries", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "read");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -144,7 +145,7 @@ function register(ipcMain) {
   });
   
   // 检查文件存在性（读取操作）
-  ipcMain.handle("fs:exists", async (_event, { path: target }) => {
+  ipcMain.handle("fs:exists", async (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => {
     const validation = validateFileAccess(target, "read");
     if (!validation.allowed) {
       throw new Error(validation.reason);
@@ -153,7 +154,7 @@ function register(ipcMain) {
   });
   
   // 获取文件信息（读取操作）
-  ipcMain.handle("fs:stat", async (_event, { path: statTarget }) => {
+  ipcMain.handle("fs:stat", async (_event: IpcMainInvokeEvent, { path: statTarget }: { path: string }) => {
     const statValidation = validateFileAccess(statTarget, "read");
     if (!statValidation.allowed) {
       throw new Error(statValidation.reason);
@@ -169,14 +170,14 @@ function register(ipcMain) {
   });
   
   // 创建临时目录，返回绝对路径（临时目录始终允许）
-  ipcMain.handle("fs:create-temp-dir", async (_event, { prefix }) => {
+  ipcMain.handle("fs:create-temp-dir", async (_event: IpcMainInvokeEvent, { prefix }: { prefix?: string }) => {
     const tmpDirBase = os.tmpdir();
     const dir = await fsp.mkdtemp(path.join(tmpDirBase, prefix || "polaragent-"));
     return dir;
   });
   
   // 创建临时文件，返回绝对路径（临时文件始终允许）
-  ipcMain.handle("fs:create-temp-file", async (_event, { prefix, suffix }) => {
+  ipcMain.handle("fs:create-temp-file", async (_event: IpcMainInvokeEvent, { prefix, suffix }: { prefix?: string; suffix?: string }) => {
     const tmpFileBase = os.tmpdir();
     const fileName = `${prefix || ""}${Date.now()}-${Math.random().toString(36).slice(2)}${suffix || ""}`;
     const filePath = path.join(tmpFileBase, fileName);
@@ -185,7 +186,7 @@ function register(ipcMain) {
   });
 
   // 安全模式同步：渲染进程切换权限模式时同步到主进程
-  ipcMain.handle("security:set-mode", (_event, { mode }) => {
+  ipcMain.handle("security:set-mode", (_event: IpcMainInvokeEvent, { mode }: { mode: unknown }) => {
     setSecurityMode(mode);
   });
 }

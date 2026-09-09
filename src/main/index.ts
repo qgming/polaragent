@@ -1,6 +1,6 @@
 // 主进程入口：应用生命周期、IPC 注册汇总。
 // 各域处理器拆分至 ipc/*，共享工具拆分至 lib/*。
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, session } from "electron";
 
 import { register as registerAppWindow } from "./ipc/app-window.js";
 import { register as registerBrowserUse } from "./ipc/browseruse.js";
@@ -16,9 +16,10 @@ import { register as registerNetwork } from "./ipc/network.js";
 import { register as registerOffice } from "./ipc/office.js";
 import { register as registerShell } from "./ipc/shell.js";
 import { register as registerSkills } from "./ipc/skills.js";
-import { initializeAutoUpdates, register as registerUpdates } from "./ipc/updates.js";
+import { register as registerUpdates, initializeAutoUpdates } from "./ipc/updates.js";
 import { ensureDataDir, readSettingCloseToTray, readSettingStartInSystemTray } from "./lib/app-paths.js";
 import { APP_ID, APP_NAME } from "./lib/constants.js";
+import { installSessionSecurity } from "./lib/session-security.js";
 import { createTray, destroyTray, setIsQuitting } from "./lib/tray.js";
 import { createMainWindow, getMainWindow } from "./lib/windows.js";
 
@@ -63,6 +64,9 @@ if (!gotSingleInstanceLock) {
 
   registerHandlers();
   void app.whenReady().then(async () => {
+    installSessionSecurity(session.defaultSession, {
+      devServerUrl: process.env.VITE_DEV_SERVER_URL ?? null,
+    });
     await ensureDataDir();
     const closeToTray = readSettingCloseToTray();
     const startInTray = readSettingStartInSystemTray();

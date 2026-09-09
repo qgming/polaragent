@@ -1,5 +1,6 @@
 // IPC：网络相关（跨域代理、技能广场搜索、内置助手广场、网络搜索）
 import { net } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { projectResourcePath } from "../lib/app-paths.js";
@@ -38,14 +39,14 @@ interface MultipartPart {
 }
 
 // 把外部传入的超时值钳制到 [MIN, max] 区间，并对 NaN/非法值兜底为默认值。
-function clampTimeout(value, max = CORS_MAX_TIMEOUT_MS) {
+function clampTimeout(value: unknown, max = CORS_MAX_TIMEOUT_MS): number {
   const num = Number(value);
   const base = Number.isFinite(num) && num > 0 ? num : DEFAULT_TIMEOUT_MS;
   return Math.min(Math.max(base, MIN_TIMEOUT_MS), max);
 }
 
 // 错误信息中的 URL 脱敏：去掉 query，避免潜在密钥写入日志/错误链路
-function redactUrl(url) {
+function redactUrl(url: string | URL): string {
   try {
     const parsed = new URL(String(url));
     return `${parsed.origin}${parsed.pathname}`;
@@ -78,7 +79,7 @@ function electronRequest(url: string | URL, options: ElectronRequestOptions = {}
       reject(new Error(`请求超时（${timeoutMs}ms）：${redactUrl(url)}`));
     }, timeoutMs);
 
-    const finish = (fn) => {
+    const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -120,22 +121,22 @@ function electronRequest(url: string | URL, options: ElectronRequestOptions = {}
   });
 }
 
-function headerValue(headers, name) {
+function headerValue(headers: Record<string, string | string[]>, name: string): string {
   const value = headers?.[name] ?? headers?.[name.toLowerCase()];
   return Array.isArray(value) ? value.join(", ") : String(value || "");
 }
 
-function responseHeadersArray(headers) {
+function responseHeadersArray(headers: Record<string, string | string[]>): Array<[string, string]> {
   return Object.entries(headers || {})
     .filter(([key]) => !["content-length", "transfer-encoding"].includes(key.toLowerCase()))
     .map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : String(value)]);
 }
 
-function responseText(response) {
+function responseText(response: ElectronResponse): string {
   return response.body.toString("utf8");
 }
 
-function responseJson(response, label) {
+function responseJson(response: ElectronResponse, label: string): any {
   const text = responseText(response);
   try {
     return JSON.parse(text);
@@ -145,13 +146,13 @@ function responseJson(response, label) {
 }
 
 // 跨域代理请求（过滤危险/受控请求头）
-async function corsFetch(request) {
+async function corsFetch(request: Record<string, any>) {
   const url = normalizeWebUrl(request.url);
   const method = String(request.method || "GET").toUpperCase();
   if (!["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"].includes(method)) {
     throw new Error(`跨域代理不支持的 HTTP 方法：${method}`);
   }
-  const headers = {};
+  const headers: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(request.headers || {})) {
     const lower = key.toLowerCase();
     if (!["host", "connection", "content-length", "transfer-encoding", "origin", "referer"].includes(lower)) {
@@ -178,7 +179,7 @@ async function corsFetch(request) {
   };
 }
 
-function imageMimeType(filePath) {
+function imageMimeType(filePath: string): string {
   const ext = path.extname(String(filePath || "")).toLowerCase();
   if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
   if (ext === ".webp") return "image/webp";
@@ -192,7 +193,7 @@ function appendOptionalPart(parts: MultipartPart[], key: string, value: unknown)
   parts.push({ name: key, value: String(value) });
 }
 
-function parseImageResponse(response) {
+function parseImageResponse(response: ElectronResponse): any {
   const body = response.body.toString("utf8");
   let payload;
   try {
@@ -206,7 +207,7 @@ function parseImageResponse(response) {
   return payload;
 }
 
-function imageExtensionFromContentType(contentType) {
+function imageExtensionFromContentType(contentType: string): string {
   const value = String(contentType || "").toLowerCase();
   if (value.includes("image/jpeg")) return "jpg";
   if (value.includes("image/webp")) return "webp";
@@ -214,7 +215,7 @@ function imageExtensionFromContentType(contentType) {
   return "png";
 }
 
-async function downloadUrlAsBase64(request) {
+async function downloadUrlAsBase64(request: Record<string, any>) {
   const url = normalizeWebUrl(request.url);
   const response = await electronRequest(url, {
     method: "GET",
@@ -232,18 +233,18 @@ async function downloadUrlAsBase64(request) {
   };
 }
 
-function multipartEscape(value) {
+function multipartEscape(value: string): string {
   return String(value).replace(/"/g, "%22").replace(/\r?\n/g, " ");
 }
 
 function buildMultipartBody(parts: MultipartPart[]) {
   const boundary = `----PolarAgentForm${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-  const chunks = [];
+  const chunks: Buffer[] = [];
   for (const part of parts) {
     chunks.push(Buffer.from(`--${boundary}\r\n`));
     if (part.buffer) {
       chunks.push(Buffer.from(
-        `Content-Disposition: form-data; name="${multipartEscape(part.name)}"; filename="${multipartEscape(part.filename)}"\r\n` +
+        `Content-Disposition: form-data; name="${multipartEscape(part.name)}"; filename="${multipartEscape(part.filename || "")}"\r\n` +
         `Content-Type: ${part.contentType || "application/octet-stream"}\r\n\r\n`,
       ));
       chunks.push(part.buffer);
@@ -261,7 +262,7 @@ function buildMultipartBody(parts: MultipartPart[]) {
   };
 }
 
-async function openaiImageEdit(request) {
+async function openaiImageEdit(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   const model = String(request.model || "").trim();
   const prompt = String(request.prompt || "").trim();
@@ -323,7 +324,7 @@ async function fetchAgentIndex() {
 
 // 按分类文件名读取该分类下的全部助手
 // fileName 形如 "cat-编程.json"，来自索引，这里仍做白名单校验防止路径穿越
-async function fetchAgentCategory(fileName) {
+async function fetchAgentCategory(fileName: string) {
   if (typeof fileName !== "string" || !/^cat-[^\\/]+\.json$/.test(fileName)) {
     throw new Error(`非法的助手分类文件名：${fileName}`);
   }
@@ -333,7 +334,7 @@ async function fetchAgentCategory(fileName) {
 }
 
 // 网络搜索统一路由 - 根据 provider 选择不同的服务商
-async function webSearch(request) {
+async function webSearch(request: Record<string, any>) {
   const provider = String(request.provider || "tavily");
   const query = String(request.query || "").trim();
   if (!query) throw new Error("缺少搜索关键词。");
@@ -355,7 +356,7 @@ async function webSearch(request) {
 }
 
 // Tavily 搜索
-async function tavilySearch(request) {
+async function tavilySearch(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   if (!apiKey) throw new Error("Tavily API Key 未配置。");
 
@@ -367,8 +368,8 @@ async function tavilySearch(request) {
     max_results: Math.min(Math.max(Number(request.limit || 5), 1), 10),
   };
 
-  if (request.includeDomains) body.include_domains = request.includeDomains.split(",").map((d) => d.trim()).filter(Boolean);
-  if (request.excludeDomains) body.exclude_domains = request.excludeDomains.split(",").map((d) => d.trim()).filter(Boolean);
+  if (request.includeDomains) body.include_domains = request.includeDomains.split(",").map((d: string) => d.trim()).filter(Boolean);
+  if (request.excludeDomains) body.exclude_domains = request.excludeDomains.split(",").map((d: string) => d.trim()).filter(Boolean);
 
   // 完整内容选项
   if (request.includeAnswer) body.include_answer = true;
@@ -385,7 +386,7 @@ async function tavilySearch(request) {
   const data = responseJson(response, "Tavily 搜索");
   if (response.status < 200 || response.status >= 300) throw new Error(`Tavily 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
-  const results = (data.results || []).map((item) => ({
+  const results = (data.results || []).map((item: any) => ({
     title: item.title || "",
     url: item.url || "",
     snippet: item.content || "",
@@ -405,7 +406,7 @@ async function tavilySearch(request) {
 }
 
 // Exa 搜索
-async function exaSearch(request) {
+async function exaSearch(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   if (!apiKey) throw new Error("Exa API Key 未配置。");
 
@@ -441,7 +442,7 @@ async function exaSearch(request) {
   const data = responseJson(response, "Exa 搜索");
   if (response.status < 200 || response.status >= 300) throw new Error(`Exa 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
-  const results = (data.results || []).map((item) => ({
+  const results = (data.results || []).map((item: any) => ({
     title: item.title || "",
     url: item.url || "",
     snippet: item.snippet || item.text || "",
@@ -456,7 +457,7 @@ async function exaSearch(request) {
 }
 
 // Serper 搜索（Google Search API）
-async function serperSearch(request) {
+async function serperSearch(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   if (!apiKey) throw new Error("Serper API Key 未配置。");
 
@@ -482,7 +483,7 @@ async function serperSearch(request) {
   const data = responseJson(response, "Serper 搜索");
   if (response.status < 200 || response.status >= 300) throw new Error(`Serper 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
-  const results = (data.organic || []).map((item) => ({
+  const results = (data.organic || []).map((item: any) => ({
     title: item.title || "",
     url: item.link || "",
     snippet: item.snippet || "",
@@ -492,10 +493,10 @@ async function serperSearch(request) {
 }
 
 // SearXNG 搜索（开源元搜索引擎）
-async function searxngSearch(request) {
+async function searxngSearch(request: Record<string, any>) {
   const instances = (request.instances || "")
     .split(/[\n,]/)
-    .map((line) => line.trim())
+    .map((line: string) => line.trim())
     .filter(Boolean);
 
   // 如果用户未配置实例，使用默认公共实例
@@ -563,7 +564,7 @@ async function searxngSearch(request) {
       const data = responseJson(response, "SearXNG 搜索");
       const results = (data.results || [])
         .slice(0, limit)
-        .map((item) => ({
+        .map((item: any) => ({
           title: item.title || "",
           url: item.url || "",
           snippet: item.content || "",
@@ -576,11 +577,11 @@ async function searxngSearch(request) {
     }
   }
 
-  throw new Error(`所有 SearXNG 实例均不可用${lastError ? `：${lastError.message}` : ""}`);
+  throw new Error(`所有 SearXNG 实例均不可用${lastError ? `：${(lastError as Error).message}` : ""}`);
 }
 
 // Brave 搜索
-async function braveSearch(request) {
+async function braveSearch(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   if (!apiKey) throw new Error("Brave Search API Key 未配置。");
 
@@ -603,7 +604,7 @@ async function braveSearch(request) {
   const data = responseJson(response, "Brave 搜索");
   if (response.status < 200 || response.status >= 300) throw new Error(`Brave 搜索失败（${response.status}）：${data.error || data.message || "未知错误"}`);
 
-  const results = (data.web?.results || []).map((item) => ({
+  const results = (data.web?.results || []).map((item: any) => ({
     title: item.title || "",
     url: item.url || "",
     snippet: item.description || "",
@@ -614,7 +615,7 @@ async function braveSearch(request) {
 
 // 音频转写（语音识别 ASR）—— OpenAI /audio/transcriptions 接口
 // 读取本地音频文件，multipart 上传，返回 JSON { text: "..." }
-async function openaiTranscription(request) {
+async function openaiTranscription(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   const model = String(request.model || "").trim();
   const audioPath = String(request.audioPath || "").trim();
@@ -663,7 +664,7 @@ async function openaiTranscription(request) {
 }
 
 // 音频 MIME 类型判断（基于文件扩展名）
-function audioMimeType(filePath) {
+function audioMimeType(filePath: string): string {
   const ext = path.extname(String(filePath || "")).toLowerCase();
   if (ext === ".mp3") return "audio/mpeg";
   if (ext === ".m4a") return "audio/mp4";
@@ -675,7 +676,7 @@ function audioMimeType(filePath) {
 
 // 语音合成（TTS）—— OpenAI /audio/speech 接口
 // POST JSON，返回二进制音频流，转为 base64 返回给渲染进程
-async function openaiSpeech(request) {
+async function openaiSpeech(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   const model = String(request.model || "").trim();
   const input = String(request.input || "").trim();
@@ -724,7 +725,7 @@ async function openaiSpeech(request) {
 
 // MiMo TTS —— /chat/completions 接口
 // MiMo 使用 chat completions 格式，audio 在 response.choices[0].message.audio.data
-async function mimoSpeech(request) {
+async function mimoSpeech(request: Record<string, any>) {
   const apiKey = String(request.apiKey || "").trim();
   const model = String(request.model || "").trim();
   const input = String(request.input || "").trim();
@@ -787,7 +788,7 @@ async function mimoSpeech(request) {
 }
 
 // 从 Content-Type 或 responseFormat 推断音频扩展名
-function audioExtensionFromContentType(contentType, responseFormat) {
+function audioExtensionFromContentType(contentType: string, responseFormat?: string): string {
   const ct = String(contentType || "").toLowerCase();
   if (ct.includes("audio/mpeg") || ct.includes("audio/mp3")) return "mp3";
   if (ct.includes("audio/wav")) return "wav";
@@ -801,16 +802,16 @@ function audioExtensionFromContentType(contentType, responseFormat) {
   return "mp3"; // 默认
 }
 
-function register(ipcMain) {
-  ipcMain.handle("network:cors-fetch", (_event, { request }) => corsFetch(request));
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("network:cors-fetch", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => corsFetch(request));
   ipcMain.handle("network:fetch-agent-index", fetchAgentIndex);
-  ipcMain.handle("network:fetch-agent-category", (_event, { fileName }) => fetchAgentCategory(fileName));
-  ipcMain.handle("network:web-search", (_event, { request }) => webSearch(request));
-  ipcMain.handle("network:download-url-as-base64", (_event, { request }) => downloadUrlAsBase64(request));
-  ipcMain.handle("network:openai-image-edit", (_event, { request }) => openaiImageEdit(request));
-  ipcMain.handle("network:openai-transcription", (_event, { request }) => openaiTranscription(request));
-  ipcMain.handle("network:openai-speech", (_event, { request }) => openaiSpeech(request));
-  ipcMain.handle("network:mimo-speech", (_event, { request }) => mimoSpeech(request));
+  ipcMain.handle("network:fetch-agent-category", (_event: IpcMainInvokeEvent, { fileName }: { fileName: string }) => fetchAgentCategory(fileName));
+  ipcMain.handle("network:web-search", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => webSearch(request));
+  ipcMain.handle("network:download-url-as-base64", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => downloadUrlAsBase64(request));
+  ipcMain.handle("network:openai-image-edit", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => openaiImageEdit(request));
+  ipcMain.handle("network:openai-transcription", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => openaiTranscription(request));
+  ipcMain.handle("network:openai-speech", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => openaiSpeech(request));
+  ipcMain.handle("network:mimo-speech", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => mimoSpeech(request));
 }
 
 export { register };

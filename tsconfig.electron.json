@@ -11,9 +11,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "useUnknownInCatchVariables": false,
+    "useUnknownInCatchVariables": true,
     "skipLibCheck": true,
     "types": ["node", "electron"]
   },

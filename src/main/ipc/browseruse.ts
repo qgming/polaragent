@@ -1,10 +1,12 @@
 // IPC: Browser Use - Chrome extension bridge.
 import { WebSocket, WebSocketServer } from "ws";
+import type { Server as HttpServer } from "node:http";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { app, dialog } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { clampNumber } from "../lib/utils.js";
 
 // 共享的浏览器端 DOM 辅助函数（注入到 CDP Runtime.evaluate 中执行）
@@ -192,18 +194,18 @@ const DEFAULT_CONFIG = {
 };
 
 let config = { ...DEFAULT_CONFIG };
-let wss = null;
-let apiServer = null;
-let extensionWs = null;
+let wss: WebSocketServer | null = null;
+let apiServer: HttpServer | null = null;
+let extensionWs: WebSocket | null = null;
 let requestId = 0;
-let pendingRequests = new Map();
-let snapshotCache = new Map();
-let extensionInfo = null;
-let lastError = null;
+let pendingRequests = new Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void; timer: NodeJS.Timeout; action: string; startedAt: number }>();
+let snapshotCache = new Map<string, { tabId: number; elements: unknown[]; createdAt: number }>();
+let extensionInfo: Record<string, unknown> | null = null;
+let lastError: string | null = null;
 let lastCommandAt = 0;
-let lastTabs = [];
+let lastTabs: unknown[] = [];
 
-function normalizePort(value, fallback) {
+function normalizePort(value: unknown, fallback: number): number {
   const port = Number(value ?? fallback);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("端口必须是 1-65535");
@@ -211,7 +213,7 @@ function normalizePort(value, fallback) {
   return port;
 }
 
-function normalizeConfig(input: Record<string, any> = {}) {
+function normalizeConfig(input: Record<string, unknown> = {}) {
   return {
     wsPort: normalizePort(input.wsPort, config.wsPort),
     apiPort: normalizePort(input.apiPort, config.apiPort),
@@ -222,16 +224,16 @@ function normalizeConfig(input: Record<string, any> = {}) {
   };
 }
 
-function log(...args) {
+function log(...args: unknown[]) {
   if (config.verboseLogs) console.log("[BrowserUse]", ...args);
 }
 
-function markError(error) {
+function markError(error: unknown) {
   lastError = error instanceof Error ? error.message : String(error);
   console.error("[BrowserUse]", lastError);
 }
 
-function rejectAllPending(message) {
+function rejectAllPending(message: string) {
   const error = new Error(message);
   for (const { reject, timer } of pendingRequests.values()) {
     clearTimeout(timer);
@@ -301,7 +303,7 @@ function startServices() {
 
         const id = Number(msg.id);
         if (id && pendingRequests.has(id)) {
-          const request = pendingRequests.get(id);
+          const request = pendingRequests.get(id)!;
           pendingRequests.delete(id);
           clearTimeout(request.timer);
           if (msg.type === "error") {
@@ -311,7 +313,7 @@ function startServices() {
           }
         }
       } catch (error) {
-        markError(new Error(`WebSocket 消息解析失败: ${error.message}`));
+        markError(new Error(`WebSocket 消息解析失败: ${(error as Error).message}`));
       }
     });
 
@@ -328,7 +330,7 @@ function startServices() {
     ws.on("error", (error) => markError(error));
   });
 
-  wss.on("error", (error) => {
+  wss.on("error", (error: NodeJS.ErrnoException) => {
     markError(error);
     if (error.code === "EADDRINUSE") {
       void stopServices();
@@ -360,7 +362,7 @@ function startApiServer() {
         res.end(JSON.stringify({ ok: true, result }));
       } catch (error) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: error.message }));
+        res.end(JSON.stringify({ ok: false, error: (error as Error).message }));
       }
     });
   });
@@ -393,10 +395,11 @@ async function restartServices(nextConfig?: Record<string, any>) {
   return getStatus();
 }
 
-function normalizeExtensionError(error) {
+function normalizeExtensionError(error: unknown): Error {
   if (error instanceof Error) return error;
   if (error && typeof error === "object") {
-    return new Error(error.message || JSON.stringify(error));
+    const obj = error as { message?: string };
+    return new Error(obj.message || JSON.stringify(error));
   }
   return new Error(String(error || "未知错误"));
 }
@@ -417,7 +420,7 @@ async function sendToExtension(action: string, params: Record<string, any> = {},
     lastCommandAt = Date.now();
 
     try {
-      extensionWs.send(JSON.stringify({ id: String(id), code: { cmd: action, ...params } }));
+      if (extensionWs) extensionWs.send(JSON.stringify({ id: String(id), code: { cmd: action, ...params } }));
     } catch (error) {
       pendingRequests.delete(id);
       clearTimeout(timer);
@@ -426,15 +429,15 @@ async function sendToExtension(action: string, params: Record<string, any> = {},
   });
 }
 
-async function getActiveTabId(tabId) {
+async function getActiveTabId(tabId: unknown): Promise<number> {
   if (Number.isInteger(Number(tabId)) && Number(tabId) > 0) return Number(tabId);
   const tabs = await getTabs({});
-  const active = tabs.find((tab) => tab.active) ?? tabs[0];
+  const active = tabs.find((tab: any) => tab.active) ?? tabs[0];
   if (!active?.id) throw new Error("未找到可操作的浏览器标签页");
   return active.id;
 }
 
-async function handleCommand(params) {
+async function handleCommand(params: Record<string, unknown>) {
   const { command, ...args } = params || {};
 
   switch (command) {
@@ -469,14 +472,14 @@ async function handleCommand(params) {
   }
 }
 
-async function getTabs(args: Record<string, any>): Promise<any[]> {
+async function getTabs(args: Record<string, unknown>): Promise<any[]> {
   const resp = await sendToExtension("tabs", args);
   const tabs = Array.isArray(resp) ? resp : (resp.data || resp.result?.data || resp.tabs || []);
   lastTabs = tabs;
   return tabs;
 }
 
-async function openTab(args) {
+async function openTab(args: Record<string, unknown>) {
   const { url, profile, active, window, allowFocus, groupTitle } = args;
   const resp = await sendToExtension("openTab", { url, profile, active, window, allowFocus, groupTitle });
   const tabId = resp.id || resp.data?.id || resp.result?.data?.id;
@@ -487,7 +490,7 @@ async function openTab(args) {
   return { tabId, ...resp };
 }
 
-async function closeTab(args) {
+async function closeTab(args: Record<string, unknown>) {
   const { tabId } = args;
   const resp = await sendToExtension("closeTab", { tabId });
   clearSnapshotsForTab(tabId);
@@ -498,12 +501,12 @@ async function cdp(tabId: unknown, method: string, params: Record<string, any> =
   return await sendToExtension("cdp", { tabId: await getActiveTabId(tabId), method, params }, timeout);
 }
 
-function sleep(ms) {
+function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isNavigationTransientError(error) {
-  const message = String(error?.message || error || "").toLowerCase();
+function isNavigationTransientError(error: unknown): boolean {
+  const message = String((error as Error)?.message || error || "").toLowerCase();
   return (
     message.includes("execution context was destroyed") ||
     message.includes("cannot find context") ||
@@ -514,7 +517,7 @@ function isNavigationTransientError(error) {
 }
 
 // #3 页面就绪检测：获取当前 URL 与 readyState
-async function getPageState(tabId) {
+async function getPageState(tabId: unknown) {
   try {
     const resp = await cdp(tabId, "Runtime.evaluate", {
       expression: `(function(){ return { url: location.href, readyState: document.readyState }; })()`,
@@ -528,7 +531,7 @@ async function getPageState(tabId) {
 }
 
 // #3 页面就绪检测：等待 document.readyState === 'complete' 且无 pending 资源
-async function waitForPageReady(tabId, timeoutMs = 5000) {
+async function waitForPageReady(tabId: unknown, timeoutMs = 5000) {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
     try {
@@ -557,7 +560,7 @@ async function waitForPageReady(tabId, timeoutMs = 5000) {
 }
 
 // #5 页面导航检测：对比操作前后的 URL/readyState，若发生导航则等待新页面就绪
-async function detectAndWaitForNavigation(tabId, preState, timeoutMs = 5000) {
+async function detectAndWaitForNavigation(tabId: unknown, preState: any, timeoutMs = 5000) {
   try {
     const postState = await getPageState(tabId);
     const urlChanged = preState?.url && postState?.url && preState.url !== postState.url;
@@ -572,7 +575,7 @@ async function detectAndWaitForNavigation(tabId, preState, timeoutMs = 5000) {
 }
 
 // 复用 snapshot 逻辑：为指定 tab 生成快照并写入 snapshotCache
-async function buildAndCacheSnapshot(tabId, limit = 200, offset = 0) {
+async function buildAndCacheSnapshot(tabId: number, limit = 200, offset = 0) {
   const expression = `(${buildSnapshotScript.toString()})(${JSON.stringify({ limit, offset })})`;
   const resp = await cdp(tabId, "Runtime.evaluate", {
     expression,
@@ -586,7 +589,7 @@ async function buildAndCacheSnapshot(tabId, limit = 200, offset = 0) {
   return { snapshotId, tabId, elements, count: elements.length };
 }
 
-async function performClick(tabId, args, resolved) {
+async function performClick(tabId: number, args: Record<string, unknown>, resolved: any) {
   const expression = buildClickScript({
     target: resolved.target,
     element: resolved.element,
@@ -603,7 +606,7 @@ async function performClick(tabId, args, resolved) {
   }
 }
 
-async function performFill(tabId, args, resolved) {
+async function performFill(tabId: number, args: Record<string, unknown>, resolved: any) {
   const expression = buildFillScript({
     target: resolved.target,
     element: resolved.element,
@@ -624,19 +627,19 @@ async function performFill(tabId, args, resolved) {
 }
 
 // #4 @e 引用容错：元素未找到时自动重新快照，按 selector/text 重新匹配后重试一次
-async function retryActionAfterResnapshot(tabId, args, originalResolved, actionName) {
+async function retryActionAfterResnapshot(tabId: number, args: Record<string, unknown>, originalResolved: any, actionName: string) {
   try {
     log("元素定位失败，尝试重新快照后重试:", args.target);
     const newSnapshot = await buildAndCacheSnapshot(tabId);
     const originalElement = originalResolved.element;
     if (!originalElement) return null;
 
-    const rematched = newSnapshot.elements.find((el) => {
+    const rematched = (newSnapshot.elements as any[]).find((el: any) => {
       if (!el) return false;
       if (originalElement.selector && el.selector === originalElement.selector) return true;
       if (originalElement.text && el.text && el.text === originalElement.text) return true;
       if (Array.isArray(originalElement.selectors) && Array.isArray(el.selectors)) {
-        return originalElement.selectors.some((s) => el.selectors.includes(s));
+        return originalElement.selectors.some((s: string) => el.selectors.includes(s));
       }
       return false;
     });
@@ -658,12 +661,12 @@ async function retryActionAfterResnapshot(tabId, args, originalResolved, actionN
       return { ...perf, snapshotId: newSnapshot.snapshotId };
     }
   } catch (error) {
-    log("重新快照重试失败:", error.message);
+    log("重新快照重试失败:", (error as Error).message);
   }
   return null;
 }
 
-async function scanPage(args) {
+async function scanPage(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   // #3 页面就绪检测：扫描前等待页面加载完成
   await waitForPageReady(tabId);
@@ -680,7 +683,7 @@ async function scanPage(args) {
 
 function buildScanTextScript() {
   const seen = new WeakSet();
-  const parts = [];
+  const parts: string[] = [];
 
   function pushText(root: any) {
     if (!root) return;
@@ -706,7 +709,7 @@ function buildScanTextScript() {
   return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function snapshot(args) {
+async function snapshot(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   // #3 页面就绪检测：快照前等待页面加载完成
   await waitForPageReady(tabId);
@@ -716,7 +719,7 @@ async function snapshot(args) {
   return { ...result, sessionKey: result.snapshotId };
 }
 
-function buildSnapshotScript({ limit, offset }) {
+function buildSnapshotScript({ limit, offset }: { limit: number; offset: number }) {
   const selector = [
     "a[href]",
     "button",
@@ -736,11 +739,11 @@ function buildSnapshotScript({ limit, offset }) {
     "[tabindex]:not([tabindex='-1'])",
   ].join(",");
 
-  const results = [];
+  const results: any[] = [];
   const seenElements = new WeakSet();
   const wanted = offset + limit;
 
-  function cssEscape(value) {
+  function cssEscape(value: string) {
     if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
     return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
   }
@@ -770,7 +773,7 @@ function buildSnapshotScript({ limit, offset }) {
     return parts.join(" > ");
   }
 
-  function piercePathFor(el) {
+  function piercePathFor(el: any) {
     const chain = [];
     let node = el;
     while (node && node.nodeType === Node.ELEMENT_NODE) {
@@ -786,7 +789,7 @@ function buildSnapshotScript({ limit, offset }) {
     return chain;
   }
 
-  function absoluteRect(el) {
+  function absoluteRect(el: any) {
     const rect = el.getBoundingClientRect();
     let x = rect.x;
     let y = rect.y;
@@ -809,7 +812,7 @@ function buildSnapshotScript({ limit, offset }) {
     };
   }
 
-  function isVisible(el) {
+  function isVisible(el: any) {
     const rect = absoluteRect(el);
     if (rect.width <= 0 || rect.height <= 0) return false;
     const style = el.ownerDocument.defaultView.getComputedStyle(el);
@@ -817,7 +820,7 @@ function buildSnapshotScript({ limit, offset }) {
     return true;
   }
 
-  function textFor(el) {
+  function textFor(el: any) {
     return (
       el.getAttribute("aria-label") ||
       el.getAttribute("title") ||
@@ -830,7 +833,7 @@ function buildSnapshotScript({ limit, offset }) {
     ).trim().replace(/\s+/g, " ").slice(0, 120);
   }
 
-  function frameIndex(frame) {
+  function frameIndex(frame: any) {
     try {
       return Array.from(frame.ownerDocument.querySelectorAll("iframe,frame")).indexOf(frame);
     } catch (_) {
@@ -838,7 +841,7 @@ function buildSnapshotScript({ limit, offset }) {
     }
   }
 
-  function addElement(el, context) {
+  function addElement(el: any, context: Record<string, any>) {
     if (!el || seenElements.has(el) || !isVisible(el)) return;
     seenElements.add(el);
     const ordinal = results.length;
@@ -922,13 +925,13 @@ function pruneSnapshotCache() {
   }
 }
 
-function clearSnapshotsForTab(tabId) {
+function clearSnapshotsForTab(tabId: unknown) {
   for (const [key, entry] of snapshotCache.entries()) {
     if (Number(entry.tabId) === Number(tabId)) snapshotCache.delete(key);
   }
 }
 
-function resolveCachedTarget(tabId, target, snapshotId) {
+function resolveCachedTarget(tabId: number, target: unknown, snapshotId?: string) {
   if (!target || !String(target).startsWith("@e")) return { target };
   const index = Number(String(target).slice(2)) - 1;
   if (!Number.isInteger(index) || index < 0) return { target };
@@ -938,15 +941,15 @@ function resolveCachedTarget(tabId, target, snapshotId) {
     : [...snapshotCache.values()].filter((entry) => Number(entry.tabId) === Number(tabId)).sort((a, b) => b.createdAt - a.createdAt);
 
   for (const entry of candidates) {
-    const element = entry.elements[index];
+    const element = (entry as any).elements[index];
     if (element) return { target: element.selector, element };
   }
   return { target };
 }
 
-async function click(args) {
+async function click(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
-  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId as string || args.sessionKey as string);
 
   // #3 页面就绪检测：操作前等待页面 readyState 与资源加载完成
   await waitForPageReady(tabId);
@@ -988,7 +991,7 @@ async function click(args) {
   };
 }
 
-function buildClickScript(payload) {
+function buildClickScript(payload: Record<string, unknown>) {
   return `(async function() {
   ${BROWSER_RUNTIME_HELPERS}
   const result = await (async function(payload) {
@@ -1030,9 +1033,9 @@ function buildClickScript(payload) {
 })()`;
 }
 
-async function fill(args) {
+async function fill(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
-  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+  const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId as string || args.sessionKey as string);
 
   // #3 页面就绪检测：操作前等待页面 readyState 与资源加载完成
   await waitForPageReady(tabId);
@@ -1074,7 +1077,7 @@ async function fill(args) {
   };
 }
 
-function buildFillScript(payload) {
+function buildFillScript(payload: Record<string, unknown>) {
   return `(async function() {
   ${BROWSER_RUNTIME_HELPERS}
   function setNativeValue(el, nextValue) {
@@ -1137,10 +1140,10 @@ function buildFillScript(payload) {
 })()`;
 }
 
-async function drag(args) {
+async function drag(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
-  const sourceResolved = resolveCachedTarget(tabId, args.source, args.snapshotId || args.sessionKey);
-  const targetResolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+  const sourceResolved = resolveCachedTarget(tabId, args.source, args.snapshotId as string || args.sessionKey as string);
+  const targetResolved = resolveCachedTarget(tabId, args.target, args.snapshotId as string || args.sessionKey as string);
 
   await waitForPageReady(tabId);
 
@@ -1164,7 +1167,7 @@ async function drag(args) {
   }
 }
 
-function buildDragScript(payload) {
+function buildDragScript(payload: Record<string, unknown>) {
   return `(async function() {
   ${BROWSER_RUNTIME_HELPERS}
   const result = await (async function(payload) {
@@ -1216,16 +1219,16 @@ function buildDragScript(payload) {
 })()`;
 }
 
-async function upload(args) {
+async function upload(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   await waitForPageReady(tabId);
 
-  const target = args.target || args.selector;
-  const resolved = resolveCachedTarget(tabId, target, args.snapshotId || args.sessionKey);
+  const target = (args.target || args.selector) as string;
+  const resolved = resolveCachedTarget(tabId, target, args.snapshotId as string || args.sessionKey as string);
   const selector = resolved.target || target;
   if (!selector) throw new Error("无效的文件输入选择器");
 
-  const filePath = args.workDir ? path.resolve(args.workDir, args.filePath) : path.resolve(args.filePath);
+  const filePath = args.workDir ? path.resolve(args.workDir as string, args.filePath as string) : path.resolve(args.filePath as string);
   if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
 
   // 通过 CDP DOM 域定位 input[type=file] 并设置文件列表
@@ -1241,7 +1244,7 @@ async function upload(args) {
   return { uploaded: true, selector: target, filePath };
 }
 
-async function executeScript(args) {
+async function executeScript(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   const resp = await cdp(tabId, "Runtime.evaluate", {
     expression: String(args.script || ""),
@@ -1254,12 +1257,12 @@ async function executeScript(args) {
   return resp.result?.value ?? resp.result;
 }
 
-async function screenshot(args) {
+async function screenshot(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   const params: Record<string, any> = { format: "png", fromSurface: true };
 
   if (args.target) {
-    const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId || args.sessionKey);
+    const resolved = resolveCachedTarget(tabId, args.target, args.snapshotId as string || args.sessionKey as string);
     const expression = buildElementRectScript({ target: resolved.target, element: resolved.element });
     const resp = await cdp(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
     const rect = resp.result?.value || resp.value;
@@ -1280,7 +1283,7 @@ async function screenshot(args) {
   if (typeof base64Data !== "string") throw new Error("截图响应格式异常");
 
   const filename = `browser-screenshot-${Date.now()}.png`;
-  const workDir = args.workDir || os.tmpdir();
+  const workDir = (args.workDir as string) || os.tmpdir();
   const filepath = path.join(workDir, filename);
   fs.writeFileSync(filepath, Buffer.from(base64Data, "base64"));
 
@@ -1289,7 +1292,7 @@ async function screenshot(args) {
   return result;
 }
 
-function buildElementRectScript(payload) {
+function buildElementRectScript(payload: Record<string, unknown>) {
   return `(async function() {
   ${BROWSER_RUNTIME_HELPERS}
   function absoluteRect(el) {
@@ -1352,31 +1355,31 @@ function buildElementRectScript(payload) {
 })()`;
 }
 
-async function networkMonitor(args) {
+async function networkMonitor(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   const action = args.action || "list";
-  const map = {
+  const map: Record<string, string> = {
     start: "networkStart",
     list: "networkList",
     detail: "networkDetail",
     clear: "networkClear",
     stop: "networkStop",
   };
-  const cmd = map[action];
+  const cmd = map[action as string];
   if (!cmd) throw new Error(`未知网络监控操作: ${action}`);
   return await sendToExtension(cmd, { tabId, ...args });
 }
 
-async function consoleMonitor(args) {
+async function consoleMonitor(args: Record<string, unknown>) {
   const tabId = await getActiveTabId(args.tabId);
   const action = args.action || "list";
-  const map = {
+  const map: Record<string, string> = {
     start: "consoleStart",
     list: "consoleList",
     clear: "consoleClear",
     stop: "consoleStop",
   };
-  const cmd = map[action];
+  const cmd = map[action as string];
   if (!cmd) throw new Error(`未知控制台监控操作: ${action}`);
   return await sendToExtension(cmd, { tabId, ...args });
 }
@@ -1407,22 +1410,22 @@ function getStatus() {
   };
 }
 
-function register(ipcMain) {
+function register(ipcMain: IpcMain) {
   startServices();
 
-  ipcMain.handle("browser-use:call", async (_event, params) => {
+  ipcMain.handle("browser-use:call", async (_event: IpcMainInvokeEvent, params: Record<string, unknown>) => {
     try {
       const result = await handleCommand(params);
       return { ok: true, result };
     } catch (error) {
-      lastError = error.message;
-      return { ok: false, error: error.message };
+      lastError = (error as Error).message;
+      return { ok: false, error: (error as Error).message };
     }
   });
 
   ipcMain.handle("browser-use:status", async () => getStatus());
 
-  ipcMain.handle("browser-use:configure", async (_event, nextConfig) => {
+  ipcMain.handle("browser-use:configure", async (_event: IpcMainInvokeEvent, nextConfig: Record<string, unknown>) => {
     const current = { ...config };
     const normalized = normalizeConfig(nextConfig || {});
     const mustRestart =
@@ -1436,12 +1439,12 @@ function register(ipcMain) {
 
   ipcMain.handle("browser-use:restart", async () => restartServices());
 
-  ipcMain.handle("browser-use:sync-extension-port", async (_event, payload) => {
+  ipcMain.handle("browser-use:sync-extension-port", async (_event: IpcMainInvokeEvent, payload: { port?: number }) => {
     try {
       const result = await syncExtensionPort(payload?.port);
       return { ok: true, result };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: (error as Error).message };
     }
   });
 
@@ -1450,7 +1453,7 @@ function register(ipcMain) {
       const result = await clearDebugSessions();
       return { ok: true, result };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: (error as Error).message };
     }
   });
 
@@ -1503,12 +1506,12 @@ function register(ipcMain) {
 
       return { ok: true, path: exportPath };
     } catch (error) {
-      return { ok: false, error: error.message };
+      return { ok: false, error: (error as Error).message };
     }
   });
 }
 
-function copyDirRecursive(src, dest) {
+function copyDirRecursive(src: string, dest: string) {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true });
   }

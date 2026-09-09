@@ -8,6 +8,7 @@
 // - full: 无限制
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { validateShellCommand } from "../lib/security.js";
 
 // 输出截断上限（字符）
@@ -23,7 +24,7 @@ function resolveShell() {
   // 显式 SHELL 环境变量优先（git-bash / WSL 通常会设）
   const envShell = process.env.SHELL;
   if (envShell && fs.existsSync(envShell)) {
-    return { file: envShell, prefix: ["-c"] };
+    return { file: envShell, prefix: ["-c"] as string[] };
   }
 
   if (process.platform === "win32") {
@@ -33,24 +34,24 @@ function resolveShell() {
       "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
     ];
     const gitBash = gitBashCandidates.find((p) => fs.existsSync(p));
-    if (gitBash) return { file: gitBash, prefix: ["-c"] };
+    if (gitBash) return { file: gitBash, prefix: ["-c"] as string[] };
     // 兜底用 cmd
-    return { file: process.env.ComSpec || "cmd.exe", prefix: ["/d", "/s", "/c"] };
+    return { file: process.env.ComSpec || "cmd.exe", prefix: ["/d", "/s", "/c"] as string[] };
   }
 
   // Unix：优先 bash，回退 sh
-  if (fs.existsSync("/bin/bash")) return { file: "/bin/bash", prefix: ["-c"] };
-  return { file: "/bin/sh", prefix: ["-c"] };
+  if (fs.existsSync("/bin/bash")) return { file: "/bin/bash", prefix: ["-c"] as string[] };
+  return { file: "/bin/sh", prefix: ["-c"] as string[] };
 }
 
 // 把字符串截断到上限，并标记是否被截断
-function truncateOutput(value) {
+function truncateOutput(value: string) {
   if (value.length <= MAX_OUTPUT_CHARS) return { text: value, truncated: false };
   return { text: value.slice(0, MAX_OUTPUT_CHARS), truncated: true };
 }
 
 // 执行一条命令。请求形如 { command, cwd, timeoutMs }
-async function execShell(request) {
+async function execShell(request: { command?: string; cwd?: string; timeoutMs?: number }) {
   const command = String(request?.command ?? "").trim();
   if (!command) {
     return { success: false, error: "命令不能为空", exitCode: null, stdout: "", stderr: "", timedOut: false, truncated: false };
@@ -127,14 +128,14 @@ async function execShell(request) {
 
     // 累积输出时即做软上限，避免超大输出撑爆内存
     const cap = MAX_OUTPUT_CHARS * 2;
-    child.stdout?.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk: string) => {
       if (stdout.length < cap) stdout += chunk;
     });
-    child.stderr?.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk: string) => {
       if (stderr.length < cap) stderr += chunk;
     });
 
-    const finish = (exitCode) => {
+    const finish = (exitCode: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -157,7 +158,7 @@ async function execShell(request) {
     };
 
     child.on("close", (code) => finish(code));
-    child.on("error", (err) => {
+    child.on("error", (err: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -166,8 +167,8 @@ async function execShell(request) {
   });
 }
 
-function register(ipcMain) {
-  ipcMain.handle("shell:exec", (_event, { request }) => execShell(request));
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("shell:exec", (_event: IpcMainInvokeEvent, { request }: { request: { command?: string; cwd?: string; timeoutMs?: number } }) => execShell(request));
 }
 
 export { register };

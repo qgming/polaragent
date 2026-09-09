@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { net } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 
 import { ensureDir, readText } from "../lib/fs-utils.js";
 import { normalizeBaseUrl, errorMessage } from "../lib/http-utils.js";
@@ -50,7 +51,7 @@ const TEXT_EXTENSIONS = new Set([
 // 文档解析：支持纯文本/代码文件、.pdf、.docx
 // ─────────────────────────────────────────────────────────────────────────
 
-async function parseDocument(filePath) {
+async function parseDocument(filePath: string): Promise<string> {
   const baseName = path.basename(filePath).toLowerCase();
   const ext = baseName === ".env" ? ".env" : path.extname(filePath).toLowerCase();
   const stat = await fsp.stat(filePath).catch(() => null);
@@ -70,7 +71,7 @@ async function parseDocument(filePath) {
   }
 }
 
-async function parsePdf(filePath) {
+async function parsePdf(filePath: string): Promise<string> {
   try {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const data = new Uint8Array(await fsp.readFile(filePath));
@@ -86,18 +87,18 @@ async function parsePdf(filePath) {
     }
     return texts.join("\n\n");
   } catch (error) {
-    throw new Error(`PDF 解析失败: ${error.message}`);
+    throw new Error(`PDF 解析失败: ${(error as Error).message}`);
   }
 }
 
-async function parseDocx(filePath) {
+async function parseDocx(filePath: string): Promise<string> {
   try {
     const mammoth = await import("mammoth");
     const buffer = await fsp.readFile(filePath);
     const result = await mammoth.extractRawText({ buffer });
     return result.value || "";
   } catch (error) {
-    throw new Error(`DOCX 解析失败: ${error.message}`);
+    throw new Error(`DOCX 解析失败: ${(error as Error).message}`);
   }
 }
 
@@ -105,9 +106,9 @@ async function parseDocx(filePath) {
 // 文本分块：固定 token 窗口 + 重叠
 // ─────────────────────────────────────────────────────────────────────────
 
-function chunkText(text, chunkSize = 512, overlap = 50) {
+function chunkText(text: string, chunkSize = 512, overlap = 50): string[] {
   const tokens = simpleTokenize(text);
-  const chunks = [];
+  const chunks: string[] = [];
   let i = 0;
   while (i < tokens.length) {
     const end = Math.min(i + chunkSize, tokens.length);
@@ -118,8 +119,8 @@ function chunkText(text, chunkSize = 512, overlap = 50) {
   return chunks.filter((c) => c.trim().length > 0);
 }
 
-function simpleTokenize(text) {
-  const tokens = [];
+function simpleTokenize(text: string): string[] {
+  const tokens: string[] = [];
   let buffer = "";
   for (const char of text) {
     buffer += char;
@@ -136,7 +137,7 @@ function simpleTokenize(text) {
 // 嵌入 API：调用 OpenAI 兼容接口
 // ─────────────────────────────────────────────────────────────────────────
 
-async function embedTexts(texts, config) {
+async function embedTexts(texts: string[], config: { apiKey?: string; baseURL?: string; model?: string; dimension?: number | string }) {
   const { apiKey, baseURL, model, dimension } = config;
   if (!apiKey || !baseURL || !model) throw new Error("嵌入配置不完整");
 
@@ -172,14 +173,14 @@ async function embedTexts(texts, config) {
     throw new Error(`嵌入 API 失败 (${response.status}): ${errorMessage(payload)}`);
   }
 
-  return (payload.data || []).map((item) => item.embedding);
+  return (payload.data || []).map((item: any) => item.embedding);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // 向量存储：JSONL 格式，每行一条记录
 // ─────────────────────────────────────────────────────────────────────────
 
-function knowledgeDir(kbId) {
+function knowledgeDir(kbId: string): string {
   if (!kbId || typeof kbId !== "string") {
     throw new Error(`Invalid kbId: ${kbId}`);
   }
@@ -195,25 +196,25 @@ function knowledgeDir(kbId) {
   return dir;
 }
 
-function vectorsPath(kbId) {
+function vectorsPath(kbId: string): string {
   return path.join(knowledgeDir(kbId), "vectors.jsonl");
 }
 
-function metadataPath(kbId) {
+function metadataPath(kbId: string): string {
   return path.join(knowledgeDir(kbId), "metadata.json");
 }
 
-function filesListPath(kbId) {
+function filesListPath(kbId: string): string {
   return path.join(knowledgeDir(kbId), "files.json");
 }
 
-async function saveVectors(kbId, records) {
+async function saveVectors(kbId: string, records: unknown[]) {
   await ensureDir(knowledgeDir(kbId));
   const lines = records.map((r) => JSON.stringify(r)).join("\n");
   await fsp.writeFile(vectorsPath(kbId), lines, "utf8");
 }
 
-async function loadVectors(kbId) {
+async function loadVectors(kbId: string): Promise<any[]> {
   const file = vectorsPath(kbId);
   if (!fs.existsSync(file)) return [];
   const content = await fsp.readFile(file, "utf8");
@@ -223,23 +224,23 @@ async function loadVectors(kbId) {
     .map((line) => JSON.parse(line));
 }
 
-async function saveMetadata(kbId, meta) {
+async function saveMetadata(kbId: string, meta: unknown) {
   await ensureDir(knowledgeDir(kbId));
   await fsp.writeFile(metadataPath(kbId), JSON.stringify(meta, null, 2), "utf8");
 }
 
-async function loadMetadata(kbId) {
+async function loadMetadata(kbId: string): Promise<any | null> {
   const file = metadataPath(kbId);
   if (!fs.existsSync(file)) return null;
   return JSON.parse(await fsp.readFile(file, "utf8"));
 }
 
-async function saveFilesList(kbId, files) {
+async function saveFilesList(kbId: string, files: unknown[]) {
   await ensureDir(knowledgeDir(kbId));
   await fsp.writeFile(filesListPath(kbId), JSON.stringify(files, null, 2), "utf8");
 }
 
-async function loadFilesList(kbId) {
+async function loadFilesList(kbId: string): Promise<any[]> {
   const file = filesListPath(kbId);
   if (!fs.existsSync(file)) return [];
   return JSON.parse(await fsp.readFile(file, "utf8"));
@@ -249,7 +250,7 @@ async function loadFilesList(kbId) {
 // 余弦相似度检索
 // ─────────────────────────────────────────────────────────────────────────
 
-async function searchVectors(kbId, queryVector, topK = 5, threshold = 0.6) {
+async function searchVectors(kbId: string, queryVector: number[], topK = 5, threshold = 0.6) {
   const records = await loadVectors(kbId);
   const scored = records
     .map((r) => ({
@@ -273,7 +274,7 @@ async function searchVectors(kbId, queryVector, topK = 5, threshold = 0.6) {
 // ─────────────────────────────────────────────────────────────────────────
 
 // 创建空知识库
-async function createKnowledgeBase(request) {
+async function createKnowledgeBase(request: Record<string, any>) {
   const { kbId, name, description, chunkSize = 512, overlap = 50 } = request;
   await ensureDir(knowledgeDir(kbId));
 
@@ -300,7 +301,7 @@ async function createKnowledgeBase(request) {
 }
 
 // 添加文件到知识库
-async function addFilesToKnowledge(request) {
+async function addFilesToKnowledge(request: Record<string, any>) {
   const { kbId, filePaths, config } = request;
   const { chunkSize = 512, overlap = 50 } = config;
 
@@ -359,7 +360,7 @@ async function addFilesToKnowledge(request) {
         size: 0,
         type: path.extname(filePath).toLowerCase(),
         status: "error",
-        error: error.message,
+        error: (error as Error).message,
         chunkCount: 0,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -414,7 +415,7 @@ async function addFilesToKnowledge(request) {
 }
 
 // 从知识库删除文件
-async function removeFileFromKnowledge(request) {
+async function removeFileFromKnowledge(request: Record<string, any>) {
   const { kbId, fileId } = request;
 
   const vectors = await loadVectors(kbId);
@@ -439,7 +440,7 @@ async function removeFileFromKnowledge(request) {
 }
 
 // 获取知识库文件列表
-async function getKnowledgeFiles(kbId) {
+async function getKnowledgeFiles(kbId: string) {
   if (!kbId) {
     throw new Error("kbId is required");
   }
@@ -448,7 +449,7 @@ async function getKnowledgeFiles(kbId) {
 }
 
 // 更新知识库配置
-async function updateKnowledgeBase(request) {
+async function updateKnowledgeBase(request: Record<string, any>) {
   const { kbId, updates } = request;
   const meta = await loadMetadata(kbId);
   if (!meta) throw new Error(`知识库不存在: ${kbId}`);
@@ -460,7 +461,7 @@ async function updateKnowledgeBase(request) {
 }
 
 // 重建知识库索引（重新嵌入所有文件）
-async function rebuildKnowledge(request) {
+async function rebuildKnowledge(request: Record<string, any>) {
   const { kbId, config } = request;
   const meta = await loadMetadata(kbId);
   const files = await loadFilesList(kbId);
@@ -499,7 +500,7 @@ async function rebuildKnowledge(request) {
       updatedFiles.push({
         ...file,
         status: "error",
-        error: error.message,
+        error: (error as Error).message,
         updatedAt: Date.now(),
       });
     }
@@ -533,7 +534,7 @@ async function rebuildKnowledge(request) {
 }
 
 // 重建单个文件索引
-async function rebuildKnowledgeFile(request) {
+async function rebuildKnowledgeFile(request: Record<string, any>) {
   const { kbId, fileId, config } = request;
   const meta = await loadMetadata(kbId);
   const files = await loadFilesList(kbId);
@@ -545,8 +546,8 @@ async function rebuildKnowledgeFile(request) {
   if (!targetFile) throw new Error(`文件不存在: ${fileId}`);
 
   const remainingVectors = vectors.filter((record) => record.fileId !== fileId);
-  let updatedFile;
-  let newRecords = [];
+  let updatedFile: any;
+  let newRecords: any[] = [];
 
   try {
     const text = await parseDocument(targetFile.path);
@@ -604,7 +605,7 @@ async function rebuildKnowledgeFile(request) {
     updatedFile = {
       ...targetFile,
       status: "error",
-      error: error.message,
+      error: (error as Error).message,
       chunkCount: 0,
       updatedAt: Date.now(),
     };
@@ -633,7 +634,7 @@ async function rebuildKnowledgeFile(request) {
 }
 
 // 检查文件向量是否与当前嵌入配置兼容
-async function checkFilesCompatibility(kbId, config) {
+async function checkFilesCompatibility(kbId: string, config: Record<string, any>) {
   const meta = await loadMetadata(kbId);
   const files = await loadFilesList(kbId);
 
@@ -660,7 +661,7 @@ async function checkFilesCompatibility(kbId, config) {
 }
 
 // 重新嵌入不兼容的文件
-async function reembedIncompatibleFiles(request) {
+async function reembedIncompatibleFiles(request: Record<string, any>) {
   const { kbId, config } = request;
   const meta = await loadMetadata(kbId);
   const files = await loadFilesList(kbId);
@@ -672,8 +673,8 @@ async function reembedIncompatibleFiles(request) {
   }
 
   const incompatibleFileIds = new Set(incompatibleFiles.map((f) => f.id));
-  const newRecords = [];
-  const updatedFiles = [];
+  const newRecords: any[] = [];
+  const updatedFiles: any[] = [];
 
   for (const file of incompatibleFiles) {
     try {
@@ -703,7 +704,7 @@ async function reembedIncompatibleFiles(request) {
       updatedFiles.push({
         ...file,
         status: "error",
-        error: error.message,
+        error: (error as Error).message,
         updatedAt: Date.now(),
       });
     }
@@ -745,7 +746,7 @@ async function reembedIncompatibleFiles(request) {
   return { success: true, reembedded: updatedFiles.length };
 }
 
-async function queryKnowledge(request) {
+async function queryKnowledge(request: Record<string, any>) {
   const { kbId, query, config, topK = 5, threshold = 0.7 } = request;
   const meta = await loadMetadata(kbId);
 
@@ -767,11 +768,11 @@ async function queryKnowledge(request) {
   return { success: true, results };
 }
 
-async function scanFiles(dir, extensions) {
-  const files = [];
+async function scanFiles(dir: string, extensions: string[]): Promise<string[]> {
+  const files: string[] = [];
   const queue = [dir];
   while (queue.length > 0) {
-    const current = queue.shift();
+    const current = queue.shift()!;
     const entries = await fsp.readdir(current, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
@@ -786,7 +787,7 @@ async function scanFiles(dir, extensions) {
   return files;
 }
 
-async function deleteKnowledge(kbId) {
+async function deleteKnowledge(kbId: string) {
   const dir = knowledgeDir(kbId);
   if (fs.existsSync(dir)) {
     await fsp.rm(dir, { recursive: true, force: true });
@@ -811,21 +812,21 @@ async function listKnowledge() {
   return list;
 }
 
-function register(ipcMain) {
-  ipcMain.handle("knowledge:create", (_event, { request }) => createKnowledgeBase(request));
-  ipcMain.handle("knowledge:update", (_event, { request }) => updateKnowledgeBase(request));
-  ipcMain.handle("knowledge:addFiles", (_event, { request }) => addFilesToKnowledge(request));
-  ipcMain.handle("knowledge:removeFile", (_event, { request }) => removeFileFromKnowledge(request));
-  ipcMain.handle("knowledge:getFiles", (_event, params) => {
-    return getKnowledgeFiles(params?.kbId);
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("knowledge:create", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => createKnowledgeBase(request));
+  ipcMain.handle("knowledge:update", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => updateKnowledgeBase(request));
+  ipcMain.handle("knowledge:addFiles", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => addFilesToKnowledge(request));
+  ipcMain.handle("knowledge:removeFile", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => removeFileFromKnowledge(request));
+  ipcMain.handle("knowledge:getFiles", (_event: IpcMainInvokeEvent, params: { kbId?: string }) => {
+    return getKnowledgeFiles(params?.kbId as string);
   });
-  ipcMain.handle("knowledge:rebuild", (_event, { request }) => rebuildKnowledge(request));
-  ipcMain.handle("knowledge:rebuildFile", (_event, { request }) => rebuildKnowledgeFile(request));
-  ipcMain.handle("knowledge:query", (_event, { request }) => queryKnowledge(request));
-  ipcMain.handle("knowledge:delete", (_event, params) => deleteKnowledge(params?.kbId));
+  ipcMain.handle("knowledge:rebuild", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => rebuildKnowledge(request));
+  ipcMain.handle("knowledge:rebuildFile", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => rebuildKnowledgeFile(request));
+  ipcMain.handle("knowledge:query", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => queryKnowledge(request));
+  ipcMain.handle("knowledge:delete", (_event: IpcMainInvokeEvent, params: { kbId?: string }) => deleteKnowledge(params?.kbId as string));
   ipcMain.handle("knowledge:list", () => listKnowledge());
-  ipcMain.handle("knowledge:checkCompatibility", (_event, { kbId, config }) => checkFilesCompatibility(kbId, config));
-  ipcMain.handle("knowledge:reembedIncompatible", (_event, { request }) => reembedIncompatibleFiles(request));
+  ipcMain.handle("knowledge:checkCompatibility", (_event: IpcMainInvokeEvent, { kbId, config }: { kbId: string; config: Record<string, any> }) => checkFilesCompatibility(kbId, config));
+  ipcMain.handle("knowledge:reembedIncompatible", (_event: IpcMainInvokeEvent, { request }: { request: Record<string, any> }) => reembedIncompatibleFiles(request));
 }
 
 export { register };

@@ -16,7 +16,8 @@ import blockedPatterns from "./blocked-patterns.json";
 // 静态导入确保 Vite 将配置一并打入主进程 bundle。
 
 // 运行时安全模式（由渲染进程通过 IPC 同步）
-let _runtimeMode = null;
+type SecurityMode = "readonly" | "safe" | "ai_review" | "full";
+let _runtimeMode: SecurityMode | null = null;
 
 // 仅用于校验渲染层通过 IPC setSecurityMode 同步过来的模式字符串是否
 // 在四档合法范围内；绝不能用于接受 per-call 的覆盖。
@@ -65,7 +66,7 @@ function isSamePathOrDescendant(targetPath: string, parentPath: string) {
  * @param {string} targetPath - 目标路径
  * @returns {boolean}
  */
-function isSystemCriticalPath(targetPath) {
+function isSystemCriticalPath(targetPath: string) {
   const normalized = path.normalize(targetPath).toLowerCase();
   
   // Windows 系统路径
@@ -261,7 +262,7 @@ function validateExternalAccess(url: string, modeOverride?: unknown) {
  */
 function getSecurityModeDescription() {
   const mode = getSecurityMode();
-  const descriptions = {
+  const descriptions: Record<SecurityMode, string> = {
     readonly: "只读模式 - AI 只能查看文件和系统信息",
     safe: "安全模式 - 系统会阻止高危命令和关键路径操作",
     ai_review: "自动审查模式（推荐）- 安全操作默认通过，仅额外判断高风险操作",

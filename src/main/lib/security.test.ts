@@ -53,3 +53,27 @@ describe("critical path matching", () => {
     }
   });
 });
+
+describe("shell and file policy", () => {
+  it("readonly mode blocks shell and write", async () => {
+    const security = await import("./security");
+    security.setSecurityMode("readonly");
+    expect(security.validateShellCommand("ls").allowed).toBe(false);
+    expect(security.validateFileAccess("C:\\temp\\a.txt", "write").allowed).toBe(false);
+    expect(security.validateFileAccess("C:\\temp\\a.txt", "read").allowed).toBe(true);
+  });
+
+  it("safe mode blocks dangerous shell patterns", async () => {
+    const security = await import("./security");
+    security.setSecurityMode("safe");
+    const result = security.validateShellCommand("rm -rf /");
+    expect(result.allowed).toBe(false);
+  });
+
+  it("validateExternalAccess rejects non http/https/file protocols", async () => {
+    const security = await import("./security");
+    security.setSecurityMode("ai_review");
+    expect(security.validateExternalAccess("https://example.com").allowed).toBe(true);
+    expect(security.validateExternalAccess("javascript:alert(1)").allowed).toBe(false);
+  });
+});

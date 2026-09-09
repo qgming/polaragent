@@ -5,12 +5,13 @@ import path from "node:path";
 
 import { APP_NAME } from "./constants.js";
 import { appIconPath, readSettingCloseToTray } from "./app-paths.js";
+import { hardenWebContents } from "./session-security.js";
 import { getIsQuitting } from "./tray.js";
 
-let mainWindow;
+let mainWindow: BrowserWindow | undefined;
 
 // 当前主窗口（可能为 undefined）
-function getMainWindow() {
+function getMainWindow(): BrowserWindow | undefined {
   return mainWindow;
 }
 
@@ -31,7 +32,7 @@ function createMainWindow({ closeToTray = true, startInTray = false } = {}) {
   // 关闭拦截：closeToTray 且非真正退出时 → 隐藏窗口到托盘
   mainWindow.on("close", (event) => {
     // 每次动态读取配置，确保设置变更立即生效（无重启）
-    if (readSettingCloseToTray() && !getIsQuitting()) {
+    if (readSettingCloseToTray() && !getIsQuitting() && mainWindow) {
       event.preventDefault();
       mainWindow.hide();
     }
@@ -41,7 +42,7 @@ function createMainWindow({ closeToTray = true, startInTray = false } = {}) {
 }
 
 // 通用无边框窗口创建；监听窗口最大化状态变化并广播给渲染进程
-function createWindow(options) {
+function createWindow(options: Record<string, unknown>) {
   const { _skipShow, ...windowOptions } = options; // 提取内部选项，不传给 BrowserWindow
   const icon = appIconPath();
   const win = new BrowserWindow({
@@ -64,6 +65,10 @@ function createWindow(options) {
     return { action: "deny" };
   });
 
+  hardenWebContents(win.webContents, {
+    devServerUrl: process.env.VITE_DEV_SERVER_URL ?? null,
+  });
+
   win.once("ready-to-show", () => {
     if (!_skipShow) win.show();
   });
@@ -75,7 +80,7 @@ function createWindow(options) {
 }
 
 // 加载应用入口：开发环境走 dev server，生产环境加载打包后的 index.html
-function loadApp(win, query = "") {
+function loadApp(win: BrowserWindow, query = "") {
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(`${process.env.VITE_DEV_SERVER_URL}${query}`);
   } else {
@@ -87,7 +92,7 @@ function loadApp(win, query = "") {
 }
 
 // 把 query string 解析为对象，供 loadFile 的 query 选项使用
-function parseQuery(query) {
+function parseQuery(query: string): Record<string, string> {
   const params = new URLSearchParams(query.replace(/^\?/, ""));
   return Object.fromEntries(params.entries());
 }

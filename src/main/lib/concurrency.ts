@@ -11,15 +11,15 @@ const LOCAL_IO_CONCURRENCY = 3;
  * @param {number} limit 最大并发数
  * @returns {<T>(fn: () => Promise<T>) => Promise<T>} 排队执行函数
  */
-function withConcurrency(limit) {
+function withConcurrency(limit: number) {
   let running = 0;
-  const queue = [];
+  const queue: Array<{ fn: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (reason?: unknown) => void }> = [];
 
   function next() {
     if (queue.length === 0 || running >= limit) return;
 
     running += 1;
-    const { fn, resolve, reject } = queue.shift();
+    const { fn, resolve, reject } = queue.shift()!;
     Promise.resolve()
       .then(fn)
       .then(resolve)
@@ -30,9 +30,9 @@ function withConcurrency(limit) {
       });
   }
 
-  return function run(fn) {
-    return new Promise((resolve, reject) => {
-      queue.push({ fn, resolve, reject });
+  return function run<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      queue.push({ fn, resolve: resolve as (value: unknown) => void, reject });
       next();
     });
   };
@@ -45,7 +45,11 @@ function withConcurrency(limit) {
  * @param {number} [limit]
  * @returns {Promise<any[]>}
  */
-async function pMap(items, mapper, limit = REMOTE_CONCURRENCY) {
+async function pMap<T, R>(
+  items: T[],
+  mapper: (item: T, index: number) => Promise<R>,
+  limit: number = REMOTE_CONCURRENCY,
+): Promise<R[]> {
   const run = withConcurrency(limit);
   return Promise.all(items.map((item, index) => run(() => mapper(item, index))));
 }

@@ -1,7 +1,9 @@
 // IPC: Computer Use - Windows desktop control via UI Automation.
 import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { app } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { projectResourcePath } from "../lib/app-paths.js";
 import { clampNumber } from "../lib/utils.js";
 
@@ -33,16 +35,16 @@ const BATCH_ACTIONS = new Set([
 ]);
 
 let config = { ...DEFAULT_CONFIG };
-let worker = null;
-let workerQueue: Promise<any> = Promise.resolve();
-let currentWorkerRequest = null;
+let worker: ChildProcessWithoutNullStreams | null = null;
+let workerQueue: Promise<unknown> = Promise.resolve();
+let currentWorkerRequest: { action: string; resolve: (value: unknown) => void; reject: (reason?: unknown) => void; timer: NodeJS.Timeout } | null = null;
 let workerStdoutBuffer = "";
 let workerStderr = "";
-let workerIdleTimer = null;
+let workerIdleTimer: NodeJS.Timeout | null = null;
 let workerStartedAt = 0;
 let workerLastUsedAt = 0;
-let workerLastError = null;
-const elementCache = new Map();
+let workerLastError: string | null = null;
+const elementCache = new Map<string, Record<string, unknown>>();
 
 function getBackendPath() {
   return projectResourcePath("resources", "builtin", "computeruse", "windows-uia.ps1")
@@ -57,7 +59,7 @@ function normalizeConfig(next: Record<string, any> = {}) {
   };
 }
 
-function spawnPowerShell(action) {
+function spawnPowerShell(action: string) {
   return spawn(
     "powershell.exe",
     ["-NoLogo", "-NoProfile", "-Sta", "-ExecutionPolicy", "Bypass", "-File", getBackendPath(), "-Action", action],
@@ -72,7 +74,7 @@ function spawnPowerShell(action) {
   );
 }
 
-async function runPowerShellOnce(action, args = {}, timeoutMs = config.actionTimeoutMs) {
+async function runPowerShellOnce(action: string, args: Record<string, unknown> = {}, timeoutMs = config.actionTimeoutMs) {
   return new Promise<any>((resolve, reject) => {
     const child = spawnPowerShell(action);
     let stdout = "";
@@ -104,7 +106,7 @@ async function runPowerShellOnce(action, args = {}, timeoutMs = config.actionTim
   });
 }
 
-function settleJsonResult(raw, action, resolve, reject) {
+function settleJsonResult(raw: string, action: string, resolve: (value: unknown) => void, reject: (reason?: unknown) => void) {
   try {
     const trimmed = String(raw || "").trim();
     if (!trimmed) throw new Error("空输出");
@@ -124,7 +126,7 @@ function settleJsonResult(raw, action, resolve, reject) {
 function startWorker() {
   if (worker && !worker.killed) return worker;
 
-  clearTimeout(workerIdleTimer);
+  if (workerIdleTimer) clearTimeout(workerIdleTimer);
   workerStdoutBuffer = "";
   workerStderr = "";
   workerLastError = null;
@@ -154,7 +156,7 @@ function startWorker() {
   return worker;
 }
 
-function onWorkerStdout(chunk) {
+function onWorkerStdout(chunk: string) {
   workerStdoutBuffer += chunk;
   const lines = workerStdoutBuffer.split(/\r?\n/);
   workerStdoutBuffer = lines.pop() || "";
@@ -169,7 +171,7 @@ function onWorkerStdout(chunk) {
   }
 }
 
-function rejectCurrentWorkerRequest(error) {
+function rejectCurrentWorkerRequest(error: Error) {
   if (!currentWorkerRequest) return;
   clearTimeout(currentWorkerRequest.timer);
   currentWorkerRequest.reject(error);
@@ -177,7 +179,7 @@ function rejectCurrentWorkerRequest(error) {
 }
 
 async function stopWorker(reason = "manual") {
-  clearTimeout(workerIdleTimer);
+  if (workerIdleTimer) clearTimeout(workerIdleTimer);
   workerIdleTimer = null;
   if (!worker) return;
   workerLastError = reason === "idle" ? workerLastError : null;
@@ -187,14 +189,14 @@ async function stopWorker(reason = "manual") {
 }
 
 function scheduleWorkerIdleStop() {
-  clearTimeout(workerIdleTimer);
+  if (workerIdleTimer) clearTimeout(workerIdleTimer);
   if (!worker) return;
   workerIdleTimer = setTimeout(() => {
     void stopWorker("idle");
   }, config.workerIdleTimeoutMs);
 }
 
-function runPowerShellWorker(action, args = {}, timeoutMs = config.actionTimeoutMs) {
+function runPowerShellWorker(action: string, args: Record<string, unknown> = {}, timeoutMs = config.actionTimeoutMs) {
   workerQueue = workerQueue.then(
     () => executeWorkerCommand(action, args, timeoutMs),
     () => executeWorkerCommand(action, args, timeoutMs),
@@ -202,7 +204,7 @@ function runPowerShellWorker(action, args = {}, timeoutMs = config.actionTimeout
   return workerQueue;
 }
 
-async function executeWorkerCommand(action, args, timeoutMs) {
+async function executeWorkerCommand(action: string, args: Record<string, unknown>, timeoutMs: number) {
   const child = startWorker();
   workerLastUsedAt = Date.now();
 
@@ -235,13 +237,13 @@ async function runComputerUse(
   timeoutMs = config.actionTimeoutMs,
   options: Record<string, any> = {},
 ) {
-  const run = async (nextArgs, allowWorker = config.persistentWorker) => {
+  const run = async (nextArgs: Record<string, unknown>, allowWorker = config.persistentWorker) => {
     if (!allowWorker) return await runPowerShellOnce(action, nextArgs, timeoutMs);
     try {
       return await runPowerShellWorker(action, nextArgs, timeoutMs);
     } catch (error) {
       if (isWorkerInfrastructureError(error)) {
-        workerLastError = error.message;
+        workerLastError = (error as Error).message;
         return await runPowerShellOnce(action, nextArgs, timeoutMs);
       }
       throw error;
@@ -280,17 +282,17 @@ async function runComputerUse(
         }
 
         // 保存评分最高的候选列表，用于最终失败时的反馈
-        if (relocated?.candidates?.length > 0) {
+        if (relocated && relocated.candidates && relocated.candidates.length > 0) {
           bestCandidates = relocated.candidates;
         }
       }
 
       // 最终失败：构造结构化错误信息返回给 AI
-      const errorMessage = lastError?.message || "元素操作失败";
+      const errorMessage = (lastError as Error)?.message || "元素操作失败";
       if (bestCandidates?.length > 0) {
         const candidateList = bestCandidates
           .slice(0, 3)
-          .map((c, i) =>
+          .map((c: any, i: number) =>
             `候选 ${i + 1}: id="${c.id}" name="${c.name || ""}" type="${c.controlType || ""}" 位置=${JSON.stringify(c.boundingBox || null)}`
           )
           .join("\n");
@@ -307,7 +309,7 @@ async function runComputerUse(
   }
 }
 
-function postProcessResult(action, args, result) {
+function postProcessResult(action: string, args: Record<string, unknown>, result: any) {
   if (action === "snapshot" && args?.screenshotMode === "path" && result?.screenshot?.base64) {
     const { base64, ...rest } = result.screenshot;
     return {
@@ -321,21 +323,21 @@ function postProcessResult(action, args, result) {
   return result;
 }
 
-function isWorkerInfrastructureError(error) {
-  const message = String(error?.message || error).toLowerCase();
+function isWorkerInfrastructureError(error: unknown): boolean {
+  const message = String((error as Error)?.message || error).toLowerCase();
   return message.includes("worker") || message.includes("管道") || message.includes("pipe") || message.includes("启动失败");
 }
 
-function isStaleElementError(error) {
-  const message = String(error?.message || error).toLowerCase();
+function isStaleElementError(error: unknown): boolean {
+  const message = String((error as Error)?.message || error).toLowerCase();
   return message.includes("stale") || message.includes("out of range") || message.includes("元素 id 已失效");
 }
 
-async function relocateElement(elementId, args, depthBoost = 0) {
+async function relocateElement(elementId: string, args: Record<string, unknown>, depthBoost = 0) {
   const cached = elementCache.get(elementId);
   if (!cached) return null;
 
-  const query = cached.automationId || cached.name || cached.className || cached.controlType || "";
+  const query = (cached.automationId || cached.name || cached.className || cached.controlType || "") as string;
   if (!query) return null;
 
   try {
@@ -343,7 +345,7 @@ async function relocateElement(elementId, args, depthBoost = 0) {
       query,
       controlType: cached.controlType || undefined,
       scope: args.scope || "active_window",
-      maxDepth: (args.maxDepth || 8) + depthBoost,
+      maxDepth: Number(args.maxDepth || 8) + depthBoost,
       maxNodes: args.maxNodes || 1200,
       maxResults: 30,
       windowTitle: args.windowTitle,
@@ -357,10 +359,10 @@ async function relocateElement(elementId, args, depthBoost = 0) {
 
     // 对所有候选进行评分、过滤并按分数降序排列（排除原失效元素本身）
     const scored = candidates
-      .filter((candidate) => candidate.id && candidate.id !== elementId)
-      .map((candidate) => scoreRelocationCandidate(cached, candidate))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score);
+      .filter((candidate: Record<string, unknown>) => candidate.id && candidate.id !== elementId)
+      .map((candidate: Record<string, unknown>) => scoreRelocationCandidate(cached, candidate))
+      .filter((item: { score: number }) => item.score > 0)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score);
 
     return {
       id: scored[0]?.id || null,
@@ -371,7 +373,7 @@ async function relocateElement(elementId, args, depthBoost = 0) {
   }
 }
 
-function scoreRelocationCandidate(source, candidate) {
+function scoreRelocationCandidate(source: any, candidate: any) {
   let score = 0;
   if (source.automationId && source.automationId === candidate.automationId) score += 8;
   if (source.name && source.name === candidate.name) score += 5;
@@ -394,7 +396,7 @@ function scoreRelocationCandidate(source, candidate) {
   };
 }
 
-function rememberElementsFromResult(result) {
+function rememberElementsFromResult(result: any) {
   if (!result || typeof result !== "object") return;
   if (result.tree) rememberElementTree(result.tree);
   if (Array.isArray(result.results)) result.results.forEach(rememberElementTree);
@@ -408,7 +410,7 @@ function rememberElementsFromResult(result) {
   }
 }
 
-function rememberElementTree(node) {
+function rememberElementTree(node: any) {
   if (!node || typeof node !== "object") return;
   if (node.id) {
     elementCache.set(node.id, {
@@ -427,7 +429,7 @@ function rememberElementTree(node) {
   if (Array.isArray(node.children)) node.children.forEach(rememberElementTree);
 }
 
-function getErrorHint(error) {
+function getErrorHint(error: unknown): string | null {
   if (!error) return null;
   const errorStr = String(error).toLowerCase();
 
@@ -456,9 +458,9 @@ function timeoutForAction(action: string, args: Record<string, any> = {}) {
   return config.actionTimeoutMs;
 }
 
-function normalizeBatchAction(action) {
+function normalizeBatchAction(action: unknown): string {
   const value = String(action || "").trim();
-  const alias = {
+  const alias = ({
     type: "type_text",
     doubleClick: "double_click",
     double_click: "double_click",
@@ -470,7 +472,7 @@ function normalizeBatchAction(action) {
     list_windows: "list_windows",
     elementInfo: "element_info",
     element_info: "element_info",
-  }[value] || value;
+  } as Record<string, string>)[value] || value;
   if (!BATCH_ACTIONS.has(alias)) throw new Error(`不支持的批量动作: ${value}`);
   return alias;
 }
@@ -493,7 +495,7 @@ async function runComputerUseBatch(payload: Record<string, any> = {}) {
       });
       results.push({ ok: true, action, result });
     } catch (error) {
-      const entry = { ok: false, action, error: error.message || String(error) };
+      const entry = { ok: false, action, error: (error as Error).message || String(error) };
       results.push(entry);
       if (stopOnError) {
         return { ok: false, failedAt: index, results, count: results.length };
@@ -517,8 +519,8 @@ function workerStatus() {
   };
 }
 
-function register(ipcMain) {
-  ipcMain.handle("cu:configure", async (_event, nextConfig) => {
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("cu:configure", async (_event: IpcMainInvokeEvent, nextConfig: Record<string, unknown>) => {
     const previous = config;
     config = normalizeConfig(nextConfig || {});
     if (!config.persistentWorker && previous.persistentWorker) await stopWorker("disabled");
@@ -533,31 +535,31 @@ function register(ipcMain) {
   });
 
   ipcMain.handle("cu:health", () => runComputerUse("health", {}, 30000, { relocate: false }));
-  ipcMain.handle("cu:snapshot", (_, opts) => runComputerUse("snapshot", opts, 45000, { relocate: false }));
-  ipcMain.handle("cu:tree", (_, opts) => runComputerUse("tree", opts, 45000, { relocate: false }));
-  ipcMain.handle("cu:list-windows", (_, opts) => runComputerUse("list_windows", opts, 30000, { relocate: false }));
-  ipcMain.handle("cu:find", (_, opts) => runComputerUse("find", opts, 45000, { relocate: false }));
-  ipcMain.handle("cu:element-info", (_, opts) => runComputerUse("element_info", opts));
+  ipcMain.handle("cu:snapshot", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("snapshot", opts, 45000, { relocate: false }));
+  ipcMain.handle("cu:tree", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("tree", opts, 45000, { relocate: false }));
+  ipcMain.handle("cu:list-windows", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("list_windows", opts, 30000, { relocate: false }));
+  ipcMain.handle("cu:find", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("find", opts, 45000, { relocate: false }));
+  ipcMain.handle("cu:element-info", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("element_info", opts));
 
-  ipcMain.handle("cu:click", (_, opts) => runComputerUse("click", opts));
-  ipcMain.handle("cu:double-click", (_, opts) => runComputerUse("double_click", opts));
-  ipcMain.handle("cu:move", (_, opts) => runComputerUse("move", opts));
-  ipcMain.handle("cu:drag", (_, opts) => runComputerUse("drag", opts));
-  ipcMain.handle("cu:scroll", (_, opts) => runComputerUse("scroll", opts));
+  ipcMain.handle("cu:click", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("click", opts));
+  ipcMain.handle("cu:double-click", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("double_click", opts));
+  ipcMain.handle("cu:move", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("move", opts));
+  ipcMain.handle("cu:drag", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("drag", opts));
+  ipcMain.handle("cu:scroll", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("scroll", opts));
 
-  ipcMain.handle("cu:type", (_, opts) => runComputerUse("type_text", opts));
-  ipcMain.handle("cu:keypress", (_, opts) => runComputerUse("keypress", opts));
+  ipcMain.handle("cu:type", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("type_text", opts));
+  ipcMain.handle("cu:keypress", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("keypress", opts));
 
-  ipcMain.handle("cu:focus", (_, opts) => runComputerUse("focus", opts));
-  ipcMain.handle("cu:invoke", (_, opts) => runComputerUse("invoke", opts));
-  ipcMain.handle("cu:set-value", (_, opts) => runComputerUse("set_value", opts));
+  ipcMain.handle("cu:focus", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("focus", opts));
+  ipcMain.handle("cu:invoke", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("invoke", opts));
+  ipcMain.handle("cu:set-value", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("set_value", opts));
 
-  ipcMain.handle("cu:activate-window", (_, opts) => runComputerUse("activate_window", opts, 30000, { relocate: false }));
-  ipcMain.handle("cu:wait", (_, opts) => {
-    const ms = opts?.milliseconds || 500;
+  ipcMain.handle("cu:activate-window", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUse("activate_window", opts, 30000, { relocate: false }));
+  ipcMain.handle("cu:wait", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => {
+    const ms = (opts?.milliseconds as number) || 500;
     return runComputerUse("wait", opts, Math.max(31000, ms + 1000), { relocate: false });
   });
-  ipcMain.handle("cu:batch", (_, opts) => runComputerUseBatch(opts));
+  ipcMain.handle("cu:batch", (_: IpcMainInvokeEvent, opts: Record<string, unknown>) => runComputerUseBatch(opts));
 }
 
 app.on("will-quit", () => {

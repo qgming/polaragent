@@ -1,4 +1,5 @@
 import { app, shell } from "electron";
+import type { IpcMain } from "electron";
 import { autoUpdater } from "electron-updater";
 
 import { APP_NAME } from "../lib/constants.js";
@@ -15,36 +16,70 @@ const AUTO_CHECK_DELAY_MS = Number.parseInt(process.env.POLARAGENT_UPDATE_CHECK_
 const AUTO_CHECK_INTERVAL_MS = Number.parseInt(process.env.POLARAGENT_UPDATE_CHECK_INTERVAL_MS || "21600000", 10);
 const RELEASE_CACHE_TTL_MS = Number.parseInt(process.env.POLARAGENT_RELEASE_CACHE_TTL_MS || "300000", 10);
 
+interface UpdateStatus {
+  phase: string;
+  currentVersion: string;
+  platform: string;
+  arch: string;
+  supported: boolean;
+  enabled: boolean;
+  updateAvailable: boolean;
+  downloaded: boolean;
+  repository: string;
+  feedUrl: string | null;
+  releasesUrl: string;
+  message: string;
+  error: string | null;
+  latestVersion: string | null;
+  latestTag: string | null;
+  releaseName: string | null;
+  releaseDate: string | null;
+  releaseUrl: string | null;
+  releaseNotes: string | null;
+  releaseNotesError: string | null;
+  updateUrl: string | null;
+  triggeredBy: string | null;
+}
+
+interface LatestRelease {
+  tagName: string;
+  name: string | null;
+  body: string | null;
+  htmlUrl: string | null;
+  publishedAt: string | null;
+  createdAt: string | null;
+}
+
 let configured = false;
 let eventsBound = false;
-let autoCheckTimer = null;
-let latestReleaseCache = null;
+let autoCheckTimer: ReturnType<typeof setInterval> | null = null;
+let latestReleaseCache: LatestRelease | null = null;
 let latestReleaseFetchedAt = 0;
-let latestReleaseRequest = null;
+let latestReleaseRequest: Promise<LatestRelease> | null = null;
 
-let updateStatus = createBaseStatus();
+let updateStatus: UpdateStatus = createBaseStatus();
 
-function isSupportedPlatform() {
+function isSupportedPlatform(): boolean {
   return SUPPORTED_PLATFORMS.has(process.platform);
 }
 
-function isUpdateEnabled() {
+function isUpdateEnabled(): boolean {
   return isSupportedPlatform() && (app.isPackaged || ENABLE_DEV_UPDATES);
 }
 
-function getInitialPhase() {
+function getInitialPhase(): string {
   if (!isSupportedPlatform()) return "unsupported";
   if (!app.isPackaged && !ENABLE_DEV_UPDATES) return "disabled";
   return "idle";
 }
 
-function getInitialMessage() {
+function getInitialMessage(): string {
   if (!isSupportedPlatform()) return "当前平台不支持自动更新";
   if (!app.isPackaged && !ENABLE_DEV_UPDATES) return "开发环境不会连接更新服务";
   return "准备检查更新";
 }
 
-function createBaseStatus() {
+function createBaseStatus(): UpdateStatus {
   return {
     phase: getInitialPhase(),
     currentVersion: app.getVersion(),
@@ -71,7 +106,7 @@ function createBaseStatus() {
   };
 }
 
-function cloneStatus() {
+function cloneStatus(): UpdateStatus {
   return { ...updateStatus };
 }
 
@@ -82,7 +117,7 @@ function broadcastStatus() {
   }
 }
 
-function setStatus(next) {
+function setStatus(next: Partial<UpdateStatus>) {
   updateStatus = {
     ...updateStatus,
     ...next,
@@ -99,19 +134,20 @@ function setStatus(next) {
   return cloneStatus();
 }
 
-function errorMessage(error) {
+function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error || "未知错误");
 }
 
-function normalizeReleaseNotes(releaseNotes) {
+function normalizeReleaseNotes(releaseNotes: unknown): string | null {
   if (typeof releaseNotes === "string") return releaseNotes.trim() || null;
   if (Array.isArray(releaseNotes)) {
     return releaseNotes
       .map((item) => {
         if (typeof item === "string") return item;
         if (item && typeof item === "object") {
-          return [item.version, item.note].filter(Boolean).join("\n\n");
+          const obj = item as { version?: string; note?: string };
+          return [obj.version, obj.note].filter(Boolean).join("\n\n");
         }
         return "";
       })
@@ -122,13 +158,13 @@ function normalizeReleaseNotes(releaseNotes) {
   return null;
 }
 
-function normalizeTag(version) {
+function normalizeTag(version: unknown): string | null {
   if (!version) return null;
   const value = String(version).trim();
   return value ? (value.startsWith("v") ? value : `v${value}`) : null;
 }
 
-function normalizeVersion(version) {
+function normalizeVersion(version: unknown): string {
   return String(version || "")
     .trim()
     .replace(/^v/i, "")
@@ -136,7 +172,7 @@ function normalizeVersion(version) {
     .split("+")[0];
 }
 
-function compareVersions(left, right) {
+function compareVersions(left: string, right: string): number {
   const leftParts = normalizeVersion(left).split(".").map((part) => Number.parseInt(part, 10) || 0);
   const rightParts = normalizeVersion(right).split(".").map((part) => Number.parseInt(part, 10) || 0);
   const length = Math.max(leftParts.length, rightParts.length, 3);
@@ -150,34 +186,35 @@ function compareVersions(left, right) {
   return 0;
 }
 
-function getUpdateUrl(updateInfo) {
+function getUpdateUrl(updateInfo: { path?: string; files?: Array<{ url?: string }> }): string | null {
   if (!updateInfo || typeof updateInfo !== "object") return null;
   if (typeof updateInfo.path === "string" && updateInfo.path.trim()) return updateInfo.path;
   if (Array.isArray(updateInfo.files)) {
     const file = updateInfo.files.find((item) => item && typeof item.url === "string" && item.url.trim());
-    if (file) return file.url;
+    if (file) return file.url || null;
   }
   return null;
 }
 
-function updateStatusFromUpdaterInfo(updateInfo) {
+function updateStatusFromUpdaterInfo(updateInfo: unknown): Partial<UpdateStatus> {
   if (!updateInfo || typeof updateInfo !== "object") return {};
+  const info = updateInfo as { version?: string; releaseName?: string; releaseDate?: string; releaseNotes?: unknown; path?: string; files?: Array<{ url?: string }> };
 
-  const latestVersion = updateInfo.version ? normalizeVersion(updateInfo.version) : null;
-  const latestTag = normalizeTag(updateInfo.version);
-  const releaseNotes = normalizeReleaseNotes(updateInfo.releaseNotes);
+  const latestVersion = info.version ? normalizeVersion(info.version) : null;
+  const latestTag = normalizeTag(info.version);
+  const releaseNotes = normalizeReleaseNotes(info.releaseNotes);
 
   return {
     latestVersion: latestVersion || updateStatus.latestVersion,
     latestTag: latestTag || updateStatus.latestTag,
-    releaseName: updateInfo.releaseName || latestTag || updateStatus.releaseName,
-    releaseDate: updateInfo.releaseDate || updateStatus.releaseDate,
+    releaseName: info.releaseName || latestTag || updateStatus.releaseName,
+    releaseDate: info.releaseDate || updateStatus.releaseDate,
     releaseNotes: releaseNotes || updateStatus.releaseNotes,
-    updateUrl: getUpdateUrl(updateInfo) || updateStatus.updateUrl,
+    updateUrl: getUpdateUrl(info) || updateStatus.updateUrl,
   };
 }
 
-function createReleaseStatus(release) {
+function createReleaseStatus(release: LatestRelease) {
   const latestVersion = normalizeVersion(release.tagName);
   const hasUpdate = compareVersions(latestVersion, app.getVersion()) > 0;
 
@@ -193,7 +230,7 @@ function createReleaseStatus(release) {
   };
 }
 
-async function fetchLatestRelease({ force = false } = {}) {
+async function fetchLatestRelease({ force = false } = {}): Promise<LatestRelease> {
   const now = Date.now();
   const cacheTtl = Number.isFinite(RELEASE_CACHE_TTL_MS) ? Math.max(RELEASE_CACHE_TTL_MS, 60000) : 300000;
 
@@ -215,8 +252,8 @@ async function fetchLatestRelease({ force = false } = {}) {
       throw new Error(`GitHub Release 请求失败：${response.status} ${response.statusText}`);
     }
 
-    const payload = await response.json();
-    const release = {
+    const payload: Record<string, unknown> = await response.json();
+    const release: LatestRelease = {
       tagName: String(payload.tag_name || ""),
       name: typeof payload.name === "string" ? payload.name : null,
       body: typeof payload.body === "string" ? payload.body : null,
@@ -239,7 +276,7 @@ async function fetchLatestRelease({ force = false } = {}) {
   return latestReleaseRequest;
 }
 
-async function refreshLatestRelease(options) {
+async function refreshLatestRelease(options: { force?: boolean } = {}) {
   try {
     const release = await fetchLatestRelease(options);
     const releaseStatus = createReleaseStatus(release);
@@ -516,7 +553,7 @@ function installUpdate() {
   return cloneStatus();
 }
 
-function register(ipcMain) {
+function register(ipcMain: IpcMain) {
   ipcMain.handle("updates:get-status", () => cloneStatus());
   ipcMain.handle("updates:check", () => checkForUpdates({ triggeredBy: "manual" }));
   ipcMain.handle("updates:download", () => downloadUpdate());

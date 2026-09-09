@@ -5,18 +5,18 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 // 递归创建目录
-async function ensureDir(dir) {
+async function ensureDir(dir: string) {
   await fsp.mkdir(dir, { recursive: true });
 }
 
 // 读取 UTF-8 文本
-async function readText(file) {
+async function readText(file: string) {
   return fsp.readFile(file, "utf8");
 }
 
 // 原子写 JSON 文件（先写临时文件再 rename，写入前校验 JSON 合法）
 // 每次调用使用唯一的临时文件名，避免并发写入时两个操作共用同一个 .tmp 路径导致竞态
-async function writeJsonFile(file, content) {
+async function writeJsonFile(file: string, content: string) {
   JSON.parse(content);
   await ensureDir(path.dirname(file));
   const tmp = `${file}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
@@ -31,7 +31,7 @@ async function writeJsonFile(file, content) {
 }
 
 // 递归复制目录内容；overwriteExisting=false 时跳过已存在文件
-async function copyDirContents(source, target, overwriteExisting = true) {
+async function copyDirContents(source: string, target: string, overwriteExisting = true) {
   await ensureDir(target);
   const entries = await fsp.readdir(source, { withFileTypes: true });
   for (const entry of entries) {
@@ -50,7 +50,7 @@ async function copyDirContents(source, target, overwriteExisting = true) {
 // 列举目录（或其多个子目录）下的全部 JSON id（去重排序），供 config / skills 复用
 async function listJsonIds(dir: string, subdirs?: string[]) {
   if (!fs.existsSync(dir)) return [];
-  const ids = new Set();
+  const ids = new Set<string>();
   const dirs = subdirs ? subdirs.map((subdir) => path.join(dir, subdir)) : [dir];
   for (const targetDir of dirs) {
     if (!fs.existsSync(targetDir)) continue;

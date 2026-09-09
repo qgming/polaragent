@@ -6,7 +6,7 @@
  * @param {number[]} b - 向量 B
  * @returns {number} 余弦相似度，范围 [-1, 1]；维度不匹配时返回 0
  */
-function cosineSimilarity(a, b) {
+function cosineSimilarity(a: number[], b: number[]): number {
   if (!a || !b || a.length !== b.length) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(`向量维度不匹配: ${a?.length} vs ${b?.length}`);
@@ -33,7 +33,7 @@ function cosineSimilarity(a, b) {
  * @param {number} max - 最大值
  * @returns {number} 限制后的整数值
  */
-function clampNumber(value, fallback, min, max) {
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
   const number = Number(value ?? fallback);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));

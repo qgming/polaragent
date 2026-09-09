@@ -37,6 +37,25 @@ export default defineConfig(async () => ({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // 重型依赖独立分包，降低首包体积
+        manualChunks(id: string) {
+          if (id.includes("node_modules")) {
+            if (id.includes("mermaid") || id.includes("streamdown")) return "chunk-mermaid";
+            if (id.includes("pdfjs-dist")) return "chunk-pdf";
+            if (id.includes("katex") || id.includes("rehype-katex")) return "chunk-katex";
+            if (id.includes("highlight.js")) return "chunk-hljs";
+            if (id.includes("react-dom") || id.includes("/react/") || id.endsWith("/react")) {
+              return "chunk-react";
+            }
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 
   clearScreen: false,
   server: {

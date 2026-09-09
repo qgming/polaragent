@@ -1,6 +1,7 @@
 // IPC：LLM 调用（chat completion 同步/流式、模型列表）
 // 走 OpenAI 兼容接口。
 import { net } from "electron";
+import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { normalizeBaseUrl, errorMessage } from "../lib/http-utils.js";
 import { REMOTE_CONCURRENCY, withConcurrency } from "../lib/concurrency.js";
 
@@ -10,15 +11,30 @@ const llmRunner = withConcurrency(REMOTE_CONCURRENCY);
 // 429 限流重试间隔（毫秒），默认重试 5 次
 const RETRY_DELAYS = [1000, 3000, 5000, 10000, 30000];
 
+// LLM 请求结构
+interface LlmRequest {
+  apiKey: string;
+  model: string;
+  baseUrl: string;
+  systemPrompt?: string;
+  messages?: Array<{ role: string; content: string }>;
+  temperature?: number;
+  maxTokens?: number;
+  responseFormat?: string;
+  requestId?: string;
+}
+
 // 判断是否因 429 限流导致的错误
-function isRateLimitError(error) {
-  if (!error || !error.message) return false;
-  return /429|Too Many Requests|rate_limit/i.test(error.message);
+function isRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const msg = (error as Error).message;
+  if (!msg) return false;
+  return /429|Too Many Requests|rate_limit/i.test(msg);
 }
 
 // 带 429 自动静默重试包装：捕获 429 错误后按递增间隔重试
-async function with429Retry(fn) {
-  let lastError;
+async function with429Retry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
   for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
     try {
       return await fn();
@@ -34,15 +50,15 @@ async function with429Retry(fn) {
   throw lastError;
 }
 
-function electronFetch(url, options) {
+function electronFetch(url: string, options?: RequestInit) {
   return net.fetch(url, options);
 }
 
 // 组装 messages（system + 非空内容的对话消息）
-function buildMessages(systemPrompt, messages) {
-  const result = [];
+function buildMessages(systemPrompt: string | undefined, messages: LlmRequest["messages"] | undefined) {
+  const result: Array<{ role: string; content: string }> = [];
   if (String(systemPrompt || "").trim()) {
-    result.push({ role: "system", content: systemPrompt });
+    result.push({ role: "system", content: systemPrompt as string });
   }
   for (const message of messages || []) {
     if (String(message.content || "").trim()) {
@@ -53,8 +69,8 @@ function buildMessages(systemPrompt, messages) {
 }
 
 // 组装请求体
-function llmBody(request, stream) {
-  const body: Record<string, any> = {
+function llmBody(request: LlmRequest, stream: boolean): Record<string, unknown> {
+  const body: Record<string, unknown> = {
     model: String(request.model || "").trim(),
     messages: buildMessages(request.systemPrompt, request.messages),
     stream,
@@ -67,15 +83,16 @@ function llmBody(request, stream) {
 }
 
 // 归一化 usage 字段
-function usageFrom(raw) {
-  const input = Number(raw?.prompt_tokens || 0);
-  const output = Number(raw?.completion_tokens || 0);
-  const totalTokens = Number(raw?.total_tokens || input + output);
+function usageFrom(raw: unknown): { input: number; output: number; totalTokens: number } {
+  const obj = raw as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null | undefined;
+  const input = Number(obj?.prompt_tokens || 0);
+  const output = Number(obj?.completion_tokens || 0);
+  const totalTokens = Number(obj?.total_tokens || input + output);
   return { input, output, totalTokens };
 }
 
 // 同步 chat completion
-async function chatCompletion(request) {
+async function chatCompletion(request: LlmRequest) {
   return with429Retry(() => llmRunner(async () => {
     if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
     if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
@@ -90,16 +107,17 @@ async function chatCompletion(request) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(`模型请求失败（${response.status}）：${errorMessage(payload)}`);
+    const data = payload as { choices?: Array<{ message?: { content?: string } }>; model?: string; usage?: unknown };
     return {
-      content: payload.choices?.[0]?.message?.content || "",
-      model: payload.model || request.model,
-      usage: usageFrom(payload.usage),
+      content: data.choices?.[0]?.message?.content || "",
+      model: data.model || request.model,
+      usage: usageFrom(data.usage),
     };
   }));
 }
 
 // 流式 chat completion：解析 SSE，逐段通过 llm:chat-stream 推送
-async function chatCompletionStream(event, request) {
+async function chatCompletionStream(event: IpcMainInvokeEvent, request: LlmRequest) {
   return with429Retry(() => llmRunner(async () => {
     if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
     if (!String(request.model || "").trim()) throw new Error("模型名称不能为空");
@@ -123,9 +141,9 @@ async function chatCompletionStream(event, request) {
     let model = request.model;
     let usage = { input: 0, output: 0, totalTokens: 0 };
 
-    const emit = (payload) => event.sender.send("llm:chat-stream", payload);
-    for await (const chunk of response.body) {
-      buffer += decoder.decode(chunk, { stream: true }).replace(/\r\n/g, "\n");
+    const emit = (payload: Record<string, unknown>) => event.sender.send("llm:chat-stream", payload);
+    for await (const chunk of response.body!) {
+      buffer += decoder.decode(chunk as Uint8Array, { stream: true }).replace(/\r\n/g, "\n");
       let index;
       while ((index = buffer.indexOf("\n\n")) >= 0) {
         const block = buffer.slice(0, index);
@@ -136,15 +154,16 @@ async function chatCompletionStream(event, request) {
           const data = trimmed.slice(5).trim();
           if (!data || data === "[DONE]") continue;
           // 个别坏行（心跳、注释、被切断的 JSON）不应中断整个流：解析失败则跳过该行
-          let payload;
+          let payload: Record<string, unknown>;
           try {
             payload = JSON.parse(data);
           } catch {
             continue;
           }
-          if (payload.model) model = payload.model;
+          if (payload.model) model = payload.model as string;
           if (payload.usage) usage = usageFrom(payload.usage);
-          const delta = payload.choices?.[0]?.delta?.content;
+          const choices = payload.choices as Array<{ delta?: { content?: string } }> | undefined;
+          const delta = choices?.[0]?.delta?.content;
           if (delta) emit({ requestId, delta, done: false });
         }
       }
@@ -154,7 +173,7 @@ async function chatCompletionStream(event, request) {
 }
 
 // 读取模型列表
-async function listModels(request) {
+async function listModels(request: LlmRequest) {
   if (!String(request.apiKey || "").trim()) throw new Error("API Key 不能为空");
   const response = await electronFetch(`${normalizeBaseUrl(request.baseUrl)}/models`, {
     headers: { Authorization: `Bearer ${request.apiKey.trim()}` },
@@ -162,13 +181,14 @@ async function listModels(request) {
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(`读取模型列表失败（${response.status}）：${errorMessage(payload)}`);
-  return (payload.data || []).map((item) => item.id).filter(Boolean);
+  const data = payload as { data?: Array<{ id?: string }> };
+  return (data.data || []).map((item) => item.id).filter(Boolean);
 }
 
-function register(ipcMain) {
-  ipcMain.handle("llm:chat-completion", (_event, { request }) => chatCompletion(request));
-  ipcMain.handle("llm:chat-completion-stream", (event, { request }) => chatCompletionStream(event, request));
-  ipcMain.handle("llm:list-models", (_event, { request }) => listModels(request));
+function register(ipcMain: IpcMain) {
+  ipcMain.handle("llm:chat-completion", (_event: IpcMainInvokeEvent, { request }: { request: LlmRequest }) => chatCompletion(request));
+  ipcMain.handle("llm:chat-completion-stream", (event: IpcMainInvokeEvent, { request }: { request: LlmRequest }) => chatCompletionStream(event, request));
+  ipcMain.handle("llm:list-models", (_event: IpcMainInvokeEvent, { request }: { request: LlmRequest }) => listModels(request));
 }
 
 export { register };

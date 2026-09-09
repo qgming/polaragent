@@ -4,7 +4,7 @@ import { getMainWindow } from "./windows.js";
 import { projectResourcePath } from "./app-paths.js";
 import { APP_NAME } from "./constants.js";
 
-let tray = null;
+let tray: Tray | null = null;
 let isQuitting = false;
 
 // 托盘图标路径（回退到应用图标）
@@ -62,7 +62,7 @@ function getIsQuitting() {
   return isQuitting;
 }
 
-function setIsQuitting(value) {
+function setIsQuitting(value: boolean) {
   isQuitting = value;
 }
 
