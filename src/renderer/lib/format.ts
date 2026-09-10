@@ -8,14 +8,10 @@ function trimZero(text: string): string {
 /** 距今相对日期：今天 / 昨天 / M月D日（跨年带年份） */
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
   const date = new Date(timestamp);
-  const today = new Date(now);
-  const startOfDay = (d: Date): number =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  // 除以 86400000 用 round 兜底夏令时导致的 23/25 小时差
-  const diffDays = Math.round((startOfDay(today) - startOfDay(date)) / 86_400_000);
+  const diffDays = dayOffset(timestamp, now);
   if (diffDays <= 0) return "今天";
   if (diffDays === 1) return "昨天";
-  if (date.getFullYear() !== today.getFullYear()) {
+  if (date.getFullYear() !== new Date(now).getFullYear()) {
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   }
   return `${date.getMonth() + 1}月${date.getDate()}日`;
@@ -27,6 +23,44 @@ export function formatTime(timestamp: number): string {
   const h = String(d.getHours()).padStart(2, "0");
   const m = String(d.getMinutes()).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+/** 时间入参：毫秒时间戳或 Date（运行时消息的 createdAt 是 Date） */
+type TimeInput = number | Date;
+
+/** 同一自然日（按本地时区）。按数值比较，不依赖任何语言的日期文案 */
+export function isSameDay(a: TimeInput, b: TimeInput): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+/** 与今天相差的自然日数：0=今天，1=昨天，负数=未来 */
+export function dayOffset(timestamp: TimeInput, now: TimeInput = Date.now()): number {
+  const startOfDay = (d: Date): number =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  // 除以 86400000 用 round 兜底夏令时导致的 23/25 小时差
+  return Math.round((startOfDay(new Date(now)) - startOfDay(new Date(timestamp))) / 86_400_000);
+}
+
+/** 日期文案（不含今天/昨天这类相对词）：9月10日 周四；跨年补年份。跟随传入的语言 */
+export function formatDayDate(
+  timestamp: TimeInput,
+  locale: string,
+  now: TimeInput = Date.now(),
+): string {
+  const date = new Date(timestamp);
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return new Intl.DateTimeFormat(locale, {
+    ...(sameYear ? {} : { year: "numeric" }),
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(date);
 }
 
 /** token 数缩写：999 / 1.2k / 100k / 1.24M */

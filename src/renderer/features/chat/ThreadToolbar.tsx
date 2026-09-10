@@ -1,6 +1,7 @@
 import { Archive, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { live, ShimmerLabel } from "@/renderer/components/assistant-ui/elements/surfaces";
 import {
   Collapsible,
   CollapsibleContent,
@@ -70,10 +71,9 @@ export function ThreadToolbar() {
                 />
               </>
             ) : (
-              // 压缩进行中（summaryPreview 尚未生成）：品牌脉冲点 + 运行中
-              <span className="flex items-center gap-1.5">
-                <span className="size-1.5 rounded-full bg-brand animate-pulse motion-reduce:animate-none" />
-                {t("chat.running")}
+              // 压缩进行中（summaryPreview 尚未生成）：live 蓝 + 微光
+              <span className={cn(live, "flex items-center gap-1.5")} role="status">
+                <ShimmerLabel>{t("chat.running")}</ShimmerLabel>
               </span>
             )}
           </CollapsibleTrigger>

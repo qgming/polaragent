@@ -1,9 +1,6 @@
 import { create } from "zustand";
 import type { Settings } from "@/shared/contracts";
 
-/** density=compact 的消息间距占位值（等设计确认后替换，先用 comfortable 兜底） */
-const GAP_COMFORTABLE = "16px";
-
 interface SettingsState {
   settings: Settings | null;
   loaded: boolean;
@@ -12,7 +9,7 @@ interface SettingsState {
   update(patch: Partial<Settings>): Promise<void>;
   /** 把 theme 应用到 html 的 dark 类（system 跟随系统偏好） */
   applyTheme(): void;
-  /** 把 chatFont / chatFontSize / density 写到 CSS 变量 */
+  /** 把 chatFont / chatFontSize 写到 CSS 变量 */
   applyTypography(): void;
   /** 读取设置并应用主题与排版，注册系统主题监听 */
   init(): Promise<void>;
@@ -50,11 +47,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       return;
     }
     if (patch.theme !== undefined) get().applyTheme();
-    if (
-      patch.chatFont !== undefined ||
-      patch.chatFontSize !== undefined ||
-      patch.density !== undefined
-    ) {
+    if (patch.chatFont !== undefined || patch.chatFontSize !== undefined) {
       get().applyTypography();
     }
   },
@@ -74,8 +67,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const style = document.documentElement.style;
     style.setProperty("--chat-font", settings.chatFont);
     style.setProperty("--chat-font-size", `${settings.chatFontSize}px`);
-    // TODO: compact 的具体间距待设计确认，暂与 comfortable 相同
-    style.setProperty("--density-gap-message", GAP_COMFORTABLE);
   },
 
   async init() {

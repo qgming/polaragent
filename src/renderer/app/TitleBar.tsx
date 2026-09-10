@@ -23,11 +23,11 @@ export function TitleBar() {
   return (
     <header
       style={dragStyle}
-      className="flex h-11 shrink-0 items-center justify-between border-border border-b px-2"
+      className="flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-2"
     >
-      {/* 左侧：品牌点 + 应用名（E2 品牌落点：仅指示点） */}
+      {/* 左侧：品牌标记 + 应用名（标记是墨色方块，不是强调色） */}
       <div className="flex min-w-0 items-center gap-2 px-2">
-        <span className="size-2 shrink-0 rounded-sm bg-brand" aria-hidden="true" />
+        <span className="size-2 shrink-0 rounded-sm bg-foreground" aria-hidden="true" />
         <span className="truncate text-sm font-medium">{t("app.name")}</span>
       </div>
 

@@ -1,9 +1,11 @@
 import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
 import { Button } from "@/renderer/components/ui/button";
 import { Textarea } from "@/renderer/components/ui/textarea";
-import { PanelLoading } from "../settings-shared";
+import { cn } from "@/renderer/lib/utils";
+import { PanelLoading, settingsTextarea } from "../settings-shared";
 
 export function PersonalizationPanel() {
   const { t } = useTranslation();
@@ -56,8 +58,8 @@ export function PersonalizationPanel() {
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-sm font-medium">{t("settings.agentsMd")}</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">{t("settings.agentsMdDesc")}</p>
+        <h3 className={typeEyebrow}>{t("settings.agentsMd")}</h3>
+        <p className="mt-1 text-xs text-foreground/45">{t("settings.agentsMdDesc")}</p>
       </div>
       <Textarea
         value={content}
@@ -67,13 +69,13 @@ export function PersonalizationPanel() {
           setContent(e.target.value);
           setDirty(true);
         }}
-        className="min-h-[300px] resize-y"
+        className={cn(settingsTextarea, "min-h-[300px] resize-y")}
       />
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-xs text-foreground/45">
           {saved ? (
             <>
-              <Check className="size-3.5 text-brand-text" aria-hidden="true" />
+              <Check className="size-3.5 text-foreground/70" aria-hidden="true" />
               {t("settings.agentsMdSaved")}
             </>
           ) : saveFailed ? (
