@@ -1,18 +1,12 @@
-// 模型服务：模型路由 + 图片生成 + 音频 + 知识库嵌入
+// 模型服务：模型路由
 // src/components/settings/panels/ModelsPanel.tsx
 
-import { useTranslation } from "react-i18next";
 import type { Settings, ProviderConfig } from "@/types/config";
 import { ModelPanel } from "../ModelPanel";
-import { ImageGenerationPanel } from "../ImageGenerationPanel";
-import { AudioPanel } from "../AudioPanel";
-import { KnowledgePanel } from "../KnowledgePanel";
 import { SectionHeader } from "./GeneralPanel";
 
 export function ModelsPanel({
   providers,
-  settings,
-  onUpdate,
   onAddProvider,
   onUpdateProvider,
   onRemoveProvider,
@@ -26,10 +20,9 @@ export function ModelsPanel({
   onRemoveProvider: (id: string) => Promise<void>;
   onSetDefaultModel: (providerId: string, modelId: string) => Promise<void>;
 }) {
-  const { t } = useTranslation("settings");
   return (
     <div className="space-y-8">
-      <SectionHeader title={t("nav.models")} />
+      <SectionHeader title="模型" />
       <ModelPanel
         providers={providers}
         onAddProvider={onAddProvider}
@@ -38,9 +31,6 @@ export function ModelsPanel({
         onSetDefaultModel={onSetDefaultModel}
         embedded
       />
-      <ImageGenerationPanel settings={settings} onUpdate={onUpdate} embedded />
-      <AudioPanel settings={settings} onUpdate={onUpdate} embedded />
-      <KnowledgePanel settings={settings} onUpdate={onUpdate} embedded />
     </div>
   );
 }

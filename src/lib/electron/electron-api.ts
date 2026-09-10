@@ -39,44 +39,6 @@ export interface SecurityScopedOptions {
   securityMode?: import("@/types/permissions").ToolPermissionMode;
 }
 
-export type AppUpdatePhase =
-  | "idle"
-  | "disabled"
-  | "unsupported"
-  | "checking"
-  | "check-error"
-  | "up-to-date"
-  | "update-available"
-  | "downloading"
-  | "download-error"
-  | "download-unavailable"
-  | "downloaded";
-
-export interface AppUpdateStatus {
-  phase: AppUpdatePhase;
-  currentVersion: string;
-  platform: string;
-  arch: string;
-  supported: boolean;
-  enabled: boolean;
-  updateAvailable: boolean;
-  downloaded: boolean;
-  repository: string;
-  feedUrl: string | null;
-  releasesUrl: string;
-  message: string;
-  error: string | null;
-  latestVersion: string | null;
-  latestTag: string | null;
-  releaseName: string | null;
-  releaseDate: string | null;
-  releaseUrl: string | null;
-  releaseNotes: string | null;
-  releaseNotesError: string | null;
-  updateUrl: string | null;
-  triggeredBy: "auto" | "manual" | null;
-}
-
 function api() {
   if (!window.polaragent) throw new Error("Electron preload API 未初始化");
   return window.polaragent;
@@ -102,7 +64,7 @@ export async function chatCompletionStream(
   let content = "";
   let settled = false;
 
-  const unlisten = api().llm.onChatStream((event) => {
+  const unlisten = api().llm.onChatStream((event: LlmChatStreamEvent) => {
     if (event.requestId !== requestId) return;
     if (event.error) {
       settled = true;
@@ -144,11 +106,8 @@ export function listRemoteModels(baseUrl: string, apiKey: string) {
 export const pickWorkingDirectory = () => api().app.pickWorkingDirectory();
 export const pickTextFile = (): Promise<string | null> => api().app.pickTextFile();
 export const pickMultipleFiles = (): Promise<string[]> => api().app.pickMultipleFiles();
-export const pickZipFile = (): Promise<string | null> => api().app.pickZipFile();
 export const getPathForFile = (file: File): string => api().app.getPathForFile(file);
 export const pickImageFile = () => api().app.pickImageFile();
-export const pickAudioFile = () => api().app.pickAudioFile();
-export const pickDocumentFile = (): Promise<string | null> => api().app.pickDocumentFile();
 export const getDataDir = () => api().app.getDataDir();
 export const getHomeDir = () => api().app.getHomeDir();
 export const openDataDir = () => api().app.openDataDir();
@@ -156,13 +115,7 @@ export const openPath = (path: string) => api().app.openPath(path);
 export const openExternal = (url: string) => api().app.openExternal(url);
 export const fileUrl = (path: string) => api().app.fileUrl(path);
 export const ensureDataDir = () => api().app.ensureDataDir();
-export const getUpdateStatus = (): Promise<AppUpdateStatus> => api().updates.getStatus();
-export const checkForUpdates = (): Promise<AppUpdateStatus> => api().updates.check();
-export const downloadUpdate = (): Promise<AppUpdateStatus> => api().updates.download();
-export const installUpdate = (): Promise<AppUpdateStatus> => api().updates.install();
-export const openUpdateReleases = (): Promise<void> => api().updates.openReleases();
-export const onUpdateStatus = (handler: (status: AppUpdateStatus) => void) =>
-  api().updates.onStatus(handler);
+
 export const listDirectory = (path: string, options?: SecurityScopedOptions) => api().fs.listDirectory(path, options);
 export const listDirectoryEntries = (path: string, options?: SecurityScopedOptions) => api().fs.listDirectoryEntries(path, options);
 export const readFile = (path: string, options?: SecurityScopedOptions) => api().fs.readFile(path, options);
@@ -175,18 +128,6 @@ export const renamePath = (src: string, dest: string, options?: SecurityScopedOp
 export const copyPath = (src: string, dest: string, options?: SecurityScopedOptions) => api().fs.copy(src, dest, options);
 export const createDirectory = (path: string, options?: SecurityScopedOptions) => api().fs.createDirectory(path, options);
 export const deleteFile = (path: string, options?: SecurityScopedOptions) => api().fs.deletePath(path, options);
-export const installSkillFromGit = (repoUrl: string) => api().skills.installFromGit(repoUrl);
-export const installSkillFromLocal = (sourcePath: string) => api().skills.installFromLocal(sourcePath);
-export const installSkillFromZip = (zipPath: string) => api().skills.installFromZip(zipPath);
-export const uninstallSkill = (skillId: string) => api().skills.uninstall(skillId);
-export const listSkills = (skillType: "builtin" | "custom") => api().skills.list(skillType);
-export const readSkillMetadata = (skillId: string) => api().skills.readMetadata(skillId);
-export const writeSkill = (name: string, content: string): Promise<{ success: boolean; path: string; message: string }> =>
-  api().skills.writeSkill(name, content);
-export const patchSkill = (name: string, oldString: string, newString: string): Promise<{ success: boolean; path: string; message: string }> =>
-  api().skills.patchSkill(name, oldString, newString);
-export const deleteSkillByName = (name: string): Promise<{ success: boolean; path: string; message: string }> =>
-  api().skills.deleteSkillByName(name);
 
 export async function readConfig<T = any>(fileName: string): Promise<T> {
   return JSON.parse(await api().config.read(fileName)) as T;
@@ -197,197 +138,263 @@ export function writeConfig(fileName: string, content: any): Promise<void> {
 }
 
 // AGENTS.md 读写：固定路径 {dataDir}/AGENTS.md
-export const readAgentsMd = (): Promise<string> =>
-  api().config.readAgentsMd();
-export const writeAgentsMd = (content: string): Promise<void> =>
-  api().config.writeAgentsMd(content);
+export const readAgentsMd = (): Promise<string> => api().config.readAgentsMd();
+export const writeAgentsMd = (content: string): Promise<void> => api().config.writeAgentsMd(content);
 
-// 网络搜索接口
-export interface WebSearchRequest {
-  provider: "tavily" | "exa" | "serper" | "searxng" | "brave";
-  query: string;
-  limit?: number;
-  apiKey?: string;
-  // Tavily 特定参数
-  searchDepth?: "basic" | "advanced";
-  includeDomains?: string;
-  excludeDomains?: string;
-  includeAnswer?: boolean;
-  includeRawContent?: boolean;
-  includeImages?: boolean;
-  // Exa 特定参数
-  type?: "neural" | "keyword";
-  useAutoprompt?: boolean;
-  category?: string;
-  includeText?: boolean;
-  includeHighlights?: boolean;
-  includeSummary?: boolean;
-  // Serper 特定参数
-  gl?: string;
-  hl?: string;
-  // SearXNG 特定参数
-  instances?: string;
-  // Brave 特定参数
-  country?: string;
-  searchLang?: string;
+/**
+ * 主进程流式 fetch（与设置页模型测试同出网路径）。
+ * 在 Electron 中替代 globalThis.fetch；非 Electron 环境回退到原生 fetch。
+ *
+ * 注意：openai / @anthropic-ai SDK 内部直接用 globalThis.fetch，
+ * 不会读取任何 options.fetch —— 所以必须通过 installIpcFetch 全局替换，
+ * 否则渲染进程直连会被浏览器 CORS 拦截（请求到达 API 但响应被拒）。
+ */
+const nativeFetch: typeof globalThis.fetch =
+  typeof globalThis !== "undefined" ? globalThis.fetch : undefined as unknown as typeof globalThis.fetch;
+
+export function ipcFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const url =
+    typeof input === "string" ? input
+    : input instanceof URL ? input.toString()
+    : input.url;
+
+  if (!isElectronRuntime() || !api().network?.fetchStream) {
+    return nativeFetch(input, init);
+  }
+
+  const headers: Record<string, string> = {};
+  if (init?.headers) {
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) headers[key] = value;
+    } else {
+      for (const [key, value] of Object.entries(init.headers)) {
+        if (value !== undefined && value !== null) headers[key] = String(value);
+      }
+    }
+  }
+
+  let body: string | undefined;
+  if (init?.body !== undefined && init.body !== null) {
+    if (typeof init.body === "string") {
+      body = init.body;
+    } else if (init.body instanceof Uint8Array || init.body instanceof ArrayBuffer) {
+      body = new TextDecoder().decode(
+        init.body instanceof ArrayBuffer ? init.body : init.body.buffer.slice(
+          init.body.byteOffset,
+          init.body.byteOffset + init.body.byteLength,
+        ),
+      );
+    } else if (typeof ReadableStream !== "undefined" && init.body instanceof ReadableStream) {
+      // 极少见的上传流：回退到原生 fetch（Electron 下仍受 CORS 约束，但 LLM 请求不依赖此路径）
+      return nativeFetch(input, init);
+    } else {
+      body = String(init.body);
+    }
+  }
+
+  return streamViaMainProcess(url, init?.method || "GET", headers, body, init?.signal ?? undefined);
 }
 
-export interface WebSearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-  score?: number;
-  // Tavily 完整内容字段
-  rawContent?: string;
-  images?: string[];
-  // Exa 完整内容字段
-  text?: string;
-  highlights?: string[];
-  summary?: string;
+/** 主进程出网事件（与 src/preload/index.ts 的 fetchStream 契约一一对应） */
+export type FetchStreamEvent =
+  | { type: "meta"; status: number; statusText: string; headers: Array<[string, string]> }
+  | { type: "chunk"; data: ArrayBuffer }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+/**
+ * 经主进程出网，并在渲染层重建 Response。
+ *
+ * 为什么 Response 不能放在 preload 里构造：contextBridge 传不了 Response 与
+ * ReadableStream，渲染层只会拿到一个空对象（丢 status/body），SDK 随即报出与
+ * 实际原因无关的错误。因此 preload 只回传事件与字节，Response 在能用的一侧组装。
+ */
+function streamViaMainProcess(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let settled = false;
+    // body 流是否已终结（close 或 error）。终结后不再重复操作。
+    let bodyFinished = false;
+    let handle: { abort: () => void } | null = null;
+
+    const abortUpstream = () => {
+      try {
+        handle?.abort();
+      } catch {
+        // 端口可能已关闭
+      }
+    };
+
+    const detach = () => {
+      if (signal) signal.removeEventListener("abort", rejectAborted);
+    };
+
+    /** 让 body 流以指定原因终止（已终结则忽略） */
+    const failBody = (error: Error) => {
+      if (bodyFinished) return;
+      bodyFinished = true;
+      try {
+        controller?.error(error);
+      } catch {
+        // 流已关闭
+      }
+    };
+
+    const closeBody = () => {
+      if (bodyFinished) return;
+      bodyFinished = true;
+      try {
+        controller?.close();
+      } catch {
+        // 流已关闭
+      }
+    };
+
+    /**
+     * 中止处理。
+     *
+     * 关键：meta 已到达（settled=true）时，Response 已经交给调用方，此时必须用
+     * AbortError 终结 body 流。否则调用方的 response.text() / for await 会永久
+     * 挂起 —— openai SDK 的流迭代器不与 signal 竞速，等不到事件就永远不返回。
+     */
+    const rejectAborted = () => {
+      abortUpstream();
+      detach();
+      const error = new DOMException("请求已中止", "AbortError");
+      if (!settled) {
+        settled = true;
+        reject(error);
+        return;
+      }
+      failBody(error as unknown as Error);
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+      cancel() {
+        abortUpstream();
+      },
+    });
+
+    handle = api().network.fetchStream({ url, method, headers, body }, (event) => {
+      if (event.type === "meta") {
+        if (settled) return;
+        settled = true;
+        resolve(
+          new Response(stream, {
+            status: event.status,
+            statusText: event.statusText,
+            headers: toHeaders(event.headers),
+          }),
+        );
+        return;
+      }
+
+      if (event.type === "chunk") {
+        if (bodyFinished) return;
+        try {
+          controller?.enqueue(new Uint8Array(event.data));
+        } catch {
+          // 流已关闭
+        }
+        return;
+      }
+
+      if (event.type === "done") {
+        detach();
+        closeBody();
+        return;
+      }
+
+      // 首字节之前就失败：合成 502，让真实原因能穿过 SDK 的错误模型
+      if (!settled) {
+        settled = true;
+        detach();
+        resolve(buildTransportFailureResponse(url, method, event.message));
+        return;
+      }
+      detach();
+      failBody(new Error(event.message || "主进程请求失败"));
+    });
+
+    if (signal) {
+      if (signal.aborted) rejectAborted();
+      else signal.addEventListener("abort", rejectAborted, { once: true });
+    }
+  });
 }
 
-export interface WebSearchResponse {
-  success: boolean;
-  provider: string;
-  instance?: string;
-  results: WebSearchResult[];
-  // Tavily AI 答案
-  answer?: string;
+/**
+ * 出网失败时合成一个 502 响应，把真实原因放进 body。
+ *
+ * OpenAI SDK 会把任何 fetch 异常统一包装成 message 固定为 "Connection error." 的
+ * APIConnectionError，pi-ai 又只读 message（从不遍历 cause），直接 reject 会让真实
+ * 原因彻底丢失。合成 502 后 SDK 会构造带 status/body 的 APIError，pi-ai 的
+ * normalizeProviderError 会把该 body 拼进 errorMessage，原因即可见。
+ * 中止不走这条路：那必须是一个 AbortError，否则会被误判成连接失败。
+ */
+function buildTransportFailureResponse(url: string, method: string, message: string): Response {
+  // 主进程的失败消息已自带「主进程请求失败（METHOD URL）」上下文，这里只在
+  // 缺失时补前缀，避免同一段 URL 在错误里出现两遍。
+  const detail = String(message || "").trim();
+  const text = detail || `主进程出网失败（${method} ${redactUrl(url)}）`;
+  return new Response(JSON.stringify({ error: { message: text } }), {
+    status: 502,
+    statusText: "Bad Gateway",
+    headers: { "content-type": "application/json" },
+  });
 }
 
-export function webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
-  return api().network.webSearch(request);
+/** 事件头数组 → Headers（非法头名忽略） */
+function toHeaders(list: Array<[string, string]>): Headers {
+  const headers = new Headers();
+  for (const [key, value] of list) {
+    try {
+      headers.append(key, value);
+    } catch {
+      // 忽略非法头名
+    }
+  }
+  return headers;
 }
 
-export interface DownloadUrlAsBase64Request {
-  url: string;
-  timeoutMs?: number;
+/** 去掉 query，避免把可能的密钥或参数写进错误信息 */
+function redactUrl(url: string): string {
+  const raw = String(url || "");
+  const index = raw.indexOf("?");
+  return index === -1 ? raw : raw.slice(0, index);
 }
 
-export interface DownloadUrlAsBase64Response {
-  base64: string;
-  contentType: string;
-  extension: string;
+/**
+ * 渲染进程启动时调用：把 globalThis.fetch 全局替换为 ipcFetch，
+ * 使 openai / anthropic SDK 与其它库的请求全部经主进程出网，
+ * 与设置页「测试模型」完全同路径，绕开渲染进程 CORS 限制。
+ */
+export function installIpcFetch(): void {
+  if (isElectronRuntime() && typeof globalThis !== "undefined") {
+    if (globalThis.fetch !== ipcFetch) {
+      globalThis.fetch = ipcFetch as typeof globalThis.fetch;
+      console.log("[net] globalThis.fetch 已替换为主进程 ipcFetch");
+    }
+  }
 }
 
-export function downloadUrlAsBase64(
-  request: DownloadUrlAsBase64Request,
-): Promise<DownloadUrlAsBase64Response> {
-  return api().network.downloadUrlAsBase64(request);
-}
-
-export interface OpenAiImageEditRequest {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  prompt: string;
-  imagePath: string;
-  maskPath?: string;
-  n?: number;
-  size?: string;
-  quality?: string;
-  responseFormat?: "b64_json" | "url";
-}
-
-export interface OpenAiImageResponse {
-  created?: number;
-  data?: Array<{
-    b64_json?: string;
-    url?: string;
-    revised_prompt?: string;
-  }>;
-}
-
-export function openAiImageEdit(request: OpenAiImageEditRequest): Promise<OpenAiImageResponse> {
-  return api().network.openaiImageEdit(request);
-}
-
-// 音频转写（语音识别 ASR）—— OpenAI /audio/transcriptions
-export interface OpenAiTranscriptionRequest {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-  audioPath: string;
-  language?: string;
-  responseFormat?: "json" | "text" | "srt" | "verbose_json" | "vtt";
-}
-
-export interface OpenAiTranscriptionResponse {
-  text: string;
-}
-
-export function openAiTranscription(
-  request: OpenAiTranscriptionRequest,
-): Promise<OpenAiTranscriptionResponse> {
-  return api().network.openaiTranscription(request);
-}
-
-// 语音合成（TTS）—— OpenAI /audio/speech
-export interface OpenAiSpeechRequest {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-  input: string;
-  voice: string;
-  speed?: number;
-  responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16";
-}
-
-export interface OpenAiSpeechResponse {
-  base64: string;
-  contentType: string;
-  extension: string;
-}
-
-export function openAiSpeech(request: OpenAiSpeechRequest): Promise<OpenAiSpeechResponse> {
-  return api().network.openaiSpeech(request);
-}
-
-// 语音合成（TTS）—— MiMo /chat/completions
-export interface MimoSpeechRequest {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-  input: string;
-  voice: string;
-  speed?: number; // MiMo 不支持，保留兼容
-  responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm16";
-  stylePrompt?: string; // 风格控制提示词
-}
-
-export interface MimoSpeechResponse {
-  base64: string;
-  contentType: string;
-  extension: string;
-}
-
-export function mimoSpeech(request: MimoSpeechRequest): Promise<MimoSpeechResponse> {
-  return api().network.mimoSpeech(request);
-}
-
-// 跨域代理请求 —— 由主进程统一发起 HTTP 请求并回传原始响应。
-// 复用 network:cors-fetch IPC，供网页读取等需要拉取任意 URL 的能力使用。
-export interface CorsFetchRequest {
-  url: string;
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-  timeoutMs?: number;
-}
-
-export interface CorsFetchResponse {
-  status: number;
-  statusText: string;
-  // 主进程以 [key, value][] 形式回传响应头（已过滤 content-length 等）
-  headers: Array<[string, string]>;
-  body: string;
-}
-
-export function corsFetch(request: CorsFetchRequest): Promise<CorsFetchResponse> {
-  return api().network.corsFetch(request) as Promise<CorsFetchResponse>;
-}
-
-// Shell 命令执行 —— 由主进程在指定工作目录下执行 shell 命令，供 run_bash 工具使用。
+// Shell 命令执行 —— 由主进程在指定工作目录下执行 shell 命令，供 bash 工具使用。
 // 主进程会做黑名单校验、超时 kill、输出截断。
 export interface ShellExecRequest {
   command: string;
@@ -409,45 +416,4 @@ export interface ShellExecResponse {
 
 export function runShell(request: ShellExecRequest): Promise<ShellExecResponse> {
   return api().shell.exec(request);
-}
-
-export interface HtmlToPdfRequest {
-  html?: string;
-  sourcePath?: string;
-  targetPath: string;
-  baseDir?: string;
-  pageSize?: "A4" | "Letter" | "Legal";
-  landscape?: boolean;
-  margins?: {
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-  };
-}
-
-export interface HtmlToPdfResponse {
-  path: string;
-  size: number;
-}
-
-export function htmlToPdf(request: HtmlToPdfRequest): Promise<HtmlToPdfResponse> {
-  return api().office.htmlToPdf(request);
-}
-
-export interface HtmlToPptxRequest {
-  html?: string;
-  sourcePath?: string;
-  targetPath: string;
-  baseDir?: string;
-}
-
-export interface HtmlToPptxResponse {
-  path: string;
-  slides: number;
-  size: number;
-}
-
-export function htmlToPptx(request: HtmlToPptxRequest): Promise<HtmlToPptxResponse> {
-  return api().office.htmlToPptx(request);
 }

@@ -1,5 +1,5 @@
 // 通用并发控制辅助
-// 用于把 Promise.all(...map(...)) 改为受控并发，避免 LLM、MCP、知识库等请求瞬间打满。
+// 用于把 Promise.all(...map(...)) 改为受控并发，避免请求瞬间打满上游。
 
 // 远程请求/进程密集型任务：并发过高容易触发 429 或系统资源瓶颈
 export const REMOTE_CONCURRENCY = 2;

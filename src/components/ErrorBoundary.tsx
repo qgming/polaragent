@@ -3,7 +3,6 @@
 
 import React, { Component, ReactNode } from "react";
 import { AlertCircle } from "lucide-react";
-import i18n from "@/i18n";
 import { Button } from "@/components/ui/button";
 
 interface Props {
@@ -17,8 +16,7 @@ interface State {
 
 /**
  * 错误边界组件（Class Component）
- * 注意：不使用 withTranslation HOC，因为 React 19 + StrictMode 下可能在 i18n 未就绪时触发渲染。
- * 直接使用 i18n.t() 降级方案，确保错误边界本身不会因翻译系统问题而崩溃。
+ * 兜底文案为中文常量，确保错误边界本身不会因其它模块问题而崩溃。
  */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
@@ -41,16 +39,6 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      // 使用 i18n.t() 而不是 useTranslation hook（Class Component 不支持 hooks）
-      // 如果 i18n 未初始化，使用硬编码的中文降级文案
-      const t = (key: string, fallback: string) => {
-        try {
-          return i18n.isInitialized ? i18n.t(key) : fallback;
-        } catch {
-          return fallback;
-        }
-      };
-
       return (
         <div className="flex h-screen items-center justify-center bg-background p-8">
           <div className="max-w-md text-center">
@@ -60,11 +48,9 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             </div>
 
-            <h1 className="mb-2 text-2xl font-bold">
-              {t("errorBoundary.title", "出错了")}
-            </h1>
+            <h1 className="mb-2 text-2xl font-bold">出错了</h1>
             <p className="mb-6 text-sm text-muted-foreground">
-              {t("errorBoundary.description", "应用遇到了一个意外错误。请尝试刷新页面。")}
+              应用遇到了一个意外错误。请尝试刷新页面。
             </p>
 
             {this.state.error && (
@@ -75,9 +61,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
             )}
 
-            <Button onClick={this.handleReset}>
-              {t("errorBoundary.reload", "刷新页面")}
-            </Button>
+            <Button onClick={this.handleReset}>刷新页面</Button>
           </div>
         </div>
       );

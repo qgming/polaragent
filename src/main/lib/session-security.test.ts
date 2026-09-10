@@ -26,23 +26,9 @@ describe("classifyAppUi", () => {
 });
 
 describe("buildCsp", () => {
-  it("blocks object and frames in prod, no open connect", () => {
-    const csp = buildCsp({ mode: "prod" });
-    expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain("frame-ancestors 'none'");
-    expect(csp).toContain("script-src 'self'");
-    expect(csp).toContain("connect-src 'self'");
-    expect(csp).not.toContain("ws:");
-  });
-
-  it("allows HMR websocket and react-refresh inline preamble in dev", () => {
-    const csp = buildCsp({ mode: "dev" });
-    expect(csp).toContain("ws:");
-    expect(csp).toContain("http://127.0.0.1:1420");
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
-    const prod = buildCsp({ mode: "prod" });
-    expect(prod).toContain("script-src 'self'");
-    expect(prod).not.toMatch(/script-src[^;]*unsafe-inline/);
+  it("returns empty string — CSP fully removed per product decision", () => {
+    expect(buildCsp({ mode: "prod" })).toBe("");
+    expect(buildCsp({ mode: "dev" })).toBe("");
   });
 });
 

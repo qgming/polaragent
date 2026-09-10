@@ -6,8 +6,6 @@ import {
 import {
   TOOL_PERMISSION_MODE_ENTRY,
   WORKING_DIR_ENTRY,
-  KNOWLEDGE_BASE_IDS_ENTRY,
-  PROJECT_REF_ENTRY,
 } from "./entries";
 import { openOrCreateSession } from "./lifecycle";
 
@@ -93,91 +91,4 @@ function readToolPermissionModeFromEntries(
     }
   }
   return DEFAULT_TOOL_PERMISSION_MODE;
-}
-
-export async function getSessionKnowledgeBaseIds(
-  sessionId: string,
-): Promise<string[]> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    return readKnowledgeBaseIdsFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
-  } catch (error) {
-    console.error(`读取会话知识库失败 ${sessionId}:`, error);
-    return [];
-  }
-}
-
-export async function setSessionKnowledgeBaseIds(
-  sessionId: string,
-  ids: string[],
-): Promise<void> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    const branch = await session.branch("main", BACKGROUND_CONTEXT);
-    if (!branch) return;
-    await branch.appendCustomEntry(KNOWLEDGE_BASE_IDS_ENTRY, { ids }, BACKGROUND_CONTEXT);
-  } catch (error) {
-    console.error(`写入会话知识库失败 ${sessionId}:`, error);
-  }
-}
-
-
-function readKnowledgeBaseIdsFromEntries(
-  entries: Awaited<ReturnType<Session["findEntries"]>>,
-): string[] {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.type !== "custom" || entry.customType !== KNOWLEDGE_BASE_IDS_ENTRY) {
-      continue;
-    }
-    const data = entry.data as { ids?: unknown } | undefined;
-    if (data && Array.isArray(data.ids)) {
-      return data.ids.filter((id): id is string => typeof id === "string");
-    }
-  }
-  return [];
-}
-
-export async function getSessionProjectId(
-  sessionId: string,
-): Promise<string | undefined> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    return readProjectIdFromEntries(await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT));
-  } catch (error) {
-    console.error(`读取会话项目归属失败 ${sessionId}:`, error);
-    return undefined;
-  }
-}
-
-export async function setSessionProjectId(
-  sessionId: string,
-  projectId: string,
-): Promise<void> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    const branch = await session.branch("main", BACKGROUND_CONTEXT);
-    if (!branch) return;
-    await branch.appendCustomEntry(PROJECT_REF_ENTRY, { projectId }, BACKGROUND_CONTEXT);
-  } catch (error) {
-    console.error(`写入会话项目归属失败 ${sessionId}:`, error);
-  }
-}
-
-function readProjectIdFromEntries(
-  entries: Awaited<ReturnType<Session["findEntries"]>>,
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry.type !== "custom" || entry.customType !== PROJECT_REF_ENTRY) {
-      continue;
-    }
-    const data = entry.data as { projectId?: unknown } | undefined;
-    if (data && typeof data.projectId === "string" && data.projectId.trim()) {
-      return data.projectId;
-    }
-    // 当前条目数据无效，继续向前查找更早的有效条目
-    continue;
-  }
-  return undefined;
 }

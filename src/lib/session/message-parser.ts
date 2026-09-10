@@ -1,122 +1,28 @@
 // 会话历史回读与解析：把 jsonl 的 message/toolResult/custom 条目重建为 UI 用的
-// ChatMessage[]（含 assistant 的有序 segments），以及任务监控快照（待办 + 产物）。
+// ChatMessage[]（含 assistant 的有序 parts）。
 import { BACKGROUND_CONTEXT, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { calculateContextTokens } from "@/lib/session/compaction";
-import { skillLoader } from "@/lib/skill";
-import type { ChatAttachment, ChatMessage, ChatSkillRef, Segment } from "@/lib/chat";
-import type { ArtifactItem, TodoItem } from "@/stores/task-monitor-store";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ChatMessagePart,
+  ChatMessageMetadata,
+} from "@/lib/chat";
+import { extractMessageParts } from "@/lib/chat";
 import { toolDisplayName } from "@/ai/tools";
 import { getRepo } from "./session-repo";
 import { pickBestMeta } from "./meta-selection";
-import { openOrCreateSession } from "./personal";
 import { GUIDANCE_ENTRY } from "./entries";
 
 /**
- * 回读某会话的「任务监控」快照（待办 + 产物），供重启后恢复右侧面板。
- *
- * 数据与消息回读同源（都来自 jsonl 的工具调用），按时间顺序遍历 assistant 的
- * toolCall block 的 arguments 重建：
- *   - update_todos → 覆盖待办（最后一次调用生效，与运行时 setTodos 语义一致）
- *   - write_file   → 产物（kind 按入参 final 区分 最终/工作 文件）
- *   - edit_file    → 产物（工作文件）
- *   - delete_file  → 从产物快照移除对应文件或目录下全部文件
- * 产物以路径为唯一键去重，后写覆盖先写（含 kind）。
- */
-export async function loadThreadMonitor(
-  sessionId: string,
-): Promise<{ todos: TodoItem[]; artifacts: ArtifactItem[] }> {
-  try {
-    const session = await openOrCreateSession(sessionId);
-    const branch = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT).catch(() => []);
-
-    let todos: TodoItem[] = [];
-    // 路径 -> 产物，保留插入顺序由下方数组维护
-    const artifactMap = new Map<string, ArtifactItem>();
-    const toolResultPaths = new Map<string, string>();
-    let order = 0; // 用作 updatedAt 的单调序，避免依赖 Date.now()
-
-    for (const entry of branch) {
-      if (entry.type !== "message") continue;
-      const message = entry.message;
-      if (message.role !== "toolResult") continue;
-      const details = message.details;
-      if (!details || typeof details !== "object") continue;
-      const path = (details as Record<string, unknown>).path;
-      if (typeof path === "string" && path.trim()) {
-        toolResultPaths.set(message.toolCallId, path);
-      }
-    }
-
-    for (const entry of branch) {
-      if (entry.type !== "message") continue;
-      const message = entry.message;
-      if (message.role !== "assistant") continue;
-
-      for (const block of message.content) {
-        if (block.type !== "toolCall") continue;
-        const args = (block.arguments ?? {}) as Record<string, unknown>;
-
-        if (block.name === "update_todos" && Array.isArray(args.todos)) {
-          todos = args.todos
-            .map((item, index) => {
-              if (!item || typeof item !== "object") return null;
-              const record = item as { content?: unknown; status?: unknown };
-              const content =
-                typeof record.content === "string" ? record.content : "";
-              const status =
-                record.status === "in_progress" ||
-                record.status === "completed"
-                  ? record.status
-                  : "pending";
-              if (!content) return null;
-              return { id: `todo-${index}`, content, status } as TodoItem;
-            })
-            .filter((t): t is TodoItem => t !== null);
-        } else if (
-          (block.name === "write_file" ||
-            block.name === "edit_file" ||
-            block.name === "delete_file") &&
-          typeof args.path === "string" &&
-          args.path.trim()
-        ) {
-          const path = toolResultPaths.get(block.id) ?? args.path;
-          if (block.name === "delete_file") {
-            const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-            const prefix = `${normalized}/`;
-            for (const key of Array.from(artifactMap.keys())) {
-              const itemPath = key.replace(/\\/g, "/").replace(/\/+$/, "");
-              if (itemPath === normalized || itemPath.startsWith(prefix)) {
-                artifactMap.delete(key);
-              }
-            }
-            continue;
-          }
-          const name = path.split(/[\\/]/).pop() || path;
-          const kind: ArtifactItem["kind"] =
-            block.name === "write_file" && args.final === true
-              ? "final"
-              : "working";
-          artifactMap.set(path, { path, name, kind, updatedAt: order++ });
-        }
-      }
-    }
-
-    return { todos, artifacts: Array.from(artifactMap.values()) };
-  } catch (error) {
-    console.error(`回读会话任务监控失败 ${sessionId}:`, error);
-    return { todos: [], artifacts: [] };
-  }
-}
-
-/**
- * 回读某会话的历史消息，重建为 UI 用的 ChatMessage[]（含 assistant 的 segments）。
+ * 回读某会话的历史消息，重建为 UI 用的 ChatMessage[]（含 assistant 的 parts）。
  *
  * pi 的 session 把每条 user / assistant / toolResult 作为独立 message 存储。
  * 这里按顺序遍历：
  *   - user      -> 一条用户 ChatMessage（取纯文本）
- *   - assistant -> 一条助手 ChatMessage，content 取 text block，segments 取有序 block
- *   - toolResult-> 不单独成条，按 toolCallId 回填到对应 assistant 的 tool segment 标签
+ *   - assistant -> 一条助手 ChatMessage，content 为有序 parts
+ *   - toolResult-> 不单独成条，按 toolCallId 回填到对应 assistant 的 tool-call part
  */
 export async function loadChatMessages(
   sessionId: string,
@@ -138,17 +44,13 @@ async function loadChatMessagesImpl(
   const session = await repo.open(best, BACKGROUND_CONTEXT);
   const branch = await session.findEntries({ order: "asc" }, BACKGROUND_CONTEXT).catch(() => []);
 
-  // 先收集所有 toolResult，按 toolCallId 建索引，供 assistant 的 tool segment 回填
+  // 先收集所有 toolResult，按 toolCallId 建索引，供 assistant 的 tool-call part 回填
   const toolResults = new Map<
     string,
     {
       label: string;
       isError: boolean;
       resultText?: string;
-      todos?: Array<{
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      }>;
       details?: Record<string, unknown>;
     }
   >();
@@ -157,12 +59,9 @@ async function loadChatMessagesImpl(
     const message = entry.message;
     if (message.role === "toolResult") {
       toolResults.set(message.toolCallId, {
-        label: summarizeToolResultContent(message.toolName, message.details),
+        label: toolDisplayName(message.toolName),
         isError: message.isError,
         resultText: toolResultDetailsText(message.details),
-        // 还原 update_todos 的待办快照，供重启后历史对话仍能按任务分组折叠
-        todos: extractTodosFromDetails(message.toolName, message.details),
-        // 保存完整的 details 对象，供语音合成等功能恢复使用
         details: extractDetails(message.details),
       });
     }
@@ -172,47 +71,30 @@ async function loadChatMessagesImpl(
 
   // 一次用户提问可能触发 agent 多轮调用，产生多条相邻的 assistant 消息
   // （中间夹着 toolResult）。这里把「相邻的 assistant」合并为一条 ChatMessage，
-  // segments 按序拼接，与实时运行时聚合为「一整条消息」的结构保持一致。
+  // parts 按序拼接，与实时运行时聚合为「一整条消息」的结构保持一致。
   // 遇到 user 消息即断开。
   let pending: {
     id: string;
     createdAt: number;
-    segments: Segment[];
-    model?: string;
-    tokenCount?: number;
-    inputTokens?: number;
-    outputTokens?: number;
-    cacheWriteTokens?: number;
-    cacheReadTokens?: number;
-    contextTokens?: number;
+    parts: ChatMessagePart[];
+    metadata: ChatMessageMetadata;
   } | null = null;
   const pendingGuidance: Array<{ text: string; createdAt: number }> = [];
 
   // 把累积中的助手消息落地为一条 ChatMessage
   const flushPending = () => {
-    if (!pending || pending.segments.length === 0) {
+    if (!pending || pending.parts.length === 0) {
       pending = null;
       return;
     }
-    const content = pending.segments
-      .filter((seg): seg is Extract<Segment, { kind: "text" }> => seg.kind === "text")
-      .map((seg) => seg.text)
-      .filter(Boolean)
-      .join("\n");
+    const hasMetadata = Object.values(pending.metadata).some((v) => v !== undefined);
     messages.push({
       id: pending.id,
       role: "assistant",
-      content,
+      content: pending.parts,
       createdAt: pending.createdAt,
       status: "complete",
-      model: pending.model,
-      tokenCount: pending.tokenCount,
-      inputTokens: pending.inputTokens,
-      outputTokens: pending.outputTokens,
-      cacheWriteTokens: pending.cacheWriteTokens,
-      cacheReadTokens: pending.cacheReadTokens,
-      contextTokens: pending.contextTokens,
-      segments: pending.segments,
+      metadata: hasMetadata ? pending.metadata : undefined,
     });
     pending = null;
   };
@@ -239,23 +121,21 @@ async function loadChatMessagesImpl(
     if (message.role === "user") {
       const text = userMessageText(message);
       const attachments = userMessageAttachments(message);
-      const skillRefs = userMessageSkillRefs(message);
 
       // 新的用户消息 -> 先落地累积的助手消息，断开合并
       flushPending();
 
       // 从待处理 guidance 队列中查找与当前用户消息文本匹配的 guidance。
       // guidance 条目在用户消息之前写入，回读时应归属到对应的用户消息中。
-      const guidanceSegments: Segment[] = [];
+      const guidanceParts: ChatMessagePart[] = [];
       const guidanceIndex = pendingGuidance.findIndex(
         (guidance) => guidance.text === text.trim(),
       );
       if (guidanceIndex >= 0) {
         const [guidance] = pendingGuidance.splice(guidanceIndex, 1);
-        guidanceSegments.push({
-          kind: "guidance",
-          text: guidance.text,
-          createdAt: guidance.createdAt,
+        guidanceParts.push({
+          type: "data-polar-guidance",
+          data: { text: guidance.text, createdAt: guidance.createdAt },
         });
       }
 
@@ -263,60 +143,67 @@ async function loadChatMessagesImpl(
       if (
         text.trim().length === 0 &&
         attachments.length === 0 &&
-        skillRefs.length === 0 &&
-        guidanceSegments.length === 0
+        guidanceParts.length === 0
       ) {
         continue;
       }
 
-      // 构建用户消息，guidance 段作为 segments 的一部分（附件、技能引用之后）
-      const userSegments: Segment[] = [...guidanceSegments];
+      // 构建用户消息：guidance part 在前，正文 text part 在后
+      const userContent: ChatMessagePart[] = [...guidanceParts];
+      if (text.trim().length > 0) {
+        userContent.push({ type: "text", text });
+      }
       messages.push({
         id: entry.id,
         role: "user",
-        content: text,
+        content: userContent,
         createdAt: timestamp,
         status: "complete",
         attachments,
-        skillRefs,
-        segments: userSegments.length > 0 ? userSegments : undefined,
       });
     } else if (message.role === "assistant") {
-      const segments = assistantSegments(message, toolResults);
-      if (segments.length === 0) continue;
-      // 追加到当前累积；id/model/tokenCount/时间取该组最后一条（与实时聚合一致）
+      const parts = extractMessageParts(message, toolResults);
+      if (parts.length === 0) continue;
+      // 追加到当前累积；id/时间取该组最后一条（与实时聚合一致）
       if (!pending) {
         pending = {
           id: entry.id,
           createdAt: timestamp,
-          segments: [...segments],
-          model: message.model,
-          // 每轮总量与上下文都用官方口径 calculateContextTokens
-          // （= totalTokens || input+output+cacheRead+cacheWrite），
-          // 与实时路径（src/ai/agent.ts buildAgentEndResult）保持一致
-          tokenCount: message.usage ? calculateContextTokens(message.usage) : undefined,
-          inputTokens: message.usage?.input,
-          outputTokens: message.usage?.output,
-          cacheWriteTokens: message.usage?.cacheWrite,
-          cacheReadTokens: message.usage?.cacheRead,
-          contextTokens: message.usage ? calculateContextTokens(message.usage) : undefined,
+          parts: [...parts],
+          metadata: {
+            model: message.model,
+            // 每轮总量与上下文都用官方口径 calculateContextTokens
+            // （= totalTokens || input+output+cacheRead+cacheWrite），
+            // 与实时路径（src/ai/agent.ts buildAgentEndResult）保持一致
+            tokenCount: message.usage ? calculateContextTokens(message.usage) : undefined,
+            inputTokens: message.usage?.input,
+            outputTokens: message.usage?.output,
+            cacheWriteTokens: message.usage?.cacheWrite,
+            cacheReadTokens: message.usage?.cacheRead,
+            contextTokens: message.usage ? calculateContextTokens(message.usage) : undefined,
+          },
         };
       } else {
         pending.id = entry.id;
         pending.createdAt = timestamp;
-        pending.segments.push(...segments);
-        pending.model = message.model ?? pending.model;
+        pending.parts.push(...parts);
+        pending.metadata.model = message.model ?? pending.metadata.model;
         // 累加所有轮次的 token（口径同上）
-        pending.tokenCount =
-          (pending.tokenCount ?? 0) + (message.usage ? calculateContextTokens(message.usage) : 0);
-        pending.inputTokens = (pending.inputTokens ?? 0) + (message.usage?.input ?? 0);
-        pending.outputTokens = (pending.outputTokens ?? 0) + (message.usage?.output ?? 0);
-        pending.cacheWriteTokens = (pending.cacheWriteTokens ?? 0) + (message.usage?.cacheWrite ?? 0);
-        pending.cacheReadTokens = (pending.cacheReadTokens ?? 0) + (message.usage?.cacheRead ?? 0);
+        pending.metadata.tokenCount =
+          (pending.metadata.tokenCount ?? 0) +
+          (message.usage ? calculateContextTokens(message.usage) : 0);
+        pending.metadata.inputTokens =
+          (pending.metadata.inputTokens ?? 0) + (message.usage?.input ?? 0);
+        pending.metadata.outputTokens =
+          (pending.metadata.outputTokens ?? 0) + (message.usage?.output ?? 0);
+        pending.metadata.cacheWriteTokens =
+          (pending.metadata.cacheWriteTokens ?? 0) + (message.usage?.cacheWrite ?? 0);
+        pending.metadata.cacheReadTokens =
+          (pending.metadata.cacheReadTokens ?? 0) + (message.usage?.cacheRead ?? 0);
         // 当前上下文大小取最后一轮的官方口径总量
-        pending.contextTokens = message.usage
+        pending.metadata.contextTokens = message.usage
           ? calculateContextTokens(message.usage)
-          : pending.contextTokens;
+          : pending.metadata.contextTokens;
       }
     }
     // toolResult 已在上面收集，不单独成条
@@ -328,16 +215,13 @@ async function loadChatMessagesImpl(
   return messages;
 }
 
-// 剥离后台注入的技能块 <skill …>…</skill> 与文件块 <file …>…</file>（方案 C）：
-// 这些块是 "/" 选中技能时拼进发送内容的 SKILL.md 全文/目录树、以及 "@" 选中文件的内容，
-// 供模型读取，不应在 UI 对话记录里显示。回读时移除所有此类块及其后随空白，仅保留用户问题。
-function stripSkillBlocks(text: string): string {
+// 剥离后台注入的文件块 <file …>…</file> 与图片块 <image …>…</image>：
+// 这些块是 "@" 选中文件时拼进发送内容的文件全文，供模型读取，
+// 不应在 UI 对话记录里显示。回读时移除所有此类块及其后随空白，仅保留用户问题。
+function stripAttachmentBlocks(text: string): string {
   return text
-    .replace(/<skill\b[^>]*>[\s\S]*?<\/skill>\s*/g, "")
-    .replace(/<skill_files\b[^>]*>[\s\S]*?<\/skill_files>\s*/g, "")
     .replace(/<file\b[^>]*>[\s\S]*?<\/file>\s*/g, "")
     .replace(/<image\b[^>]*>[\s\S]*?<\/image>\s*/g, "")
-    .replace(/<project_context\b[^>]*>[\s\S]*?<\/project_context>\s*/g, "")
     .trim();
 }
 
@@ -392,153 +276,9 @@ function userMessageAttachments(
   return attachments;
 }
 
-function userMessageSkillRefs(
-  message: Extract<AgentMessage, { role: "user" }>,
-): ChatSkillRef[] {
-  const rawText = rawUserText(message);
-  const refs: ChatSkillRef[] = [];
-  const seen = new Set<string>();
-
-  for (const match of rawText.matchAll(/<skill\b([^>]*)>[\s\S]*?<\/skill>/g)) {
-    const attrs = match[1] ?? "";
-    const id =
-      attrValue(attrs, "name") ??
-      attrValue(attrs, "id") ??
-      attrValue(attrs, "skill") ??
-      attrValue(attrs, "title");
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-
-    const displayName =
-      attrValue(attrs, "displayName") ??
-      attrValue(attrs, "label") ??
-      skillLoader.getSkill(id)?.name ??
-      id;
-    refs.push({ id, name: displayName });
-  }
-
-  return refs;
-}
-
-// 取用户消息的纯文本（content 可能是 string 或 (text|image)[]），并剥离技能块
+// 取用户消息的纯文本（content 可能是 string 或 (text|image)[]），并剥离附件块
 function userMessageText(message: Extract<AgentMessage, { role: "user" }>): string {
-  const raw = rawUserText(message, "");
-  return stripSkillBlocks(raw);
-}
-
-// 从 assistant message 的有序 content blocks 重建 segments
-function assistantSegments(
-  message: Extract<AgentMessage, { role: "assistant" }>,
-  toolResults: Map<
-    string,
-    {
-      label: string;
-      isError: boolean;
-      resultText?: string;
-      todos?: Array<{
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      }>;
-      details?: Record<string, unknown>;
-    }
-  >,
-): Segment[] {
-  const segments: Segment[] = [];
-  for (const block of message.content) {
-    if (block.type === "text") {
-      if (block.text.trim().length > 0) {
-        segments.push({ kind: "text", text: block.text });
-      }
-    } else if (block.type === "thinking") {
-      if (block.thinking.trim().length > 0) {
-        segments.push({ kind: "thinking", text: block.thinking });
-      }
-    } else if (block.type === "toolCall") {
-      const result = toolResults.get(block.id);
-      const widget = extractWidgetSegmentFromDetails(result?.details);
-      if (widget) {
-        segments.push(widget);
-        continue;
-      }
-      segments.push({
-        kind: "tool",
-        toolCallId: block.id,
-        toolName: block.name,
-        label: result?.label ?? toolDisplayName(block.name),
-        status: result ? (result.isError ? "error" : "done") : "done",
-        resultText: result?.resultText,
-        // 还原 update_todos 的待办快照，使重启后历史对话仍能按任务分组折叠
-        todos: result?.todos,
-        // 恢复工具结果的 details，供语音合成等功能使用
-        details: result?.details,
-      });
-    }
-  }
-  return segments;
-}
-
-// 工具结果 details -> 单行摘要（与 agent.ts 的运行时摘要保持一致风格）
-function summarizeToolResultContent(toolName: string, details: unknown): string {
-  const base = toolDisplayName(toolName);
-  if (details && typeof details === "object") {
-    const record = details as Record<string, unknown>;
-    if (toolName === "update_todos" && Array.isArray(record.todos)) {
-      return `已更新待办 ${record.todos.length} 项`;
-    }
-    if (toolName === "delegate_task" && typeof record.agentName === "string") {
-      return `子代理 ${record.agentName} 已完成`;
-    }
-    if (toolName === "write_file" && typeof record.path === "string") {
-      return `已写入 ${String(record.path).split(/[\\/]/).pop()}`;
-    }
-    if (toolName === "create_directory" && typeof record.path === "string") {
-      return `已创建目录 ${String(record.path).split(/[\\/]/).pop()}`;
-    }
-    if (toolName === "delete_file" && typeof record.path === "string") {
-      return `已删除 ${String(record.path).split(/[\\/]/).pop()}`;
-    }
-    if (toolName === "list_directory" && Array.isArray(record.entries)) {
-      return `列出 ${record.entries.length} 个条目`;
-    }
-  }
-  return base;
-}
-
-// 从回读到的 toolResult.details 里抽取 update_todos 的待办快照。
-// 与 agent.ts 的 extractTodos 等价，但这里 details 已是对象（无 result.details 外层）。
-function extractTodosFromDetails(
-  toolName: string,
-  details: unknown,
-):
-  | Array<{ content: string; status: "pending" | "in_progress" | "completed" }>
-  | undefined {
-  if (toolName !== "update_todos") return undefined;
-  if (!details || typeof details !== "object") return undefined;
-  const rawTodos = (details as Record<string, unknown>).todos;
-  if (!Array.isArray(rawTodos)) return undefined;
-
-  const todos = rawTodos
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const record = item as { content?: unknown; status?: unknown };
-      const content = typeof record.content === "string" ? record.content : "";
-      const status =
-        record.status === "in_progress" || record.status === "completed"
-          ? record.status
-          : "pending";
-      if (!content) return null;
-      return { content, status } as const;
-    })
-    .filter(
-      (
-        item,
-      ): item is {
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      } => item !== null,
-    );
-
-  return todos.length > 0 ? todos : undefined;
+  return stripAttachmentBlocks(rawUserText(message, ""));
 }
 
 // 从 toolResult.details 中提取完整的 details 对象
@@ -547,44 +287,9 @@ function extractDetails(details: unknown): Record<string, unknown> | undefined {
   return details as Record<string, unknown>;
 }
 
-function extractWidgetSegmentFromDetails(
-  details: Record<string, unknown> | undefined,
-): Extract<Segment, { kind: "widget" }> | undefined {
-  const widget = details?.widget;
-  if (!widget || typeof widget !== "object") return undefined;
-
-  const record = widget as Record<string, unknown>;
-  if (typeof record.widgetId !== "string" || typeof record.title !== "string" || typeof record.html !== "string") {
-    return undefined;
-  }
-
-  return {
-    kind: "widget",
-    widgetId: record.widgetId,
-    title: record.title,
-    html: record.html,
-    updateMode: record.update_mode === "patch" ? "patch" : "replace",
-    widgetPath: typeof record.widget_path === "string" ? record.widget_path : null,
-    data:
-      record.data && typeof record.data === "object"
-        ? (record.data as Record<string, unknown>)
-        : null,
-  };
-}
-
 // 工具结果 details -> 完整可读文本（供步骤项点击展开查看）
 function toolResultDetailsText(details: unknown): string | undefined {
   if (details === undefined || details === null) return undefined;
-  if (details && typeof details === "object" && "widget" in (details as Record<string, unknown>)) {
-    const widget = (details as Record<string, unknown>).widget;
-    if (widget && typeof widget === "object") {
-      const info = widget as Record<string, unknown>;
-      const title = typeof info.title === "string" ? info.title : "未命名 Widget";
-      const mode = info.update_mode === "patch" ? "patch" : "replace";
-      const source = info.source === "file" ? "模板文件" : "内联代码";
-      return `Widget: ${title}\n更新模式: ${mode}\n来源: ${source}`;
-    }
-  }
   if (typeof details === "string") {
     return details.trim() || undefined;
   }

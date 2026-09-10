@@ -1,7 +1,6 @@
 import { Search } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 
 import {
   Dialog,
@@ -70,7 +69,6 @@ export function GlobalSessionSearch({
   onOpenThread: (threadId: string) => void;
   open: boolean;
 }) {
-  const { t } = useTranslation("common");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -158,9 +156,9 @@ export function GlobalSessionSearch({
           transition={{ type: "spring", stiffness: 520, damping: 38 }}
           className="w-full min-w-0 overflow-hidden"
         >
-	          <DialogTitle className="sr-only">{t("globalSearch.title")}</DialogTitle>
+	          <DialogTitle className="sr-only">{"全局会话搜索"}</DialogTitle>
 	          <DialogDescription className="sr-only">
-	            {t("globalSearch.description")}
+	            {"搜索会话中的内容。"}
 	          </DialogDescription>
 
           <div className="flex h-16 items-center gap-3 border-b border-border px-5">
@@ -169,7 +167,7 @@ export function GlobalSessionSearch({
               ref={inputRef}
               className="h-full min-w-0 flex-1 bg-transparent text-lg text-foreground outline-none placeholder:text-muted-foreground"
               onChange={(event) => setQuery(event.target.value)}
-	              placeholder={t("globalSearch.placeholder")}
+	              placeholder={"搜索会话内容..."}
               value={query}
             />
           </div>
@@ -212,7 +210,7 @@ export function GlobalSessionSearch({
                                 !result.excerpt && "italic",
                               )}
                             >
-	                              {result.excerpt || t("globalSearch.titleMatch")}
+	                              {result.excerpt || "标题匹配"}
                             </span>
                           </span>
                         </button>
@@ -220,7 +218,7 @@ export function GlobalSessionSearch({
                     </div>
                   ) : (
                     <div className="flex h-44 items-center justify-center text-sm text-muted-foreground">
-	                      {loading ? t("globalSearch.searching") : t("globalSearch.noResults")}
+	                      {loading ? "搜索中..." : "未找到匹配的会话"}
                     </div>
                   )}
                 </motion.div>
@@ -336,17 +334,15 @@ function scoreConversation(
 }
 
 function messageText(message: ChatMessage): string {
-  const segmentText =
-    message.segments
-      ?.filter(
-        (segment) =>
-          segment.kind === "text" ||
-          segment.kind === "thinking" ||
-          segment.kind === "guidance",
-      )
-      .map((segment) => ("text" in segment ? segment.text : ""))
-      .join("\n") ?? "";
-  return [message.content, segmentText].filter(Boolean).join("\n");
+  return message.content
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "reasoning") return part.text;
+      if (part.type === "data-polar-guidance") return part.data.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function normalize(value: string): string {

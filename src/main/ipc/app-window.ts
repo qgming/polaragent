@@ -1,32 +1,19 @@
-// IPC：应用、窗口、对话框、文件预览窗口
+// IPC：应用、窗口、对话框
 import { BrowserWindow, dialog, shell, app, type IpcMain, type IpcMainInvokeEvent } from "electron";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { APP_NAME } from "../lib/constants.js";
 import { dataDir, ensureDataDir } from "../lib/app-paths.js";
 import { ensureDir } from "../lib/fs-utils.js";
 import { isSafeExternalUrl } from "../lib/session-security.js";
-import { getMainWindow, createWindow, loadApp } from "../lib/windows.js";
+import { getMainWindow } from "../lib/windows.js";
 
 const DOCUMENT_EXTENSIONS = [
   "txt", "md", "markdown", "mdx", "json", "csv", "log", "xml", "yaml", "yml",
-  "pdf", "docx", "toml", "ini", "html", "htm", "css", "scss", "less", "ts",
+  "toml", "ini", "html", "htm", "css", "scss", "less", "ts",
   "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "sh", "rb",
   "php", "sql", "env",
 ];
-
-// 已打开的预览窗口：key -> BrowserWindow
-const previewWindows = new Map<string, BrowserWindow>();
-
-// 由文件路径派生稳定的预览窗口 key（同一文件复用同一窗口）
-function labelForPath(filePath: string): string {
-  let hash = 5381;
-  for (let index = 0; index < filePath.length; index += 1) {
-    hash = (hash * 33) ^ filePath.charCodeAt(index);
-  }
-  return `preview-${(hash >>> 0).toString(36)}`;
-}
 
 function register(ipcMain: IpcMain) {
   ipcMain.handle("app:get-data-dir", () => dataDir());
@@ -43,6 +30,7 @@ function register(ipcMain: IpcMain) {
     }
     return shell.openExternal(String(url));
   });
+  // 本地路径 -> file:// URL，供 markdown 内联图片等渲染使用
   ipcMain.handle("app:file-url", (_event: IpcMainInvokeEvent, { path: target }: { path: string }) => pathToFileURL(target).toString());
   ipcMain.handle("dialog:pick-directory", async () => {
     const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, { properties: ["openDirectory"] });
@@ -79,27 +67,6 @@ function register(ipcMain: IpcMain) {
     });
     return result.canceled ? null : result.filePaths[0] || null;
   });
-  ipcMain.handle("dialog:pick-audio-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
-      properties: ["openFile"],
-      filters: [{ name: "音频文件", extensions: ["mp3", "wav", "m4a", "aac", "ogg", "flac", "webm", "opus"] }],
-    });
-    return result.canceled ? null : result.filePaths[0] || null;
-  });
-  ipcMain.handle("dialog:pick-document-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
-      properties: ["openFile"],
-      filters: [{ name: "文档文件", extensions: ["pdf", "docx"] }],
-    });
-    return result.canceled ? null : result.filePaths[0] || null;
-  });
-  ipcMain.handle("dialog:pick-zip-file", async () => {
-    const result = await dialog.showOpenDialog(getMainWindow() as BrowserWindow, {
-      properties: ["openFile"],
-      filters: [{ name: "压缩包文件", extensions: ["zip"] }],
-    });
-    return result.canceled ? null : result.filePaths[0] || null;
-  });
 
   ipcMain.handle("window:minimize", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle("window:toggle-maximize", (event: IpcMainInvokeEvent) => {
@@ -112,33 +79,6 @@ function register(ipcMain: IpcMain) {
   ipcMain.handle("window:close", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.close());
   ipcMain.handle("window:set-title", (event: IpcMainInvokeEvent, { title }: { title: string }) => BrowserWindow.fromWebContents(event.sender)?.setTitle(String(title || APP_NAME)));
   ipcMain.handle("window:is-maximized", (event: IpcMainInvokeEvent) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
-  ipcMain.handle("preview:open", async (_event: IpcMainInvokeEvent, { path: filePath }: { path: string }) => {
-    if (!filePath) return;
-
-    if (isSafeExternalUrl(filePath)) {
-      await shell.openExternal(filePath);
-      return;
-    }
-
-    const key = labelForPath(filePath);
-    const existing = previewWindows.get(key);
-    if (existing && !existing.isDestroyed()) {
-      existing.show();
-      existing.focus();
-      return;
-    }
-    const win = createWindow({
-      width: 800,     // 默认宽度：900 → 800 (预览窗口更紧凑)
-      height: 660,    // 默认高度：720 → 660 (保持比例)
-      minWidth: 480,  // 最小宽度：保持 480 (已经很合理)
-      minHeight: 360, // 最小高度：保持 360 (已经很合理)
-      title: path.basename(filePath),
-      parent: getMainWindow(),
-    });
-    previewWindows.set(key, win);
-    win.on("closed", () => previewWindows.delete(key));
-    loadApp(win, `?view=preview&path=${encodeURIComponent(filePath)}`);
-  });
 }
 
 export { register };

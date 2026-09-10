@@ -1,4 +1,4 @@
-// IPC：shell 命令执行（供 run_bash 工具使用）
+// IPC：shell 命令执行（供 pisdk 原生 bash 工具使用）
 // src/main/ipc/shell.ts
 //
 // 四级安全模式：

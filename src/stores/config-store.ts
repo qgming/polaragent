@@ -217,49 +217,7 @@ function normalizeProviders(providers: ProvidersConfig): ProvidersConfig {
   };
 }
 
-// 归一化图片生成配置
-function normalizeImageGeneration(
-  current: Settings["imageGeneration"],
-  fallback: NonNullable<Settings["imageGeneration"]>,
-): NonNullable<Settings["imageGeneration"]> {
-  const raw = (current ?? {}) as Record<string, any>;
-  const rawProvider = raw.provider as string | undefined;
-  const provider =
-    rawProvider === "openai-chat" || rawProvider === "gemini"
-      ? rawProvider
-      : "openai-images";
-
-  const rawImages = (raw.openaiImages ?? {}) as Record<string, any>;
-  const rawChat = (raw.openaiChat ?? {}) as Record<string, any>;
-  const rawGemini = (raw.gemini ?? {}) as Record<string, any>;
-
-  return {
-    provider,
-    openaiImages: {
-      apiKey: rawImages.apiKey ?? fallback.openaiImages!.apiKey,
-      baseURL: rawImages.baseURL ?? fallback.openaiImages!.baseURL,
-      model: rawImages.model ?? fallback.openaiImages!.model,
-    },
-    openaiChat: {
-      apiKey: rawChat.apiKey ?? fallback.openaiChat!.apiKey,
-      baseURL: rawChat.baseURL ?? fallback.openaiChat!.baseURL,
-      model: rawChat.model ?? fallback.openaiChat!.model,
-    },
-    gemini: {
-      apiKey: rawGemini.apiKey ?? fallback.gemini!.apiKey,
-      baseURL: rawGemini.baseURL ?? fallback.gemini!.baseURL,
-      model: rawGemini.model ?? fallback.gemini!.model,
-    },
-  };
-}
-
 function normalizeSettings(settings: Settings, dataDir: string): Settings {
-  const defaultWebSearch = defaultSettings.webSearch!;
-  const defaultImageGeneration = defaultSettings.imageGeneration!;
-  const defaultAudio = defaultSettings.audio!;
-  const defaultKnowledge = defaultSettings.knowledge!;
-  const defaultMemory = defaultSettings.memory!;
-  const defaultAutomation = defaultSettings.automation!;
   return {
     ...defaultSettings,
     ...settings,
@@ -276,72 +234,5 @@ function normalizeSettings(settings: Settings, dataDir: string): Settings {
       ...settings.window,
     },
     dataDirectory: settings.dataDirectory ?? dataDir,
-    webSearch: {
-      ...defaultWebSearch,
-      ...settings.webSearch,
-      usage: {
-        ...defaultWebSearch.usage,
-        ...settings.webSearch?.usage,
-      },
-      tavily: {
-        ...defaultWebSearch.tavily!,
-        ...settings.webSearch?.tavily,
-        apiKey: settings.webSearch?.tavily?.apiKey ?? defaultWebSearch.tavily!.apiKey,
-      },
-      exa: {
-        ...defaultWebSearch.exa!,
-        ...settings.webSearch?.exa,
-        apiKey: settings.webSearch?.exa?.apiKey ?? defaultWebSearch.exa!.apiKey,
-      },
-      serper: {
-        ...defaultWebSearch.serper!,
-        ...settings.webSearch?.serper,
-        apiKey: settings.webSearch?.serper?.apiKey ?? defaultWebSearch.serper!.apiKey,
-      },
-      searxng: {
-        ...defaultWebSearch.searxng!,
-        ...settings.webSearch?.searxng,
-        instances: settings.webSearch?.searxng?.instances ?? defaultWebSearch.searxng!.instances,
-      },
-      brave: {
-        ...defaultWebSearch.brave!,
-        ...settings.webSearch?.brave,
-        apiKey: settings.webSearch?.brave?.apiKey ?? defaultWebSearch.brave!.apiKey,
-      },
-    },
-    imageGeneration: normalizeImageGeneration(settings.imageGeneration, defaultImageGeneration),
-    audio: settings.audio ?? defaultAudio,
-    knowledge: {
-      ...defaultKnowledge,
-      ...settings.knowledge,
-      embedding: {
-        ...defaultKnowledge.embedding,
-        ...settings.knowledge?.embedding,
-      },
-      retrieval: {
-        ...defaultKnowledge.retrieval,
-        ...settings.knowledge?.retrieval,
-      },
-    },
-    memory: {
-      ...defaultMemory,
-      ...settings.memory,
-      retrieval: {
-        ...defaultMemory.retrieval,
-        ...settings.memory?.retrieval,
-      },
-    },
-    automation: {
-      ...defaultAutomation,
-      ...settings.automation,
-      browserUse: {
-        ...defaultAutomation.browserUse,
-        ...settings.automation?.browserUse,
-      },
-      computerUse: {
-        ...defaultAutomation.computerUse,
-        ...settings.automation?.computerUse,
-      },
-    },
   };
 }

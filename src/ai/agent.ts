@@ -3,18 +3,14 @@
 //
 // 每个对话线程一个 AgentHarness（绑定该线程的 pi Session）。这里用
 // harness.prompt() 驱动多轮工具调用，把：
-//   - 流式 text_delta 与有序 segments 经 rAF 合批后回传 onStreamUpdate
+//   - 流式 text_delta 与有序 parts 经 rAF 合批后回传 onStreamUpdate
 //     （每帧最多一次写 store，避免高频 token 把主线程打满）
-//   - tool_execution_* 事件转发到「任务监控」面板（待办 / 产物 / 步骤轨迹）
-//   - agent_end 时从最终 AssistantMessage.content 的有序 block 提取 segments
+//   - tool_start / tool_update / tool_end 事件聚合为工具调用片段
+//   - run_end 时从累积的 AssistantMessage.content 有序 block 提取 parts
 //     （text/thinking/tool 顺序），合并工具结果摘要，回传 onDone 持久化
 // 历史上下文由 pi Session 原生管理，无需手动注入。
 
-import {
-  agentManager,
-  type ScheduleContext,
-  type SubagentContext,
-} from "./agent-manager";
+import { agentManager } from "./agent-manager";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import {
   BACKGROUND_CONTEXT,
@@ -27,23 +23,19 @@ import {
   estimateContextTokens,
   shouldCompact,
 } from "@/lib/session/compaction";
-import { cancelAskUserRequestsForThread } from "./ask-user";
 import { toolDisplayName } from "./tools";
-import { formatSkillInvocationWithFiles } from "./tools/skills";
 import { initializeAiRuntime } from "@/lib/app-init";
-import { skillLoader } from "@/lib/skill";
 import { readBase64File, readFile } from "@/lib/electron/electron-api";
 import { appendGuidanceMessage } from "@/lib/session/personal";
-import { appendScheduleGuidanceMessage } from "@/lib/session/messages";
-import { useTaskMonitorStore } from "@/stores/task-monitor-store";
-import type { ChatAttachment, Segment } from "@/lib/chat";
+import type { ChatAttachment, ChatMessagePart, ToolResultSummary } from "@/lib/chat";
+import { extractMessageParts } from "@/lib/chat";
 import type { ToolPermissionMode } from "@/types/permissions";
 import type { ImageContent, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { clampThinkingLevel } from "@earendil-works/pi-ai";
 import { RETRY_DELAYS, MAX_RETRIES, sleep } from "./retry";
 
 export interface AgentResult {
-  content: string;
+  content: ChatMessagePart[];
   model: string;
   usage: {
     input: number;
@@ -54,25 +46,12 @@ export interface AgentResult {
   };
   // 当前上下文大小（最后一轮的 input，用于上下文压缩判断）
   contextTokens: number;
-  segments: Segment[];
   providerCacheHit?: boolean;
 }
 
-interface ToolResultSummary {
-  label: string;
-  isError: boolean;
-  pending?: boolean;
-  resultText?: string;
-  todos?: Array<{
-    content: string;
-    status: "pending" | "in_progress" | "completed";
-  }>;
-  details?: Record<string, unknown>;
-}
-
 export interface AgentHandlers {
-  // 流式合批更新：每帧最多一次，携带本帧待追加文本与最新有序段
-  onStreamUpdate: (update: { appendDelta?: string; segments?: Segment[] }) => void;
+  // 流式合批更新：每帧最多一次，携带本帧最新有序 parts（完整快照，非增量）
+  onStreamUpdate: (update: { parts?: ChatMessagePart[] }) => void;
   onDone: (result: AgentResult) => void;
   onError: (message: string) => void;
   // 重试回调：attempt 从 1 开始
@@ -84,98 +63,26 @@ export interface PromptOptions {
   workingDir?: string;
   // 当前这轮 assistant 消息 id，用于把工具步骤轨迹归属到该条消息
   messageId?: string;
-  // 输入框 "/" 临时选中的技能 id。这些技能的 SKILL.md 全文会在后台拼到发送内容里
-  // （方案 C），但不进入 UI 显示——UI 只展示用户原始问题与技能 chip 标记。
-  skillIds?: string[];
   // 输入框 "@" 选中的文件绝对路径。发送时读取其内容拼到发送内容里（后台注入），
-  // 同样不进入 UI 显示——UI 只展示用户原始问题与文件 chip 标记。
+  // 不进入 UI 显示——UI 只展示用户原始问题与文件 chip 标记。
   filePaths?: string[];
   attachments?: ChatAttachment[];
   permissionMode?: ToolPermissionMode;
-  // 当前会话选中的知识库 ID 列表
-  knowledgeBaseIds?: string[];
-  // 子代理上下文：普通对话通过 delegate_task 启动的专家子会话。
-  subagentContext?: SubagentContext;
-  // 定时任务后台模式：使用独立 schedule 会话仓库，并限制前台交互类工具。
-  scheduleContext?: ScheduleContext;
-  // 当前会话所属项目。存在时会装配项目会话读取工具。
-  projectId?: string;
-  // 项目级别的系统提示词（当对话属于某项目时注入）
-  projectSystemPrompt?: string;
 }
 
-// 把「选中技能的全文与目录树 + 选中文件的内容 + 用户问题」拼成发给模型的实际输入（方案 C）。
-// 技能块用 pi 的 formatSkillInvocation 生成 <skill>…全文…</skill>，
-// 并追加 <skill_files> 目录树，方便模型知道 references/examples 等子文件路径。
-// 文件块为 <file path="…">…全文…</file>，二者依次拼接，末尾接用户问题。
-// 文件内容在发送时才读取（reads-on-send），保证拿到最新内容、避免选中即占内存。
-// 无任何注入时原样返回用户输入。
 /**
- * Guidance 文本队列管理器
- * 封装 guidance 文本状态，避免并发操作数组导致竞态条件。
- * 注意：0.84.4 已移除 queue_update 事件，队列不再与 harness 队列状态同步
- * （syncQueued/consumeNext/hasConsumed 不再被调用），仅保留 reset() 供每轮清理。
- * 引导消息改由 message_start 近似识别（见 promptAgent 内 message_start 监听器）。
+ * 把「选中文件的内容 + 图片附件占位 + 用户问题」拼成发给模型的实际输入。
+ * 文件块为 <file path="…">…全文…</file>，末尾接用户问题。
+ * 文件内容在发送时才读取（reads-on-send），保证拿到最新内容、避免选中即占内存。
+ * 无任何注入时原样返回用户输入。
  */
-class GuidanceQueue {
-  // 已确定的 guidance 文本（按生效顺序）
-  private consumed: string[] = [];
-  // 待生效的 guidance 文本
-  private queued: string[] = [];
-
-  /** 设置最新队列状态；超出的旧队列文本视为已生效 */
-  syncQueued(nextQueued: string[]) {
-    if (nextQueued.length < this.queued.length) {
-      this.consumed.push(
-        ...this.queued.slice(0, this.queued.length - nextQueued.length),
-      );
-    }
-    this.queued = nextQueued;
-  }
-
-  /** 消费下一个已生效的 guidance 文本 */
-  consumeNext(): string | undefined {
-    if (this.consumed.length === 0) return undefined;
-    return this.consumed.shift();
-  }
-
-  /** 强制将当前全部待生效文本转为已生效 */
-  flushQueuedToConsumed() {
-    if (this.queued.length > 0) {
-      this.consumed.push(...this.queued);
-      this.queued = [];
-    }
-  }
-
-  /** 判断当前是否有已生效的 guidance 待消费 */
-  hasConsumed(): boolean {
-    return this.consumed.length > 0;
-  }
-
-  /** 重置队列 */
-  reset() {
-    this.consumed = [];
-    this.queued = [];
-  }
-}
-
 async function buildModelInput(
   input: string,
-  skillIds?: string[],
   filePaths?: string[],
   imageAttachments?: ChatAttachment[],
 ): Promise<string> {
   const blocks: string[] = [];
 
-  // 1) 技能块：toPiSkills 仅返回启用且有 filePath 的技能；带 content（SKILL.md 全文）
-  for (const id of skillIds ?? []) {
-    const [skill] = skillLoader.toPiSkills([id]);
-    if (skill) {
-      blocks.push(await formatSkillInvocationWithFiles(skill));
-    }
-  }
-
-  // 2) 文件块：发送时读取文件全文，读失败的文件跳过（不阻断发送）
   for (const path of filePaths ?? []) {
     try {
       const content = await readFile(path);
@@ -242,20 +149,15 @@ function selectThinkingLevel(input: string): ModelThinkingLevel {
 }
 
 /** rAF 合批器：流式 token 高频到达时按帧合并更新，避免每 token 一次写 store */
-function createRafBatcher(handler: (update: { appendDelta?: string; segments?: Segment[] }) => void) {
-  let pendingDelta = "";
-  let pendingSegments: Segment[] | null = null;
+function createRafBatcher(handler: (update: { parts?: ChatMessagePart[] }) => void) {
+  let pendingParts: ChatMessagePart[] | null = null;
   let rafId: number | null = null;
 
   const flush = () => {
     rafId = null;
-    if (pendingDelta || pendingSegments) {
-      handler({
-        appendDelta: pendingDelta || undefined,
-        segments: pendingSegments ?? undefined,
-      });
-      pendingDelta = "";
-      pendingSegments = null;
+    if (pendingParts) {
+      handler({ parts: pendingParts });
+      pendingParts = null;
     }
   };
 
@@ -279,9 +181,8 @@ function createRafBatcher(handler: (update: { appendDelta?: string; segments?: S
   };
 
   return {
-    pushDelta: (delta: string) => { pendingDelta += delta; schedule(); },
-    pushSegments: (segments: Segment[]) => { pendingSegments = segments; schedule(); },
-    reset: () => { pendingDelta = ""; pendingSegments = null; },
+    pushParts: (parts: ChatMessagePart[]) => { pendingParts = parts; schedule(); },
+    reset: () => { pendingParts = null; },
     cancel,
     flush,
   };
@@ -302,7 +203,7 @@ export async function promptAgent(
   const toolResults = new Map<string, ToolResultSummary>();
 
   // —— rAF 合批：流式 token 高频到达，若每个 token 都写 store 会把主线程打满
-  // （多会话并行时尤甚）。这里用 createRafBatcher 按帧合并：缓存待追加的文本与最新 segments，
+  // （多会话并行时尤甚）。这里用 createRafBatcher 按帧合并：缓存最新 parts，
   // 每帧最多 flush 一次，把「每 token 一次」的更新降到「每帧一次」。
   const batcher = createRafBatcher(handlers.onStreamUpdate);
 
@@ -312,11 +213,6 @@ export async function promptAgent(
       harness = await agentManager.getOrCreateHarness(options.threadId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
-        knowledgeBaseIds: options.knowledgeBaseIds,
-        subagentContext: options.subagentContext,
-        scheduleContext: options.scheduleContext,
-        projectId: options.projectId,
-        projectSystemPrompt: options.projectSystemPrompt,
       });
     } catch (error) {
       // 运行时未初始化时兜底重建一次
@@ -324,17 +220,10 @@ export async function promptAgent(
       harness = await agentManager.getOrCreateHarness(options.threadId, {
         workingDir: options.workingDir,
         permissionMode: options.permissionMode,
-        knowledgeBaseIds: options.knowledgeBaseIds,
-        subagentContext: options.subagentContext,
-        scheduleContext: options.scheduleContext,
-        projectId: options.projectId,
-        projectSystemPrompt: options.projectSystemPrompt,
       });
     }
 
     const runtimeModelId = agentManager.getRuntimeModelId();
-    const monitor = useTaskMonitorStore.getState();
-    let assistantText = "";
     // 本次 run 内按真实顺序产生的可渲染过程：assistant 轮次 + 中途引导状态。
     // 必须聚合全部轮次，否则只取最后一条会丢掉前面轮次已输出的正文/思考。
     const runItems: Array<
@@ -343,51 +232,44 @@ export async function promptAgent(
     > = [];
     // 当前正在进行的轮次的 partial assistant 消息（尚未 turn_end）。
     let livePartial: (AgentMessage & { role: "assistant" }) | null = null;
-    // Guidance 队列管理器：封装 guidance 文本状态，避免并发操作竞态。
-    const guidanceQueue = new GuidanceQueue();
 
-    // 把「已完成轮次 + 当前 partial」聚合为有序 segments，缓存等待按帧 flush。
+    // 把「已完成轮次 + 当前 partial」聚合为有序 parts，缓存等待按帧 flush。
     // partial 与已完成轮次不重叠：turn_end 时把 partial 落入 runMessages 并清空。
-    const emitSegments = () => {
-      const segments: Segment[] = [];
+    const emitParts = () => {
+      const parts: ChatMessagePart[] = [];
       for (const item of runItems) {
         if (item.type === "assistant") {
-          segments.push(...extractSegments(item.message, toolResults));
+          parts.push(...extractMessageParts(item.message, toolResults));
         } else {
-          segments.push({
-            kind: "guidance",
-            text: item.text,
-            createdAt: item.createdAt,
+          parts.push({
+            type: "data-polar-guidance",
+            data: { text: item.text, createdAt: item.createdAt },
           });
         }
       }
       if (livePartial) {
-        segments.push(...extractSegments(livePartial, toolResults));
+        parts.push(...extractMessageParts(livePartial, toolResults));
       }
-      if (segments.length > 0) {
-        batcher.pushSegments(segments);
+      if (parts.length > 0) {
+        batcher.pushParts(parts);
       }
     };
 
-    // 方案 C：把选中技能的 SKILL.md 全文 + 选中文件的内容拼到用户问题前一起发给模型
-    // （后台注入），UI 显示的仍是用户原始问题（startExchange 时已用纯文本建消息）。
+    // 把 "@" 选中文件的内容 + 图片附件占位拼到用户问题前一起发给模型（后台注入），
+    // UI 显示的仍是用户原始问题（startExchange 时已用纯文本建消息）。
     const modelInput = await buildModelInput(
       input,
-      options.skillIds,
       options.filePaths,
       options.attachments?.filter((attachment) => attachment.kind === "image"),
     );
 
     // 记录发送给 AI 的内容组成
-    const skillCount = options.skillIds?.length ?? 0;
     const fileCount = options.filePaths?.length ?? 0;
     const imageCount = options.attachments?.filter((a) => a.kind === "image").length ?? 0;
     console.log(
       `[AI输入] 会话 ${options.threadId} 内容组成:`,
       {
         用户输入: input.length,
-        技能数: skillCount,
-        技能: options.skillIds,
         文件数: fileCount,
         文件: options.filePaths,
         图片数: imageCount,
@@ -450,14 +332,12 @@ export async function promptAgent(
     // --- 重试循环 ---
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       // 每次重试前清空累积状态
-      assistantText = "";
       runItems.length = 0;
       livePartial = null;
       toolResults.clear();
       batcher.reset();
       settled = false;
       providerCacheHit = false;
-      guidanceQueue.reset();
 
       // 每次 attempt 独立的 AbortController，用于取消旧 events 监听回调中的异步操作
       const attemptController = new AbortController();
@@ -489,7 +369,7 @@ export async function promptAgent(
               text,
               createdAt: Date.now(),
             });
-            emitSegments();
+            emitParts();
           }
         }),
       );
@@ -497,18 +377,11 @@ export async function promptAgent(
       unsubscribers.push(
         harness.events.on("message_update", (event) => {
           const messageEvent = event as Extract<HarnessEvent, { type: "message_update" }>;
-          // 0.85.0: assistantMessageEvent 字段更名为 event
-          const inner = messageEvent.event;
-          if (inner.type === "text_delta") {
-            assistantText += inner.delta;
-            // 缓存文本增量，按帧合并写入（不再每 token 调一次 onDelta）
-            batcher.pushDelta(inner.delta);
-          }
-          // 更新当前轮次的 partial，并实时重建 segments（思考/工具/正文有序）。
+          // 更新当前轮次的 partial，并实时重建 parts（思考/工具/正文有序）。
           // 思考增量(thinking_delta)无需单独累积——partial.content 已含有序 block。
           if (messageEvent.message.role === "assistant") {
             livePartial = messageEvent.message as AgentMessage & { role: "assistant" };
-            emitSegments();
+            emitParts();
           }
         }),
       );
@@ -525,40 +398,23 @@ export async function promptAgent(
           }
           // 该轮已落地，清空 partial，避免与 runMessages 重复计入
           livePartial = null;
-          emitSegments();
-        }),
-      );
-
-      unsubscribers.push(
-        harness.events.on("tool_start", (event) => {
-          const toolEvent = event as Extract<HarnessEvent, { type: "tool_start" }>;
-          monitor.startStep(options.threadId, {
-            id: toolEvent.toolCallId,
-            toolName: toolEvent.toolName,
-            messageId: options.messageId,
-          });
+          emitParts();
         }),
       );
 
       unsubscribers.push(
         harness.events.on("tool_update", (event) => {
           const toolEvent = event as Extract<HarnessEvent, { type: "tool_update" }>;
-          // 工具执行中间进度：partialResult 含中间结果，更新步骤面板的 label
-          const partial = toolEvent.partialResult;
-          const partialLabel = summarizePartialResult(toolEvent.toolName, partial);
+          // 工具执行中间进度：partialResult 含中间结果，回填到 tool-call 展示文本
+          const partialLabel = summarizePartialResult(toolEvent.toolName, toolEvent.partialResult);
           if (partialLabel) {
-            monitor.updateStep(options.threadId, toolEvent.toolCallId, {
+            toolResults.set(toolEvent.toolCallId, {
               label: partialLabel,
+              isError: false,
+              pending: true,
+              details: extractToolDetails(toolEvent.partialResult),
             });
-            if (toolEvent.toolName === "delegate_task") {
-              toolResults.set(toolEvent.toolCallId, {
-                label: partialLabel,
-                isError: false,
-                pending: true,
-                details: extractToolDetails(partial),
-              });
-              emitSegments();
-            }
+            emitParts();
           }
         }),
       );
@@ -572,15 +428,10 @@ export async function promptAgent(
             label,
             isError: toolEvent.isError,
             resultText: toolResultText(toolEvent.result),
-            todos: extractTodos(toolEvent.toolName, toolEvent.result),
             details: resultDetails,
           });
-          monitor.finishStep(options.threadId, toolEvent.toolCallId, {
-            label,
-            status: toolEvent.isError ? "error" : "done",
-          });
           // 工具结果到位后，已渲染的工具段标签/状态需要刷新
-          emitSegments();
+          emitParts();
         }),
       );
 
@@ -606,7 +457,7 @@ export async function promptAgent(
           }
 
           const result = buildAgentEndResult(
-            runItems, assistantText, runtimeModelId, toolResults, providerCacheHit,
+            runItems, runtimeModelId, toolResults, providerCacheHit,
           );
           if (result) handlers.onDone(result);
         }),
@@ -693,15 +544,7 @@ export async function promptAgent(
 }
 
 async function persistGuidance(options: PromptOptions, text: string): Promise<void> {
-  const sessionId = options.subagentContext?.sessionId ?? options.threadId;
-  if (options.scheduleContext) {
-    await appendScheduleGuidanceMessage(
-      options.scheduleContext.sessionId ?? options.threadId,
-      text,
-    );
-  } else {
-    await appendGuidanceMessage(sessionId, text);
-  }
+  await appendGuidanceMessage(options.threadId, text);
 }
 
 /** 构建 run_end 事件的最终 AgentResult（0.85.0: run_end 不再携带 messages，全部取自 runItems） */
@@ -710,7 +553,6 @@ function buildAgentEndResult(
     | { type: "assistant"; message: AgentMessage & { role: "assistant" } }
     | { type: "guidance"; text: string; createdAt: number }
   >,
-  assistantText: string,
   runtimeModelId: string,
   toolResults: Map<string, ToolResultSummary>,
   providerCacheHit: boolean,
@@ -725,35 +567,27 @@ function buildAgentEndResult(
 
   if (assistants.length === 0) {
     return {
-      content: assistantText,
+      content: [],
       model: runtimeModelId,
       usage: { input: 0, output: 0, totalTokens: 0, cacheRead: 0, cacheWrite: 0 },
       contextTokens: 0,
-      segments: assistantText ? [{ kind: "text", text: assistantText }] : [],
     };
   }
 
-  // 聚合所有轮次的 segments，保持轮次与块的真实顺序
-  const segments: Segment[] = [];
+  // 聚合所有轮次的 parts，保持轮次与块的真实顺序
+  const parts: ChatMessagePart[] = [];
   for (const item of runItems) {
     if (item.type === "assistant") {
-      segments.push(...extractSegments(item.message, toolResults));
+      parts.push(...extractMessageParts(item.message, toolResults));
     } else {
-      segments.push({
-        kind: "guidance",
-        text: item.text,
-        createdAt: item.createdAt,
+      parts.push({
+        type: "data-polar-guidance",
+        data: { text: item.text, createdAt: item.createdAt },
       });
     }
   }
 
   const lastAssistant = assistants[assistants.length - 1];
-  const content =
-    segments
-      .filter((seg) => seg.kind === "text")
-      .map((seg) => (seg.kind === "text" ? seg.text : ""))
-      .filter(Boolean)
-      .join("\n") || assistantText;
 
   // 累加所有 assistant 轮次的 usage（input/output/cacheRead/cacheWrite）
   // 多轮工具调用中，每轮都有独立的 usage
@@ -777,7 +611,7 @@ function buildAgentEndResult(
   const contextTokens = estimateContextTokens(allMessages).tokens;
 
   return {
-    content,
+    content: parts,
     model: lastAssistant.model?.trim() || runtimeModelId,
     usage: {
       input: totalInput,
@@ -787,53 +621,8 @@ function buildAgentEndResult(
       cacheWrite: totalCacheWrite,
     },
     contextTokens,
-    segments,
     providerCacheHit,
   };
-}
-
-/**
- * 从最终的 AssistantMessage.content 有序 block 提取 segments。
- * pi 的 content 顺序即模型产出的真实顺序：text / thinking / toolCall 交错。
- * 工具调用的单行结果摘要从本轮收集的 toolResults 里按 toolCallId 取。
- */
-function extractSegments(
-  message: AgentMessage & { role: "assistant" },
-  toolResults: Map<string, ToolResultSummary>,
-): Segment[] {
-  const segments: Segment[] = [];
-
-  for (const block of message.content) {
-    if (block.type === "text") {
-      if (block.text.trim().length > 0) {
-        segments.push({ kind: "text", text: block.text });
-      }
-    } else if (block.type === "thinking") {
-      if (block.thinking.trim().length > 0) {
-        segments.push({ kind: "thinking", text: block.thinking });
-      }
-    } else if (block.type === "toolCall") {
-      const result = toolResults.get(block.id);
-      const widget = extractWidgetSegment(result?.details);
-      if (widget) {
-        segments.push(widget);
-        continue;
-      }
-      segments.push({
-        kind: "tool",
-        toolCallId: block.id,
-        toolName: block.name,
-        label: result?.label ?? toolDisplayName(block.name),
-        // 结果未到位 = 仍在执行（流式中显示旋转图标）；到位后按成功/出错定状态
-        status: result ? (result.pending ? "running" : result.isError ? "error" : "done") : "running",
-        resultText: result?.resultText,
-        todos: result?.todos,
-        details: result?.details,
-      });
-    }
-  }
-
-  return segments;
 }
 
 function agentUserMessageText(message: AgentMessage): string {
@@ -846,43 +635,6 @@ function agentUserMessageText(message: AgentMessage): string {
     .trim();
 }
 
-// 从 update_todos 的结果里抽取完整待办快照（供按待办分组折叠）
-function extractTodos(
-  toolName: string,
-  result: unknown,
-):
-  | Array<{ content: string; status: "pending" | "in_progress" | "completed" }>
-  | undefined {
-  if (toolName !== "update_todos") return undefined;
-  if (!result || typeof result !== "object") return undefined;
-  const details = (result as { details?: Record<string, unknown> }).details;
-  if (!details || !Array.isArray(details.todos)) return undefined;
-
-  const todos = details.todos
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const record = item as { content?: unknown; status?: unknown };
-      const content =
-        typeof record.content === "string" ? record.content : "";
-      const status =
-        record.status === "in_progress" || record.status === "completed"
-          ? record.status
-          : "pending";
-      if (!content) return null;
-      return { content, status } as const;
-    })
-    .filter(
-      (
-        item,
-      ): item is {
-        content: string;
-        status: "pending" | "in_progress" | "completed";
-      } => item !== null,
-    );
-
-  return todos.length > 0 ? todos : undefined;
-}
-
 // 从工具结果中提取 details 对象
 function extractToolDetails(result: unknown): Record<string, unknown> | undefined {
   if (!result || typeof result !== "object") return undefined;
@@ -890,45 +642,14 @@ function extractToolDetails(result: unknown): Record<string, unknown> | undefine
   return details && typeof details === "object" ? details : undefined;
 }
 
-function extractWidgetSegment(details: Record<string, unknown> | undefined): Extract<Segment, { kind: "widget" }> | undefined {
-  const widget = details?.widget;
-  if (!widget || typeof widget !== "object") return undefined;
-
-  const record = widget as Record<string, unknown>;
-  if (typeof record.widgetId !== "string" || typeof record.title !== "string" || typeof record.html !== "string") {
-    return undefined;
-  }
-
-  return {
-    kind: "widget",
-    widgetId: record.widgetId,
-    title: record.title,
-    html: record.html,
-    updateMode: record.update_mode === "patch" ? "patch" : "replace",
-    widgetPath: typeof record.widget_path === "string" ? record.widget_path : null,
-    data:
-      record.data && typeof record.data === "object"
-        ? (record.data as Record<string, unknown>)
-        : null,
-  };
-}
-
-// 工具中间进度 -> 步骤面板里的单行摘要（tool_execution_update 事件用）
+// 工具中间进度 -> 单行摘要（tool_update 事件用）
 function summarizePartialResult(toolName: string, partial: unknown): string | undefined {
+  void toolName;
   if (!partial || typeof partial !== "object") return undefined;
   const details = (partial as { details?: Record<string, unknown> }).details;
   if (details) {
     if (typeof details.summary === "string" && details.summary.trim()) {
       return details.summary.trim();
-    }
-    // bash 执行中：显示 phase
-    if (toolName === "run_bash" && typeof details.phase === "string") {
-      return details.phase === "executing" ? "正在执行命令..." : undefined;
-    }
-    if (toolName === "delegate_task" && typeof details.agentName === "string") {
-      return details.phase === "running"
-        ? `子代理 ${details.agentName} 正在执行任务...`
-        : `正在调用子代理 ${details.agentName}...`;
     }
     // 其他工具的中间进度：如果有 content 文本，取前 60 字符
     const content = (partial as { content?: unknown[] }).content;
@@ -946,79 +667,30 @@ function summarizePartialResult(toolName: string, partial: unknown): string | un
   return undefined;
 }
 
-// 工具结果 -> 步骤面板里的单行摘要
+// 工具结果 -> 单行摘要。只覆盖 pisdk 原生四件套（bash/read/write/edit）。
 function summarizeToolResult(toolName: string, result: unknown, isError = false): string {
   const base = toolDisplayName(toolName);
   if (result && typeof result === "object") {
     const details = (result as { details?: Record<string, unknown> }).details;
     if (details) {
       const suffix = formatDurationSuffix(details.durationMs);
-      if (toolName === "update_todos" && Array.isArray(details.todos)) {
-        return `已更新待办 ${details.todos.length} 项${suffix}`;
+      if (toolName === "bash" && typeof details.exitCode === "number") {
+        return isError
+          ? `命令执行失败（退出码 ${details.exitCode}）${suffix}`
+          : `命令执行完成${suffix}`;
       }
-      if (toolName === "start_background_task" && typeof details.jobId === "string") {
-        return `后台任务已启动：${details.jobId}${suffix}`;
-      }
-      if (toolName === "list_background_tasks" && typeof details.count === "number") {
-        return `列出 ${details.count} 个后台任务${suffix}`;
-      }
-      if (
-        (toolName === "get_background_task" || toolName === "cancel_background_task") &&
-        typeof details.status === "string"
-      ) {
-        return `后台任务状态：${details.status}${suffix}`;
-      }
-      if (toolName === "delegate_task" && typeof details.agentName === "string") {
-        return isError ? `子代理 ${details.agentName} 执行失败${suffix}` : `子代理 ${details.agentName} 已完成${suffix}`;
-      }
-      if (toolName === "web_search" && typeof details.count === "number") {
-        return `搜索到 ${details.count} 条结果${suffix}`;
-      }
-      if (toolName === "web_fetch" && typeof details.title === "string") {
-        return `已读取网页《${details.title || "未命名网页"}》${suffix}`;
-      }
-      if (toolName === "search_knowledge" && Array.isArray(details.results)) {
-        return `检索到 ${details.results.length} 条知识库结果${suffix}`;
-      }
-      if ((toolName === "image_generation" || toolName === "image_edit") && Array.isArray(details.saved)) {
-        return `已保存 ${details.saved.length} 张图片${suffix}`;
-      }
-      if (toolName === "speech_recognition" && typeof details.audioPath === "string") {
-        return `已识别 ${String(details.audioPath).split(/[\\/]/).pop()}${suffix}`;
-      }
-      if (toolName === "speech_synthesis" && typeof details.name === "string") {
-        return `已合成 ${details.name}${suffix}`;
-      }
-      if (toolName.startsWith("mcp_") && typeof details.serverName === "string" && typeof details.remoteToolName === "string") {
-        return `已调用 MCP：${details.serverName} · ${details.remoteToolName}${suffix}`;
-      }
-      if (toolName === "write_file" && typeof details.path === "string") {
+      if (toolName === "write" && typeof details.path === "string") {
         return `已写入 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
-      if (toolName === "create_office_document" && typeof details.path === "string") {
-        return `已创建 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
+      if (toolName === "edit" && typeof details.path === "string") {
+        return `已编辑 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
-      if (toolName === "edit_file" && typeof details.path === "string") {
-        const name = String(details.path).split(/[\\/]/).pop();
-        const replaced =
-          typeof details.replaced === "number" ? details.replaced : 1;
-        return `已编辑 ${name}（替换 ${replaced} 处）${suffix}`;
-      }
-      if (toolName === "create_directory" && typeof details.path === "string") {
-        return `已创建目录 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
-      }
-      if (toolName === "delete_file" && typeof details.path === "string") {
-        return `已删除 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
-      }
-      if (toolName === "list_directory" && Array.isArray(details.entries)) {
-        return `列出 ${details.entries.length} 个条目${suffix}`;
-      }
-      if (toolName === "search_files" && Array.isArray(details.results)) {
-        return `找到 ${details.results.length} 个文件匹配${suffix}`;
+      if (toolName === "read" && typeof details.path === "string") {
+        return `已读取 ${String(details.path).split(/[\\/]/).pop()}${suffix}`;
       }
     }
   }
-  return base;
+  return isError ? `${base}执行失败` : base;
 }
 
 function formatDurationSuffix(durationMs: unknown): string {
@@ -1037,21 +709,6 @@ function toolResultText(result: unknown): string | undefined {
     content?: unknown;
     details?: unknown;
   };
-
-  if (
-    record.details &&
-    typeof record.details === "object" &&
-    "widget" in (record.details as Record<string, unknown>)
-  ) {
-    const widget = (record.details as Record<string, unknown>).widget;
-    if (widget && typeof widget === "object") {
-      const info = widget as Record<string, unknown>;
-      const title = typeof info.title === "string" ? info.title : "未命名 Widget";
-      const mode = info.update_mode === "patch" ? "patch" : "replace";
-      const source = info.source === "file" ? "模板文件" : "内联代码";
-      return `Widget: ${title}\n更新模式: ${mode}\n来源: ${source}`;
-    }
-  }
 
   // content 通常是 [{ type: "text", text }] 数组，拼接其文本
   if (Array.isArray(record.content)) {
@@ -1093,42 +750,7 @@ function toolResultText(result: unknown): string | undefined {
 /** 中止指定线程的 Agent 运行（用户在该会话内主动点「停止」时调用）。
  *  仅影响该线程，其它并行会话继续在后台运行。 */
 export function abortAgentThread(threadId: string) {
-  cancelAskUserRequestsForThread(threadId);
   agentManager.abortThread(threadId);
-}
-
-/**
- * 在 Agent 正在运行时插入用户引导。pi-agent 会在后续循环点消费 steering 消息，
- * 通常表现为当前工具/步骤完成后、下一轮模型请求前生效。
- */
-export async function steerAgentThread(
-  threadId: string,
-  text: string,
-): Promise<boolean> {
-  const accepted = await agentManager.steerThread(threadId, text);
-  return accepted > 0;
-}
-
-/**
- * 在当前运行结束前排入 follow-up。pi-agent 会在没有更多工具调用与 steering 后消费。
- */
-export async function followUpAgentThread(
-  threadId: string,
-  text: string,
-): Promise<boolean> {
-  const accepted = await agentManager.followUpThread(threadId, text);
-  return accepted > 0;
-}
-
-/**
- * 排入下一轮消息。可用于把用户输入放到后续 prompt 前，而不自建应用层队列。
- */
-export async function nextTurnAgentThread(
-  threadId: string,
-  text: string,
-): Promise<boolean> {
-  const accepted = await agentManager.nextTurnThread(threadId, text);
-  return accepted > 0;
 }
 
 /** 中止当前所有 Agent 运行（极端清理场景，如重置运行时）。 */
@@ -1138,6 +760,5 @@ export function abortAgent() {
 
 /** 重置某个线程的 harness 会话状态 */
 export function resetAgent(threadId: string) {
-  cancelAskUserRequestsForThread(threadId);
   agentManager.disposeThread(threadId);
 }

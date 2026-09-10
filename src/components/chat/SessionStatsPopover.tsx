@@ -1,7 +1,6 @@
 // 会话用量统计浮层面板
 // 从 chatStore 读取当前活跃会话的消息数据进行聚合统计。
 import { useMemo } from "react";
-import { useTranslation } from "react-i18next";
 
 import { useChatStore } from "@/stores/chat-store";
 import { useConfigStore } from "@/stores/config-store";
@@ -18,7 +17,6 @@ function formatNumber(value: number): string {
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
 export function SessionStatsPopover({ threadId }: { threadId?: string }) {
-  const { t } = useTranslation("chat");
   // 只订阅当前活跃会话对象：其它后台会话的流式更新不会触发本组件重渲染
   const activeThread = useChatStore((state) =>
     state.threads.find((thread) => thread.id === (threadId ?? state.activeThreadId)),
@@ -48,24 +46,22 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
     const byModel = new Map<string, { tokens: number; count: number }>();
 
     for (const msg of assistantMessages) {
-      const input = msg.inputTokens ?? 0;
-      const output = msg.outputTokens ?? 0;
-      const cacheRead = msg.cacheReadTokens ?? 0;
-      const total = msg.tokenCount ?? (input + output);
+      const input = msg.metadata?.inputTokens ?? 0;
+      const output = msg.metadata?.outputTokens ?? 0;
+      const cacheRead = msg.metadata?.cacheReadTokens ?? 0;
+      const total = msg.metadata?.tokenCount ?? (input + output);
 
       totalInput += input;
       totalOutput += output;
       totalCacheRead += cacheRead;
       totalTokens += total;
 
-      // 统计工具调用（segments 中 kind 为 "tool" 的段）
-      if (msg.segments) {
-        toolCallCount += msg.segments.filter(
-          (seg) => seg.kind === "tool",
-        ).length;
-      }
+      // 统计工具调用（tool-call parts）
+      toolCallCount += msg.content.filter(
+        (part) => part.type === "tool-call",
+      ).length;
 
-      const model = msg.model || "unknown";
+      const model = msg.metadata?.model || "unknown";
       const existing = byModel.get(model) ?? { tokens: 0, count: 0 };
       existing.tokens += total;
       existing.count += 1;
@@ -86,11 +82,14 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
     const lastAssistant = assistantMessages.length > 0
       ? assistantMessages[assistantMessages.length - 1]
       : null;
-    const currentContextTokens = lastAssistant?.contextTokens ?? lastAssistant?.inputTokens ?? totalInput;
+    const currentContextTokens =
+      lastAssistant?.metadata?.contextTokens ??
+      lastAssistant?.metadata?.inputTokens ??
+      totalInput;
 
     // 上下文窗口大小
     const modelConfig = allModels.find(
-      (m) => m.id === (lastAssistant?.model ?? ""),
+      (m) => m.id === (lastAssistant?.metadata?.model ?? ""),
     );
     const contextWindow = modelConfig?.contextWindow ?? 128000;
 
@@ -120,7 +119,7 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
   if (!activeThread || messages.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
-        {t("stats.empty")}
+        {"暂无会话数据"}
       </div>
     );
   }
@@ -131,8 +130,8 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
   const durationMinutes = Math.round(stats.durationMs / 60000);
   const durationText =
     durationMinutes < 1
-      ? t("stats.lessThanMinute")
-      : `${durationMinutes} ${t("stats.minutes")}`;
+      ? "<1 分钟"
+      : `${durationMinutes} ${"分钟"}`;
 
   // 缓存率（token 级别）：缓存读取的 token 占实际总输入 token 的比例
   // 实际总输入 = input + cacheRead（新输入 + 缓存读取）
@@ -144,25 +143,25 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
     <div className="divide-y divide-border">
       {/* 标题 */}
       <div className="px-4 py-3">
-        <h3 className="text-sm font-semibold">{t("stats.title")}</h3>
+        <h3 className="text-sm font-semibold">{"本次会话用量"}</h3>
       </div>
 
       {/* Token 总量 */}
       <div className="space-y-2.5 px-4 py-3">
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-muted-foreground">{t("stats.totalTokens")}</span>
+          <span className="text-xs text-muted-foreground">{"总 Token"}</span>
           <span className="text-lg font-semibold tabular-nums">
             {formatNumber(totalAll)}
           </span>
         </div>
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-muted-foreground">{t("stats.totalInput")}</span>
+          <span className="text-xs text-muted-foreground">{"输入 Token"}</span>
           <span className="text-sm tabular-nums text-muted-foreground">
             {formatNumber(stats.totalInput)}
           </span>
         </div>
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-muted-foreground">{t("stats.totalOutput")}</span>
+          <span className="text-xs text-muted-foreground">{"输出 Token"}</span>
           <span className="text-sm tabular-nums text-muted-foreground">
             {formatNumber(stats.totalOutput)}
           </span>
@@ -172,7 +171,7 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
       {/* 缓存命中率 */}
       <div className="space-y-2 px-4 py-3">
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-muted-foreground">{t("stats.cacheHitRate")}</span>
+          <span className="text-xs text-muted-foreground">{"缓存命中率"}</span>
           <span className="text-sm tabular-nums text-muted-foreground">
             {cacheReadRate.toFixed(1)}%
           </span>
@@ -197,7 +196,7 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
       {/* 上下文压缩 */}
       <div className="space-y-2 px-4 py-3">
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-muted-foreground">{t("stats.compaction")}</span>
+          <span className="text-xs text-muted-foreground">{"上下文压缩"}</span>
           <span className="text-sm tabular-nums text-muted-foreground">
             {formatNumber(stats.currentContextTokens)} / {formatNumber(stats.compactionThreshold)}
           </span>
@@ -221,19 +220,19 @@ export function SessionStatsPopover({ threadId }: { threadId?: string }) {
 
       {/* 对话概览 */}
       <div className="grid grid-cols-2 gap-3 px-4 py-3">
-        <StatItem label={t("stats.turns")} value={String(stats.turnCount)} />
-        <StatItem label={t("stats.toolCalls")} value={String(stats.toolCallCount)} />
+        <StatItem label={"对话轮次"} value={String(stats.turnCount)} />
+        <StatItem label={"工具调用"} value={String(stats.toolCallCount)} />
         <StatItem
-          label={t("stats.avgPerReply")}
+          label={"平均每条回复"}
           value={formatNumber(stats.avgTokensPerReply)}
         />
-        <StatItem label={t("stats.duration")} value={durationText} />
+        <StatItem label={"会话时长"} value={durationText} />
       </div>
 
       {/* 按模型分组 */}
       {stats.byModel.length > 1 ? (
         <div className="space-y-1.5 px-4 py-3">
-          <span className="text-xs text-muted-foreground">{t("stats.byModel")}</span>
+          <span className="text-xs text-muted-foreground">{"按模型"}</span>
           {stats.byModel.map(([model, data]) => (
             <div
               key={model}

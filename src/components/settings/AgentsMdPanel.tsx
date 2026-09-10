@@ -2,7 +2,6 @@
 // src/components/settings/AgentsMdPanel.tsx
 
 import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { FileText, Loader2, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,6 @@ import { invalidateAgentsMdCache } from "@/ai/agents-md";
 import { PageTitle } from "./settings-shared";
 
 export function AgentsMdPanel({ embedded }: { embedded?: boolean }) {
-  const { t } = useTranslation("settings");
   const [content, setContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -45,10 +43,10 @@ export function AgentsMdPanel({ embedded }: { embedded?: boolean }) {
     try {
       await writeAgentsMd(content);
       invalidateAgentsMdCache();
-      setStatus(t("agentsMd.saved"));
+      setStatus("已保存");
     } catch (error) {
       console.error("保存 AGENTS.md 失败:", error);
-      setStatus(t("agentsMd.saveFailed"));
+      setStatus("保存失败，请重试");
     } finally {
       setIsSaving(false);
     }
@@ -57,9 +55,12 @@ export function AgentsMdPanel({ embedded }: { embedded?: boolean }) {
   return (
     <div className="space-y-8">
       {!embedded ? (
-        <PageTitle title={t("agentsMd.title")} description={t("agentsMd.description")} />
+        <PageTitle
+          title="个性化"
+          description="自定义 AGENTS.md 指令，作为系统提示词注入每一轮对话"
+        />
       ) : (
-        <h3 className="text-sm font-semibold text-muted-foreground">{t("agentsMd.title")}</h3>
+        <h3 className="text-sm font-semibold text-muted-foreground">个性化</h3>
       )}
 
       <section className="space-y-3">
@@ -67,9 +68,11 @@ export function AgentsMdPanel({ embedded }: { embedded?: boolean }) {
           <div>
             <p className="flex items-center gap-2 text-sm font-medium">
               <FileText className="size-4" />
-              {t("agentsMd.content")}
+              AGENTS.md 内容
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{t("agentsMd.contentDesc")}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              保存在数据目录下，保存后对新一轮对话立即生效
+            </p>
           </div>
           <Button size="sm" disabled={isSaving || isLoading} onClick={() => void handleSave()}>
             {isSaving ? (
@@ -77,19 +80,19 @@ export function AgentsMdPanel({ embedded }: { embedded?: boolean }) {
             ) : (
               <Save className="mr-1.5 size-3.5" />
             )}
-            {t("agentsMd.save")}
+            保存
           </Button>
         </div>
         {isLoading ? (
           <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
             <Loader2 className="mr-2 size-4 animate-spin" />
-            {t("common:loading", "加载中...")}
+            加载中...
           </div>
         ) : (
           <Textarea
             value={content}
             onChange={(event) => setContent(event.target.value)}
-            placeholder={t("agentsMd.contentPlaceholder")}
+            placeholder="在这里写下希望 Agent 始终遵守的指令..."
             className="app-scrollbar min-h-[360px] font-mono text-sm"
           />
         )}

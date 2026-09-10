@@ -7,10 +7,6 @@ import {
   stream as openaiResponsesStream,
   streamSimple as openaiResponsesStreamSimple,
 } from "@earendil-works/pi-ai/api/openai-responses";
-import {
-  stream as anthropicMessagesStream,
-  streamSimple as anthropicMessagesStreamSimple,
-} from "@earendil-works/pi-ai/api/anthropic-messages";
 import type { ProvidersConfig, ProviderConfig } from "@/types/config";
 
 export type RuntimeProvider = {
@@ -195,8 +191,6 @@ function normalizeBaseURL(baseURL: string, type: ProviderConfig["type"]) {
 // 给 pi-ai 的 model.provider 一个标识；优先按已知域名识别，否则按格式给通用值
 // 0.80 对齐 KnownProvider：覆盖主流 + 国产 + 云厂商域名
 function providerSlug(type: ProviderConfig["type"], baseURL: string) {
-  // 按接口类型优先
-  if (type === "anthropic-messages") return "anthropic";
   // 按域名识别（与 pi-ai KnownProvider 对齐）
   if (baseURL.includes("api.openai.com")) return "openai";
   if (baseURL.includes("api.anthropic.com")) return "anthropic";
@@ -232,14 +226,13 @@ export { providerSlug };
  * 获取对应类型的 ProviderStreams 实现。
  * pi-ai 内部为每个 API 格式提供了 stream / streamSimple 函数，
  * 这里按 provider type 静态映射到对应实现。
+ *
+ * 网络路径说明：openai SDK 直接调 globalThis.fetch，
+ * 因此出网路径统一由渲染进程启动时的 installIpcFetch() 接管
+ * （globalThis.fetch → 主进程 ipcFetch），这里无需再注入 fetch。
  */
 export function getProviderStreams(type: ProviderConfig["type"]): ProviderStreams {
   switch (type) {
-    case "anthropic-messages":
-      return {
-        stream: anthropicMessagesStream,
-        streamSimple: anthropicMessagesStreamSimple,
-      };
     case "openai-responses":
       return {
         stream: openaiResponsesStream,

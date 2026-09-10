@@ -15,7 +15,6 @@ import {
   listSessions,
   openOrCreateSession,
   setSessionTitle,
-  setSessionProjectId,
   ensureSessionFilesDir,
   deleteSessionFilesDir,
 } from "@/lib/session/personal";
@@ -30,7 +29,6 @@ export interface ConversationMetaLite {
   id: string;
   title: string;
   updatedAt: number;
-  projectId?: string;
 }
 
 interface ConversationState {
@@ -45,11 +43,7 @@ interface ConversationState {
     conversationId: string,
     message: ChatMessage,
   ) => Promise<void>;
-  createNewConversation: (
-    id: string,
-    title: string,
-    projectId?: string,
-  ) => Promise<void>;
+  createNewConversation: (id: string, title: string) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   clearConversation: (id: string) => Promise<void>;
@@ -71,7 +65,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         title: session.title || "新对话",
         // 优先用索引里的 updatedAt（反映重命名/清空等活动），缺失则回退创建时间
         updatedAt: session.updatedAt ?? (session.createdAt || 0),
-        projectId: session.projectId,
       }));
       set({ conversations });
     } catch (error) {
@@ -83,7 +76,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  // 回读单个会话的历史消息（从 pi Session 重建，含 segments）
+  // 回读单个会话的历史消息（从 pi Session 重建）
   loadConversation: async (id: string) => {
     try {
       return await loadChatMessages(id);
@@ -99,7 +92,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   // 创建新会话：确保对应 pi Session 文件存在，并写入标题
-  createNewConversation: async (id: string, title: string, projectId?: string) => {
+  createNewConversation: async (id: string, title: string) => {
     try {
       await openOrCreateSession(id);
       if (title && title !== "新对话") {
@@ -109,10 +102,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       await ensureSessionFilesDir(id);
       const updatedAt = Date.now();
       // 同步标题索引，使侧边栏下次启动走快路径（只读 titles.json）
-      await upsertTitleIndex(id, title || "新对话", updatedAt, "normal", { projectId });
+      await upsertTitleIndex(id, title || "新对话", updatedAt);
       set((state) => ({
         conversations: [
-          { id, title: title || "新对话", updatedAt, projectId },
+          { id, title: title || "新对话", updatedAt },
           ...state.conversations.filter((c) => c.id !== id),
         ],
       }));
@@ -127,9 +120,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       await setSessionTitle(id, title);
       const updatedAt = Date.now();
-      // 同步标题索引（保留 projectId，避免索引缺失重建时丢失项目归属）
-      const projectId = get().conversations.find((c) => c.id === id)?.projectId;
-      await upsertTitleIndex(id, title, updatedAt, "normal", { projectId });
+      // 同步标题索引
+      await upsertTitleIndex(id, title, updatedAt);
       set((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === id ? { ...c, title, updatedAt } : c,
@@ -161,18 +153,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   // 清空会话内容：删除旧 session 后重建一个同 id 的空 session
   clearConversation: async (id: string) => {
     try {
-      // 先记录项目归属，重建后写入
       const target = get().conversations.find((c) => c.id === id);
-      const projectId = target?.projectId;
       await deleteSession(id);
       await openOrCreateSession(id);
-      // 保留项目归属：重建后重新写入 PROJECT_REF_ENTRY
-      if (projectId) {
-        await setSessionProjectId(id, projectId);
-      }
       const updatedAt = Date.now();
       // 清空后标题保持不变，仅刷新更新时间
-      void upsertTitleIndex(id, target?.title || "新对话", updatedAt, "normal", { projectId });
+      void upsertTitleIndex(id, target?.title || "新对话", updatedAt);
       set((state) => ({
         conversations: state.conversations.map((c) =>
           c.id === id ? { ...c, updatedAt } : c,

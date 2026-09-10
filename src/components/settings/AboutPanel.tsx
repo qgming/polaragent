@@ -1,90 +1,15 @@
 // 关于软件面板
 // src/components/settings/AboutPanel.tsx
 
-import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-
-import { Button } from "@/components/ui/button";
-import { UpdateNotesModal } from "@/components/updates/UpdateNotesModal";
-import { useToast } from "@/hooks/useToast";
-import {
-  checkForUpdates,
-  getUpdateStatus,
-  isElectronRuntime,
-  onUpdateStatus,
-  type AppUpdateStatus,
-} from "@/lib/electron/electron-api";
 import { PageTitle } from "./settings-shared";
 import logo from "@/assets/logo.png";
 
 export function AboutPanel() {
-  const { t } = useTranslation("settings");
-  const toastSuccess = useToast((state) => state.success);
-  const toastError = useToast((state) => state.error);
-  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(
-    null,
-  );
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [checking, setChecking] = useState(false);
-
-  const version = updateStatus?.currentVersion ?? "0.1.0";
-  const isChecking = checking || updateStatus?.phase === "checking";
-
-  useEffect(() => {
-    if (!isElectronRuntime()) return undefined;
-
-    let disposed = false;
-    void getUpdateStatus()
-      .then((status) => {
-        if (!disposed) setUpdateStatus(status);
-      })
-      .catch((error) => {
-        if (!disposed)
-          toastError(error instanceof Error ? error.message : String(error));
-      });
-
-    const unsubscribe = onUpdateStatus((status) => {
-      if (disposed) return;
-      setUpdateStatus(status);
-    });
-
-    return () => {
-      disposed = true;
-      unsubscribe();
-    };
-  }, [toastError]);
-
-  async function handleCheckUpdates() {
-    if (!isElectronRuntime()) return;
-
-    setChecking(true);
-    try {
-      const status = await checkForUpdates();
-      setUpdateStatus(status);
-      if (status.phase === "up-to-date") {
-        toastSuccess(t("about.upToDate"));
-        return;
-      }
-      if (status.updateAvailable) {
-        setUpdateModalOpen(true);
-        return;
-      }
-      if (status.phase === "check-error") {
-        toastError(status.error || t("about.checkFailed"));
-        return;
-      }
-      toastError(status.message || t("about.noUpdate"));
-    } catch (error) {
-      toastError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setChecking(false);
-    }
-  }
+  const version = "0.6.0";
 
   return (
     <section>
-      <PageTitle title={t("about.title")} description={t("about.description")} />
+      <PageTitle title="关于" description="版本与产品信息" />
 
       {/* 主卡片 - Logo 和基本信息 */}
       <div className="mt-8 rounded-xl border border-border bg-gradient-to-br from-card to-muted/20">
@@ -112,31 +37,12 @@ export function AboutPanel() {
           {/* 下方介绍 - 无背景卡片 */}
           <div className="mt-6">
             <p className="text-sm leading-relaxed text-muted-foreground">
-              {t("about.appDescription")}
+              基于 pi-agent-core 的本地桌面 Agent 工作台。对话由 pisdk 会话仓库持久化，
+              工具面为 pisdk 原生四件套（bash / read / write / edit）。
             </p>
           </div>
         </div>
       </div>
-
-      <div className="mt-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-card px-5 py-4">
-        <span className="text-sm font-medium">{t("about.checkUpdate")}</span>
-        <Button
-          variant="outline"
-          onClick={() => void handleCheckUpdates()}
-          disabled={isChecking}
-        >
-          <RefreshCw
-            className={isChecking ? "size-4 animate-spin" : "size-4"}
-          />
-          {isChecking ? t("about.checking") : t("about.checkUpdate")}
-        </Button>
-      </div>
-
-      <UpdateNotesModal
-        open={updateModalOpen}
-        onOpenChange={setUpdateModalOpen}
-        checkOnOpenKey={0}
-      />
 
       {/* 底部版权 */}
       <div className="mt-8 text-center">

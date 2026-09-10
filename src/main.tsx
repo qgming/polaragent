@@ -1,21 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { PreviewWindow } from "./components/PreviewWindow";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { installIpcFetch } from "./lib/electron/electron-api";
 import "./index.css";
 
-// 导入并等待 i18n 模块加载（同步导入会阻塞，确保 i18n 先初始化）
-import "./i18n";
+// 渲染进程启动时把全局 fetch 替换为主进程 ipcFetch：
+// openai / anthropic SDK 等直接调 globalThis.fetch，不走 options.fetch，
+// 必须全局替换才能与「设置测试」一样经主进程出网，绕开 CORS。
+installIpcFetch();
 
-// 按 URL 参数分发窗口角色:
-//   ?view=preview&path=<文件路径>  -> 文件预览窗口
-//   其它                          -> 主应用窗口
-const params = new URLSearchParams(window.location.search);
-const view = params.get("view");
-const previewPath = params.get("path") ?? "";
-
-// 获取 root 元素
 const rootElement = document.getElementById("root");
 
 if (!rootElement) {
@@ -24,17 +18,12 @@ if (!rootElement) {
   );
 }
 
-// 创建 React root 并渲染应用
 const root = ReactDOM.createRoot(rootElement);
 
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      {view === "preview" ? (
-        <PreviewWindow filePath={previewPath} />
-      ) : (
-        <App />
-      )}
+      <App />
     </ErrorBoundary>
   </React.StrictMode>,
 );

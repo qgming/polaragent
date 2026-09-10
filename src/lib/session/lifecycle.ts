@@ -5,16 +5,13 @@ import {
 } from "@earendil-works/pi-agent-core";
 import {
   getRepo,
-  getScheduleRepo,
   sessionPromises,
 } from "./session-repo";
 import {
   pickBestMeta,
   type SessionMeta,
 } from "./meta-selection";
-import { isScheduleThreadId } from "@/lib/schedule/runtime-ids";
 import { readTitleIndex, rebuildTitleIndex } from "./title-index";
-import { getSessionProjectId } from "./preferences";
 import { deleteSessionFilesDir } from "./files";
 import { pMap, LOCAL_IO_CONCURRENCY } from "@/lib/concurrency";
 
@@ -25,13 +22,6 @@ export async function openOrCreateSession(
   sessionId: string,
 ): Promise<Session> {
   return openOrCreateSessionImpl(sessionId, getRepo);
-}
-
-/** 定时任务后台会话版：打开/创建 schedule 会话（存于 schedule/conversations 下的独立 repo）。 */
-export async function openOrCreateScheduleSession(
-  sessionId: string,
-): Promise<Session> {
-  return openOrCreateSessionImpl(sessionId, getScheduleRepo, "schedule::");
 }
 
 async function openOrCreateSessionImpl(
@@ -63,11 +53,11 @@ async function openOrCreateSessionImpl(
 }
 
 export async function listSessions(): Promise<
-  Array<{ id: string; createdAt: number; path: string; title?: string; updatedAt?: number; projectId?: string }>
+  Array<{ id: string; createdAt: number; path: string; title?: string; updatedAt?: number }>
 > {
   const repo = await getRepo();
   const metas = (await repo.list(undefined, BACKGROUND_CONTEXT).catch(() => [])).filter(
-    (meta) => !isScheduleThreadId(meta.id) && !isSubagentSessionId(meta.id),
+    (meta) => !isSubagentSessionId(meta.id),
   );
   const groups = new Map<string, SessionMeta[]>();
   for (const meta of metas) {
@@ -85,17 +75,14 @@ export async function listSessions(): Promise<
       const cached = index[best.id];
       let title: string | undefined;
       let updatedAt: number | undefined;
-      let projectId: string | undefined;
       if (cached) {
         title = cached.title;
         updatedAt = cached.updatedAt;
-        projectId = cached.projectId;
       } else {
         indexMissing = true;
         title = await readTitleFromSessions(repo, group);
-        projectId = await getSessionProjectId(best.id);
       }
-      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt, projectId };
+      return { id: best.id, createdAt: best.createdAt, path: best.path, title, updatedAt };
     },
     { concurrency: LOCAL_IO_CONCURRENCY },
   );
@@ -106,7 +93,6 @@ export async function listSessions(): Promise<
         id: item.id,
         title: item.title || "新对话",
         updatedAt: item.createdAt || 0,
-        projectId: item.projectId,
       })),
     );
   }
@@ -153,10 +139,6 @@ async function setSessionTitleImpl(
 
 export async function deleteSession(sessionId: string): Promise<void> {
   return deleteSessionImpl(sessionId, getRepo, "", { includeSubagents: true });
-}
-
-export async function deleteScheduleSession(sessionId: string): Promise<void> {
-  return deleteSessionImpl(sessionId, getScheduleRepo, "schedule::");
 }
 
 async function deleteSessionImpl(

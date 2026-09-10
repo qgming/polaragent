@@ -87,8 +87,6 @@ jobs:
             release/*.deb
             release/*.rpm
             release/*.tar.gz
-            release/*.blockmap
-            release/latest*.yml
           if-no-files-found: error
 
   release:
@@ -132,6 +130,4 @@ jobs:
             artifacts/**/*.deb
             artifacts/**/*.rpm
             artifacts/**/*.tar.gz
-            artifacts/**/*.blockmap
-            artifacts/**/latest*.yml
           fail_on_unmatched_files: true

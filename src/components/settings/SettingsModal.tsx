@@ -2,17 +2,7 @@
 // src/components/settings/SettingsModal.tsx
 
 import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import {
-  Brain,
-  FileText,
-  Globe,
-  Info,
-  Monitor,
-  Search,
-  Settings2,
-  Sparkles,
-} from "lucide-react";
+import { FileText, Info, Search, Settings2, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { initializeAiRuntime } from "@/lib/app-init";
@@ -26,46 +16,34 @@ import {
 } from "@/components/ui/dialog";
 import { GeneralPanel } from "./panels/GeneralPanel";
 import { ModelsPanel } from "./panels/ModelsPanel";
-import { WebSearchPanel } from "./WebSearchPanel";
-import { MemoryPanel } from "./MemoryPanel";
 import { AgentsMdPanel } from "./AgentsMdPanel";
-import { AutomationPanel } from "./panels/AutomationPanel";
 import { AboutPanel } from "./AboutPanel";
 
-type NavItem = { id: SettingsSection; icon: LucideIcon; labelKey: string; keywords: string };
+type NavItem = { id: SettingsSection; icon: LucideIcon; label: string; keywords: string };
 
-const navGroups: Array<{ titleKey: string; items: NavItem[] }> = [
+const navGroups: Array<{ title: string; items: NavItem[] }> = [
   {
-    titleKey: "settings:nav.groupGeneral",
+    title: "基础",
     items: [
-      { id: "general", icon: Settings2, labelKey: "settings:nav.general", keywords: "general 通用 语言 主题 窗口 数据 language theme window" },
-      { id: "models", icon: Sparkles, labelKey: "settings:nav.models", keywords: "model 模型 图片 音频 嵌入 image audio embedding provider" },
+      { id: "general", icon: Settings2, label: "通用", keywords: "general 通用 主题 窗口 数据 theme window" },
+      { id: "models", icon: Sparkles, label: "模型", keywords: "model 模型 provider 供应商" },
     ],
   },
   {
-    titleKey: "settings:nav.groupCapability",
+    title: "Agent",
     items: [
-      { id: "webSearch", icon: Globe, labelKey: "settings:nav.webSearch", keywords: "search 搜索 网络 tavily exa brave" },
-      { id: "memory", icon: Brain, labelKey: "settings:nav.memory", keywords: "memory 记忆 全局" },
-      { id: "personal", icon: FileText, labelKey: "settings:nav.personal", keywords: "personal 个性化 agents.md 指令 prompt 系统提示" },
+      { id: "personal", icon: FileText, label: "个性化", keywords: "personal 个性化 agents.md 指令 prompt 系统提示" },
     ],
   },
   {
-    titleKey: "settings:nav.groupAutomation",
+    title: "其它",
     items: [
-      { id: "automation", icon: Monitor, labelKey: "settings:nav.automation", keywords: "automation 自动化 computer browser 浏览器 桌面" },
-    ],
-  },
-  {
-    titleKey: "settings:nav.groupAbout",
-    items: [
-      { id: "about", icon: Info, labelKey: "settings:nav.about", keywords: "about 关于 更新 version update" },
+      { id: "about", icon: Info, label: "关于", keywords: "about 关于 version 版本" },
     ],
   },
 ];
 
 export function SettingsModal() {
-  const { t } = useTranslation();
   const open = useSettingsUiStore((s) => s.settingsOpen);
   const setOpen = useSettingsUiStore((s) => s.setSettingsOpen);
   const activeSection = useSettingsUiStore((s) => s.activeSection);
@@ -89,11 +67,11 @@ export function SettingsModal() {
         items: group.items.filter(
           (item) =>
             item.keywords.toLowerCase().includes(q) ||
-            t(item.labelKey).toLowerCase().includes(q),
+            item.label.toLowerCase().includes(q),
         ),
       }))
       .filter((group) => group.items.length > 0);
-  }, [query, t]);
+  }, [query]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -101,14 +79,14 @@ export function SettingsModal() {
         className="h-[min(700px,calc(100vh-2.5rem))] w-[min(880px,calc(100vw-2.5rem))] max-w-none overflow-hidden rounded-2xl border-border/60 bg-background p-0 shadow-2xl sm:max-w-none"
         aria-describedby={undefined}
       >
-        <DialogTitle className="sr-only">{t("settings:nav.title", "设置")}</DialogTitle>
+        <DialogTitle className="sr-only">设置</DialogTitle>
 
         <div className="grid min-h-0 grid-cols-[210px_minmax(0,1fr)]">
           {/* 左侧导航 */}
           <aside className="flex min-h-0 flex-col border-r border-border/40 bg-[#f8f7f5] dark:bg-muted/20">
             <div className="px-5 pt-6 pb-4">
               <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                {t("settings:nav.title", "设置")}
+                设置
               </h2>
               <div className="relative mt-4">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/70" />
@@ -116,7 +94,7 @@ export function SettingsModal() {
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t("settings:nav.searchPlaceholder", "搜索设置")}
+                  placeholder="搜索设置"
                   className="h-9 w-full rounded-xl border border-border/50 bg-background pl-9 pr-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring/50 focus-visible:ring-[3px] focus-visible:ring-ring/15"
                 />
               </div>
@@ -124,9 +102,9 @@ export function SettingsModal() {
 
             <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
               {filteredGroups.map((group, gi) => (
-                <div key={group.titleKey} className={gi > 0 ? "mt-5" : undefined}>
+                <div key={group.title} className={gi > 0 ? "mt-5" : undefined}>
                   <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wide text-muted-foreground/60">
-                    {t(group.titleKey)}
+                    {group.title}
                   </p>
                   <div className="space-y-0.5">
                     {group.items.map((item) => {
@@ -144,7 +122,7 @@ export function SettingsModal() {
                           )}
                         >
                           <Icon className="size-4 shrink-0" />
-                          <span className="truncate">{t(item.labelKey)}</span>
+                          <span className="truncate">{item.label}</span>
                         </button>
                       );
                     })}
@@ -152,9 +130,7 @@ export function SettingsModal() {
                 </div>
               ))}
               {filteredGroups.length === 0 ? (
-                <p className="px-3 py-6 text-xs text-muted-foreground/60">
-                  {t("settings:nav.noResults", "无匹配项")}
-                </p>
+                <p className="px-3 py-6 text-xs text-muted-foreground/60">无匹配项</p>
               ) : null}
             </nav>
           </aside>
@@ -188,16 +164,7 @@ export function SettingsModal() {
                   }}
                 />
               ) : null}
-              {activeSection === "webSearch" ? (
-                <WebSearchPanel settings={settings} onUpdate={updateSettings} />
-              ) : null}
-              {activeSection === "memory" ? (
-                <MemoryPanel settings={settings} onUpdate={updateSettings} />
-              ) : null}
               {activeSection === "personal" ? <AgentsMdPanel /> : null}
-              {activeSection === "automation" ? (
-                <AutomationPanel settings={settings} onUpdate={updateSettings} />
-              ) : null}
               {activeSection === "about" ? <AboutPanel /> : null}
             </div>
           </main>

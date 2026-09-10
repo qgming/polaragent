@@ -23,31 +23,12 @@ function classifyAppUi(url: string, devServerUrl?: string | null): AppUiKind {
   return "other";
 }
 
-// 组装 CSP 字符串。dev 需放行 HMR 的 ws/http，以及 Vite React Refresh 的内联 preamble。
-function buildCsp(options: { mode: "dev" | "prod" }): string {
-  const connect = ["'self'"];
-  const script = ["'self'"];
-  if (options.mode === "dev") {
-    connect.push("ws:", "http://127.0.0.1:1420", "http://localhost:1420");
-    // @vitejs/plugin-react 注入 inline preamble；不加会导致 dev 白屏
-    script.push("'unsafe-inline'");
-  }
-  const directives = [
-    "default-src 'self'",
-    `script-src ${script.join(" ")}`,
-    // Tailwind / 内联样式 + 外链字体（用户资料渲染）
-    "style-src 'self' 'unsafe-inline' https:",
-    "img-src 'self' data: blob: https:",
-    "font-src 'self' data: https:",
-    "media-src 'self' blob: data:",
-    `connect-src ${connect.join(" ")}`,
-    "worker-src 'self' blob:",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ];
-  return directives.join("; ");
+// 组装 CSP 字符串。
+// PolarAgent 的模型调用（pi-ai / llm-call）经主进程 net.fetch 出网，
+// 用户明确要求完全放开渲染进程 CSP，避免任何 connect-src 误伤。
+// 保留权限白名单与导航/webview 防护；CSP 头不再注入。
+function buildCsp(_options: { mode: "dev" | "prod" }): string {
+  return "";
 }
 
 // 权限决策：默认 false
@@ -71,19 +52,12 @@ function isAllowedAppNavigation(url: string, devServerUrl?: string | null): bool
   return kind === "dev" || kind === "prod";
 }
 
-// 安装默认会话上的 CSP / 权限 / webview 防护
+// 安装默认会话上的权限 / webview 防护（不再注入 CSP）
 function installSessionSecurity(session: Session, options?: { devServerUrl?: string | null }) {
-  const devServerUrl = options?.devServerUrl ?? process.env.VITE_DEV_SERVER_URL ?? null;
-  const devCsp = buildCsp({ mode: "dev" });
-  const prodCsp = buildCsp({ mode: "prod" });
-
-  session.webRequest.onHeadersReceived((details, callback) => {
-    const kind = classifyAppUi(details.url, devServerUrl);
-    const responseHeaders = { ...details.responseHeaders };
-    if (kind === "dev" || kind === "prod") {
-      responseHeaders["Content-Security-Policy"] = [kind === "dev" ? devCsp : prodCsp];
-    }
-    callback({ responseHeaders });
+  // CSP 已按产品要求完全移除；保留 onHeadersReceived 空实现以免依赖方假设钩子存在。
+  void options;
+  session.webRequest.onHeadersReceived((_details, callback) => {
+    callback({});
   });
 
   session.setPermissionRequestHandler((_wc, permission, callback) => {

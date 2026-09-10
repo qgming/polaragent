@@ -7,10 +7,7 @@ import { create } from "zustand";
 export type SettingsSection =
   | "general"
   | "models"
-  | "webSearch"
-  | "memory"
   | "personal"
-  | "automation"
   | "about";
 
 interface SettingsUiState {

@@ -1,8 +1,18 @@
+// 对话消息模型 —— 对齐 assistant-ui MessagePart
+// src/lib/chat/types.ts
+//
+// 旧 Segment 模型废弃。消息 content 直接使用 assistant-ui 兼容的 parts，
+// ExternalStoreRuntime 几乎零转换开销。
+
 import type { ToolPermissionMode } from "@/types/permissions";
 
 export type ChatRole = "assistant" | "user";
 
-export type ChatMessageStatus = "complete" | "streaming" | "error";
+export type ChatMessageStatus =
+  | "complete"
+  | "running"
+  | "incomplete"
+  | "error";
 
 export interface ChatAttachment {
   path: string;
@@ -11,84 +21,76 @@ export interface ChatAttachment {
   duration?: number;
 }
 
-export interface ChatSkillRef {
-  id: string;
-  name: string;
+/** 文本片段 */
+export interface TextPart {
+  type: "text";
+  text: string;
 }
 
-/**
- * Segment 基础接口
- * 所有消息片段的共同属性
- */
-interface SegmentBase {
-  kind: string;
-  /** 创建时间戳（可选，用于记录片段生成时间） */
-  createdAt?: number;
+/** 思考/推理片段 */
+export interface ReasoningPart {
+  type: "reasoning";
+  text: string;
 }
 
-/**
- * 消息片段类型
- * 支持文本、思考、引导、工具调用等多种类型
- */
-export type Segment =
-  | (SegmentBase & { kind: "text"; text: string })
-  | (SegmentBase & { kind: "thinking"; text: string })
-  | (SegmentBase & { kind: "guidance"; text: string })
-  | (SegmentBase & {
-      kind: "widget";
-      widgetId: string;
-      title: string;
-      html: string;
-      updateMode: "replace" | "patch";
-      widgetPath?: string | null;
-      data?: Record<string, unknown> | null;
-    })
-  | (SegmentBase & {
-      kind: "tool";
-      toolCallId: string;
-      toolName: string;
-      label: string;
-      status: "running" | "done" | "error";
-      resultText?: string;
-      todos?: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
-      details?: Record<string, unknown>;
-    });
+/** 工具调用片段（对齐 assistant-ui ToolCallMessagePart） */
+export interface ToolCallPart {
+  type: "tool-call";
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  argsText: string;
+  result?: unknown;
+  isError?: boolean;
+  /** 展示用中文标签 */
+  label?: string;
+  /** 附加展示信息 */
+  polar?: {
+    status: "running" | "complete" | "error";
+    resultText?: string;
+    details?: Record<string, unknown>;
+  };
+}
+
+/** 过程引导片段 */
+export interface GuidancePart {
+  type: "data-polar-guidance";
+  data: {
+    text: string;
+    createdAt?: number;
+  };
+}
+
+export type ChatMessagePart =
+  | TextPart
+  | ReasoningPart
+  | ToolCallPart
+  | GuidancePart;
+
+export interface ChatMessageMetadata {
+  model?: string;
+  tokenCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  contextTokens?: number;
+  providerCacheHit?: boolean;
+  error?: string;
+  retryAttempt?: number;
+}
 
 export interface ChatMessage {
   id: string;
   role: ChatRole;
-  content: string;
   createdAt: number;
   status: ChatMessageStatus;
-  model?: string;
-  tokenCount?: number;
-  // 输入 token 数（累加所有轮次）
-  inputTokens?: number;
-  // 输出 token 数（累加所有轮次）
-  outputTokens?: number;
-  // 缓存写入 token 数（累加所有轮次）
-  cacheWriteTokens?: number;
-  // 缓存读取 token 数（累加所有轮次）
-  cacheReadTokens?: number;
-  // 当前上下文 token 数（官方口径：最后一轮 usage 的 totalTokens || 四字段和）
-  contextTokens?: number;
+  /** assistant-ui 兼容的有序内容 parts */
+  content: ChatMessagePart[];
   attachments?: ChatAttachment[];
-  skillRefs?: ChatSkillRef[];
-  segments?: Segment[];
-  // Provider 缓存命中标记（0.80 after_provider_response 事件提取）
-  providerCacheHit?: boolean;
-  // 错误信息（不影响 content 显示）
-  error?: string;
-  // 当前重试次数（0 = 未重试，1-5 = 正在重试）
-  retryAttempt?: number;
+  metadata?: ChatMessageMetadata;
 }
 
-/**
- * 助手消息完成时由完成回调传入的用量元数据。
- * 普通聊天（chat-store / ChatPage / HomePage / goal-supervisor）共用；
- * 新增字段必须在此统一添加，
- * 避免各调用点的内联类型漂移导致字段被静默丢弃。
- */
 export interface MessageFinishMetadata {
   model?: string;
   tokenCount?: number;
@@ -97,7 +99,7 @@ export interface MessageFinishMetadata {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   contextTokens?: number;
-  segments?: Segment[];
+  content?: ChatMessagePart[];
 }
 
 export interface ChatThread {
@@ -107,9 +109,22 @@ export interface ChatThread {
   messages: ChatMessage[];
   updatedAt: number;
   permissionMode: ToolPermissionMode;
-  knowledgeBaseIds?: string[]; // 当前会话选中的知识库 ID 列表
+  /** 该会话的工作目录（工具执行根目录） */
+  workingDir?: string;
   loaded?: boolean;
-  // 归属的项目 ID（空=普通对话，不属于任何项目）
-  projectId?: string;
   autoTitled?: boolean;
+}
+
+/** 从 parts 拼出纯文本（用于标题生成、剪贴板等） */
+export function partsToPlainText(parts: ChatMessagePart[]): string {
+  const chunks: string[] = [];
+  for (const part of parts) {
+    if (part.type === "text") chunks.push(part.text);
+  }
+  return chunks.join("\n");
+}
+
+/** 是否包含可见正文 */
+export function hasVisibleText(parts: ChatMessagePart[]): boolean {
+  return parts.some((p) => p.type === "text" && p.text.trim().length > 0);
 }

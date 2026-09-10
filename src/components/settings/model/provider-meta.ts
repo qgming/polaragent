@@ -1,11 +1,10 @@
 // 供应商接口格式的共享元数据与工具
 import type { ProviderConfig } from "@/types/config";
 
-// 三种接口格式的展示名
+// 两种接口格式的展示名
 export const PROVIDER_TYPE_LABELS: Record<ProviderConfig["type"], string> = {
   "openai-completions": "OpenAI Chat Completions",
   "openai-responses": "OpenAI Responses",
-  "anthropic-messages": "Anthropic Messages",
 };
 
 export const PROVIDER_TYPE_OPTIONS = (

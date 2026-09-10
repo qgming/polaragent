@@ -1,6 +1,5 @@
 // 单个模型服务卡片：可展开编辑 baseURL/apiKey/格式，并增删模型
 import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 import {
   AlertCircle,
   Bot,
@@ -35,7 +34,6 @@ export function ProviderCard({
   onUpdate: (updates: Partial<ProviderConfig>) => Promise<void>;
   onRemove: () => void;
 }) {
-  const { t } = useTranslation("settings");
   const [expanded, setExpanded] = useState(false);
   const [baseURL, setBaseURL] = useState(provider.config.baseURL);
   const [apiKey, setApiKey] = useState(provider.config.apiKey);
@@ -86,7 +84,7 @@ export function ProviderCard({
       }
       savedTimerRef.current = window.setTimeout(() => setSaveState("idle"), 1200);
     } catch (error) {
-      console.error(t("models.saveConnectionFailed"), error);
+      console.error("保存模型服务连接配置失败:", error);
       setSaveState("error");
     }
   };
@@ -101,9 +99,9 @@ export function ProviderCard({
       });
       return true;
     } catch (error) {
-      console.error(t("models.saveModelsFailed"), error);
+      console.error("保存模型列表失败:", error);
       setFetchState("error");
-      setFetchMessage(t("models.saveModelsFailedRetry"));
+      setFetchMessage("保存模型列表失败，请重试。");
       return false;
     }
   };
@@ -128,13 +126,13 @@ export function ProviderCard({
 
   const setType = (type: ProviderConfig["type"]) => {
     void onUpdate({ type }).catch((error) => {
-      console.error(t("models.saveApiFormatFailed"), error);
+      console.error("保存接口格式失败:", error);
     });
   };
 
   const fetchModels = async () => {
     setFetchState("loading");
-    setFetchMessage(t("models.fetchingModels"));
+    setFetchMessage("正在读取模型列表...");
     try {
       const remote = await listRemoteModels(baseURL.trim(), apiKey.trim());
       const existing = new Set(provider.models.map((m) => m.id));
@@ -154,15 +152,13 @@ export function ProviderCard({
       setFetchState("idle");
       setFetchMessage(
         remote.length > 0
-          ? t("models.mergedRemoteModels", { count: remote.length })
-          : t("models.noRemoteModels"),
+          ? `已合并 ${remote.length} 个云端模型。`
+          : "接口未返回模型，请手动添加。",
       );
     } catch (error) {
       setFetchState("error");
       setFetchMessage(
-        t("models.fetchFailed", {
-          message: error instanceof Error ? error.message : t("models.unknownError"),
-        }),
+        `读取失败：${error instanceof Error ? error.message : "未知错误"}。请确认 Base URL 与 API Key。`,
       );
     }
   };
@@ -220,7 +216,7 @@ export function ProviderCard({
               {PROVIDER_TYPE_LABELS[provider.type]}
             </span>
             <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              {t("models.modelCount", { count: provider.models.length })}
+              {`${provider.models.length} 个模型`}
             </span>
           </span>
         </button>
@@ -241,7 +237,7 @@ export function ProviderCard({
                 className="h-11 w-full rounded-lg border border-input bg-background px-3 text-base outline-none focus:border-ring"
               />
             </Field>
-            <Field icon={Settings2} label={t("models.apiFormat")}>
+            <Field icon={Settings2} label={"接口格式"}>
               <SettingDropdown
                 value={provider.type}
                 options={PROVIDER_TYPE_OPTIONS}
@@ -273,7 +269,7 @@ export function ProviderCard({
                   <button
                     type="button"
                     onClick={() => setShowApiKey((value) => !value)}
-                    aria-label={showApiKey ? t("models.hideApiKey") : t("models.showApiKey")}
+                    aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     {showApiKey ? (
@@ -287,7 +283,7 @@ export function ProviderCard({
             </Field>
             {saveState === "error" ? (
               <p className="mt-2 text-xs text-destructive">
-                {t("models.saveFailedRetry")}
+                {"保存失败，请重试。"}
               </p>
             ) : null}
           </div>
@@ -297,7 +293,7 @@ export function ProviderCard({
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                 <Bot className="size-4" />
-                {t("knowledge.model")}
+                {"模型"}
               </span>
             </div>
 
@@ -311,7 +307,7 @@ export function ProviderCard({
                     setNewModel("");
                   }
                 }}
-                placeholder={t("models.addModelPlaceholder")}
+                placeholder={"手动输入模型名称，例如 deepseek-chat"}
                 className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-ring"
               />
               <Button
@@ -324,7 +320,7 @@ export function ProviderCard({
                 }}
               >
                 <Plus className="size-4" />
-                {t("common:add")}
+                {"添加"}
               </Button>
               <Button
                 variant="outline"
@@ -339,7 +335,7 @@ export function ProviderCard({
                 ) : (
                   <RefreshCw className="size-4" />
                 )}
-                {t("models.fetchRemote")}
+                {"云端获取"}
               </Button>
             </div>
 
@@ -360,7 +356,7 @@ export function ProviderCard({
               <div className="mt-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-muted-foreground">
-                    {t("models.addedModels")}
+                    {"已添加的模型"}
                   </span>
                   <Button
                     variant="outline"
@@ -375,7 +371,7 @@ export function ProviderCard({
                     ) : (
                       <Zap className="size-3.5" />
                     )}
-                    {t("models.testAll")}
+                    {"全部测试"}
                   </Button>
                 </div>
 
@@ -410,7 +406,7 @@ export function ProviderCard({
               </div>
             ) : (
               <p className="mt-3 text-xs text-muted-foreground">
-                {t("models.noModels")}
+                {"还没有模型，手动输入或点击「云端获取」。"}
               </p>
             )}
           </div>
@@ -419,13 +415,13 @@ export function ProviderCard({
           <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <div className="size-1.5 rounded-full bg-green-500/60" />
-              {t("models.autoSaved")}
+              {"修改已自动保存"}
             </div>
             <div className="flex items-center gap-3">
               {saveState === "error" ? (
                 <span className="flex items-center gap-1.5 text-xs text-destructive">
                   <AlertCircle className="size-3.5" />
-                  {t("models.saveFailedRetry")}
+                  {"保存失败，请重试。"}
                 </span>
               ) : null}
               <Button
@@ -441,7 +437,7 @@ export function ProviderCard({
                 ) : (
                   <Save className="size-4" />
                 )}
-                {t("common:save")}
+                {"保存"}
               </Button>
             </div>
           </div>

@@ -4,7 +4,6 @@
 // 用统一的非流式 HTTP 请求调用当前模型路由，并为轻量结构化任务提供：
 //   - openai-completions
 //   - openai-responses
-//   - anthropic-messages
 //
 // 设计目标：
 //   1. 始终走非流式请求
@@ -14,6 +13,7 @@
 
 import type { RoutedModelService } from "./model-router";
 import { MAX_RETRIES, RETRY_DELAYS, sleep } from "./retry";
+import { ipcFetch } from "@/lib/electron/electron-api";
 
 export interface LlmCallOptions {
   systemPrompt: string;
@@ -97,8 +97,6 @@ async function dispatchNonStreamingCall(
       return callOpenAiCompletions(service, options, requestId, signal);
     case "openai-responses":
       return callOpenAiResponses(service, options, requestId, signal);
-    case "anthropic-messages":
-      return callAnthropicMessages(service, options, requestId, signal);
     default:
       throw new Error(`不支持的轻量调用 provider 类型: ${service.provider.type}`);
   }
@@ -133,7 +131,7 @@ async function callOpenAiCompletions(
 
   const responseData = await postJsonLike({
     url: buildOpenAiCompletionsUrl(service.model.baseUrl),
-    headers: buildProviderHeaders(service, "openai"),
+    headers: buildProviderHeaders(service),
     payload,
     signal,
     requestId,
@@ -185,7 +183,7 @@ async function callOpenAiResponses(
 
   const responseData = await postJsonLike({
     url: buildOpenAiResponsesUrl(service.model.baseUrl),
-    headers: buildProviderHeaders(service, "openai"),
+    headers: buildProviderHeaders(service),
     payload,
     signal,
     requestId,
@@ -199,59 +197,6 @@ async function callOpenAiResponses(
   const result =
     extractOpenAiResponsesResult(responseData.parsed) ||
     extractOpenAiResponsesFromSse(responseData.sseEvents) ||
-    responseData.sseText ||
-    "";
-
-  logLlmDebug(`${requestId} result-text`, result);
-  return result;
-}
-
-async function callAnthropicMessages(
-  service: RoutedModelService,
-  options: LlmCallOptions,
-  requestId: string,
-  signal: AbortSignal,
-): Promise<string> {
-  const payload: Record<string, unknown> = {
-    model: service.model.id,
-    max_tokens: options.maxTokens ?? service.model.maxTokens ?? 1024,
-    system: options.systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: options.userPrompt,
-          },
-        ],
-      },
-    ],
-    stream: false,
-  };
-
-  if (options.temperature !== undefined) {
-    payload.temperature = options.temperature;
-  }
-
-  logLlmDebug(`${requestId} payload`, payload);
-
-  const responseData = await postJsonLike({
-    url: buildAnthropicMessagesUrl(service.model.baseUrl),
-    headers: buildProviderHeaders(service, "anthropic"),
-    payload,
-    signal,
-    requestId,
-  });
-
-  logLlmDebug(`${requestId} assistant-message`, responseData.parsed ?? null);
-  if (responseData.sseEvents.length > 0) {
-    logLlmDebug(`${requestId} sse-events`, responseData.sseEvents);
-  }
-
-  const result =
-    extractAnthropicMessagesResult(responseData.parsed) ||
-    extractAnthropicFromSse(responseData.sseEvents) ||
     responseData.sseText ||
     "";
 
@@ -276,7 +221,8 @@ interface JsonLikeResponse {
 }
 
 async function postJsonLike(params: PostJsonLikeParams): Promise<JsonLikeResponse> {
-  const response = await fetch(params.url, {
+  // 走主进程 IPC fetch，与设置页模型测试同路径
+  const response = await ipcFetch(params.url, {
     method: "POST",
     headers: params.headers,
     body: JSON.stringify(params.payload),
@@ -432,44 +378,16 @@ function extractOpenAiResponsesFromSse(events: unknown[]): string {
   return parts.join("");
 }
 
-function extractAnthropicMessagesResult(parsed: unknown): string {
+function extractGenericContentResult(parsed: unknown): string {
   if (!parsed || typeof parsed !== "object") return "";
 
   const record = parsed as Record<string, unknown>;
-  const contentText = extractAnthropicText(record.content);
+  const contentText = extractTextBlocks(record.content);
   if (contentText.trim()) {
     return contentText;
   }
 
   return extractTextByKeySearch(parsed, ["output_text", "text", "content"]);
-}
-
-function extractAnthropicFromSse(events: unknown[]): string {
-  const parts: string[] = [];
-
-  for (const event of events) {
-    if (!event || typeof event !== "object") continue;
-    const record = event as Record<string, unknown>;
-    const type = typeof record.type === "string" ? record.type : "";
-
-    if (type === "content_block_delta") {
-      const delta = record.delta && typeof record.delta === "object"
-        ? (record.delta as Record<string, unknown>)
-        : null;
-      const text = stringOrEmpty(delta?.text);
-      if (text.trim()) {
-        parts.push(text);
-      }
-      continue;
-    }
-
-    const fallback = extractAnthropicMessagesResult(record);
-    if (fallback.trim()) {
-      parts.push(fallback);
-    }
-  }
-
-  return parts.join("");
 }
 
 function extractOpenAiChoiceText(choice: unknown): string {
@@ -553,7 +471,7 @@ function extractOpenAiResponsesOutput(output: unknown): string {
   return parts.join("\n");
 }
 
-function extractAnthropicText(content: unknown): string {
+function extractTextBlocks(content: unknown): string {
   if (!Array.isArray(content)) return "";
 
   return content
@@ -624,7 +542,7 @@ function parseSsePayloads(rawText: string): { parsedEvents: unknown[]; text: str
       const text =
         extractOpenAiCompletionsResult(parsed) ||
         extractOpenAiResponsesResult(parsed) ||
-        extractAnthropicMessagesResult(parsed) ||
+        extractGenericContentResult(parsed) ||
         extractTextByKeySearch(parsed, ["delta", "output_text", "text", "content"]);
       if (text.trim()) {
         textParts.push(text);
@@ -643,7 +561,6 @@ function parseSsePayloads(rawText: string): { parsedEvents: unknown[]; text: str
 
 function buildProviderHeaders(
   service: RoutedModelService,
-  kind: "openai" | "anthropic",
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -657,15 +574,10 @@ function buildProviderHeaders(
   const host = `${service.provider.name} ${service.provider.baseURL} ${service.model.baseUrl} ${service.model.provider}`.toLowerCase();
   const isXiaomiStyle = host.includes("xiaomi") || host.includes("mimo");
 
-  if (kind === "anthropic") {
-    headers[isXiaomiStyle ? "api-key" : "x-api-key"] = apiKey;
-    headers["anthropic-version"] = "2023-06-01";
+  if (isXiaomiStyle) {
+    headers["api-key"] = apiKey;
   } else {
-    if (isXiaomiStyle) {
-      headers["api-key"] = apiKey;
-    } else {
-      headers.Authorization = `Bearer ${apiKey}`;
-    }
+    headers.Authorization = `Bearer ${apiKey}`;
   }
 
   if (service.model.headers) {
@@ -681,17 +593,6 @@ function buildOpenAiCompletionsUrl(baseUrl: string): string {
 
 function buildOpenAiResponsesUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/responses`;
-}
-
-function buildAnthropicMessagesUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, "");
-  if (trimmed.endsWith("/messages")) {
-    return trimmed;
-  }
-  if (/\/v\d+(?:beta\d+)?$/i.test(trimmed)) {
-    return `${trimmed}/messages`;
-  }
-  return `${trimmed}/v1/messages`;
 }
 
 function prefersMaxCompletionTokens(service: RoutedModelService): boolean {

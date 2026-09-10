@@ -1,12 +1,23 @@
 export type {
   ChatAttachment,
   ChatMessage,
+  ChatMessageMetadata,
+  ChatMessagePart,
   ChatMessageStatus,
   ChatRole,
-  ChatSkillRef,
   ChatThread,
+  GuidancePart,
   MessageFinishMetadata,
-  Segment,
+  ReasoningPart,
+  TextPart,
+  ToolCallPart,
 } from "./types";
 
-export { buildSkillRefs } from "./skill-refs";
+export { hasVisibleText, partsToPlainText } from "./types";
+export { extractMessageParts, type ToolResultSummary } from "./parts";
+export {
+  convertLegacyChatMessage,
+  convertLegacyChatMessages,
+  convertLegacySegments,
+  isLegacyChatMessage,
+} from "./legacy-convert";

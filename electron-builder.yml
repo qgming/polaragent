@@ -11,17 +11,6 @@ files:
   - dist-electron/**/*
   - package.json
 
-extraResources:
-  - from: resources
-    to: resources
-    filter:
-      - "**/*"
-
-publish:
-  provider: github
-  owner: qgming
-  repo: polaragent
-
 win:
   target:
     - target: nsis

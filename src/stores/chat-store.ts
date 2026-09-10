@@ -1,28 +1,14 @@
 import { useMemo } from "react";
 import { create } from "zustand";
 import { useConversationStore } from "./conversation-store";
-import { useTaskMonitorStore } from "./task-monitor-store";
-import { useProjectsStore } from "./project/projects-store";
 import {
   getSessionWorkingDir,
   getSessionToolPermissionMode,
-  setSessionProjectId,
   setSessionToolPermissionMode,
   setSessionWorkingDir,
   openOrCreateSession,
 } from "@/lib/session/personal";
-import { readGoalState } from "@/lib/session/goal";
-import { useGoalStore } from "@/stores/goal-store";
-import {
-  getSessionKnowledgeBaseIds,
-  setSessionKnowledgeBaseIds,
-} from "@/lib/session/preferences";
-import { loadThreadMonitor } from "@/lib/session/message-parser";
 import { generateConversationTitle } from "@/ai/title-generator";
-import {
-  captureMemoriesFromExchange,
-  clearThreadCaptureTokens,
-} from "@/ai/memory-capture";
 import {
   DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
@@ -41,62 +27,32 @@ import { useConfigStore } from "@/stores/config-store";
 import type {
   ChatAttachment,
   ChatMessage,
-  ChatSkillRef,
+  ChatMessagePart,
   ChatThread,
   MessageFinishMetadata,
-  Segment,
+} from "@/lib/chat";
+import {
+  hasVisibleText,
+  partsToPlainText,
+  convertLegacyChatMessages,
 } from "@/lib/chat";
 import {
   DEFAULT_TOOL_PERMISSION_MODE,
   type ToolPermissionMode,
 } from "@/types/permissions";
 
-// 切到某对话时从会话 jsonl 恢复右侧任务监控（工作目录 + 待办 + 产物），
-// 使重启/切回后侧边栏与上次保持一致。仅在运行期尚无对应数据时回填，不覆盖。
-async function restoreThreadMonitor(threadId: string): Promise<void> {
-  // 在任何 await 之前捕获线程对象，避免快速切换线程后读到 store 中已变更的 threads
-  const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
-  // 工作目录：仅当任务监控里尚无该线程的工作目录时回填
-  const existing = useTaskMonitorStore.getState().getMonitor(threadId).workingDir;
-  if (!existing) {
-    const dir = await getSessionWorkingDir(threadId);
-    if (dir) {
-      useTaskMonitorStore.getState().setWorkingDir(threadId, dir);
-    } else {
-      // 会话自身无工作目录时，回退到项目共享目录
-      if (thread?.projectId) {
-        const projectConfig = useProjectsStore.getState().projects.find((p) => p.id === thread.projectId);
-        if (projectConfig?.workingDir) {
-          useTaskMonitorStore.getState().setWorkingDir(threadId, projectConfig.workingDir);
-        }
-      }
-    }
+// 切到某对话时从会话 jsonl 恢复工作目录，使重启/切回后仍沿用上次的目录。
+async function restoreThreadWorkingDir(threadId: string): Promise<void> {
+  if (useChatStore.getState().workingDirs[threadId]) return;
+  const dir = await getSessionWorkingDir(threadId);
+  if (dir) {
+    useChatStore.getState().setThreadWorkingDir(threadId, dir, { persist: false });
   }
-  // 待办 + 产物：从 jsonl 回读重建后灌入（hydrateThread 内部会跳过已有数据的会话）
-  const snapshot = await loadThreadMonitor(threadId);
-  useTaskMonitorStore.getState().hydrateThread(threadId, snapshot);
 }
 
 async function restoreThreadPermissionMode(threadId: string): Promise<void> {
   const mode = await getSessionToolPermissionMode(threadId);
   useChatStore.getState().setThreadPermissionMode(threadId, mode, {
-    persist: false,
-  });
-}
-
-// 切到某对话时从会话 jsonl 恢复目标状态（仅在内存中尚无时回填）
-async function restoreGoalState(threadId: string): Promise<void> {
-  const goal = useGoalStore.getState().getGoal(threadId);
-  if (goal) return; // 内存中已有，不覆盖
-  const state = await readGoalState(threadId);
-  if (state) {
-    useGoalStore.getState().hydrateGoal(threadId, state);
-  }
-}
-
-async function restoreThreadKnowledgeBaseIds(threadId: string): Promise<void> {
-  const ids = await getSessionKnowledgeBaseIds(threadId);
-  useChatStore.getState().setThreadKnowledgeBaseIds(threadId, ids, {
     persist: false,
   });
 }
@@ -220,7 +176,7 @@ async function checkAndCompactOnOpen(threadId: string): Promise<void> {
   }
 }
 
-export type { ChatAttachment, ChatMessage, ChatThread, Segment } from "@/lib/chat";
+export type { ChatAttachment, ChatMessage, ChatMessagePart, ChatThread } from "@/lib/chat";
 
 interface ExchangeStart {
   assistantId: string;
@@ -238,29 +194,24 @@ interface ChatState {
   runningThreadIds: string[];
   workingDir: string; // 当前工作目录（新会话默认沿用）
   setWorkingDir: (dir: string) => void;
-  appendAssistantDelta: (
+  // 按会话记录的工作目录（工具执行根目录）；缺失时回退到全局 workingDir
+  workingDirs: Record<string, string>;
+  setThreadWorkingDir: (
     threadId: string,
-    messageId: string,
-    delta: string,
+    dir: string,
+    options?: { persist?: boolean },
   ) => void;
-  // 流式过程中实时更新助手消息的有序段（思考/工具/正文按真实顺序）
-  updateAssistantSegments: (
+  // 流式合批：用最新有序 parts 整体替换助手消息 content（单次 set，单次重渲染）
+  applyStreamingParts: (
     threadId: string,
     messageId: string,
-    segments: Segment[],
-  ) => void;
-  // 流式合批：一次性追加文本增量 + 替换 segments（单次 set，单次重渲染）
-  applyStreamingUpdate: (
-    threadId: string,
-    messageId: string,
-    update: { appendDelta?: string; segments?: Segment[] },
+    parts: ChatMessagePart[],
   ) => void;
   clearActiveThread: () => void;
   clearThread: (threadId: string) => void;
   createThread: (
     initialText?: string,
     permissionMode?: ToolPermissionMode,
-    projectId?: string,
   ) => string;
   deleteThread: (threadId: string) => void;
   failAssistant: (threadId: string, messageId: string, error: string) => void;
@@ -280,16 +231,14 @@ interface ChatState {
     mode: ToolPermissionMode,
     options?: { persist?: boolean },
   ) => void;
-  setThreadKnowledgeBaseIds: (
-    threadId: string,
-    ids: string[],
-    options?: { persist?: boolean },
-  ) => void;
   startExchange: (
     userText: string,
     attachments?: ChatAttachment[],
-    skillRefs?: ChatSkillRef[],
   ) => ExchangeStart;
+  /** 从 messageId 起截断其后消息（不含该条），用于重生成/编辑 */
+  truncateFrom: (threadId: string, messageId: string) => void;
+  /** 在末尾追加 running 占位助手消息，返回其 id */
+  appendAssistantPlaceholder: (threadId: string) => string;
   // 标记某会话为运行中（开始响应时调用）
   markRunning: (threadId: string) => void;
   // 结束某会话的运行态（完成/出错/手动停止时调用）
@@ -315,32 +264,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
   runningThreadIds: [],
   threads: [],
   workingDir: "",
+  workingDirs: {},
 
   setWorkingDir: (dir) => {
     set({ workingDir: dir });
   },
 
-  appendAssistantDelta: (threadId, messageId, delta) => {
-    set((state) => ({
-      threads: state.threads.map((thread) =>
-        thread.id === threadId
-          ? {
-              ...thread,
-              messages: thread.messages.map((message) =>
-                message.id === messageId
-                  ? { ...message, content: message.content + delta }
-                  : message,
-              ),
-              updatedAt: Date.now(),
-            }
-          : thread,
-      ),
-    }));
+  setThreadWorkingDir: (threadId, dir, options) => {
+    set((state) => {
+      const workingDirs = { ...state.workingDirs };
+      if (dir.trim()) workingDirs[threadId] = dir;
+      else delete workingDirs[threadId];
+      return {
+        workingDirs,
+        threads: state.threads.map((thread) =>
+          thread.id === threadId ? { ...thread, workingDir: dir } : thread,
+        ),
+      };
+    });
+    if (options?.persist !== false && dir.trim()) {
+      void setSessionWorkingDir(threadId, dir);
+    }
   },
 
-  // 流式过程中实时把当前已聚合的有序段写入助手消息，
-  // 让 UI 在生成期间即按思考/工具/正文真实顺序渲染（而非等结束才补）。
-  updateAssistantSegments: (threadId, messageId, segments) => {
+  // 流式过程中把最新有序 parts 整体写入助手消息，
+  // 让 UI 在生成期间即按思考/工具/正文真实顺序渲染。
+  applyStreamingParts: (threadId, messageId, parts) => {
     set((state) => ({
       threads: state.threads.map((thread) =>
         thread.id === threadId
@@ -348,35 +297,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...thread,
               messages: thread.messages.map((message) =>
                 message.id === messageId
-                  ? { ...message, segments }
-                  : message,
-              ),
-            }
-          : thread,
-      ),
-    }));
-  },
-
-  // 流式合批：一次性追加文本增量 + 替换 segments，合并为单次 set（单次重渲染）。
-  applyStreamingUpdate: (threadId, messageId, update) => {
-    set((state) => ({
-      threads: state.threads.map((thread) =>
-        thread.id === threadId
-          ? {
-              ...thread,
-              messages: thread.messages.map((message) =>
-                message.id === messageId
-                  ? {
-                      ...message,
-                      content:
-                        update.appendDelta !== undefined
-                          ? message.content + update.appendDelta
-                          : message.content,
-                      segments:
-                        update.segments !== undefined
-                          ? update.segments
-                          : message.segments,
-                    }
+                  ? { ...message, content: parts }
                   : message,
               ),
             }
@@ -432,7 +353,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   createThread: (
     initialText?: string,
     permissionMode = DEFAULT_TOOL_PERMISSION_MODE,
-    projectId?: string,
   ) => {
     const id = `thread-${createId()}`;
     const trimmedInitialText = initialText?.trim();
@@ -440,7 +360,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ? {
           id: createId(),
           role: "user",
-          content: trimmedInitialText,
+          content: [{ type: "text", text: trimmedInitialText }],
           createdAt: Date.now(),
           status: "complete",
         }
@@ -453,9 +373,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: userMessage ? [userMessage] : [],
       updatedAt: Date.now(),
       permissionMode,
-      knowledgeBaseIds: [], // 初始化知识库 ID 列表
       loaded: true, // 新建会话，内存即权威，无需从磁盘回读
-      projectId, // 归属项目
     };
     set((state) => ({
       activeThreadId: id,
@@ -466,18 +384,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 创建会话文件
     void useConversationStore
       .getState()
-      .createNewConversation(id, thread.title, projectId);
+      .createNewConversation(id, thread.title);
     void setSessionToolPermissionMode(id, thread.permissionMode);
-    // 写入项目归属
-    if (projectId) {
-      void setSessionProjectId(id, projectId);
-      // 项目会话：从项目配置读取共享工作目录，初始化到 task-monitor-store
-      const projectConfig = useProjectsStore.getState().projects.find((p) => p.id === projectId);
-      if (projectConfig?.workingDir) {
-        useTaskMonitorStore.getState().setWorkingDir(id, projectConfig.workingDir);
-        void setSessionWorkingDir(id, projectConfig.workingDir);
-      }
-    }
     if (userMessage) {
       void useConversationStore
         .getState()
@@ -503,8 +411,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     });
 
-    // 清理该线程的自动记忆捕获 token 标记，避免 Map 随会话删除只增不减
-    clearThreadCaptureTokens(threadId);
+    // 清理该线程的运行态
     // 同步删除磁盘上的 JSONL 文件与索引条目，避免重启后重新出现
     void useConversationStore.getState().deleteConversation(threadId);
   },
@@ -524,14 +431,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ? (() => {
                         // content 为空时把完整提示写入 error；有内容时只保留原始错误，不覆盖 content
                         const errorText =
-                          message.content.trim().length === 0
+                          !hasVisibleText(message.content)
                             ? `这次响应没有完成：${error || "请求已中断"}`
                             : error || "请求已中断";
                         failedMessage = {
                           ...message,
-                          error: errorText,
                           status: "error" as const,
-                          retryAttempt: undefined, // 清除重试状态
+                          metadata: {
+                            ...message.metadata,
+                            error: errorText,
+                            retryAttempt: undefined, // 清除重试状态
+                          },
                         };
                         return failedMessage;
                       })()
@@ -548,7 +458,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 只要有 content 或 error 就持久化，保证用户消息与上下文不丢。
     if (
       failedMessage &&
-      (failedMessage.content.trim().length > 0 || failedMessage.error)
+      (hasVisibleText(failedMessage.content) || failedMessage.metadata?.error)
     ) {
       void useConversationStore
         .getState()
@@ -564,7 +474,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...thread,
               messages: thread.messages.map((message) =>
                 message.id === messageId
-                  ? { ...message, retryAttempt: attempt, error: undefined }
+                  ? {
+                      ...message,
+                      metadata: {
+                        ...message.metadata,
+                        retryAttempt: attempt,
+                        error: undefined,
+                      },
+                    }
                   : message,
               ),
             }
@@ -573,14 +490,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  finishAssistant: (threadId, messageId, finalContent, metadata) => {
-    const sourceThread = get().threads.find((thread) => thread.id === threadId);
-    const lastUserMessage = sourceThread
-      ? [...sourceThread.messages].reverse().find((message) => message.role === "user")
-      : undefined;
-    const workingDir =
-      useTaskMonitorStore.getState().getMonitor(threadId).workingDir ||
-      get().workingDir;
+  finishAssistant: (threadId, messageId, _finalContent, metadata) => {
     let completedMessage: ChatMessage | undefined;
 
     set((state) => ({
@@ -595,16 +505,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ? (() => {
                         completedMessage = {
                           ...message,
-                          content: finalContent || message.content,
-                          model: metadata?.model ?? message.model,
+                          // metadata.content 为最终有序 parts；未提供时保留流式期间已写入的 content
+                          content: metadata?.content ?? message.content,
                           status: "complete",
-                          tokenCount: metadata?.tokenCount,
-                          inputTokens: metadata?.inputTokens,
-                          outputTokens: metadata?.outputTokens,
-                          cacheReadTokens: metadata?.cacheReadTokens,
-                          cacheWriteTokens: metadata?.cacheWriteTokens,
-                          contextTokens: metadata?.contextTokens,
-                          segments: metadata?.segments ?? message.segments,
+                          metadata: {
+                            ...message.metadata,
+                            model: metadata?.model ?? message.metadata?.model,
+                            tokenCount: metadata?.tokenCount,
+                            inputTokens: metadata?.inputTokens,
+                            outputTokens: metadata?.outputTokens,
+                            cacheReadTokens: metadata?.cacheReadTokens,
+                            cacheWriteTokens: metadata?.cacheWriteTokens,
+                            contextTokens: metadata?.contextTokens,
+                            error: undefined,
+                          },
                         };
                         return completedMessage;
                       })()
@@ -625,42 +539,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // 用户与 AI 各回复两次后（累计 4 条完成消息），基于前 4 条历史自动生成标题
     void get().maybeAutoGenerateTitle(threadId);
-
-    if (completedMessage && lastUserMessage) {
-      // 计算当前线程的累计 token 数
-      const updatedThread = get().threads.find((t) => t.id === threadId);
-      const cumulativeTokens = updatedThread?.messages.reduce(
-        (sum, msg) => sum + (msg.tokenCount ?? 0), 0
-      ) ?? 0;
-
-      void captureMemoriesFromExchange({
-        threadId,
-        threadTitle: sourceThread?.title,
-        workingDir,
-        userText: lastUserMessage.content,
-        assistantText: completedMessage.content,
-        cumulativeTokens,
-      });
-    }
   },
 
   selectThread: (threadId) => {
-    set((state) => ({
-      threads: state.threads.map((t) =>
-        t.id === threadId && !t.knowledgeBaseIds
-          ? { ...t, knowledgeBaseIds: [] }
-          : t
-      ),
+    set({
       activeThreadId: threadId,
       composer: "",
-    }));
+    });
     // 切换会话时按需从 JSONL 回读历史消息
     void get().loadThreadMessages(threadId);
-    // 从会话 jsonl 恢复该对话的任务监控（工作目录 + 待办 + 产物）
-    void restoreThreadMonitor(threadId);
+    // 恢复该会话的工作目录与权限模式
+    void restoreThreadWorkingDir(threadId);
     void restoreThreadPermissionMode(threadId);
-    void restoreThreadKnowledgeBaseIds(threadId);
-    void restoreGoalState(threadId);
   },
 
   showHome: () => {
@@ -702,36 +592,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     window.polaragent.security?.setMode?.(mode);
   },
 
-  setThreadKnowledgeBaseIds: (threadId, ids, options) => {
-    set((state) => ({
-      threads: state.threads.map((thread) =>
-        thread.id === threadId ? { ...thread, knowledgeBaseIds: ids } : thread,
-      ),
-    }));
-    if (options?.persist !== false) {
-      void setSessionKnowledgeBaseIds(threadId, ids);
-    }
-  },
-
-  startExchange: (userText, attachments = [], skillRefs = []) => {
+  startExchange: (userText, attachments = []) => {
     const threadId = get().activeThreadId;
     const assistantId = createId();
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
-      content: userText,
+      content: [{ type: "text", text: userText }],
       createdAt: Date.now(),
       status: "complete",
       attachments,
-      skillRefs,
     };
     const assistantMessage: ChatMessage = {
       id: assistantId,
       role: "assistant",
-      content: "",
+      content: [],
       createdAt: Date.now(),
-      status: "streaming",
-      model: "polar-dialogue-1",
+      status: "running",
     };
 
     // 标题不再用用户首句，保持默认「新对话」，待 AI 回复后自动生成替换。
@@ -758,6 +635,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .saveMessage(threadId, userMessage);
 
     return { assistantId, threadId };
+  },
+
+  truncateFrom: (threadId, messageId) => {
+    set((state) => ({
+      threads: state.threads.map((thread) => {
+        if (thread.id !== threadId) return thread;
+        const idx = thread.messages.findIndex((m) => m.id === messageId);
+        if (idx < 0) return thread;
+        return {
+          ...thread,
+          messages: thread.messages.slice(0, idx + 1),
+          updatedAt: Date.now(),
+        };
+      }),
+    }));
+  },
+
+  appendAssistantPlaceholder: (threadId) => {
+    const assistantId = createId();
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: [],
+      createdAt: Date.now(),
+      status: "running",
+    };
+    set((state) => ({
+      runningThreadIds: state.runningThreadIds.includes(threadId)
+        ? state.runningThreadIds
+        : [...state.runningThreadIds, threadId],
+      threads: state.threads.map((thread) =>
+        thread.id === threadId
+          ? {
+              ...thread,
+              messages: [...thread.messages, assistantMessage],
+              updatedAt: Date.now(),
+            }
+          : thread,
+      ),
+    }));
+    return assistantId;
   },
 
   markRunning: (threadId) => {
@@ -819,7 +737,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
             permissionMode: DEFAULT_TOOL_PERMISSION_MODE,
             loaded: false,
             autoTitled: true, // 已持久化的会话沿用其标题，不再自动改名
-            projectId: meta.projectId, // 恢复项目归属
           }));
 
         // 合并后按更新时间倒序，确保侧边栏顺序稳定
@@ -839,9 +756,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const thread = get().threads.find((t) => t.id === threadId);
     if (!thread || thread.loaded) return;
 
-    const messages = await useConversationStore
+    const rawMessages = await useConversationStore
       .getState()
       .loadConversation(threadId);
+
+    // 旧格式（string content + segments）一次性转为 parts；新格式原样保留
+    const messages = convertLegacyChatMessages(rawMessages as unknown[]);
 
     set((state) => ({
       threads: state.threads.map((t) =>
@@ -876,7 +796,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 只取已完成、且「正文非空」的消息：跳过纯工具调用/思考的空正文 AI 消息
     const completed = thread.messages.filter(
       (message) =>
-        message.status === "complete" && message.content.trim().length > 0,
+        message.status === "complete" && hasVisibleText(message.content),
     );
 
     // 至少要有一条「含正文」的 AI 回复后才生成
@@ -891,7 +811,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 用户问题 + AI 正文一起作为生成依据（取前若干条，控制 token）
     const history = completed.slice(0, 4).map((message) => ({
       role: message.role,
-      content: message.content,
+      content: partsToPlainText(message.content),
     }));
 
     try {
@@ -920,19 +840,18 @@ export interface ThreadSummary {
   id: string;
   title: string;
   updatedAt: number;
-  projectId?: string;
 }
-// 用 JSON 签名做按值比较：仅当 id/title/updatedAt/projectId 真正变化时才返回新引用。
+// 用 JSON 签名做按值比较：仅当 id/title/updatedAt 真正变化时才返回新引用。
 // 不能直接用 useShallow——它对数组逐元素做 Object.is，每次 .map() 都产生全新对象，
 // 永远判不等，会让 useSyncExternalStore 无限循环导致白屏。
 export function useThreadSummaries(): ThreadSummary[] {
   const signature = useChatStore((state) =>
-    JSON.stringify(state.threads.map((t) => [t.id, t.title, t.updatedAt, t.projectId ?? ""])),
+    JSON.stringify(state.threads.map((t) => [t.id, t.title, t.updatedAt])),
   );
   return useMemo(() => {
-    const rows = JSON.parse(signature) as Array<[string, string, number, string?]>;
+    const rows = JSON.parse(signature) as Array<[string, string, number]>;
     return rows
-      .map(([id, title, updatedAt, projectId]) => ({ id, title, updatedAt, projectId: projectId || undefined }))
+      .map(([id, title, updatedAt]) => ({ id, title, updatedAt }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [signature]);
 }
@@ -960,10 +879,13 @@ export function useThreadPermissionMode(threadId: string): ToolPermissionMode {
   );
 }
 
-export function useThreadKnowledgeBaseIds(threadId: string): string[] {
+/** 订阅单个会话的工作目录；缺失时回退到全局 workingDir。 */
+export function useThreadWorkingDir(threadId: string): string {
   return useChatStore(
     (state) =>
-      state.threads.find((t) => t.id === threadId)?.knowledgeBaseIds ?? []
+      state.threads.find((t) => t.id === threadId)?.workingDir ??
+      state.workingDir ??
+      "",
   );
 }
 

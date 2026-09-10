@@ -1,10 +1,17 @@
-@import "katex/dist/katex.min.css";
-@import "streamdown/styles.css";
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
-@source "../node_modules/streamdown/dist/*.js";
-@source "../node_modules/@streamdown/code/dist/*.js";
-@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@import "tw-shimmer";
+
+/* Tailwind v4 的 preflight 只把 border 重置为 `0 solid`，不再设 border-color，
+   裸 `border` 因此落到 CSS 默认值 currentColor（继承文字色，浅色主题下近黑）。
+   这里补上 shadcn 约定的全局兜底，让裸 `border` 落到设计令牌的边框色；
+   显式颜色声明（border-input / border-destructive 等）优先级更高，不受影响。 */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+}
 
 @theme inline {
   --font-sans: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", sans-serif;
@@ -28,6 +35,22 @@
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
+  @keyframes collapsible-down {
+  from {
+    height: 0;
+    }
+  to {
+    height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+  }
+  @keyframes collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height, var(--collapsible-panel-height, auto));
+    }
+  to {
+    height: 0;
+    }
+  }
 }
 
 :root {
@@ -164,252 +187,6 @@ button {
   scrollbar-width: thin;
 }
 
-.code-block .hljs {
-  color: #e6e6e6;
-  background: transparent;
-}
+@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
 
-.code-block pre {
-  line-height: 1.45;
-}
-
-.code-block .hljs-keyword,
-.code-block .hljs-selector-tag,
-.code-block .hljs-literal,
-.code-block .hljs-built_in,
-.code-block .hljs-type {
-  color: #c792ea;
-}
-
-.code-block .hljs-string,
-.code-block .hljs-regexp,
-.code-block .hljs-symbol,
-.code-block .hljs-template-variable {
-  color: #c3e88d;
-}
-
-.code-block .hljs-title,
-.code-block .hljs-name,
-.code-block .hljs-section,
-.code-block .hljs-attribute {
-  color: #82aaff;
-}
-
-.code-block .hljs-number,
-.code-block .hljs-meta,
-.code-block .hljs-variable,
-.code-block .hljs-params,
-.code-block .hljs-link {
-  color: #f78c6c;
-}
-
-.code-block .hljs-comment,
-.code-block .hljs-quote {
-  color: #7f8a99;
-}
-
-.code-block .hljs-doctag,
-.code-block .hljs-strong {
-  font-weight: 600;
-}
-
-.code-block .hljs-emphasis {
-  font-style: italic;
-}
-
-.code-block .code-search-mark {
-  border-radius: 3px;
-  background: #facc15;
-  color: #111827;
-  padding: 0 1px;
-}
-
-/* 对话消息内容：用 @tailwindcss/typography 的 prose 渲染 markdown，
-   并让「对话字体 / 对话字号」真实驱动它。
-   容器字号跟随 --chat-font-size，prose 子元素的相对 em 字号会随之整体缩放；
-   字体族强制继承容器的 --chat-font。!important 用于压过 prose-sm 的内置值。 */
-.chat-content {
-  --tw-prose-body: var(--foreground);
-  --tw-prose-headings: var(--foreground);
-  --tw-prose-lead: var(--muted-foreground);
-  --tw-prose-links: var(--accent-foreground);
-  --tw-prose-bold: var(--foreground);
-  --tw-prose-counters: var(--muted-foreground);
-  --tw-prose-bullets: var(--muted-foreground);
-  --tw-prose-hr: var(--border);
-  --tw-prose-quotes: var(--muted-foreground);
-  --tw-prose-quote-borders: var(--border);
-  --tw-prose-captions: var(--muted-foreground);
-  --tw-prose-kbd: var(--foreground);
-  --tw-prose-kbd-shadows: 0 0 0;
-  --tw-prose-code: var(--foreground);
-  --tw-prose-pre-code: #e6e6e6;
-  --tw-prose-pre-bg: transparent;
-  --tw-prose-th-borders: var(--border);
-  --tw-prose-td-borders: var(--border);
-  --tw-prose-invert-body: var(--foreground);
-  --tw-prose-invert-headings: var(--foreground);
-  --tw-prose-invert-lead: var(--muted-foreground);
-  --tw-prose-invert-links: var(--accent-foreground);
-  --tw-prose-invert-bold: var(--foreground);
-  --tw-prose-invert-counters: var(--muted-foreground);
-  --tw-prose-invert-bullets: var(--muted-foreground);
-  --tw-prose-invert-hr: var(--border);
-  --tw-prose-invert-quotes: var(--muted-foreground);
-  --tw-prose-invert-quote-borders: var(--border);
-  --tw-prose-invert-captions: var(--muted-foreground);
-  --tw-prose-invert-kbd: var(--foreground);
-  --tw-prose-invert-kbd-shadows: 0 0 0;
-  --tw-prose-invert-code: var(--foreground);
-  --tw-prose-invert-pre-code: #e6e6e6;
-  --tw-prose-invert-pre-bg: transparent;
-  --tw-prose-invert-th-borders: var(--border);
-  --tw-prose-invert-td-borders: var(--border);
-  font-family: var(--chat-font) !important;
-  font-size: var(--chat-font-size) !important;
-}
-
-.chat-content :where(p, li, ul, ol, blockquote, h1, h2, h3, h4, h5, h6,
-  table, thead, tbody, tr, td, th, a, strong, em, figcaption) {
-  font-family: inherit;
-}
-
-.chat-content :where(pre):not(:where(.not-prose, .not-prose *)) {
-  margin: 0;
-  padding: 0;
-  background: transparent;
-}
-
-/* 减小 markdown 中水平分隔线 <hr> 的上下间距：
-   Tailwind Typography 默认 prose-sm 给 hr 1.5em 上下 margin（约 21~24px），
-   在对话流里偏大、导致段间视觉断层过深，改为 0.5em（约 7~8px），
-   削弱段落分隔但不丢失分隔语义。 */
-.chat-content :where(hr):not(:where(.not-prose, .not-prose *)),
-.markdown-preview :where(hr):not(:where(.not-prose, .not-prose *)) {
-  margin-top: 0.5em;
-  margin-bottom: 0.5em;
-  border-top-width: 1px;
-}
-
-.chat-content :where(table):not(:where(.not-prose, .not-prose *)) {
-  width: 100%;
-}
-
-.chat-content :where(iframe):not(:where(.not-prose, .not-prose *)),
-.markdown-preview :where(iframe):not(:where(.not-prose, .not-prose *)) {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.chat-content :where(.markdown-table-wrap table):not(:where(.not-prose, .not-prose *)),
-.markdown-preview :where(table):not(:where(.not-prose, .not-prose *)) {
-  width: 100%;
-  min-width: max-content;
-  border-collapse: collapse;
-}
-
-.chat-content :where(th, td):not(:where(.not-prose, .not-prose *)),
-.markdown-preview :where(th, td):not(:where(.not-prose, .not-prose *)) {
-  min-width: 120px;
-}
-
-.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *)) {
-  border-radius: 4px;
-  background: var(--muted);
-  padding: 0.1em 0.35em;
-  color: var(--foreground);
-  font-family: "Consolas", "SF Mono", "JetBrains Mono", monospace;
-  font-size: 0.85em;
-  font-weight: 500;
-}
-
-.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *))::before,
-.chat-content :where(code):not(:where(pre code, .not-prose, .not-prose *))::after {
-  content: none;
-}
-
-.chat-content :where(.katex, .katex *),
-.markdown-preview :where(.katex, .katex *) {
-  font-family: KaTeX_Main, "Times New Roman", serif;
-}
-
-.chat-content :where(.katex-display),
-.markdown-preview :where(.katex-display) {
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 0.25rem 0;
-}
-
-.chat-content :where(.katex-display > .katex),
-.markdown-preview :where(.katex-display > .katex) {
-  max-width: 100%;
-}
-
-.math-block .katex-display {
-  margin: 0;
-}
-
-.markdown-preview {
-  --tw-prose-body: var(--foreground);
-  --tw-prose-headings: var(--foreground);
-  --tw-prose-links: var(--accent-foreground);
-  --tw-prose-bold: var(--foreground);
-  --tw-prose-counters: var(--muted-foreground);
-  --tw-prose-bullets: var(--muted-foreground);
-  --tw-prose-hr: var(--border);
-  --tw-prose-quotes: var(--muted-foreground);
-  --tw-prose-quote-borders: var(--border);
-  --tw-prose-code: var(--foreground);
-  --tw-prose-th-borders: var(--border);
-  --tw-prose-td-borders: var(--border);
-  --tw-prose-invert-body: var(--foreground);
-  --tw-prose-invert-headings: var(--foreground);
-  --tw-prose-invert-links: var(--accent-foreground);
-  --tw-prose-invert-bold: var(--foreground);
-  --tw-prose-invert-counters: var(--muted-foreground);
-  --tw-prose-invert-bullets: var(--muted-foreground);
-  --tw-prose-invert-hr: var(--border);
-  --tw-prose-invert-quotes: var(--muted-foreground);
-  --tw-prose-invert-quote-borders: var(--border);
-  --tw-prose-invert-code: var(--foreground);
-  --tw-prose-invert-th-borders: var(--border);
-  --tw-prose-invert-td-borders: var(--border);
-}
-
-.markdown-preview :where(a) {
-  overflow-wrap: anywhere;
-}
-
-.markdown-preview :where(img) {
-  height: auto;
-  max-width: 100%;
-  object-fit: contain;
-}
-
-.markdown-preview :where(pre) {
-  max-width: 100%;
-  overflow-x: auto;
-  font-size: 0.92em;
-  line-height: 1.45;
-}
-
-.markdown-preview :where(pre code) {
-  line-height: inherit;
-}
-
-.markdown-preview :where(svg),
-.mermaid-svg :where(svg) {
-  max-width: 100%;
-  height: auto;
-}
-
-/* 富文本对话输入框（contentEditable）：空内容时显示占位文案。
-   :empty 在仅有 <br> 时不生效，故同时判断 data-placeholder 与无文本。 */
-.composer-editable:empty::before {
-  content: attr(data-placeholder);
-  color: var(--muted-foreground, #9ca3af);
-  pointer-events: none;
-}
+@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));

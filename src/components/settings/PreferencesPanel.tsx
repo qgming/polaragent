@@ -1,10 +1,7 @@
-// 偏好设置面板（主题/对话字体/字号 + 语言）
+// 偏好设置面板（主题/对话字体/字号）
 // src/components/settings/PreferencesPanel.tsx
 
-import { useTranslation } from "react-i18next";
-import { Switch } from "@/components/ui/switch";
 import type { Settings } from "@/types/config";
-import { defaultSettings } from "@/config/defaults";
 import { PageTitle, SettingDropdown, SettingRow } from "./settings-shared";
 
 export function PreferencesPanel({
@@ -16,8 +13,6 @@ export function PreferencesPanel({
   onUpdate: (updates: Partial<Settings>) => Promise<void>;
   embedded?: boolean;
 }) {
-  const { t } = useTranslation("settings");
-
   const setAppearance = (updates: Partial<Settings["appearance"]>) =>
     onUpdate({
       appearance: {
@@ -29,32 +24,13 @@ export function PreferencesPanel({
   return (
     <section>
       {!embedded ? (
-        <PageTitle title={t("preferences.title")} description={t("preferences.description")} />
+        <PageTitle title="外观" description="主题、对话字体与字号" />
       ) : null}
 
       <div className={embedded ? "divide-y divide-border/50 rounded-xl border border-border/60 bg-card" : "mt-8 divide-y divide-border/50 rounded-xl border border-border/60 bg-card"}>
         <SettingRow
-          title={t("preferences.language")}
-          description={t("preferences.languageDesc")}
-          control={
-            <SettingDropdown
-              value={settings.appearance.language}
-              onChange={(lang) =>
-                void setAppearance({
-                  language: lang as Settings["appearance"]["language"],
-                })
-              }
-              options={[
-                { value: "system", label: t("preferences.followSystem") },
-                { value: "zh-CN", label: t("preferences.simplifiedChinese") },
-                { value: "en-US", label: t("preferences.english") },
-              ]}
-            />
-          }
-        />
-        <SettingRow
-          title={t("preferences.theme")}
-          description={t("preferences.themeDesc")}
+          title="主题"
+          description="选择界面配色"
           control={
             <SettingDropdown
               value={settings.appearance.theme}
@@ -64,16 +40,16 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "light", label: t("preferences.light") },
-                { value: "dark", label: t("preferences.dark") },
-                { value: "system", label: t("preferences.followSystem") },
+                { value: "light", label: "浅色" },
+                { value: "dark", label: "深色" },
+                { value: "system", label: "跟随系统" },
               ]}
             />
           }
         />
         <SettingRow
-          title={t("preferences.chatFont")}
-          description={t("preferences.chatFontDesc")}
+          title="对话字体"
+          description="对话内容的字体族"
           control={
             <SettingDropdown
               value={settings.appearance.chatFont}
@@ -83,16 +59,16 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "sans", label: t("preferences.sans") },
-                { value: "serif", label: t("preferences.serif") },
-                { value: "mono", label: t("preferences.mono") },
+                { value: "sans", label: "无衬线" },
+                { value: "serif", label: "衬线" },
+                { value: "mono", label: "等宽" },
               ]}
             />
           }
         />
         <SettingRow
-          title={t("preferences.chatFontSize")}
-          description={t("preferences.chatFontSizeDesc")}
+          title="对话字号"
+          description="对话内容的文字大小"
           control={
             <SettingDropdown
               value={settings.appearance.chatFontSize}
@@ -102,118 +78,15 @@ export function PreferencesPanel({
                 })
               }
               options={[
-                { value: "small", label: t("preferences.small") },
-                { value: "medium", label: t("preferences.medium") },
-                { value: "large", label: t("preferences.large") },
-                { value: "xlarge", label: t("preferences.xlarge") },
+                { value: "small", label: "小" },
+                { value: "medium", label: "中" },
+                { value: "large", label: "大" },
+                { value: "xlarge", label: "特大" },
               ]}
             />
           }
         />
       </div>
-
-      <WindowBehaviorCard settings={settings} onUpdate={onUpdate} />
-
-      <VoiceInputCard settings={settings} onUpdate={onUpdate} />
     </section>
-  );
-}
-
-// 窗口行为卡片（关闭到托盘 / 启动时隐藏到托盘）
-function WindowBehaviorCard({
-  settings,
-  onUpdate,
-}: {
-  settings: Settings;
-  onUpdate: (updates: Partial<Settings>) => Promise<void>;
-}) {
-  const { t } = useTranslation("settings");
-
-  const setWindow = (updates: Partial<Settings["window"]>) =>
-    onUpdate({
-      window: {
-        ...settings.window,
-        ...updates,
-      },
-    });
-
-  return (
-    <div className="mt-6 divide-y divide-border/50 rounded-xl border border-border/60 bg-card">
-      <SettingRow
-        title={t("preferences.closeToTray")}
-        description={t("preferences.closeToTrayDesc")}
-        control={
-          <Switch
-            checked={settings.window.closeToTray}
-            onCheckedChange={(checked) => void setWindow({ closeToTray: checked })}
-          />
-        }
-      />
-      <SettingRow
-        title={t("preferences.startInSystemTray")}
-        description={t("preferences.startInSystemTrayDesc")}
-        control={
-          <Switch
-            checked={settings.window.startInSystemTray}
-            onCheckedChange={(checked) => void setWindow({ startInSystemTray: checked })}
-          />
-        }
-      />
-    </div>
-  );
-}
-
-// 语音输入优化卡片（自动发送 / 口语优化），原属音频设置，移入偏好设置统一管理
-function VoiceInputCard({
-  settings,
-  onUpdate,
-}: {
-  settings: Settings;
-  onUpdate: (updates: Partial<Settings>) => Promise<void>;
-}) {
-  const { t } = useTranslation("settings");
-
-  const audioDefaults = () => settings.audio ?? defaultSettings.audio!;
-  const inputOptimization =
-    settings.audio?.inputOptimization ??
-    defaultSettings.audio?.inputOptimization ?? { autoSend: false, refineText: false };
-
-  // 改动即写入，失败时由调用方 store 兜底（与原音频面板逻辑一致）
-  const update = (patch: Partial<{ autoSend: boolean; refineText: boolean }>) => {
-    const currentAudio = audioDefaults();
-    return onUpdate({
-      audio: {
-        ...currentAudio,
-        inputOptimization: {
-          ...currentAudio.inputOptimization,
-          ...patch,
-        },
-      },
-    });
-  };
-
-  return (
-    <div className="mt-6 divide-y divide-border/50 rounded-xl border border-border/60 bg-card">
-      <SettingRow
-        title={t("preferences.voiceAutoSend")}
-        description={t("preferences.voiceAutoSendDesc")}
-        control={
-          <Switch
-            checked={inputOptimization.autoSend}
-            onCheckedChange={(checked) => void update({ autoSend: checked })}
-          />
-        }
-      />
-      <SettingRow
-        title={t("preferences.voiceRefineText")}
-        description={t("preferences.voiceRefineTextDesc")}
-        control={
-          <Switch
-            checked={inputOptimization.refineText}
-            onCheckedChange={(checked) => void update({ refineText: checked })}
-          />
-        }
-      />
-    </div>
   );
 }
