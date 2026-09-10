@@ -3,15 +3,17 @@
 
 # PolarAgent
 
-**基于 pi-agent-core 的桌面 Agent 工作台**
+**基于 pisdk 的桌面 Agent 工作台**
 
-一个尽量薄的桌面外壳：把 pisdk（pi-agent-core / pi-ai）的对话、会话持久化与原生工具直接暴露成桌面应用，不再自研工具与中间层。
+  把 pisdk（pi-agent-core / pi-ai）的对话、会话持久化与原生工具装进一个克制的桌面外壳：
+  主进程独占 Agent 运行时，渲染进程零特权，UI 以 assistant-ui 为核心。
 
   <p>
     <img alt="Electron" src="https://img.shields.io/badge/Electron-44-47848F?style=flat-square&logo=electron&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white" />
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="Vite" src="https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white" />
+    <img alt="Tailwind" src="https://img.shields.io/badge/Tailwind-v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" />
     <img alt="Local First" src="https://img.shields.io/badge/Local--First-Yes-16A34A?style=flat-square" />
   </p>
 </div>
@@ -20,59 +22,100 @@
 
 ## 产品定位
 
-PolarAgent 是一个面向本地工作流的桌面 Agent 客户端。它不自带工具箱，而是把 pisdk 的能力原样呈现：
+PolarAgent 是面向本地工作流的桌面 Agent 客户端：不自研工具与中间层，把 pisdk 的能力原样呈现。
 
-- **对话**：assistant-ui Thread ↔ 每会话一个 AgentHarness（绑定该会话的 pi Session）。
-- **工具**：Agent 可见的工具面固定为 pisdk 原生四件套 —— `bash`、`read`、`write`、`edit`。没有注册表、没有开关、没有动态加载。
-- **能力归属**：模型路由、流式请求、会话持久化（JSONL）、上下文压缩（compaction）、分支与 fork 全部由 pisdk 承担。
-- **本地优先**：会话、配置、AGENTS.md 都存在本机；模型请求只发往你在设置里配置的供应商。
-
----
-
-## Agent 可见的工具
-
-| 工具 | 能力 | 来源 |
-| --- | --- | --- |
-| `bash` | 在工作目录执行 shell 命令，返回合并后的 stdout/stderr | `createBashTool` |
-| `read` | 读取文本文件（含分页与图片附件） | `createReadTool` |
-| `write` | 写入/覆盖文件，自动创建父目录 | `createWriteTool` |
-| `edit` | 按 `oldText → newText` 精确替换（支持多处） | `createEditTool` |
-
-这四个工具的执行环境是 `ElectronExecutionEnv`（`src/lib/electron/electron-fs.ts`），它实现 pisdk 的 `ExecutionEnv` 接口，把文件与命令都经 IPC 落到主进程，再由主进程的安全层做校验与拦截。
+- **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 批量转发。
+- **工具**：Agent 可见工具固定为 pisdk 原生四件套 —— `bash`、`read`、`write`、`edit`。
+- **能力归属**：模型路由、流式请求、会话持久化、上下文压缩、分支 fork 全部由 pisdk 承担。
+- **本地优先**：会话、设置、AGENTS.md 与技能都在本机；模型请求只发往你配置的 OpenAI 兼容服务。
 
 ---
 
-## 安全边界
+## 架构
 
-工具调用在执行前统一过一道审查（`src/ai/tool-permissions.ts`），四种权限模式：
+```
+┌─ 渲染进程（sandbox，零特权）───────────────────────────────┐
+│  React 19 + shadcn/ui + assistant-ui（ExternalStoreRuntime）│
+│  zustand 状态层 · react-i18next（中英双语）· lucide 图标     │
+└───────────────────────┬────────────────────────────────────┘
+                        │ preload（contextBridge，白名单 API）
+┌───────────────────────┴────────────────────────────────────┐
+│  主进程（唯一特权进程）                                      │
+│  ├─ pisdk 装配：AgentHarness / Provider / 四工具 / 权限门     │
+│  ├─ SQLite 会话仓储（分页游标 + 标题索引）                     │
+│  ├─ 三模式权限：默认权限 / 帮我审批（AI）/ 完全访问            │
+│  ├─ 安全层：路径守卫、命令黑名单、safeStorage 加密            │
+│  └─ 设置与 AGENTS.md 持久化                                  │
+└────────────────────────────────────────────────────────────┘
+```
 
-| 模式 | 行为 |
-| --- | --- |
-| `readonly` | 只放行 `read`，其余一律拒绝 |
-| `safe` | 放行读写与常规命令，本地拦截高危命令模式 |
-| `ai_review`（默认） | `read` 直接放行，其余交给模型逐次审批并给出依据 |
-| `full` | 全部放行 |
+关键设计：**主进程独占 pisdk**（其资源文件依赖 `import.meta.url`，因此主进程构建必须外置依赖，不能内联打包）；渲染进程通过类型化 IPC 通道消费，事件按批下发。
 
-主进程另有一道独立防线（`src/main/lib/security.ts`）：命令黑名单、工作目录范围检查、输出截断。
+目录：
+
+```
+src/
+├── main/                  # Electron 主进程
+│   ├── app/               # 路径与窗口
+│   ├── ipc/               # 按域拆分的 IPC 处理器
+│   ├── pisdk/             # AgentHarness 装配、会话仓储、工具、权限、审批
+│   ├── security/          # 路径守卫 / 命令黑名单
+│   └── settings/          # 设置存储（safeStorage 加密）
+├── preload/               # contextBridge 白名单 API
+├── renderer/
+│   ├── app/               # 外壳：标题栏 / 侧边栏 / 主区 / 全局快捷键
+│   ├── features/          # chat / settings / search
+│   ├── components/        # shadcn 基础组件 + assistant-ui 元素
+│   ├── runtime/           # ExternalStoreRuntime 桥与事件桥
+│   └── stores/            # zustand 状态层
+└── shared/                # 双端契约（IPC / 类型 / i18n 词条）
+```
 
 ---
 
-## 设置
+## 功能
 
 | 分区 | 内容 |
 | --- | --- |
-| 通用 | 主题、对话字体、对话字号、数据目录 |
-| 模型 | 模型服务（Base URL / API Key / 模型列表）与默认路由模型 |
-| 个性化 | AGENTS.md 自定义指令，每轮对话作为系统提示词注入 |
-| 关于 | 版本信息 |
+| 对话 | 流式回复、思考链折叠、工具调用分组、Markdown、停止/重试、图片附件、运行中排队与插话 |
+| 会话 | 新建/切换/重命名/归档/删除、标题索引、分页加载历史、**从任意消息分支**、SQLite 持久化 |
+| 权限 | 三模式（默认权限 / 帮我审批 / 完全访问）、审批卡（允许一次 / 始终允许 / 拒绝并说明理由）、「始终允许」规则库 |
+| 技能 | SKILL.md 扫描（全局 + 项目目录）、启用/禁用、提示模板 |
+| 设置 | 通用（主题/语言/密度/字体/数据目录）、模型服务（两种 OpenAI 格式 + 拉取模型）、权限、技能、个性化（AGENTS.md）、关于 |
+| 搜索 | Ctrl+K 全局搜索（会话/消息/设置/命令）、会话内查找（Ctrl+F） |
+
+### 模型服务
+
+仅支持 OpenAI 兼容接口的两种格式：
+
+| 格式 | 端点 |
+| --- | --- |
+| `openai-completions` | `/chat/completions`（含 reasoning 内容兼容） |
+| `openai-responses` | `/responses` |
+
+Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（不可用时回退明文并告警）。
 
 ---
 
-## 安装与运行
+## 快捷键
+
+| 快捷键 | 动作 |
+| --- | --- |
+| `Ctrl/Cmd + K` | 全局搜索 |
+| `Ctrl/Cmd + F` | 会话内查找 |
+| `Ctrl/Cmd + N` | 新建对话 |
+| `Ctrl/Cmd + B` | 折叠/展开侧栏 |
+| `Ctrl/Cmd + ,` | 打开设置 |
+| `Enter` / `Shift + Enter` | 发送 / 换行 |
+| 运行中 `Enter` / `Ctrl + Enter` | 排队 / 插话 |
+
+---
+
+## 开发
 
 ### 环境要求
 
-- Node.js 20+
+- Node.js 20+（`node:sqlite` 需 Node 22+，应用内由 Electron 44 提供）
 - npm 10+
 - Windows / macOS / Linux
 
@@ -80,42 +123,42 @@ PolarAgent 是一个面向本地工作流的桌面 Agent 客户端。它不自�
 
 | 命令 | 说明 |
 | --- | --- |
-| `npm run dev` | 启动开发环境 |
-| `npm run start` | 启动已构建的 Electron 应用 |
-| `npm run typecheck` | 检查 renderer、主进程与 preload 类型 |
+| `npm run dev` | 启动开发环境（Vite + Electron HMR） |
+| `npm run start` | 启动已构建的应用 |
+| `npm run typecheck` | 检查渲染进程、主进程与 preload 类型 |
+| `npm run lint` | Biome 检查（`lint:fix` / `format` 可自动修复） |
+| `npm run test` | 运行单元测试（vitest） |
 | `npm run build` | 类型检查并构建 renderer、主进程与 preload |
-| `npm run test` | 运行自动化测试 |
 | `npm run pack` | 生成 `release/` 下的可运行应用目录 |
 | `npm run dist` | 生成当前平台安装包 |
 
+### 冒烟脚本
+
+| 脚本 | 用途 |
+| --- | --- |
+| `node scripts/probe-pisdk.mjs` | pisdk 装配探针（真实端点，验证 harness/工具/会话链路） |
+| `node scripts/e2e-smoke.mjs` | 端到端冒烟（CDP 驱动真实 Electron，覆盖流式对话、工具调用、审批、完全访问、重启恢复） |
+
+两者都从环境变量读取凭据：
+
+```bash
+POLAR_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
+# 可选：POLAR_PROBE_BASE_URL / POLAR_PROBE_MODEL
+```
+
 ### 首次配置
 
-1. 打开应用，进入「设置 → 模型」。
-2. 添加模型服务，填写 Base URL 与 API Key，再添加可用模型。
-3. 在「默认路由模型」里选中要用的模型。
-4. （可选）在「个性化」里编辑 AGENTS.md，写下希望 Agent 长期遵守的规则。
+1. 打开应用，进入「设置 → 模型服务」。
+2. 添加服务：填写 Base URL（自带 `/v1`）与 API Key，选择接口格式。
+3. 添加模型（或用「拉取模型」自动获取），并在「默认路由模型」里选中它。
+4. （可选）在「个性化」编辑 AGENTS.md，写下希望 Agent 长期遵守的规则。
 
 ---
 
-## 项目结构
+## 设计
 
-```text
-polaragent/
-├── src/
-│   ├── ai/              # AgentHarness 装配、工具层、权限审查、标题生成
-│   ├── components/      # UI 组件（assistant-ui 元素、设置面板、侧边栏）
-│   ├── lib/
-│   │   ├── chat/        # 对话消息模型与 parts 提取
-│   │   ├── electron/    # preload API 封装、ExecutionEnv 适配
-│   │   └── session/     # pi Session 的打开/列表/偏好读写
-│   ├── main/            # Electron 主进程、IPC 与安全层
-│   ├── pages/           # 对话页
-│   ├── preload/         # contextBridge 安全桥接
-│   └── stores/          # 对话与配置状态
-├── build/               # 应用图标与打包资源
-├── electron-builder.yml # 安装包与平台目标
-└── public/              # 静态资源
-```
+UI 遵循 assistant-ui 的 design.md 规范：印刷文档隐喻、单色 chrome、唯一强调色（品牌紫 `#b99af1`）、克制的线条与动效。
+完整设计稿（含逐屏 ASCII 线框图、组件映射与主题变量）见 [`docs/design/ui-v2-ascii.md`](docs/design/ui-v2-ascii.md)。
 
 ---
 

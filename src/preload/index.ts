@@ -1,142 +1,76 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
+import type { PolarAgentApi } from "@/shared/contracts/api";
+import type { ChatEvent } from "@/shared/contracts/chat";
+import { IPC } from "@/shared/contracts/ipc";
 
-const invoke = (channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload);
-
-contextBridge.exposeInMainWorld("polaragent", {
+// 渲染进程唯一入口：只暴露白名单方法，不透传 ipcRenderer 原始能力
+const api = {
   app: {
-    getDataDir: () => invoke("app:get-data-dir"),
-    getHomeDir: () => invoke("app:get-home-dir"),
-    ensureDataDir: () => invoke("app:ensure-data-dir"),
-    openDataDir: () => invoke("app:open-data-dir"),
-    openPath: (path: string) => invoke("app:open-path", { path }),
-    openExternal: (url: string) => invoke("app:open-external", { url }),
-    fileUrl: (path: string) => invoke("app:file-url", { path }),
-    pickWorkingDirectory: () => invoke("dialog:pick-directory"),
-    pickTextFile: () => invoke("dialog:pick-text-file"),
-    pickMultipleFiles: () => invoke("dialog:pick-multiple-files"),
-    pickImageFile: () => invoke("dialog:pick-image-file"),
-    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+    getInfo: () => ipcRenderer.invoke(IPC.app.getInfo),
   },
   window: {
-    minimize: () => invoke("window:minimize"),
-    toggleMaximize: () => invoke("window:toggle-maximize"),
-    close: () => invoke("window:close"),
-    setTitle: (title: string) => invoke("window:set-title", { title }),
-    isMaximized: () => invoke("window:is-maximized"),
-    onMaximizedChange: (handler: (value: boolean) => void) => {
-      const listener = (_event: unknown, value: unknown) => handler(Boolean(value));
-      ipcRenderer.on("window:maximized-change", listener);
-      return () => ipcRenderer.removeListener("window:maximized-change", listener);
+    minimize: () => ipcRenderer.invoke(IPC.window.minimize),
+    toggleMaximize: () => ipcRenderer.invoke(IPC.window.toggleMaximize),
+    close: () => ipcRenderer.invoke(IPC.window.close),
+    onMaximizedChange: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, maximized: boolean) =>
+        callback(maximized);
+      ipcRenderer.on(IPC.window.onMaximizedChange, listener);
+      return () => ipcRenderer.removeListener(IPC.window.onMaximizedChange, listener);
     },
   },
-  fs: {
-    // 安全说明：故意不接受 options 参数 —— 渲染层无法通过 fs API
-    // 注入 securityMode 等安全模式覆盖字段。安全模式只能由用户通过
-    // security:set-mode IPC 一次性同步到主进程。
-    readFile: (path: string) => invoke("fs:read-file", { path }),
-    readBase64File: (path: string) => invoke("fs:read-base64-file", { path }),
-    readBinaryFile: (path: string) => invoke("fs:read-binary-file", { path }),
-    writeFile: (path: string, content: string) => invoke("fs:write-file", { path, content }),
-    writeBase64File: (path: string, content: string) => invoke("fs:write-base64-file", { path, content }),
-    appendFile: (path: string, content: string) => invoke("fs:append-file", { path, content }),
-    createDirectory: (path: string) => invoke("fs:create-directory", { path }),
-    deletePath: (path: string) => invoke("fs:delete-path", { path }),
-    rename: (src: string, dest: string) => invoke("fs:rename", { src, dest }),
-    copy: (src: string, dest: string) => invoke("fs:copy", { src, dest }),
-    listDirectory: (path: string) => invoke("fs:list-directory", { path }),
-    listDirectoryEntries: (path: string) => invoke("fs:list-directory-entries", { path }),
-    exists: (path: string) => invoke("fs:exists", { path }),
-    stat: (path: string) => invoke("fs:stat", { path }),
-    createTempDir: (prefix?: string) => invoke("fs:create-temp-dir", { prefix }),
-    createTempFile: (opts?: { prefix?: string; suffix?: string }) => invoke("fs:create-temp-file", opts || {}),
+  settings: {
+    read: () => ipcRenderer.invoke(IPC.settings.read),
+    write: (next) => ipcRenderer.invoke(IPC.settings.write, next),
   },
-  security: {
-    setMode: (mode: string) => invoke("security:set-mode", { mode }),
+  sessions: {
+    list: () => ipcRenderer.invoke(IPC.sessions.list),
+    create: (options) => ipcRenderer.invoke(IPC.sessions.create, options),
+    rename: (id, title) => ipcRenderer.invoke(IPC.sessions.rename, { id, title }),
+    setArchived: (id, archived) => ipcRenderer.invoke(IPC.sessions.archive, { id, archived }),
+    remove: (id) => ipcRenderer.invoke(IPC.sessions.delete, { id }),
+    fork: (id, entryId) => ipcRenderer.invoke(IPC.sessions.fork, { id, entryId }),
+    loadMessages: (id, options) => ipcRenderer.invoke(IPC.sessions.loadMessages, { id, options }),
   },
-  config: {
-    read: (fileName: string) => invoke("config:read", { fileName }),
-    write: (fileName: string, content: string) => invoke("config:write", { fileName, content }),
-    readAgentsMd: () => invoke("config:read-agents-md"),
-    writeAgentsMd: (content: string) => invoke("config:write-agents-md", { content }),
-  },
-  llm: {
-    chatCompletion: (request: unknown) => invoke("llm:chat-completion", { request }),
-    chatCompletionStream: (request: unknown) => invoke("llm:chat-completion-stream", { request }),
-    listModels: (baseUrl: string, apiKey: string) => invoke("llm:list-models", { request: { baseUrl, apiKey } }),
-    onChatStream: (handler: (payload: unknown) => void) => {
-      const listener = (_event: unknown, payload: unknown) => handler(payload);
-      ipcRenderer.on("llm:chat-stream", listener);
-      return () => ipcRenderer.removeListener("llm:chat-stream", listener);
+  chat: {
+    send: (sessionId, text, images, messageId) =>
+      ipcRenderer.invoke(IPC.chat.send, { sessionId, text, images, messageId }),
+    stop: (sessionId) => ipcRenderer.invoke(IPC.chat.stop, { sessionId }),
+    queue: (sessionId, text, mode) => ipcRenderer.invoke(IPC.chat.queue, { sessionId, text, mode }),
+    compact: (sessionId, instructions) =>
+      ipcRenderer.invoke(IPC.chat.compact, { sessionId, instructions }),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: ChatEvent) => callback(event);
+      ipcRenderer.on(IPC.chat.event, listener);
+      return () => ipcRenderer.removeListener(IPC.chat.event, listener);
     },
   },
-  network: {
-    /**
-     * 流式 Fetch：经主进程 net.fetch 出网。
-     *
-     * 只桥接「事件 + 字节」，绝不在 preload 内构造 Response / ReadableStream：
-     * 这两类对象不能跨 contextBridge，传到渲染层会退化成空对象（丢 status/body），
-     * 让 SDK 侧报出与实际原因无关的错误。
-     * 中止由渲染层用 AbortSignal 驱动返回的 abort 句柄完成。
-     */
-    fetchStream: (
-      request: {
-        url: string;
-        method?: string;
-        headers?: Record<string, string>;
-        body?: string;
-      },
-      onEvent: (
-        event:
-          | { type: "meta"; status: number; statusText: string; headers: Array<[string, string]> }
-          | { type: "chunk"; data: ArrayBuffer }
-          | { type: "done" }
-          | { type: "error"; message: string },
-      ) => void,
-    ): { abort: () => void } => {
-      const { port1, port2 } = new MessageChannel();
-      let aborted = false;
-
-      const closePort = () => {
-        try {
-          port1.close();
-        } catch {
-          // ignore
-        }
-      };
-
-      const abort = () => {
-        if (aborted) return;
-        aborted = true;
-        try {
-          port1.postMessage({ type: "abort" });
-        } catch {
-          // ignore
-        }
-        closePort();
-      };
-
-      port1.onmessage = (event: MessageEvent) => {
-        const msg = event.data as
-          | { type: "meta"; status: number; statusText: string; headers: Array<[string, string]> }
-          | { type: "chunk"; data: ArrayBuffer }
-          | { type: "done" }
-          | { type: "error"; message: string };
-
-        if (!msg || typeof msg !== "object") return;
-        onEvent(msg);
-        if (msg.type === "done" || msg.type === "error") closePort();
-      };
-
-      port1.onmessageerror = () => {
-        onEvent({ type: "error", message: "主进程 fetch 消息反序列化失败" });
-        closePort();
-      };
-
-      ipcRenderer.postMessage("network:fetch-stream", request, [port2]);
-      return { abort };
-    },
+  approvals: {
+    respond: (id, decision, note) =>
+      ipcRenderer.invoke(IPC.approvals.respond, { id, decision, note }),
   },
-  shell: {
-    exec: (request: unknown) => invoke("shell:exec", { request }),
+  skills: {
+    list: (workingDir) => ipcRenderer.invoke(IPC.skills.list, { workingDir }),
   },
-});
+  permissions: {
+    listRules: () => ipcRenderer.invoke(IPC.permissions.listRules),
+    addRule: (rule) => ipcRenderer.invoke(IPC.permissions.addRule, rule),
+    removeRule: (toolName, pattern) =>
+      ipcRenderer.invoke(IPC.permissions.removeRule, { toolName, pattern }),
+  },
+  agents: {
+    read: () => ipcRenderer.invoke(IPC.agents.read),
+    write: (content) => ipcRenderer.invoke(IPC.agents.write, { content }),
+  },
+  dialog: {
+    pickDirectory: (defaultPath) => ipcRenderer.invoke(IPC.dialog.pickDirectory, { defaultPath }),
+  },
+  services: {
+    fetchModels: (request) => ipcRenderer.invoke(IPC.services.fetchModels, request),
+  },
+  models: {
+    lookup: (id) => ipcRenderer.invoke(IPC.models.lookup, { id }),
+  },
+} satisfies PolarAgentApi;
+
+contextBridge.exposeInMainWorld("polaragent", api);

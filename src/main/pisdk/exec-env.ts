@@ -1,0 +1,248 @@
+// 执行环境装配：为 Agent 提供受路径守卫约束的 NodeExecutionEnv 包装。
+
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { type ExecutionEnv, err, FileError } from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
+import { normalizePath, validatePathAccess } from "@/main/security/path-guard";
+
+/** bash 路径解析缓存：undefined 同样缓存，表示该平台已确认不可用 */
+const bashPathCache = new Map<NodeJS.Platform, string | undefined>();
+
+/** System32/Sysnative 下的 bash.exe 是 WSL 入口，未安装发行版时执行必失败，须排除 */
+const WSL_BASH_PATTERN = /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/i;
+
+/** 同步执行探测命令；任何失败都静默返回空数组 */
+function probe(command: string, args: string[]): string[] {
+  try {
+    const stdout = execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+  } catch {
+    return [];
+  }
+}
+
+/** 过滤 WSL 入口与空串后，返回第一个真实存在的路径 */
+function firstExisting(candidates: string[]): string | undefined {
+  for (const candidate of candidates) {
+    if (candidate === "" || WSL_BASH_PATTERN.test(candidate)) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/** Windows 常见 Git Bash 安装位置，按优先级排列 */
+function windowsBashCandidates(): string[] {
+  const candidates: string[] = [];
+  const { ProgramFiles, "ProgramFiles(x86)": programFilesX86, LOCALAPPDATA } = process.env;
+  if (ProgramFiles) candidates.push(path.win32.join(ProgramFiles, "Git", "bin", "bash.exe"));
+  if (programFilesX86) candidates.push(path.win32.join(programFilesX86, "Git", "bin", "bash.exe"));
+  candidates.push(
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+    "C:\\Git\\bin\\bash.exe",
+  );
+  if (LOCALAPPDATA) {
+    candidates.push(path.win32.join(LOCALAPPDATA, "Programs", "Git", "bin", "bash.exe"));
+  }
+  return candidates;
+}
+
+/** 由 where git.exe 的结果推导同级 ..\bin\bash.exe */
+function bashFromGit(): string | undefined {
+  for (const gitPath of probe("where", ["git.exe"])) {
+    const derived = path.win32.join(path.win32.dirname(gitPath), "..", "bin", "bash.exe");
+    if (existsSync(derived) && !WSL_BASH_PATTERN.test(derived)) return derived;
+  }
+  return undefined;
+}
+
+/** 解析可用的 bash 可执行路径；解析失败返回 undefined（交给 NodeExecutionEnv 自行回退） */
+export function resolveBashPath(platform: NodeJS.Platform = process.platform): string | undefined {
+  if (bashPathCache.has(platform)) return bashPathCache.get(platform);
+
+  let resolved: string | undefined;
+  if (platform === "win32") {
+    resolved = firstExisting(windowsBashCandidates());
+    // where 可能把 System32 的 WSL 入口排在真实 Git Bash 之前，必须过滤
+    resolved ??= firstExisting(probe("where", ["bash.exe"]));
+    resolved ??= bashFromGit();
+  } else {
+    resolved = firstExisting(["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]);
+  }
+
+  bashPathCache.set(platform, resolved);
+  return resolved;
+}
+
+export interface CreateExecEnvOptions {
+  /** 会话工作目录；同时作为路径守卫的根 */
+  cwd: string;
+  /** 额外允许访问的根目录（如数据目录、技能目录）；默认包含 cwd */
+  allowedRoots?: string[];
+}
+
+/** 路径守卫校验结果 */
+type GuardedPath = { ok: true; path: string } | { ok: false; error: FileError };
+
+/** 与 NodeExecutionEnv 一致的归一逻辑：支持 ~ 与 file://，相对路径按会话 cwd 解析 */
+function toAbsolutePath(requested: string, cwd: string): string {
+  let normalized = requested;
+  if (normalized === "~") {
+    normalized = homedir();
+  } else if (
+    normalized.startsWith("~/") ||
+    (process.platform === "win32" && normalized.startsWith("~\\"))
+  ) {
+    normalized = path.join(homedir(), normalized.slice(2));
+  } else if (normalized.startsWith("file://")) {
+    try {
+      normalized = fileURLToPath(normalized);
+    } catch {
+      // 保留原样：与 NodeExecutionEnv 行为一致，越界与否交由守卫判定
+    }
+  }
+  return path.isAbsolute(normalized) ? path.resolve(normalized) : path.resolve(cwd, normalized);
+}
+
+/** 路径越界错误：FileErrorCode 无专用码，用 permission_denied 表达 */
+function outsideRootError(absolutePath: string, reason: string): FileError {
+  return new FileError("permission_denied", `路径越界：${reason}`, normalizePath(absolutePath));
+}
+
+/**
+ * 创建受路径守卫约束的执行环境。
+ * 路径类方法先校验目标是否落在 allowedRoots 内，越界返回 FileError；
+ * exec 直接透传，命令风险由上层权限门判断。
+ */
+export async function createExecEnv(options: CreateExecEnvOptions): Promise<ExecutionEnv> {
+  const cwd = normalizePath(options.cwd);
+  const roots = [cwd, ...(options.allowedRoots ?? [])].map((root) => normalizePath(root));
+  const inner = new NodeExecutionEnv({ cwd, shellPath: resolveBashPath() });
+
+  /** 校验请求路径：归一化后必须位于任一允许根内 */
+  function guard(requested: string): GuardedPath {
+    const absolute = toAbsolutePath(requested, cwd);
+    const access = validatePathAccess(absolute, roots);
+    return access.ok
+      ? { ok: true, path: access.resolved }
+      : { ok: false, error: outsideRootError(absolute, access.reason) };
+  }
+
+  return {
+    get cwd() {
+      return inner.cwd;
+    },
+
+    async absolutePath(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.absolutePath(check.path, context);
+    },
+
+    joinPath(parts, context) {
+      return inner.joinPath(parts, context);
+    },
+
+    async readTextFile(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.readTextFile(check.path, context);
+    },
+
+    async readTextLines(requested, options, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.readTextLines(check.path, options, context);
+    },
+
+    async readBinaryFile(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.readBinaryFile(check.path, context);
+    },
+
+    async writeFile(requested, content, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.writeFile(check.path, content, context);
+    },
+
+    async appendFile(requested, content, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.appendFile(check.path, content, context);
+    },
+
+    async renameFile(source, destination, context) {
+      const sourceCheck = guard(source);
+      if (!sourceCheck.ok) return err<never, FileError>(sourceCheck.error);
+      const destinationCheck = guard(destination);
+      if (!destinationCheck.ok) return err<never, FileError>(destinationCheck.error);
+      return inner.renameFile(sourceCheck.path, destinationCheck.path, context);
+    },
+
+    async fileInfo(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.fileInfo(check.path, context);
+    },
+
+    async listDir(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.listDir(check.path, context);
+    },
+
+    async canonicalPath(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.canonicalPath(check.path, context);
+    },
+
+    async exists(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.exists(check.path, context);
+    },
+
+    async createDir(requested, options, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.createDir(check.path, options, context);
+    },
+
+    async remove(requested, options, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.remove(check.path, options, context);
+    },
+
+    createTempDir(prefix, context) {
+      return inner.createTempDir(prefix, context);
+    },
+
+    createTempFile(options, context) {
+      return inner.createTempFile(options, context);
+    },
+
+    exec(command, options, context) {
+      return inner.exec(command, options, context);
+    },
+
+    cleanup(context) {
+      return inner.cleanup(context);
+    },
+  };
+}

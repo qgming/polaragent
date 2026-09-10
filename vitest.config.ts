@@ -8,6 +8,8 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: [...configDefaults.exclude, "aionui参考代码/**"],
+    include: ["src/**/*.test.ts"],
+    environment: "node",
+    exclude: [...configDefaults.exclude],
   },
 });

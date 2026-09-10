@@ -1,36 +1,15 @@
-// 主进程入口：应用生命周期、IPC 注册汇总。
-// 各域处理器拆分至 ipc/*，共享工具拆分至 lib/*。
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow } from "electron";
+import { IPC } from "@/shared/contracts/ipc";
+import { ensureAppDirs } from "./app/paths";
+import { createMainWindow, getMainWindow } from "./app/window";
+import { registerIpcHandlers } from "./ipc/registry";
+import { bootstrapPisdk } from "./pisdk/bootstrap";
 
-import { register as registerAppWindow } from "./ipc/app-window.js";
-import { register as registerConfig } from "./ipc/config.js";
-import { register as registerFs } from "./ipc/fs.js";
-import { register as registerLlm } from "./ipc/llm.js";
-import { register as registerNetwork } from "./ipc/network.js";
-import { register as registerShell } from "./ipc/shell.js";
-import { ensureDataDir } from "./lib/app-paths.js";
-import { APP_ID, APP_NAME } from "./lib/constants.js";
-import { installSessionSecurity } from "./lib/session-security.js";
-import { createMainWindow, getMainWindow } from "./lib/windows.js";
-
-const ipcRegistrars = [
-  registerAppWindow,
-  registerFs,
-  registerConfig,
-  registerLlm,
-  registerNetwork,
-  registerShell,
-];
-
-// 注册全部 IPC 处理器
-function registerHandlers() {
-  for (const register of ipcRegistrars) register(ipcMain);
-}
-
-app.setAppUserModelId(APP_ID);
-app.setName(APP_NAME);
-
+// 单实例锁：SQLite 会话库与窗口状态都不允许并发写
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+// pisdk 清理函数：退出前统一释放运行时与 sqlite 资源
+let disposePisdk: (() => void) | null = null;
 
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -43,13 +22,21 @@ if (!gotSingleInstanceLock) {
     win.focus();
   });
 
-  registerHandlers();
-  void app.whenReady().then(async () => {
-    installSessionSecurity(session.defaultSession, {
-      devServerUrl: process.env.VITE_DEV_SERVER_URL ?? null,
+  // IPC 先注册再建窗口，保证渲染进程首帧调用即可用
+  registerIpcHandlers();
+
+  void app.whenReady().then(() => {
+    ensureAppDirs();
+    // 装配 pisdk 并把聊天事件广播到所有窗口
+    disposePisdk = bootstrapPisdk({
+      emit: (event) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send(IPC.chat.event, event);
+        }
+      },
     });
-    await ensureDataDir();
     createMainWindow();
+
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow();
@@ -58,7 +45,13 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// hide 的窗口不会触发此事件，仅真正销毁后才触发。
+// 退出前释放 pisdk；清理函数幂等，重复触发安全
+app.on("before-quit", () => {
+  disposePisdk?.();
+  disposePisdk = null;
+});
+
+// macOS 下关闭窗口不退出应用，其余平台沿用系统习惯
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
