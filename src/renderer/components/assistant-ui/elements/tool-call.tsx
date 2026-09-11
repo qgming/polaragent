@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -18,6 +19,11 @@ export interface ToolCallProps {
   running: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * 可选的详情渲染：给了就替掉内置的 Request/Result 文本面板。
+   * 用于把结果交给更贴的组件（终端块、diff 等）——那些组件自带外观，所以不再套外层灰底框。
+   */
+  detail?: ReactNode;
   className?: string;
 }
 
@@ -30,6 +36,7 @@ export function ToolCall({
   running,
   open,
   onOpenChange,
+  detail,
   className,
 }: ToolCallProps) {
   return (
@@ -37,7 +44,7 @@ export function ToolCall({
       data-slot="tool-call"
       open={open}
       onOpenChange={onOpenChange}
-      className={cn("w-full max-w-sm", className)}
+      className={cn("w-full", className)}
     >
       <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-2 rounded-md py-1 text-[13.5px] transition-colors outline-none">
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" />
@@ -48,7 +55,10 @@ export function ToolCall({
           <>{label}</>
         </SwapLabel>
         <span
-          className={cn(mono, "bg-foreground/[0.06] text-foreground/70 rounded-md px-1.5 py-0.5")}
+          className={cn(
+            mono,
+            "bg-foreground/[0.06] text-foreground/70 min-w-0 truncate rounded-md px-1.5 py-0.5",
+          )}
         >
           {query}
         </span>
@@ -59,17 +69,21 @@ export function ToolCall({
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-        <div className={cn(field, "mt-2 overflow-hidden rounded-2xl text-xs")}>
-          <div className="px-3.5 pt-2.5 pb-2">
-            <p className={cn(mono, "text-foreground/35 mb-1")}>Request</p>
-            <p className="text-foreground/55 font-mono">{request}</p>
+        {detail !== undefined ? (
+          <div className="mt-2">{detail}</div>
+        ) : (
+          <div className={cn(field, "mt-2 overflow-hidden rounded-2xl text-xs")}>
+            <div className="px-3.5 pt-2.5 pb-2">
+              <p className={cn(mono, "text-foreground/35 mb-1")}>Request</p>
+              <p className="text-foreground/55 font-mono">{request}</p>
+            </div>
+            <div className="bg-foreground/[0.06] mx-3.5 h-px" />
+            <div className="px-3.5 pt-2 pb-2.5">
+              <p className={cn(mono, "text-foreground/35 mb-1")}>Result</p>
+              <p className="text-foreground/90">{result}</p>
+            </div>
           </div>
-          <div className="bg-foreground/[0.06] mx-3.5 h-px" />
-          <div className="px-3.5 pt-2 pb-2.5">
-            <p className={cn(mono, "text-foreground/35 mb-1")}>Result</p>
-            <p className="text-foreground/90">{result}</p>
-          </div>
-        </div>
+        )}
       </CollapsibleContent>
     </Collapsible>
   );

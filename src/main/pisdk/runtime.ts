@@ -178,6 +178,25 @@ function toolResultValue(result: AgentToolResult<unknown>): unknown {
 }
 
 /**
+ * tool_end 事件 → 该 part 的字段补丁（流式路径）。
+ *
+ * 文本结果会盖住 details，两者都留：工具的结构化详情（edit 的 patch 等）只有 details 里有，
+ * 渲染层靠它决定展开面板用 diff 还是纯文本。
+ * 提到模块级是为了可测：这段写入在 createChatRuntime 的闭包里够不到，
+ * 与 message-mapper 的 applyToolResult（历史回读路径）对称，两条路径各有一个可测入口。
+ */
+export function applyToolEnd(
+  part: ToolCallPart,
+  result: AgentToolResult<unknown>,
+  isError: boolean,
+): void {
+  part.result = toolResultValue(result);
+  if (result.details !== undefined) part.details = result.details;
+  part.isError = isError;
+  part.status = isError ? "error" : "done";
+}
+
+/**
  * always_allow 的规则模式：bash 取命令首词，write/edit 取路径首段（跳过盘符）；
  * 无法提取时返回 undefined，表示该工具全局放行。
  */
@@ -471,9 +490,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): void {
     const ref = runtime.toolParts.get(event.toolCallId);
     if (!ref) return;
-    ref.part.result = toolResultValue(event.result);
-    ref.part.isError = event.isError;
-    ref.part.status = event.isError ? "error" : "done";
+    applyToolEnd(ref.part, event.result, event.isError);
     emitSafe({
       type: "part-upsert",
       messageId: ref.messageId,

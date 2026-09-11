@@ -161,6 +161,59 @@ describe("mapEntriesToMessages", () => {
     });
   });
 
+  it("工具的结构化 details 与文本结果并存透传", () => {
+    const details = {
+      diff: "@@ -1 +1 @@\n-旧\n+新\n",
+      patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-旧\n+新\n",
+      firstChangedLine: 1,
+    };
+    const entries: Entry[] = [
+      messageEntry(
+        "a1",
+        1,
+        assistantMessage([
+          { type: "toolCall", id: "call-1", name: "edit", arguments: { path: "a.txt" } },
+        ]),
+      ),
+      messageEntry(
+        "t1",
+        2,
+        toolResultMessage({
+          toolCallId: "call-1",
+          toolName: "edit",
+          content: [{ type: "text", text: "Successfully replaced 1 block(s) in a.txt." }],
+          details,
+        }),
+      ),
+    ];
+
+    const { messages } = mapEntriesToMessages(entries);
+    const part = messages[0]?.parts[0] as ToolCallPart | undefined;
+    // 文本照旧进 result；details 不因为文本存在而丢失
+    expect(part?.result).toBe("Successfully replaced 1 block(s) in a.txt.");
+    expect(part?.details).toEqual(details);
+  });
+
+  it("工具未给 details 时不写入该字段", () => {
+    const entries: Entry[] = [
+      messageEntry(
+        "a1",
+        1,
+        assistantMessage([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }]),
+      ),
+      messageEntry(
+        "t1",
+        2,
+        toolResultMessage({ toolCallId: "call-1", content: [{ type: "text", text: "内容" }] }),
+      ),
+    ];
+
+    const { messages } = mapEntriesToMessages(entries);
+    const part = messages[0]?.parts[0] as ToolCallPart | undefined;
+    expect(part).toBeDefined();
+    expect(Object.hasOwn(part ?? {}, "details")).toBe(false);
+  });
+
   it("找不到对应调用的 toolResult 被忽略", () => {
     const entries: Entry[] = [
       messageEntry(

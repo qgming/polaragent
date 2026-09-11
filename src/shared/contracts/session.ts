@@ -27,6 +27,8 @@ export interface ToolCallPart {
   argsText: string;
   args?: unknown;
   result?: unknown;
+  /** 工具自己声明的结构化详情（如 edit 的 diff/patch）；形状由工具决定，渲染层按工具名取用 */
+  details?: unknown;
   isError?: boolean;
   status: "running" | "done" | "error" | "pending-approval" | "denied";
 }

@@ -26,7 +26,6 @@ import {
   inkButton,
   mono,
   paper,
-  ShimmerLabel,
 } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
@@ -80,8 +79,8 @@ function selectSessionUsage(state: {
 
 /** chip 触发键：形状抄自 elements/composer.tsx 的 ComposerModelTrigger，三个 chip 共用 */
 const chipTrigger = cn(
-  "flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] text-foreground/55 outline-none",
-  "transition-colors hover:bg-foreground/[0.06] hover:text-foreground/90 dark:hover:bg-foreground/[0.09]",
+  "flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] text-foreground outline-none",
+  "transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/[0.09]",
   "focus-visible:ring-1 focus-visible:ring-foreground/20 motion-reduce:transition-none",
 );
 
@@ -347,9 +346,7 @@ function ThinkingChip({ level }: { level: ThinkingLevel }) {
                 className={cn(
                   "flex-1 rounded-full py-1 text-center text-xs font-medium whitespace-nowrap outline-none",
                   "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
-                  active
-                    ? "bg-background text-foreground/90"
-                    : "text-foreground/45 hover:text-foreground/70",
+                  active ? "bg-background text-foreground" : "text-foreground hover:bg-background/60",
                 )}
               >
                 {t(item.labelKey)}
@@ -530,9 +527,6 @@ export function Composer() {
               "placeholder:text-foreground/35",
             )}
           />
-          {running && (
-            <p className="px-2.5 text-[11px] text-muted-foreground">{t("chat.queueHint")}</p>
-          )}
           <div className="flex items-center justify-between gap-1.5">
             <div className="flex min-w-0 items-center gap-1.5">
               <ComposerPrimitive.AddAttachment
@@ -549,12 +543,10 @@ export function Composer() {
               <ModelChip options={modelOptions} current={currentModel} />
               <ThinkingChip level={thinkingLevel} />
             </div>
-            {running ? (
-              <div className="flex shrink-0 items-center gap-2">
-                <ShimmerLabel className="hidden max-w-56 truncate text-[11px] text-muted-foreground md:inline">
-                  {t("approval.stopAfterStep")}
-                </ShimmerLabel>
-                {usageRing}
+            {/* 运行中文案一律不驻留：底部这行只放控件本身 */}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {usageRing}
+              {running ? (
                 <Button
                   type="button"
                   variant="default"
@@ -565,10 +557,7 @@ export function Composer() {
                 >
                   <Square className="size-3 fill-current" />
                 </Button>
-              </div>
-            ) : (
-              <div className="flex shrink-0 items-center gap-1.5">
-                {usageRing}
+              ) : (
                 <ComposerPrimitive.Send asChild>
                   {/* 空输入时禁用（前景 40% 不透明，B1 ③） */}
                   <button
@@ -583,8 +572,8 @@ export function Composer() {
                     <ArrowUp className="size-4" />
                   </button>
                 </ComposerPrimitive.Send>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </ComposerPrimitive.AttachmentDropzone>
       </ComposerPrimitive.Root>

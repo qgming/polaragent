@@ -120,6 +120,8 @@ function applyToolResult(message: ToolResultMessage, pending: PendingToolCalls):
   // 找不到匹配调用的结果直接忽略（可能来自分支外的历史残留）
   if (!part) return;
   part.result = toolResultValue(message);
+  // 文本结果会盖住 details，两者都留：工具的结构化详情（edit 的 patch 等）只有 details 里有
+  if (message.details !== undefined) part.details = message.details;
   part.isError = message.isError;
   part.status = message.isError ? "error" : "done";
 }

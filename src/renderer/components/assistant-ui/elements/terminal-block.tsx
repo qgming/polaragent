@@ -31,7 +31,7 @@ export function TerminalBlock({
       data-slot="terminal-block"
       className={cn(
         ink ? "bg-foreground dark:bg-popover" : paper,
-        "w-full max-w-md overflow-hidden rounded-2xl font-mono text-xs",
+        "w-full overflow-hidden rounded-2xl font-mono text-xs",
         className,
       )}
       {...props}

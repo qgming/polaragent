@@ -22,7 +22,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { Fragment, useEffect, useRef } from "react";
+import { createContext, Fragment, useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
 import {
@@ -40,12 +40,6 @@ import {
   ReasoningTrigger,
 } from "@/renderer/components/assistant-ui/elements/reasoning.aui";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
-import { ToolFallback } from "@/renderer/components/assistant-ui/elements/tool-fallback.aui";
-import {
-  ToolGroupContent,
-  ToolGroupRoot,
-  ToolGroupTrigger,
-} from "@/renderer/components/assistant-ui/elements/tool-group.aui";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import type { SessionSearchHit } from "@/renderer/features/search";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
@@ -53,6 +47,32 @@ import { cn } from "@/renderer/lib/utils";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
+import { ToolCallPart, ToolRunGroup } from "./ToolParts";
+
+/**
+ * 助手消息在一次运行里的位置。
+ *
+ * pi 的 harness 每遇到一次 message_start 就新开一条助手消息，所以「推理 → 工具 → 正文」
+ * 这样一次运行会落成好几条消息。段首决定与上一段之间的间距，段尾决定唯一的底部操作栏
+ * 挂在哪条上。由 ThreadView 遍历时算好，避免每条消息各自扫一遍整个列表；
+ * 用字符串而不是对象，让 context 只在位置真变化时才传下去。
+ */
+type RunPosition = "solo" | "start" | "middle" | "end";
+
+const RunPositionContext = createContext<RunPosition | null>(null);
+
+/** 按左右邻居的角色定位置：非助手消息不属于任何助手段 */
+function runPosition(
+  role: string,
+  prevRole: string | undefined,
+  nextRole: string | undefined,
+): RunPosition | null {
+  if (role !== "assistant") return null;
+  const starts = prevRole !== "assistant";
+  const ends = nextRole !== "assistant";
+  if (starts) return ends ? "solo" : "start";
+  return ends ? "end" : "middle";
+}
 
 /**
  * 助手消息的 part 分组：连续推理与工具调用折进「思维链」组，其余按类型单独出。
@@ -134,7 +154,6 @@ function AssistantActionBar() {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="not-last"
       className="aui-assistant-action-bar-root flex animate-in gap-1 text-muted-foreground fade-in duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
@@ -232,11 +251,22 @@ function UserMessage() {
 
 function AssistantMessage() {
   const { t } = useTranslation();
+  // null 表示这条消息不在某次运行的助手段里（渲染在消息流之外时也走这个兜底）
+  const position = useContext(RunPositionContext);
+  const startsRun = position === null || position === "solo" || position === "start";
+  const endsRun = position === null || position === "solo" || position === "end";
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className="relative -mb-7.5 animate-in pb-7.5 duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      className={cn(
+        "relative animate-in duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]",
+        // 同一次运行里的续条紧贴上一段，整次输出读作一块；
+        // 只有段尾留出操作栏的高度（负外边距把那块高度还回给相邻间距）
+        !startsRun && "-mt-4",
+        endsRun && "-mb-7.5 pb-7.5",
+      )}
     >
       <div
         data-slot="aui_assistant-message-content"
@@ -248,19 +278,12 @@ function AssistantMessage() {
               case "group-chainOfThought":
                 return <div data-slot="aui_chain-of-thought">{children}</div>;
               case "group-tool":
-                return (
-                  <ToolGroupRoot variant="ghost">
-                    <ToolGroupTrigger
-                      count={part.indices.length}
-                      active={part.status.type === "running"}
-                    />
-                    <ToolGroupContent>{children}</ToolGroupContent>
-                  </ToolGroupRoot>
-                );
+                return <ToolRunGroup indices={part.indices}>{children}</ToolRunGroup>;
               case "group-reasoning": {
                 const running = part.status.type === "running";
                 return (
-                  <ReasoningRoot streaming={running}>
+                  // ghost：思考块不描边，触发行直接坐在正文左线上
+                  <ReasoningRoot variant="ghost" streaming={running}>
                     <ReasoningTrigger active={running} />
                     <ReasoningContent aria-busy={running}>
                       <ReasoningText>{children}</ReasoningText>
@@ -273,7 +296,7 @@ function AssistantMessage() {
               case "reasoning":
                 return <Reasoning {...part} />;
               case "tool-call":
-                return part.toolUI ?? <ToolFallback {...part} />;
+                return part.toolUI ?? <ToolCallPart {...part} />;
               case "data":
                 return part.dataRendererUI;
               case "file":
@@ -307,13 +330,16 @@ function AssistantMessage() {
         <MessageError />
       </div>
 
-      <div
-        data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
-      >
-        <BranchPicker />
-        <AssistantActionBar />
-      </div>
+      {/* 一次运行只有段尾那条挂操作栏，运行中由 hideWhenRunning 整条收起 */}
+      {endsRun && (
+        <div
+          data-slot="aui_assistant-message-footer"
+          className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+        >
+          <BranchPicker />
+          <AssistantActionBar />
+        </div>
+      )}
     </MessagePrimitive.Root>
   );
 }
@@ -389,7 +415,9 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
           <div data-slot="aui_message-group" className="mb-2 flex flex-col gap-y-6 empty:hidden">
             {messages.map((message, index) => {
               const prev = messages[index - 1];
+              const next = messages[index + 1];
               const isHit = searchHit?.messageId === message.id;
+              const position = runPosition(message.role, prev?.role, next?.role);
               return (
                 <Fragment key={message.id}>
                   {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
@@ -412,7 +440,12 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
                         {searchHit.indexInMessage + 1}/{searchHit.count}
                       </div>
                     )}
-                    <ThreadPrimitive.MessageByIndex index={index} components={MESSAGE_COMPONENTS} />
+                    <RunPositionContext.Provider value={position}>
+                      <ThreadPrimitive.MessageByIndex
+                        index={index}
+                        components={MESSAGE_COMPONENTS}
+                      />
+                    </RunPositionContext.Provider>
                   </div>
                 </Fragment>
               );

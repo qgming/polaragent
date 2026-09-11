@@ -38,6 +38,9 @@ function toThreadPart(part: ChatPart): ThreadPart {
         ...(part.args !== undefined ? { args: part.args } : {}),
         ...(part.result !== undefined ? { result: part.result } : {}),
         ...(part.isError !== undefined ? { isError: part.isError } : {}),
+        // 工具的 details 走 assistant-ui 的 artifact 槽位（库声明的 UI 专用附属数据）。
+        // 不能直接挂一个自造字段：那不是 ThreadMessageLike 的形状，会在归一化时被丢掉。
+        ...(part.details !== undefined ? { artifact: part.details } : {}),
       };
       return partLike as ThreadPart;
     }
