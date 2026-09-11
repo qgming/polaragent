@@ -11,6 +11,7 @@ import {
   deriveRulePattern,
   getChatRuntime,
   pairEntryWithMessage,
+  runPromptFor,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
@@ -62,6 +63,30 @@ describe("deriveRulePattern", () => {
     expect(deriveRulePattern("write", { path: "src/foo.ts" })).toBe("src");
     expect(deriveRulePattern("edit", { path: "D:\\dev\\polaragent\\a.ts" })).toBe("dev");
     expect(deriveRulePattern("write", {})).toBeUndefined();
+  });
+});
+
+describe("runPromptFor", () => {
+  const images = [{ type: "image" as const, data: "QUJD", mimeType: "image/png" }];
+
+  it("普通发送：原样透传文本与图片", () => {
+    expect(runPromptFor({ text: "你好", images })).toEqual({ prompt: "你好", images });
+    expect(runPromptFor({ text: "你好" })).toEqual({ prompt: "你好", images: undefined });
+  });
+
+  // 回归：传文本会让 acceptRun 再追加一条 user 条目，
+  // 分支点落到用户消息上、历史里多一份重复对话
+  it("重新生成：回退后必须用空 prompt，且不带图片", () => {
+    expect(runPromptFor({ text: "你好", images, rewindToEntryId: "u1" })).toEqual({
+      prompt: "",
+      images: undefined,
+    });
+  });
+
+  it("回退点为空字符串（拿不到条目 id）时按普通发送处理", () => {
+    const result = runPromptFor({ text: "你好", images, rewindToEntryId: "" });
+    expect(result.prompt).toBe("");
+    expect(result.images).toBeUndefined();
   });
 });
 

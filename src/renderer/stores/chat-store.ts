@@ -232,18 +232,23 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       .filter((p) => p.type === "text")
       .map((p) => p.text)
       .join("");
-    const images = lastUser.parts
-      .filter((p) => p.type === "image")
-      .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType }));
-    // 截断到最后一条用户消息（含），丢弃其后的助手回复
-    set((state) => ({
-      messagesBySession: {
-        ...state.messagesBySession,
-        [sessionId]: list.slice(0, lastUserIndex + 1),
-      },
-    }));
-    // 复用被保留的用户消息 id，避免重发时再追加一条同样的消息
-    await window.polaragent.chat.send(sessionId, text, images, lastUser.id);
+    /**
+     * 重新生成：主进程会先把 lane 的 tip 退回这条用户条目，再用空 prompt 重跑，
+     * 所以新回复在 pi 的条目树里是旧回复的**兄弟**（可切换），也不会再追加一条重复的用户消息。
+     *
+     * 因此这里**不截断**列表：旧回复留在列表里，两条共享同一个 parentId，
+     * assistant-ui 据此把它们渲染成同一条消息的两个分支。
+     * 回退点要求条目 id；还没拿到（例如消息尚未落盘）时退回老行为，只重发不截断。
+     */
+    await window.polaragent.chat.send(
+      sessionId,
+      text,
+      lastUser.parts
+        .filter((p) => p.type === "image")
+        .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType })),
+      lastUser.id,
+      lastUser.entryId,
+    );
   },
 
   applyEvent(sessionId, event) {

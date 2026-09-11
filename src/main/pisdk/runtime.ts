@@ -42,8 +42,41 @@ export interface ChatRuntimeDeps {
   resolveWorkingDir: (sessionId: string) => Promise<string>;
 }
 
+/**
+ * 这次运行该怎么驱动 lane。
+ *
+ * 重新生成（给了回退点）时必须用**空 prompt**：`acceptRun` 只在「prompt 为空且无图片」时
+ * 不追加任何消息，用的正是当前 tip 上已有的那条用户消息。若照旧传文本，
+ * 会再写一条 user 条目 —— 分支点就落到用户消息上，历史里也多一份重复对话。
+ */
+export function runPromptFor(input: {
+  text: string;
+  images?: ImageContent[];
+  rewindToEntryId?: string;
+}): { prompt: string; images: ImageContent[] | undefined } {
+  if (input.rewindToEntryId === undefined) return { prompt: input.text, images: input.images };
+  return { prompt: "", images: undefined };
+}
+
+export interface SendOptions {
+  /**
+   * 重新生成：先把 lane 的 tip 退回这条（用户消息）条目，再让模型重跑一次。
+   *
+   * 退回之后用**空 prompt** 驱动 —— `acceptRun` 在「prompt 为空且无图片」时不追加任何消息，
+   * 正是我们要的「重新回答上一条，而不是再发一条」。新回复的 parent 因此就是那条用户条目，
+   * 与旧回复成为 pi 条目树里的兄弟（可直接切换），也不会像原来那样在历史里留下重复的用户消息。
+   */
+  rewindToEntryId?: string;
+}
+
 export interface ChatRuntime {
-  send(sessionId: string, text: string, images?: ImageContent[], messageId?: string): Promise<void>;
+  send(
+    sessionId: string,
+    text: string,
+    images?: ImageContent[],
+    messageId?: string,
+    options?: SendOptions,
+  ): Promise<void>;
   stop(sessionId: string): Promise<void>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(sessionId: string, instructions?: string): Promise<void>;
@@ -376,10 +409,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       // 复用渲染层乐观消息 id：upsertMessage 按 id 覆盖，避免同一条用户消息显示两次
       const reuseId = runtime.pendingUserMessageId;
       runtime.pendingUserMessageId = undefined;
+      const messageId = reuseId ?? randomUUID();
+      // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
+      runtime.awaitingEntryIds.push(messageId);
       emitSafe({
         type: "message-added",
         message: {
-          id: reuseId ?? randomUUID(),
+          id: messageId,
           role: "user",
           createdAt: Date.now(),
           parts: mapUserParts(message),
@@ -823,6 +859,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     text: string,
     images?: ImageContent[],
     messageId?: string,
+    options?: SendOptions,
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
     // 运行中再 send 等价于 followUp 排队
@@ -841,7 +878,21 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.runId = runId;
     emitSafe({ type: "run-started", runId });
     try {
-      const result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
+      const rewound = options?.rewindToEntryId;
+      if (rewound !== undefined) {
+        // 先把 tip 退回那条用户消息，再空 prompt 驱动 —— 新回复与旧回复成为兄弟条目
+        const nav = await runtime.lane.navigateTree(rewound, undefined, BACKGROUND_CONTEXT);
+        if (!nav.ok) {
+          emitRunFailure(runtime, runId, nav.error);
+          return;
+        }
+      }
+      const prompt = runPromptFor({ text, images, ...(options ?? {}) });
+      const result = await runtime.lane.prompt(
+        prompt.prompt,
+        prompt.images,
+        BACKGROUND_CONTEXT,
+      );
       if (!result.ok) emitRunFailure(runtime, runId, result.error);
     } catch (error) {
       emitRunFailure(runtime, runId, error);

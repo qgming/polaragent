@@ -37,12 +37,17 @@ export function registerChatIpc(): void {
       text: string;
       images?: ChatImage[];
       messageId?: string;
+      /** 重新生成时给出的用户条目 id：主进程据此把 lane 退回再重跑 */
+      rewindToEntryId?: string;
     }) => {
       await getChatRuntime().send(
         request.sessionId,
         request.text,
         toImageContents(request.images),
         request.messageId,
+        request.rewindToEntryId === undefined
+          ? undefined
+          : { rewindToEntryId: request.rewindToEntryId },
       );
     },
   );

@@ -39,6 +39,8 @@ export interface PolarAgentApi {
       text: string,
       images?: { data: string; mimeType: string }[],
       messageId?: string,
+      /** 重新生成：先回退到该用户条目再重跑，新回复成为旧回复的兄弟分支 */
+      rewindToEntryId?: string,
     ): Promise<void>;
     stop(sessionId: string): Promise<void>;
     queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
