@@ -48,7 +48,9 @@ export interface ChatRuntimeDeps {
  * `known: false` 表示读取失败 —— 与「tip 是 null」是两回事，调用方必须能区分：
  * 把读失败当成 null 会让「回退到会话开头」被误判成「目标已是 tip」而跳过导航。
  */
-async function currentTip(runtime: SessionRuntime): Promise<{ known: boolean; tipId: string | null }> {
+async function currentTip(
+  runtime: SessionRuntime,
+): Promise<{ known: boolean; tipId: string | null }> {
   try {
     const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
     return { known: true, tipId: info.tipId };

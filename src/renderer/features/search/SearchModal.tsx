@@ -38,20 +38,23 @@ const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 type CommandId = "new-chat" | "toggle-theme";
 
 /**
- * 全局搜索面板（Ctrl+K）：输入即搜，结果按 会话 → 消息 → 设置 → 命令 分组。
+ * 统一搜索模态窗：侧栏搜索按钮与 Ctrl+K 打开同一个它，输入即搜，
+ * 结果按 会话 → 消息 → 设置 → 命令 分组。
  *
  * 结果列表交给官方 CommandPalette 渲染（分组眉题、键盘上下、Enter、Esc 标记都由它提供），
  * 本组件只负责把四类结果映射成它的 PaletteCommand：
  *   label 是主文案，keys 是右侧那一串等宽标记（会话的更新时间、命中的位置、设置的去向、命令的快捷键）。
  * 官方组件按 label 自行过滤，因此这里仍按各自规则先筛好（消息要按正文命中而不是标题）。
+ *
+ * 消息结果只覆盖**本次运行已加载过**的会话：渲染层拿不到全库全文检索，
+ * 点中一条消息时会切到该会话并请求定位到那条消息（见 Thread 的搜索跳转处理）。
  */
-export function GlobalSearch() {
+export function SearchModal() {
   const { t } = useTranslation();
-  const open = useUiStore((s) => s.globalSearchOpen);
-  const closeGlobalSearch = useUiStore((s) => s.closeGlobalSearch);
+  const open = useUiStore((s) => s.searchOpen);
+  const closeSearch = useUiStore((s) => s.closeSearch);
+  const jumpToMessage = useUiStore((s) => s.jumpToMessage);
   const openSettings = useUiStore((s) => s.openSettings);
-  const openSessionSearch = useUiStore((s) => s.openSessionSearch);
-  const setSessionSearchQuery = useUiStore((s) => s.setSessionSearchQuery);
   const sessions = useChatStore((s) => s.sessions);
   const messagesBySession = useChatStore((s) => s.messagesBySession);
   const runningBySession = useChatStore((s) => s.runningBySession);
@@ -120,7 +123,7 @@ export function GlobalSearch() {
       const id = `session:${session.id}`;
       next.set(id, () => {
         void setActiveSession(session.id);
-        closeGlobalSearch();
+        closeSearch();
       });
       out.push({
         id,
@@ -134,7 +137,7 @@ export function GlobalSearch() {
       if (!hasQuery && sessionCount >= RECENT_SESSION_LIMIT) break;
     }
 
-    // 消息：只遍历已加载的会话，每条命中消息一行；点开时带着关键词进入会话内搜索
+    // 消息：只遍历已加载的会话，每条命中消息一行；点开时切到该会话并请求定位到那条消息
     if (hasQuery) {
       const loadedIds = Object.keys(messagesBySession);
       const orderedIds = [
@@ -151,9 +154,8 @@ export function GlobalSearch() {
           const id = `message:${sessionId}:${match.messageId}`;
           next.set(id, () => {
             void setActiveSession(sessionId);
-            closeGlobalSearch();
-            setSessionSearchQuery(keyword);
-            openSessionSearch();
+            jumpToMessage(sessionId, match.messageId);
+            closeSearch();
           });
           out.push({
             id,
@@ -175,7 +177,7 @@ export function GlobalSearch() {
       if (!label.toLocaleLowerCase().includes(lowered)) continue;
       const id = `setting:${section}`;
       next.set(id, () => {
-        closeGlobalSearch();
+        closeSearch();
         openSettings(section);
       });
       out.push({
@@ -202,7 +204,7 @@ export function GlobalSearch() {
       next.set(entry.id, () => {
         if (entry.command === "new-chat") void createSession();
         else void updateSettings({ theme: theme === "dark" ? "light" : "dark" });
-        closeGlobalSearch();
+        closeSearch();
       });
       out.push({
         id: entry.id,
@@ -224,9 +226,8 @@ export function GlobalSearch() {
     theme,
     t,
     setActiveSession,
-    closeGlobalSearch,
-    setSessionSearchQuery,
-    openSessionSearch,
+    closeSearch,
+    jumpToMessage,
     openSettings,
     createSession,
     updateSettings,
@@ -242,7 +243,7 @@ export function GlobalSearch() {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      closeGlobalSearch();
+      closeSearch();
     }
   };
 
@@ -250,7 +251,7 @@ export function GlobalSearch() {
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) closeGlobalSearch();
+        if (!next) closeSearch();
       }}
     >
       <DialogPortal>
@@ -272,6 +273,8 @@ export function GlobalSearch() {
             onQueryChange={setQuery}
             onActiveChange={setActiveId}
             onRun={(id) => actions.current.get(id)?.()}
+            placeholder={t("search.globalPlaceholder")}
+            emptyLabel={t("search.noResults")}
             className="max-w-none"
           />
         </DialogPrimitive.Content>

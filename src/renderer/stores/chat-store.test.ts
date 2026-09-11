@@ -14,7 +14,11 @@ function msg(id: string, role: ChatMessage["role"], parentId?: string | null): C
 }
 
 /** 一条典型的会话：用户消息 u1 的父级是 p0，其回复是 a1 */
-const CONVERSATION = [msg("p0", "user", null), msg("u1", "user", "p0"), msg("a1", "assistant", "u1")];
+const CONVERSATION = [
+  msg("p0", "user", null),
+  msg("u1", "user", "p0"),
+  msg("a1", "assistant", "u1"),
+];
 
 describe("planRewrite", () => {
   // 核心：回退点必须是这条用户消息的**父**条目。

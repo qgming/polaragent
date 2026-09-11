@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-agent-status",
+  "type": "registry:component",
+  "title": "Agent status",
+  "description": "One pill that always answers: what is it doing, and for how long.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/agent-status.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/agent-status.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { CheckIcon, PauseIcon, RotateCcwIcon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { mono, paper } from \"./surfaces\";\n\nexport type AgentState = \"working\" | \"waiting\" | \"done\";\n\nexport interface StatusStep {\n  state: AgentState;\n  label: string;\n}\n\nexport function AgentStatus({\n  state,\n  label,\n  elapsed,\n  className,\n  ...props\n}: Omit<ComponentProps<\"div\">, \"children\" | \"state\" | \"label\" | \"elapsed\"> & {\n  state: AgentState;\n  label: string;\n  elapsed?: string;\n}) {\n  return (\n    <div\n      data-slot=\"agent-status\"\n      className={cn(\n        paper,\n        \"flex items-center gap-2.5 rounded-full py-1.5 ps-3.5 pe-1.5\",\n        className,\n      )}\n\n      {...props}\n    >\n      {state === \"done\" ? (\n        <CheckIcon aria-hidden className=\"size-3 shrink-0 text-emerald-500\" />\n      ) : (\n        <span\n          aria-hidden\n          className={cn(\n            \"size-1.5 shrink-0 rounded-full motion-reduce:animate-none\",\n            state === \"working\"\n              ? \"animate-pulse bg-blue-500 dark:bg-blue-400\"\n              : \"border-foreground/35 border\",\n          )}\n        />\n      )}\n      <span className=\"sr-only\">{state}</span>\n      <span\n        key={label}\n        className=\"fade-in blur-in-[2px] animate-in max-w-44 truncate text-xs duration-300 motion-reduce:animate-none\"\n      >\n        {label}\n      </span>\n      {elapsed !== undefined && state !== \"done\" && (\n        <span className={cn(mono, \"text-foreground/30 tabular-nums\")}>\n          {elapsed}\n        </span>\n      )}\n      <span\n        aria-hidden\n        className=\"text-foreground/45 flex size-6 items-center justify-center rounded-full\"\n      >\n        {state === \"done\" ? (\n          <RotateCcwIcon className=\"size-3\" />\n        ) : (\n          <PauseIcon className=\"size-3\" />\n        )}\n      </span>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

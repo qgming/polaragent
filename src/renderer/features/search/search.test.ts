@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/shared/contracts";
-import { findMatches } from "./SessionSearchBar";
+import { findMatches } from "./find-matches";
 
 /** 构造只含一个文本 part 的消息 */
 function textMessage(id: string, text: string): ChatMessage {

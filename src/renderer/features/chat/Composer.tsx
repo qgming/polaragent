@@ -346,7 +346,9 @@ function ThinkingChip({ level }: { level: ThinkingLevel }) {
                 className={cn(
                   "flex-1 rounded-full py-1 text-center text-xs font-medium whitespace-nowrap outline-none",
                   "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
-                  active ? "bg-background text-foreground" : "text-foreground hover:bg-background/60",
+                  active
+                    ? "bg-background text-foreground"
+                    : "text-foreground hover:bg-background/60",
                 )}
               >
                 {t(item.labelKey)}

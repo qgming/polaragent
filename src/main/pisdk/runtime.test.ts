@@ -66,7 +66,6 @@ describe("deriveRulePattern", () => {
   });
 });
 
-
 describe("pairEntryWithMessage", () => {
   const assistantEntry = (id: string, parentId: string | null = "u1") => ({
     type: "message",
@@ -188,11 +187,7 @@ describe("applyToolEnd", () => {
 
   it("失败时状态为 error 并保留 isError", () => {
     const part = makePart();
-    applyToolEnd(
-      part,
-      { content: [{ type: "text", text: "命令失败" }], details: undefined },
-      true,
-    );
+    applyToolEnd(part, { content: [{ type: "text", text: "命令失败" }], details: undefined }, true);
 
     expect(part.status).toBe("error");
     expect(part.isError).toBe(true);

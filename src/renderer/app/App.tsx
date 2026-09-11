@@ -1,7 +1,7 @@
 import { MotionConfig } from "motion/react";
 import { useEffect } from "react";
 import { TooltipProvider } from "@/renderer/components/ui/tooltip";
-import { GlobalSearch } from "@/renderer/features/search";
+import { SearchModal } from "@/renderer/features/search";
 import { SettingsModal } from "@/renderer/features/settings";
 import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
 import { PolarRuntimeProvider } from "@/renderer/runtime/PolarRuntimeProvider";
@@ -43,7 +43,7 @@ export function App() {
         </div>
         {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}
         <SettingsModal />
-        <GlobalSearch />
+        <SearchModal />
       </MotionConfig>
     </TooltipProvider>
   );

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-todo-list",
+  "type": "registry:component",
+  "title": "Todo list",
+  "description": "The agent's own working list, rewritten mid-run as it discovers what else is needed.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/todo-list.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/todo-list.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { CheckIcon, Loader2Icon, XIcon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { mono } from \"./surfaces\";\n\nexport type TodoStatus = \"pending\" | \"active\" | \"done\" | \"failed\";\n\nexport interface TodoItem {\n  id: string;\n  text: string;\n  status: TodoStatus;\n  reason?: string;\n}\n\nexport function TodoList({\n  items,\n  revision,\n  className,\n  ...props\n}: Omit<ComponentProps<\"div\">, \"children\" | \"items\" | \"revision\"> & {\n  items: readonly TodoItem[];\n  revision?: number;\n}) {\n  const done = items.filter((item) => item.status === \"done\").length;\n\n  return (\n    <div\n      data-slot=\"todo-list\"\n      className={cn(\"flex w-full max-w-sm flex-col gap-3\", className)}\n      {...props}\n    >\n      <div className=\"flex items-baseline justify-between\">\n        <span className=\"text-[13.5px] font-medium\">Todos</span>\n        <span className={cn(mono, \"text-foreground/35 tabular-nums\")}>\n          {revision === undefined\n            ? `${done}/${items.length}`\n            : `${done}/${items.length} · rev ${revision}`}\n        </span>\n      </div>\n      <ul className=\"flex flex-col gap-1\">\n        {items.map((item) => (\n          <li\n            key={item.id}\n            className=\"fade-in slide-in-from-bottom-1 animate-in fill-mode-both flex items-start gap-2.5 py-0.5 text-[13.5px] duration-300\"\n          >\n            <span\n              aria-hidden\n              className=\"flex size-4 h-5 shrink-0 items-center justify-center\"\n            >\n              {item.status === \"done\" ? (\n                <span className=\"border-foreground/20 bg-foreground/[0.06] flex size-3.5 items-center justify-center rounded-[5px] border\">\n                  <CheckIcon className=\"text-foreground/45 size-2.5\" />\n                </span>\n              ) : item.status === \"failed\" ? (\n                <span className=\"flex size-3.5 items-center justify-center rounded-[5px] border border-red-600/25 bg-red-600/[0.08] dark:border-red-400/25 dark:bg-red-400/[0.08]\">\n                  <XIcon className=\"size-2.5 text-red-600 dark:text-red-400\" />\n                </span>\n              ) : item.status === \"active\" ? (\n                <Loader2Icon className=\"size-3.5 animate-spin text-blue-500 motion-reduce:animate-none dark:text-blue-400\" />\n              ) : (\n                <span className=\"border-foreground/15 size-3.5 rounded-[5px] border\" />\n              )}\n            </span>\n            <span className=\"sr-only\">{item.status}</span>\n            <div className=\"min-w-0 flex-1 leading-5 break-words\">\n              <span\n                className={cn(\n                  item.status === \"done\" &&\n                    \"text-foreground/35 line-through decoration-[1.5px]\",\n                  item.status === \"active\" && \"text-foreground/90\",\n                  item.status === \"pending\" && \"text-foreground/50\",\n                  item.status === \"failed\" && \"text-red-600 dark:text-red-400\",\n                )}\n              >\n                {item.text}\n              </span>\n              {item.status === \"failed\" && item.reason ? (\n                <p className=\"text-foreground/45 text-xs leading-4 break-words\">\n                  {item.reason}\n                </p>\n              ) : null}\n            </div>\n          </li>\n        ))}\n      </ul>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

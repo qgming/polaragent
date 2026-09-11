@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-error-state",
+  "type": "registry:component",
+  "title": "Error state",
+  "description": "A quiet failure banner with a retry path, not a modal in your face.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/error-state.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/error-state.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { CircleAlertIcon, RefreshCwIcon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { ShimmerLabel } from \"./surfaces\";\n\nexport interface ErrorStateProps extends Omit<\n  ComponentProps<\"div\">,\n  \"children\" | \"role\"\n> {\n  title: string;\n  detail: string;\n  retrying: boolean;\n  onRetry: () => void;\n}\n\nexport function ErrorState({\n  title,\n  detail,\n  retrying,\n  onRetry,\n  className,\n  ...props\n}: ErrorStateProps) {\n  if (retrying) {\n    return (\n      <div\n        data-slot=\"error-state\"\n        key=\"retrying\"\n        role=\"status\"\n        className={cn(\n          \"fade-in animate-in flex w-full max-w-sm items-center gap-2.5 text-sm duration-300 motion-reduce:animate-none\",\n          className,\n        )}\n\n        {...props}\n      >\n        <RefreshCwIcon className=\"text-foreground/45 size-3.5 shrink-0 animate-spin motion-reduce:animate-none\" />\n        <ShimmerLabel className=\"text-foreground/55 relative inline-block\">\n          Retrying\n        </ShimmerLabel>\n      </div>\n    );\n  }\n\n  return (\n    <div\n      data-slot=\"error-state\"\n      key=\"error\"\n      role=\"alert\"\n      className={cn(\n        \"fade-in animate-in flex w-full max-w-sm items-start gap-2.5 rounded-2xl bg-red-500/[0.06] px-4 py-3 text-sm duration-300 motion-reduce:animate-none dark:bg-red-500/10\",\n        className,\n      )}\n\n      {...props}\n    >\n      <CircleAlertIcon className=\"mt-0.5 size-4 shrink-0 text-red-500/80\" />\n      <div>\n        <p className=\"font-medium text-red-600 dark:text-red-400\">{title}</p>\n        <p className=\"mt-0.5 text-[13px] leading-snug text-red-600/60 dark:text-red-400/60\">\n          {detail}\n        </p>\n      </div>\n      <button\n        type=\"button\"\n        onClick={onRetry}\n        className=\"ms-auto flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400\"\n      >\n        <RefreshCwIcon className=\"size-3\" />\n        Retry\n      </button>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

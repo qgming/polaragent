@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-message-branches",
+  "type": "registry:component",
+  "title": "Message branches",
+  "description": "Navigate between regenerated versions of the same answer without losing your place.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/message-branches.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/message-branches.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { ChevronLeftIcon, ChevronRightIcon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { ghostButton, mono } from \"./surfaces\";\n\nexport interface MessageBranchesProps extends Omit<\n  ComponentProps<\"div\">,\n  \"children\"\n> {\n  variants: readonly string[];\n  index: number;\n  onIndexChange: (index: number) => void;\n}\n\nexport function MessageBranches({\n  variants,\n  index,\n  onIndexChange,\n  className,\n  ...props\n}: MessageBranchesProps) {\n  const message = variants[index] ?? variants[0] ?? \"\";\n  const hasNavigation = variants.length > 1;\n\n  const goPrevious = () => {\n    if (!hasNavigation) return;\n    onIndexChange(index === 0 ? variants.length - 1 : index - 1);\n  };\n  const goNext = () => {\n    if (!hasNavigation) return;\n    onIndexChange(index === variants.length - 1 ? 0 : index + 1);\n  };\n\n  return (\n    <div\n      data-slot=\"message-branches\"\n      className={cn(\"flex max-w-sm flex-col gap-2\", className)}\n\n      {...props}\n    >\n      <p\n        key={index}\n        className=\"fade-in slide-in-from-bottom-1 animate-in text-foreground/90 min-h-[4.25rem] text-sm leading-relaxed duration-300 motion-reduce:animate-none\"\n      >\n        {message}\n      </p>\n      <div className=\"flex items-center gap-1\">\n        <button\n          type=\"button\"\n          aria-label=\"Show previous response\"\n          disabled={!hasNavigation}\n          onClick={goPrevious}\n          className={cn(ghostButton, \"size-6\")}\n        >\n          <ChevronLeftIcon className=\"size-3.5\" />\n        </button>\n        <span className={cn(mono, \"text-foreground/35 tabular-nums\")}>\n          {variants.length === 0\n            ? \"0 / 0\"\n            : `${index + 1} / ${variants.length}`}\n        </span>\n        <button\n          type=\"button\"\n          aria-label=\"Show next response\"\n          disabled={!hasNavigation}\n          onClick={goNext}\n          className={cn(ghostButton, \"size-6\")}\n        >\n          <ChevronRightIcon className=\"size-3.5\" />\n        </button>\n      </div>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

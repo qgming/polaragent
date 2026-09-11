@@ -1,0 +1,19 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "use-attachment-src",
+  "type": "registry:hook",
+  "title": "Use Attachment Src",
+  "description": "Resolve an image attachment to a preview source URL.",
+  "dependencies": [
+    "@assistant-ui/react",
+    "zustand"
+  ],
+  "files": [
+    {
+      "type": "registry:hook",
+      "path": "hooks/use-attachment-src.ts",
+      "sourcePath": "packages/ui/src/hooks/use-attachment-src.ts",
+      "content": "\"use client\";\n\nimport { useEffect, useState } from \"react\";\nimport { useAuiState } from \"@assistant-ui/react\";\nimport { useShallow } from \"zustand/react/shallow\";\n\nconst useFileSrc = (file: File | undefined) => {\n  const [entry, setEntry] = useState<{ file: File; url: string } | undefined>(\n    undefined,\n  );\n\n  useEffect(() => {\n    // The object URL is a browser resource whose lifetime has to straddle\n    // commit, so allocation, revocation, and clearing the entry that names a\n    // revoked URL all belong to the effect.\n    if (!file) {\n      // eslint-disable-next-line react-hooks/set-state-in-effect\n      setEntry(undefined);\n      return;\n    }\n\n    const objectUrl = URL.createObjectURL(file);\n    setEntry({ file, url: objectUrl });\n\n    return () => {\n      URL.revokeObjectURL(objectUrl);\n    };\n  }, [file]);\n\n  return entry !== undefined && entry.file === file ? entry.url : undefined;\n};\n\nexport const useAttachmentSrc = () => {\n  const { file, src } = useAuiState(\n    useShallow((s): { file?: File; src?: string } => {\n      if (s.attachment.type !== \"image\") return {};\n      if (s.attachment.file) return { file: s.attachment.file };\n      const src = s.attachment.content?.filter((c) => c.type === \"image\")[0]\n        ?.image;\n      if (!src) return {};\n      return { src };\n    }),\n  );\n\n  return useFileSrc(file) ?? src;\n};\n"
+    }
+  ]
+}

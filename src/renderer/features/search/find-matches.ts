@@ -46,7 +46,7 @@ function countOccurrences(text: string, pattern: RegExp): { count: number; first
 }
 
 /**
- * 会话内搜索的核心：对每条消息的文本 part 做大小写不敏感的子串匹配。
+ * 搜索模态窗的消息结果：对每条消息的文本 part 做大小写不敏感的子串匹配。
  * 只返回有命中的消息，snippet 为首个命中周围的片段。
  */
 export function findMatches(messages: ChatMessage[], query: string): SearchMatch[] {

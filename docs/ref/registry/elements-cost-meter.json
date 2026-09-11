@@ -1,0 +1,19 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-cost-meter",
+  "type": "registry:component",
+  "title": "Cost meter",
+  "description": "What the run spent, split by model, against the session total.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json",
+    "https://r.assistant-ui.com/elements-range.json"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/cost-meter.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/cost-meter.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { cn } from \"@/lib/utils\";\nimport { mono, paper } from \"./surfaces\";\nimport { announced, pct } from \"../utils/range\";\n\nexport interface CostLine {\n  model: string;\n  inputTokens: number;\n  outputTokens: number;\n  cost: string;\n  share: number;\n}\n\nexport function CostMeter({\n  runCost,\n  sessionCost,\n  lines,\n  className,\n  ...props\n}: Omit<\n  ComponentProps<\"div\">,\n  \"children\" | \"runCost\" | \"sessionCost\" | \"lines\"\n> & {\n  runCost: string;\n  sessionCost: string;\n  lines: readonly CostLine[];\n}) {\n  return (\n    <div\n      data-slot=\"cost-meter\"\n      className={cn(\n        paper,\n        \"flex w-full max-w-sm flex-col gap-3 rounded-2xl p-4\",\n        className,\n      )}\n\n      {...props}\n    >\n      <div className=\"flex items-baseline gap-2\">\n        <span className=\"text-2xl font-medium tracking-tight tabular-nums\">\n          {runCost}\n        </span>\n        <span className={cn(mono, \"text-foreground/30\")}>this run</span>\n        <span className={cn(mono, \"text-foreground/35 ms-auto tabular-nums\")}>\n          {sessionCost} session\n        </span>\n      </div>\n\n      <div className=\"bg-foreground/[0.06] flex h-1.5 w-full overflow-hidden rounded-full\">\n        {lines.map((line, i) => {\n          const width = pct(line.share, 1);\n          if (announced(width) === 0) return null;\n          return (\n            <span\n              key={line.model}\n              role=\"meter\"\n              aria-label={`${line.model} cost share`}\n              aria-valuemin={0}\n              aria-valuemax={100}\n              aria-valuenow={announced(width)}\n              className={cn(\n                \"h-full transition-[width] duration-500 motion-reduce:transition-none\",\n                i === 0\n                  ? \"bg-blue-500 dark:bg-blue-400\"\n                  : i === 1\n                    ? \"bg-blue-500/55 dark:bg-blue-400/55\"\n                    : \"bg-foreground/25\",\n              )}\n              style={{ width: `${width}%` }}\n            />\n          );\n        })}\n      </div>\n\n      <div className=\"flex flex-col gap-1.5\">\n        {lines.map((line) => (\n          <div key={line.model} className=\"flex items-baseline gap-2\">\n            <span className=\"text-foreground/75 min-w-0 flex-1 truncate text-[13px]\">\n              {line.model}\n            </span>\n            <span\n              className={cn(mono, \"text-foreground/25 shrink-0 tabular-nums\")}\n            >\n              {(line.inputTokens / 1000).toFixed(1)}k in ·{\" \"}\n              {(line.outputTokens / 1000).toFixed(1)}k out\n            </span>\n            <span\n              className={cn(mono, \"text-foreground/55 shrink-0 tabular-nums\")}\n            >\n              {line.cost}\n            </span>\n          </div>\n        ))}\n      </div>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

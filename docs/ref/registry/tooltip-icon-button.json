@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "tooltip-icon-button",
+  "type": "registry:component",
+  "title": "Tooltip Icon Button",
+  "description": "Icon button with an accessible tooltip label, shared across the assistant UI components.",
+  "registryDependencies": [
+    "tooltip",
+    "button"
+  ],
+  "dependencies": [
+    "radix-ui"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/tooltip-icon-button.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/tooltip-icon-button.radix.tsx",
+      "content": "\"use client\";\n\nimport { type ComponentPropsWithRef, forwardRef } from \"react\";\nimport { Slot } from \"radix-ui\";\n\nimport {\n  Tooltip,\n  TooltipContent,\n  TooltipProvider,\n  TooltipTrigger,\n} from \"@/components/ui/tooltip\";\nimport { Button } from \"@/components/ui/button\";\nimport { cn } from \"@/lib/utils\";\n\nexport type TooltipIconButtonProps = ComponentPropsWithRef<typeof Button> & {\n  tooltip: string;\n  side?: \"top\" | \"bottom\" | \"left\" | \"right\";\n};\n\nexport const TooltipIconButton = forwardRef<\n  HTMLButtonElement,\n  TooltipIconButtonProps\n>(({ children, tooltip, side = \"bottom\", className, ...rest }, ref) => {\n  return (\n    <TooltipProvider delayDuration={0}>\n      <Tooltip>\n        <TooltipTrigger asChild>\n          <Button\n            variant=\"ghost\"\n            size=\"icon\"\n            {...rest}\n            className={cn(\n              \"aui-button-icon size-6 p-1 active:scale-90\",\n              className,\n            )}\n            ref={ref}\n          >\n            <Slot.Slottable>{children}</Slot.Slottable>\n            <span className=\"aui-sr-only sr-only\">{tooltip}</span>\n          </Button>\n        </TooltipTrigger>\n        <TooltipContent side={side}>{tooltip}</TooltipContent>\n      </Tooltip>\n    </TooltipProvider>\n  );\n});\n\nTooltipIconButton.displayName = \"TooltipIconButton\";\n"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-reasoning-effort",
+  "type": "registry:component",
+  "title": "Reasoning effort",
+  "description": "How hard to think, and how much of that budget the run actually spent.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json",
+    "https://r.assistant-ui.com/elements-range.json"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/reasoning-effort.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/reasoning-effort.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { cn } from \"@/lib/utils\";\nimport { field, mono } from \"./surfaces\";\nimport { announced, pct } from \"../utils/range\";\n\nconst fmt = (n: number) => n.toLocaleString(\"en-US\");\n\nexport interface EffortLevel {\n  key: string;\n  label: string;\n  budget: number;\n}\n\nexport function ReasoningEffort({\n  levels,\n  selectedKey,\n  spent,\n  onSelect,\n  className,\n  ...props\n}: Omit<\n  ComponentProps<\"div\">,\n  \"children\" | \"levels\" | \"selectedKey\" | \"spent\" | \"onSelect\"\n> & {\n  levels: readonly EffortLevel[];\n  selectedKey: string;\n  spent: number;\n  onSelect?: (key: string) => void;\n}) {\n  const selected = levels.find((level) => level.key === selectedKey);\n  const budget = selected?.budget ?? 0;\n  const used = pct(spent, budget);\n\n  return (\n    <div\n      data-slot=\"reasoning-effort\"\n      className={cn(\"flex w-full max-w-sm flex-col gap-2.5\", className)}\n\n      {...props}\n    >\n      <div className=\"flex items-baseline justify-between\">\n        <span className=\"text-[13.5px] font-medium\">Thinking</span>\n        <span className={cn(mono, \"text-foreground/35 tabular-nums\")}>\n          {fmt(spent)} / {fmt(budget)}\n        </span>\n      </div>\n\n      <div className={cn(field, \"flex gap-0.5 rounded-full p-0.5\")}>\n        {levels.map((level) => {\n          const active = level.key === selectedKey;\n          return (\n            <button\n              key={level.key}\n              type=\"button\"\n              aria-pressed={active}\n              onClick={() => onSelect?.(level.key)}\n              className={cn(\n                \"flex-1 rounded-full py-1 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.97]\",\n                active\n                  ? \"bg-background text-foreground/90\"\n                  : \"text-foreground/45 hover:text-foreground/70\",\n              )}\n            >\n              {level.label}\n            </button>\n          );\n        })}\n      </div>\n\n      <span\n        role=\"progressbar\"\n        aria-label=\"Thinking budget used\"\n        aria-valuemin={0}\n        aria-valuemax={100}\n        aria-valuenow={announced(used)}\n        aria-valuetext={`${fmt(spent)} of ${fmt(budget)}`}\n        className=\"bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full\"\n      >\n        <span\n          className=\"block h-full rounded-full bg-blue-500 transition-[width] duration-500 motion-reduce:transition-none dark:bg-blue-400\"\n          style={{ width: `${used}%` }}\n        />\n      </span>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

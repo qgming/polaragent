@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-tool-call",
+  "type": "registry:component",
+  "title": "Tool call",
+  "description": "One tool invocation with its request and result tucked behind a disclosure.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json",
+    "collapsible"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/tool-call.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/tool-call.tsx",
+      "content": "\"use client\";\n\nimport { CheckIcon, ChevronRightIcon } from \"lucide-react\";\nimport {\n  Collapsible,\n  CollapsibleContent,\n  CollapsibleTrigger,\n} from \"@/components/ui/collapsible\";\nimport { cn } from \"@/lib/utils\";\nimport {\n  collapsePanel,\n  field,\n  mono,\n  ShimmerLabel,\n  SwapLabel,\n} from \"./surfaces\";\n\nexport interface ToolCallProps {\n  label: string;\n  activeLabel: string;\n  query: string;\n  request: string;\n  result: string;\n  running: boolean;\n  open: boolean;\n  onOpenChange: (open: boolean) => void;\n  className?: string;\n}\n\nexport function ToolCall({\n  label,\n  activeLabel,\n  query,\n  request,\n  result,\n  running,\n  open,\n  onOpenChange,\n  className,\n}: ToolCallProps) {\n  return (\n    <Collapsible\n      data-slot=\"tool-call\"\n      open={open}\n      onOpenChange={onOpenChange}\n      className={cn(\"w-full max-w-sm\", className)}\n    >\n      <CollapsibleTrigger className=\"group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-2 rounded-md py-1 text-[13.5px] transition-colors outline-none\">\n        <ChevronRightIcon className=\"size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none\" />\n        <SwapLabel active={running ? 0 : 1} className=\"text-start\">\n          <ShimmerLabel\n            active={running}\n            className=\"relative inline-block leading-none\"\n          >\n            {activeLabel}\n          </ShimmerLabel>\n          <>{label}</>\n        </SwapLabel>\n        <span\n          className={cn(\n            mono,\n            \"bg-foreground/[0.06] text-foreground/70 rounded-md px-1.5 py-0.5\",\n          )}\n        >\n          {query}\n        </span>\n        <span className=\"ms-auto flex w-4 items-center justify-end\">\n          {!running && (\n            <CheckIcon className=\"fade-in zoom-in-90 animate-in size-3.5 text-emerald-500 duration-200\" />\n          )}\n        </span>\n      </CollapsibleTrigger>\n      <CollapsibleContent className={cn(collapsePanel, \"outline-none\")}>\n        <div className={cn(field, \"mt-2 overflow-hidden rounded-2xl text-xs\")}>\n          <div className=\"px-3.5 pt-2.5 pb-2\">\n            <p className={cn(mono, \"text-foreground/35 mb-1\")}>Request</p>\n            <p className=\"text-foreground/55 font-mono\">{request}</p>\n          </div>\n          <div className=\"bg-foreground/[0.06] mx-3.5 h-px\" />\n          <div className=\"px-3.5 pt-2 pb-2.5\">\n            <p className={cn(mono, \"text-foreground/35 mb-1\")}>Result</p>\n            <p className=\"text-foreground/90\">{result}</p>\n          </div>\n        </div>\n      </CollapsibleContent>\n    </Collapsible>\n  );\n}\n"
+    }
+  ]
+}

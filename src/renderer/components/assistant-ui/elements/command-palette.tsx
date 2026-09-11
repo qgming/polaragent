@@ -20,6 +20,8 @@ export function CommandPalette({
   onActiveChange,
   onRun,
   className,
+  placeholder = "Type a command",
+  emptyLabel,
   ...props
 }: Omit<
   ComponentProps<"div">,
@@ -31,6 +33,10 @@ export function CommandPalette({
   onQueryChange?: (query: string) => void;
   onActiveChange?: (id: string) => void;
   onRun?: (id: string) => void;
+  /** 输入框占位，同时作为它的无障碍名；默认保持上游英文原文 */
+  placeholder?: string;
+  /** 无匹配时的提示文案；不给则用上游那句带查询词的英文 */
+  emptyLabel?: string;
 }) {
   const listId = useId();
   const optionId = (id: string) => `${listId}-${id}`;
@@ -87,8 +93,8 @@ export function CommandPalette({
           value={query}
           onChange={(event) => onQueryChange?.(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Type a command"
-          aria-label="Type a command"
+          placeholder={placeholder}
+          aria-label={placeholder}
           role="combobox"
           aria-expanded={ordered.length > 0}
           aria-controls={listId}
@@ -148,7 +154,7 @@ export function CommandPalette({
       {matches.length === 0 && (
         <div className="border-foreground/[0.07] border-t p-1.5">
           <span className="text-foreground/30 block px-2 py-4 text-center text-xs break-words">
-            No command matches “{query}”
+            {emptyLabel ?? `No command matches “${query}”`}
           </span>
         </div>
       )}

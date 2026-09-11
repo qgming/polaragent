@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "reasoning",
+  "type": "registry:component",
+  "title": "Reasoning",
+  "description": "Collapsible panel for assistant reasoning and thinking content.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-reasoning.json",
+    "https://r.assistant-ui.com/markdown-text.json"
+  ],
+  "dependencies": [
+    "@assistant-ui/react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/reasoning.aui.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/reasoning.aui.tsx",
+      "content": "\"use client\";\n\nimport { memo, useCallback, useRef } from \"react\";\nimport {\n  useScrollLock,\n  useAuiState,\n  type ReasoningMessagePartComponent,\n  type ReasoningGroupComponent,\n} from \"@assistant-ui/react\";\nimport { MarkdownText } from \"@/components/assistant-ui/elements/markdown-text\";\nimport {\n  ANIMATION_DURATION,\n  ReasoningRoot as ReasoningRootBase,\n  ReasoningTrigger,\n  ReasoningContent,\n  ReasoningText,\n  ReasoningFade,\n  reasoningVariants,\n  type ReasoningRootProps,\n} from \"./reasoning\";\n\nexport type { ReasoningRootProps } from \"./reasoning\";\n\n/** `ReasoningRoot` with the thread viewport scroll locked during disclosure animations. */\nfunction ReasoningRoot({\n  ref,\n  onAnimationStart,\n  ...props\n}: ReasoningRootProps) {\n  const collapsibleRef = useRef<HTMLDivElement | null>(null);\n  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);\n\n  const handleAnimationStart = useCallback(() => {\n    lockScroll();\n    onAnimationStart?.();\n  }, [lockScroll, onAnimationStart]);\n\n  const composedRef = useCallback(\n    (node: HTMLDivElement | null) => {\n      collapsibleRef.current = node;\n      if (typeof ref === \"function\") {\n        ref(node);\n      } else if (ref) {\n        ref.current = node;\n      }\n    },\n    [ref],\n  );\n\n  return (\n    <ReasoningRootBase\n      ref={composedRef}\n      onAnimationStart={handleAnimationStart}\n      {...props}\n    />\n  );\n}\n\nconst ReasoningImpl: ReasoningMessagePartComponent = () => <MarkdownText />;\n\nconst ReasoningGroupImpl: ReasoningGroupComponent = ({\n  children,\n  startIndex,\n  endIndex,\n}) => {\n  const isReasoningStreaming = useAuiState((s) => {\n    if (s.message.status?.type !== \"running\") return false;\n    for (let index = startIndex; index <= endIndex; index++) {\n      if (s.message.parts[index]?.status.type === \"running\") return true;\n    }\n    return false;\n  });\n\n  return (\n    <ReasoningRoot streaming={isReasoningStreaming}>\n      <ReasoningTrigger active={isReasoningStreaming} />\n      <ReasoningContent aria-busy={isReasoningStreaming}>\n        <ReasoningText>{children}</ReasoningText>\n      </ReasoningContent>\n    </ReasoningRoot>\n  );\n};\n\nconst Reasoning = memo(\n  ReasoningImpl,\n) as unknown as ReasoningMessagePartComponent & {\n  Root: typeof ReasoningRoot;\n  Trigger: typeof ReasoningTrigger;\n  Content: typeof ReasoningContent;\n  Text: typeof ReasoningText;\n  Fade: typeof ReasoningFade;\n};\n\nReasoning.displayName = \"Reasoning\";\nReasoning.Root = ReasoningRoot;\nReasoning.Trigger = ReasoningTrigger;\nReasoning.Content = ReasoningContent;\nReasoning.Text = ReasoningText;\nReasoning.Fade = ReasoningFade;\n\n/**\n * @deprecated This wrapper targets the legacy `components.ReasoningGroup`\n * prop on `<MessagePrimitive.Parts>`. Use `<MessagePrimitive.GroupedParts>`\n * with a `groupBy` returning `\"group-reasoning\"` and compose `ReasoningRoot`\n * / `ReasoningTrigger` / `ReasoningContent` / `ReasoningText` directly.\n * See `thread.aui.tsx` for an example.\n */\nconst ReasoningGroup = memo(ReasoningGroupImpl);\nReasoningGroup.displayName = \"ReasoningGroup\";\n\nexport {\n  Reasoning,\n  ReasoningGroup,\n  ReasoningRoot,\n  ReasoningTrigger,\n  ReasoningContent,\n  ReasoningText,\n  ReasoningFade,\n  reasoningVariants,\n};\n"
+    }
+  ]
+}

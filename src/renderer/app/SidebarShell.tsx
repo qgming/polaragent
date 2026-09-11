@@ -1,11 +1,9 @@
-import { PanelLeft, Plus, Settings2 } from "lucide-react";
-import { useState } from "react";
+import { PanelLeft, Plus, Search, Settings2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   ThreadListItems,
   ThreadListNew,
   ThreadListRoot,
-  ThreadListSearch,
 } from "@/renderer/components/assistant-ui/elements/thread-list.aui";
 import { ThemeToggle } from "@/renderer/components/ThemeToggle";
 import { Button } from "@/renderer/components/ui/button";
@@ -54,21 +52,21 @@ function RailButton({
 
 /**
  * 侧栏：会话列表整体交给 assistant-ui 官方的 thread-list 部件
- *（ThreadListRoot / New / Search / Items + ThreadListItem），
+ *（ThreadListRoot / New / Items + ThreadListItem），
  * 会话数据由 PolarRuntimeProvider 的 threadList 适配器从 chat-store 供上。
- * 折叠轨道与底部设置/主题是该部件的扩展位，不在官方组件内，按 Elements 的图标按钮口径自建。
+ * 折叠轨道与顶部的搜索入口、底部的设置/主题是该部件的扩展位，不在官方组件内，
+ * 按 Elements 的图标按钮口径自建。搜索不在这里做（不做列表内筛选），统一走搜索模态窗。
  */
 export function SidebarShell() {
   const { t } = useTranslation();
 
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const openSearch = useUiStore((s) => s.openSearch);
   const openSettings = useUiStore((s) => s.openSettings);
   const pendingDeleteSessionId = useUiStore((s) => s.pendingDeleteSessionId);
   const settleDeleteSession = useUiStore((s) => s.settleDeleteSession);
   const createSession = useChatStore((s) => s.createSession);
-
-  const [search, setSearch] = useState("");
 
   const collapseLabel = collapsed ? t("app.expandSidebar") : t("app.collapseSidebar");
 
@@ -89,16 +87,22 @@ export function SidebarShell() {
           <RailButton label={collapseLabel} onClick={toggleSidebar}>
             <PanelLeft className="size-4" />
           </RailButton>
+          <RailButton label={t("common.search")} onClick={openSearch}>
+            <Search className="size-4" />
+          </RailButton>
           <RailButton label={t("sidebar.newChat")} onClick={() => void createSession()}>
             <Plus className="size-4" />
           </RailButton>
         </div>
       ) : (
         <>
-          {/* 折叠开关是官方列表之外的控件，单独一行，避免挤压 New 的整宽按钮 */}
-          <div className="flex items-center p-2 pb-0">
+          {/* 折叠开关与搜索都是官方列表之外的控件，单独一行，避免挤压 New 的整宽按钮 */}
+          <div className="flex items-center gap-1 p-2 pb-0">
             <RailButton label={collapseLabel} onClick={toggleSidebar}>
               <PanelLeft className="size-4" />
+            </RailButton>
+            <RailButton label={t("common.search")} onClick={openSearch}>
+              <Search className="size-4" />
             </RailButton>
           </div>
 
@@ -107,16 +111,7 @@ export function SidebarShell() {
               <Plus className="size-4 shrink-0" />
               <span className="whitespace-nowrap">{t("sidebar.newChat")}</span>
             </ThreadListNew>
-            <ThreadListSearch
-              value={search}
-              onValueChange={setSearch}
-              placeholder={t("sidebar.filterSessions")}
-              aria-label={t("sidebar.filterSessions")}
-            />
-            <ThreadListItems
-              searchQuery={search}
-              className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
-            />
+            <ThreadListItems className="app-scrollbar min-h-0 flex-1 overflow-y-auto" />
           </ThreadListRoot>
         </>
       )}

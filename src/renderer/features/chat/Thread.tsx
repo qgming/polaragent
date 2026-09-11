@@ -17,15 +17,15 @@ import {
   PencilIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { createContext, Fragment, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
+import { DaySeparatorRow } from "@/renderer/components/assistant-ui/elements/day-separator";
 import {
   EmptyState,
   EmptyStateGreeting,
 } from "@/renderer/components/assistant-ui/elements/empty-state";
 import { File } from "@/renderer/components/assistant-ui/elements/file";
-import { DaySeparatorRow } from "@/renderer/components/assistant-ui/elements/day-separator";
 import { Image } from "@/renderer/components/assistant-ui/elements/image";
 import { MarkdownText } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import {
@@ -38,7 +38,6 @@ import {
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/thinking-indicator";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
-import type { SessionSearchHit } from "@/renderer/features/search";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
@@ -46,6 +45,7 @@ import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
+import { isMessageSequenceSynced } from "./message-seq";
 import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 
 /**
@@ -457,8 +457,6 @@ interface ThreadViewProps {
   /** 待审批项（来自并行车道的 chat-store）；渲染在消息流尾部 */
   approvals?: ApprovalRequest[];
   onResolve?: (id: string, decision: ApprovalDecision, note?: string) => void;
-  /** 会话内搜索的当前命中：定位并高亮对应消息 */
-  searchHit?: SessionSearchHit | null;
 }
 
 /**
@@ -466,16 +464,32 @@ interface ThreadViewProps {
  * 布局与 thread.aui.tsx 一致，差异只有三处（都是为了保住本应用既有的行为）：
  * 逐条渲染消息以便插入跨天分隔与搜索定位、审批卡接在消息流尾部、Composer 用本应用的控制台版本。
  */
-export function ThreadView({ approvals = [], onResolve, searchHit = null }: ThreadViewProps) {
+export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
   const { t } = useTranslation();
   const messages = useAuiState((s) => s.thread.messages);
   const viewportRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const searchJump = useUiStore((s) => s.searchJump);
+  const clearSearchJump = useUiStore((s) => s.clearSearchJump);
+  /** 属于当前会话的跳转目标；别的会话的目标（切换过程中可能残留）一律忽略 */
+  const jump = searchJump !== null && searchJump.sessionId === activeSessionId ? searchJump : null;
+
+  // 离开目标会话后丢弃跳转目标：否则回到该会话会留下一条「只有标记、不再滚动」的残留
+  useEffect(() => {
+    if (searchJump !== null && searchJump.sessionId !== activeSessionId) clearSearchJump();
+  }, [searchJump, activeSessionId, clearSearchJump]);
+
   const hasMore = useChatStore(
     (s) => s.activeSessionId !== null && s.hasMoreBySession[s.activeSessionId] === true,
-  );  const loadingOlder = useChatStore(
+  );
+  const loadingOlder = useChatStore(
     (s) => s.activeSessionId !== null && s.loadingOlderBySession[s.activeSessionId] === true,
+  );
+  /** store 里当前会话的消息：跳转判据的真值来源，见 domSynced */
+  const sessionMessages = useChatStore((s) =>
+    s.activeSessionId === null ? undefined : s.messagesBySession[s.activeSessionId],
   );
 
   /**
@@ -506,9 +520,50 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
     // 只依赖 hasMore：换会话时它必然重算，够用了；回调里读的是 store 的最新状态
   }, [hasMore]);
 
-  // 命中键：消息 id + 全局序号。流式更新不会改变键，避免反复滚动；
-  // 同一消息内切换命中时键变化，需要重新定位
-  const hitKey = searchHit === null ? null : `${searchHit.messageId}#${searchHit.globalIndex}`;
+  /** 已消费的跳转键（消息 id + token）：同一目标只滚一次 */
+  const consumedJumpRef = useRef<string | null>(null);
+
+  /**
+   * 这批 messages 是否已经跟上 store 的当前会话（判据见 isMessageSequenceSynced）。
+   *
+   * 这件事对跳转是致命的：fork 出来的会话与源会话**共用消息 id**
+   *（见 src/main/pisdk/session-store.test.ts），只按 id 判定就会在旧会话的 DOM 上
+   * 命中同 id 节点、把跳转提前消费掉，等新会话真的渲染出来时反而不滚了 ——
+   * 而左侧竖条又按 id 正确落在目标上，把失败掩盖过去。
+   *
+   * 因此只有在两边逐条一致、且运行中的那一条乐观消息被正确放行时才允许消费。
+   */
+  /** 渲染侧此刻是否允许比 store 多一条尾部乐观助手消息（条件与运行时一致，见 message-seq） */
+  const uiRunning = useAuiState((s) => s.thread.isRunning);
+  const optimisticTail = uiRunning && sessionMessages?.at(-1)?.role !== "assistant";
+  const domSynced = useMemo(
+    () =>
+      sessionMessages !== undefined &&
+      isMessageSequenceSynced(sessionMessages, messages, optimisticTail),
+    [sessionMessages, messages, optimisticTail],
+  );
+
+  /**
+   * 搜索模态窗点中消息后的落地：滚到那条消息，并留下左侧竖条标记（见消息容器的 data-search-hit）。
+   *
+   * 依赖 messages 而不是只依赖跳转目标：切换会话后消息是异步加载的，
+   * 目标 DOM 要到下一次消息变化才可能出现，因此定位必须在消息变化时重试，
+   * 未找到时**不**记消费，留给后面的渲染再试。
+   */
+  useEffect(() => {
+    if (jump === null || !domSynced) return;
+    const key = `${jump.messageId}#${jump.token}`;
+    if (consumedJumpRef.current === key) return;
+    // 目标消息不在这个会话里（或还在更早的分页中未加载）：不消费，等后续渲染再试
+    if (!sessionMessages?.some((message) => message.id === jump.messageId)) return;
+    const target = viewportRef.current?.querySelector(
+      `[data-message-id="${CSS.escape(jump.messageId)}"]`,
+    );
+    if (!(target instanceof HTMLElement)) return;
+    consumedJumpRef.current = key;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  }, [jump, domSynced, sessionMessages]);
 
   /**
    * 当前（末尾）那次运行的起点下标：从末尾往前扫连续的助手消息。
@@ -520,17 +575,6 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
     if (messages[i]?.role !== "assistant") break;
     activeRunStart = i;
   }
-
-  useEffect(() => {
-    if (hitKey === null) return;
-    const messageId = hitKey.slice(0, hitKey.lastIndexOf("#"));
-    const target = viewportRef.current?.querySelector(
-      `[data-message-id="${CSS.escape(messageId)}"]`,
-    );
-    if (!(target instanceof HTMLElement)) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    target.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
-  }, [hitKey]);
 
   return (
     <ThreadPrimitive.Root
@@ -573,7 +617,7 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
             {messages.map((message, index) => {
               const prev = messages[index - 1];
               const next = messages[index + 1];
-              const isHit = searchHit?.messageId === message.id;
+              const isSearchTarget = jump?.messageId === message.id;
               // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
               const isRunEnd = next?.role !== "assistant";
               // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
@@ -583,23 +627,16 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
                   {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
                     <DayDivider timestamp={message.createdAt} />
                   )}
-                  {/* 命中用内阴影做左侧栏（gutter bar），避免切高亮时引起排版跳动 */}
+                  {/* 搜索落点用内阴影做左侧栏（gutter bar），避免出现/消失时引起排版跳动 */}
                   <div
                     data-message-id={message.id}
-                    data-search-hit={isHit ? "true" : undefined}
+                    data-search-hit={isSearchTarget ? "true" : undefined}
                     className={cn(
                       "relative rounded-md",
-                      isHit &&
+                      isSearchTarget &&
                         "shadow-[inset_2px_0_0_0_color-mix(in_oklab,var(--foreground)_35%,transparent)]",
                     )}
                   >
-                    {isHit && searchHit !== null && (
-                      <div className={cn("pt-1", mono, "text-foreground/45")}>
-                        {t("search.hitCount", { count: searchHit.count })}
-                        {" · "}
-                        {searchHit.indexInMessage + 1}/{searchHit.count}
-                      </div>
-                    )}
                     <IsRunEndContext.Provider value={isRunEnd}>
                       <IsRunStartContext.Provider value={isRunStart}>
                         <ThreadPrimitive.MessageByIndex

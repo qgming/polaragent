@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-agent-plan",
+  "type": "registry:component",
+  "title": "Agent plan",
+  "description": "A checklist the agent works through, with progress you can glance.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json",
+    "https://r.assistant-ui.com/elements-range.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/agent-plan.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/agent-plan.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { CheckIcon, Loader2Icon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { mono } from \"./surfaces\";\nimport { pct, progressOf } from \"../utils/range\";\n\nexport function AgentPlan({\n  steps,\n  activeIndex,\n  className,\n  ...props\n}: Omit<ComponentProps<\"div\">, \"children\" | \"steps\" | \"activeIndex\"> & {\n  steps: readonly string[];\n  activeIndex: number;\n}) {\n  const total = steps.length;\n  const completed = progressOf(activeIndex, total);\n  const allDone = completed >= total;\n  const progress = pct(completed, total);\n\n  return (\n    <div\n      data-slot=\"agent-plan\"\n      className={cn(\"flex w-full max-w-sm flex-col gap-3\", className)}\n\n      {...props}\n    >\n      <div className=\"flex items-center justify-between\">\n        <span className=\"text-[13.5px] font-medium\">Plan</span>\n        <span className={cn(mono, \"text-foreground/35 tabular-nums\")}>\n          {completed} of {total}\n        </span>\n      </div>\n      <div className=\"bg-foreground/[0.06] h-[3px] w-full overflow-hidden rounded-full\">\n        <span\n          className=\"bg-foreground/80 block h-full rounded-full transition-[width] duration-500\"\n          style={{ width: `${progress}%` }}\n        />\n      </div>\n      <ul className=\"flex flex-col gap-2.5\">\n        {steps.map((step, i) => {\n          const done = allDone || i < completed;\n          const active = !allDone && i === completed;\n          return (\n            <li key={step} className=\"flex items-center gap-2.5 text-[13.5px]\">\n              <span className=\"flex size-4 shrink-0 items-center justify-center\">\n                {done ? (\n                  <CheckIcon className=\"text-foreground/35 size-3.5\" />\n                ) : active ? (\n                  <Loader2Icon className=\"text-foreground/90 size-3.5 animate-spin motion-reduce:animate-none\" />\n                ) : (\n                  <span\n                    aria-hidden\n                    className=\"bg-foreground/15 size-1.5 rounded-full\"\n                  />\n                )}\n              </span>\n              <span\n                className={cn(\n                  done && \"text-foreground/40\",\n                  active && \"text-foreground/90\",\n                  !done && !active && \"text-foreground/35\",\n                )}\n              >\n                {step}\n              </span>\n            </li>\n          );\n        })}\n      </ul>\n    </div>\n  );\n}\n"
+    }
+  ]
+}

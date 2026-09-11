@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "syntax-highlighter",
+  "type": "registry:component",
+  "title": "Syntax Highlighter",
+  "description": "Code block highlighting powered by react-syntax-highlighter.",
+  "dependencies": [
+    "@assistant-ui/react-syntax-highlighter",
+    "@assistant-ui/react-markdown",
+    "react-syntax-highlighter",
+    "@types/react-syntax-highlighter"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/syntax-highlighter.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/syntax-highlighter.tsx",
+      "content": "import { PrismAsyncLight } from \"react-syntax-highlighter\";\nimport { makePrismAsyncLightSyntaxHighlighter } from \"@assistant-ui/react-syntax-highlighter\";\nimport type { SyntaxHighlighterProps } from \"@assistant-ui/react-markdown\";\n\nimport tsx from \"react-syntax-highlighter/dist/esm/languages/prism/tsx\";\nimport python from \"react-syntax-highlighter/dist/esm/languages/prism/python\";\n\nimport {\n  coldarkCold,\n  coldarkDark,\n} from \"react-syntax-highlighter/dist/cjs/styles/prism\";\n\nPrismAsyncLight.registerLanguage(\"js\", tsx);\nPrismAsyncLight.registerLanguage(\"jsx\", tsx);\nPrismAsyncLight.registerLanguage(\"ts\", tsx);\nPrismAsyncLight.registerLanguage(\"tsx\", tsx);\nPrismAsyncLight.registerLanguage(\"python\", python);\n\nconst syntaxHighlighterCustomStyle = {\n  margin: 0,\n  width: \"100%\",\n  padding: \"1.5rem 1rem\",\n};\n\nconst LightSyntaxHighlighter = makePrismAsyncLightSyntaxHighlighter({\n  style: coldarkCold,\n  customStyle: syntaxHighlighterCustomStyle,\n  className: \"dark:hidden\",\n});\n\nconst DarkSyntaxHighlighter = makePrismAsyncLightSyntaxHighlighter({\n  style: coldarkDark,\n  customStyle: syntaxHighlighterCustomStyle,\n  className: \"hidden dark:block\",\n});\n\nexport const SyntaxHighlighter = (props: SyntaxHighlighterProps) => (\n  <>\n    <LightSyntaxHighlighter {...props} />\n    <DarkSyntaxHighlighter {...props} />\n  </>\n);\n"
+    }
+  ]
+}

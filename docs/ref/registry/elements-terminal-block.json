@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "elements-terminal-block",
+  "type": "registry:component",
+  "title": "Terminal block",
+  "description": "Command output that streams line by line and ends with an exit status.",
+  "registryDependencies": [
+    "https://r.assistant-ui.com/elements-surfaces.json",
+    "https://r.assistant-ui.com/elements-range.json"
+  ],
+  "dependencies": [
+    "lucide-react"
+  ],
+  "files": [
+    {
+      "type": "registry:component",
+      "path": "components/assistant-ui/elements/terminal-block.tsx",
+      "sourcePath": "packages/ui/src/components/react/assistant-ui/elements/terminal-block.tsx",
+      "content": "\"use client\";\n\nimport type { ComponentProps } from \"react\";\nimport { CheckIcon, Loader2Icon } from \"lucide-react\";\nimport { cn } from \"@/lib/utils\";\nimport { mono, paper } from \"./surfaces\";\nimport { take } from \"../utils/range\";\n\nexport function TerminalBlock({\n  command,\n  lines,\n  visibleCount,\n  done,\n  variant = \"paper\",\n  className,\n  ...props\n}: Omit<\n  ComponentProps<\"div\">,\n  \"children\" | \"command\" | \"lines\" | \"visibleCount\" | \"done\" | \"variant\"\n> & {\n  command: string;\n  lines: readonly string[];\n  visibleCount: number;\n  done: boolean;\n  variant?: \"paper\" | \"ink\";\n}) {\n  const ink = variant === \"ink\";\n\n  return (\n    <div\n      data-slot=\"terminal-block\"\n      className={cn(\n        ink ? \"bg-foreground dark:bg-popover\" : paper,\n        \"w-full max-w-md overflow-hidden rounded-2xl font-mono text-xs\",\n        className,\n      )}\n\n      {...props}\n    >\n      <div className=\"flex items-center justify-between px-4 pt-3 pb-1.5\">\n        <span\n          className={cn(\n            ink\n              ? \"text-background/90 dark:text-foreground/90\"\n              : \"text-foreground/90\",\n          )}\n        >\n          {command}\n        </span>\n        {done ? (\n          <div className=\"flex items-center gap-1\">\n            <CheckIcon className=\"size-3 text-emerald-500\" />\n            <span\n              className={cn(\n                mono,\n                ink\n                  ? \"text-background/40 dark:text-foreground/40\"\n                  : \"text-foreground/40\",\n              )}\n            >\n              exit 0\n            </span>\n          </div>\n        ) : (\n          <Loader2Icon\n            className={cn(\n              \"size-3 animate-spin motion-reduce:animate-none\",\n              ink\n                ? \"text-background/35 dark:text-foreground/35\"\n                : \"text-foreground/35\",\n            )}\n          />\n        )}\n      </div>\n      <div\n        className={cn(\n          \"flex min-h-[8.5rem] flex-col gap-1 px-4 pt-1 pb-3.5\",\n          ink\n            ? \"text-background/55 dark:text-foreground/50\"\n            : \"text-foreground/50\",\n        )}\n      >\n        {take(lines, visibleCount).map((line, i) => {\n          const isLast = i === lines.length - 1;\n          return (\n            <div\n              key={`${i}-${line}`}\n              className={cn(\n                \"fade-in animate-in fill-mode-both duration-300\",\n                isLast &&\n                  (ink\n                    ? \"text-background/90 dark:text-foreground/90\"\n                    : \"text-foreground/90\"),\n              )}\n            >\n              {line}\n            </div>\n          );\n        })}\n        {!done && (\n          <span\n            aria-hidden\n            className=\"inline-block h-3 w-1.5 animate-pulse bg-blue-500/70 motion-reduce:animate-none dark:bg-blue-400/70\"\n          />\n        )}\n      </div>\n    </div>\n  );\n}\n"
+    }
+  ]
+}
