@@ -581,11 +581,11 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
 
   return (
     <div className="space-y-6">
+      {/* 分类名已由模态的大标题给出（「模型服务」），这里只留一句范围说明与动作，不重复标题 */}
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className={typeEyebrow}>{t("settings.modelServices")}</h3>
-          <p className="mt-1 text-xs text-foreground/45">{t("settings.modelServicesDesc")}</p>
-        </div>
+        <p className="min-w-0 flex-1 text-xs text-foreground/45">
+          {t("settings.modelServicesDesc")}
+        </p>
         <Button type="button" size="sm" onClick={() => setDraft(toDraft())}>
           <Plus className="size-4" />
           {t("settings.addService")}

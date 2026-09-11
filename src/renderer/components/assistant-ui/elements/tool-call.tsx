@@ -71,9 +71,19 @@ export function ToolCall({
       </CollapsibleTrigger>
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
         {detail !== undefined ? (
-          <div className="mt-2">{detail}</div>
+          /*
+            工具详情（bash 输出 / diff / 内置面板）与触发行之间的间距走 --density-gap-inner：
+            它是块内条目，比块间距紧一档（舒适 12px / 紧凑 8px）。
+          */
+          <div className="mt-(--density-gap-inner)">{detail}</div>
         ) : (
-          <div className={cn(field, "mt-2 overflow-hidden rounded-2xl text-xs")}>
+          <div
+            className={cn(
+              field,
+              // 相对正文缩放（12/14 基准）：面板里的正文跟随对话字号
+              "mt-(--density-gap-inner) overflow-hidden rounded-2xl text-[0.86em]",
+            )}
+          >
             <div className="px-3.5 pt-2.5 pb-2">
               <p className={cn(mono, "text-foreground/35 mb-1")}>Request</p>
               <p className="text-foreground/55 font-mono">{request}</p>

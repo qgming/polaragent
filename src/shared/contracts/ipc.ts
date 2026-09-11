@@ -14,6 +14,7 @@ import type { SkillInfo } from "./skills";
 export const IPC = {
   app: {
     getInfo: "app:get-info",
+    openPath: "app:open-path",
   },
   window: {
     minimize: "window:minimize",
@@ -74,6 +75,10 @@ export const IPC = {
  */
 export interface IpcInvokeContract {
   [IPC.app.getInfo]: { request: undefined; response: AppInfo };
+  [IPC.app.openPath]: {
+    request: { path: string };
+    response: { ok: true } | { ok: false; reason: string };
+  };
   [IPC.window.minimize]: { request: undefined; response: undefined };
   [IPC.window.toggleMaximize]: { request: undefined; response: undefined };
   [IPC.window.close]: { request: undefined; response: undefined };

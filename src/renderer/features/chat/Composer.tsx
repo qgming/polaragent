@@ -25,7 +25,6 @@ import {
   ghostButton,
   inkButton,
   mono,
-  paper,
 } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
@@ -431,8 +430,8 @@ function QueuePanel({ items }: { items: QueuedMessage[] }) {
 }
 
 /**
- * Composer（B4）：Elements 外壳（paper + 24px 圆角）+ 附件（选择/拖拽/粘贴）
- * + 权限/模型/思考 chip + 发送/停止 + 队列面板与队列提示。
+ * Composer（B4）：自绘外壳（--composer-bg 面 + 24px 圆角 + --composer-shadow 抬高）
+ * + 附件（选择/拖拽/粘贴）+ 权限/模型/思考 chip + 发送/停止 + 队列面板与队列提示。
  * 发送走 ComposerPrimitive.Send（runtime 原生）；运行中 Enter 走 store.queue（见下）。
  * store 状态按会话分片：running / queue 均需以 activeSessionId 读取。
  */
@@ -499,8 +498,10 @@ export function Composer() {
       <ComposerPrimitive.Root
         compact={false}
         className={cn(
-          paper,
-          "w-full rounded-[24px] p-2.5 transition-colors",
+          // 面用 Thread 根上声明的 --composer-bg（= --card）：它比页面底色亮一档，
+          // 配合 --composer-shadow 才立得起来；暗色沿用 paper 口径的 popover 面。
+          "w-full rounded-[24px] border border-border/60 p-2.5 transition-colors",
+          "bg-[var(--composer-bg,var(--card))] shadow-[var(--composer-shadow)] dark:bg-popover",
           "focus-within:ring-1 focus-within:ring-foreground/20",
         )}
       >

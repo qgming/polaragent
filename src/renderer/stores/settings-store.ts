@@ -11,7 +11,9 @@ interface SettingsState {
   applyTheme(): void;
   /** 把 chatFont / chatFontSize 写到 CSS 变量 */
   applyTypography(): void;
-  /** 读取设置并应用主题与排版，注册系统主题监听 */
+  /** 把 density 写到 html 的 data-density（间距令牌在 index.css 里按该属性分档） */
+  applyDensity(): void;
+  /** 读取设置并应用主题、排版与密度，注册系统主题监听 */
   init(): Promise<void>;
 }
 
@@ -50,6 +52,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     if (patch.chatFont !== undefined || patch.chatFontSize !== undefined) {
       get().applyTypography();
     }
+    if (patch.density !== undefined) get().applyDensity();
   },
 
   applyTheme() {
@@ -65,14 +68,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const { settings } = get();
     if (!settings) return;
     const style = document.documentElement.style;
-    style.setProperty("--chat-font", settings.chatFont);
+    // 字体留空 = 「跟随界面」：必须删掉变量而不是写空串。
+    // 写空串会让消费侧的 var(--chat-font, var(--font-sans)) 把空值当合法值用掉，
+    // 兜底字体反而失效（这也是原来「对话字体」改了没反应的一部分原因）。
+    const font = settings.chatFont.trim();
+    if (font === "") style.removeProperty("--chat-font");
+    else style.setProperty("--chat-font", font);
     style.setProperty("--chat-font-size", `${settings.chatFontSize}px`);
+  },
+
+  applyDensity() {
+    const { settings } = get();
+    if (!settings) return;
+    document.documentElement.dataset.density = settings.density;
   },
 
   async init() {
     await get().load();
     get().applyTheme();
     get().applyTypography();
+    get().applyDensity();
     // 替换旧的监听器，保证只挂一个
     mediaQuery?.removeEventListener("change", onSystemThemeChange);
     mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");

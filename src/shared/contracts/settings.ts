@@ -40,5 +40,4 @@ export interface Settings {
   skillDirs: string[];
   /** 被用户禁用的技能名；技能仍会被扫描到但排除出系统提示词 */
   disabledSkillNames: string[];
-  archivedVisible: boolean;
 }

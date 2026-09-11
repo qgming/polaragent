@@ -31,7 +31,8 @@ export function TerminalBlock({
       data-slot="terminal-block"
       className={cn(
         ink ? "bg-foreground dark:bg-popover" : paper,
-        "w-full overflow-hidden rounded-2xl font-mono text-xs",
+        // 相对正文缩放（12/14 基准）：终端输出跟随对话字号
+        "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]",
         className,
       )}
       {...props}

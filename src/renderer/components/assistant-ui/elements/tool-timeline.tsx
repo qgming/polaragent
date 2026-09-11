@@ -83,7 +83,8 @@ export function ToolTimeline({
         </SwapLabel>
       </CollapsibleTrigger>
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-        <div className="flex flex-col gap-2.5 ps-4 pt-2.5">
+        {/* 步骤之间走 --density-gap-inner（块内条目）：舒适 12px / 紧凑 8px */}
+        <div className="flex flex-col gap-(--density-gap-inner) ps-4 pt-2.5">
           {take(steps, visibleSteps).map((step, index, shown) => {
             const Icon = step.icon;
             const active = streaming && index === shown.length - 1;

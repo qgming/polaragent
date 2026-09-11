@@ -144,14 +144,39 @@
   --scrollbar-thumb: color-mix(in oklab, var(--foreground) 18%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklab, var(--foreground) 32%, transparent);
 
-  /* 对话正文的字体与字号（设置页覆盖，这里兜底） */
+  /* 唯一被允许的阴影：Composer 的 lift。
+     设计基调是「阴影全局归零，只有浮层允许轻微抬高」，输入框就是那个浮层——
+     它外侧的脚注带是透明的，消息会从它身下滚过，靠这层阴影把它从内容上抬起来。
+     亮色用两层（贴边 1px 定边 + 大范围软影），透明度都压得很低，避免出现灰边。
+     暗色下阴影几乎不成立，只留一点贴边暗影，靠 --popover 与页面的明度差承担分层。 */
+  --composer-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 12px 28px -14px rgb(0 0 0 / 0.16);
+
+  /* 对话正文的字体与字号（设置页覆盖，这里兜底）。
+     --chat-font 允许写 var(--font-*) 引用，自定义属性的间接引用会在使用处解析，因此
+     仍能跟随主题；留空由 settings-store 直接删掉该变量，这里的兜底才会生效。 */
   --chat-font: var(--font-sans);
   --chat-font-size: 14px;
 
-  /* 布局：侧栏两态与线程最大宽度。组件必须消费这些变量，不得再硬编码像素值 */
+  /* 界面密度：只改纵向间距，不改字号（见 [data-density="compact"]）。
+     舒适 = 16px：消息块之间、段落与列表的上下、思考块与工具调用块的上下。
+     inner 用于组内条目（思维链正文段、工具组步骤、工具详情），比块级紧一档。 */
+  --density-gap: 16px;
+  --density-gap-inner: 12px;
+
+  /* 布局：侧栏宽度与线程最大宽度。组件必须消费这些变量，不得再硬编码像素值。
+     侧栏只有「展开 / 完全隐藏」两态（隐藏 = 宽度 0，见 SidebarShell），没有窄轨道，
+     因此没有 collapsed 宽度令牌。 */
   --layout-sidebar-width: 240px;
-  --layout-sidebar-width-collapsed: 48px;
   --layout-thread-max-width: 44rem;
+}
+
+/* 紧凑档：同一组令牌收紧到 12 / 8。挂 <html data-density>，
+   由 settings-store 的 applyDensity() 写入，值本身不落 CSS 之外的任何地方。 */
+[data-density="compact"] {
+  --density-gap: 12px;
+  --density-gap-inner: 8px;
 }
 
 /* 暗色：同一套语义名，只换明度台阶；--tint 保持不变 */
@@ -180,6 +205,11 @@
   --sidebar-accent: oklch(0.26 0.005 var(--tint));
   --sidebar-accent-foreground: oklch(0.94 0.004 var(--tint));
   --code-surface: oklch(0.24 0.004 var(--tint));
+
+  /* 暗色下的 Composer lift：软影在深底上不可见，只留贴边一层，别糊成一圈灰雾 */
+  --composer-shadow:
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 10px 24px -16px rgb(0 0 0 / 0.5);
 
   --aui-live: oklch(0.707 0.165 254.624);
   --aui-success: oklch(0.72 0.17 149);

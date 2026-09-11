@@ -37,7 +37,6 @@ export const DEFAULT_SETTINGS: Settings = {
   aiApprovalModel: null,
   skillDirs: [],
   disabledSkillNames: [],
-  archivedVisible: false,
 };
 
 export interface SettingsStoreOptions {

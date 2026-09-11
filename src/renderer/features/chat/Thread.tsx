@@ -45,6 +45,7 @@ import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
+import { MessageRail } from "./MessageRail";
 import { isMessageSequenceSynced } from "./message-seq";
 import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 
@@ -107,7 +108,18 @@ function MessageError() {
   );
 }
 
-const ACTION_BAR_HEIGHT = "min-h-7.5 pt-1.5";
+/**
+ * 操作栏按钮：比通用的 TooltipIconButton 小一档（24px 按钮 / 16px 图标 → 22 / 14）。
+ * 图标尺寸必须用 `!` 压过 Button 基类的 `[&_svg:not([class*='size-'])]:size-4`
+ * —— 那条规则带 :not()，特异性比这里的 `[&_svg]` 高，不加 important 是压不住的。
+ */
+const ACTION_BUTTON = "size-5.5 [&_svg]:size-3.5!";
+
+/**
+ * 操作栏一行的高度：上间距与段落 / 思考块 / 工具块同用 --density-gap（舒适 16 / 紧凑 12），
+ * min-h 恒等于「上间距 + 按钮高」，所以按钮的显隐（运行中收起、hover 才出现）不改变消息间距。
+ */
+const ACTION_BAR_ROW = "pt-(--density-gap) min-h-[calc(var(--density-gap)_+_1.375rem)]";
 
 /**
  * 运行秒数。官方没有 selector —— `metadata.timing` 要等消息结束才定下来 —— 所以自己起计时器。
@@ -214,7 +226,7 @@ function AssistantThinking() {
 /**
  * 助手消息的底部操作栏：复制 + 重新生成 + 分支。
  * 运行中整条收起（hideWhenRunning）——重新生成会在半途截断当前运行。
- * 高度由外层的 ACTION_BAR_HEIGHT 常驻预留，所以它的显隐不改变消息间距。
+ * 高度由外层的 ACTION_BAR_ROW 常驻预留，所以它的显隐不改变消息间距。
  */
 function AssistantActionBar() {
   const { t } = useTranslation();
@@ -232,7 +244,7 @@ function AssistantActionBar() {
       className="aui-assistant-action-bar-root flex animate-in items-center gap-1 text-muted-foreground fade-in duration-200 motion-reduce:animate-none"
     >
       <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip={t("common.copy")}>
+        <TooltipIconButton tooltip={t("common.copy")} className={ACTION_BUTTON}>
           <AuiIf condition={(s) => s.message.isCopied}>
             <CheckIcon className="animate-in fade-in zoom-in-50 duration-200 ease-out" />
           </AuiIf>
@@ -242,7 +254,7 @@ function AssistantActionBar() {
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip={t("common.retry")}>
+        <TooltipIconButton tooltip={t("common.retry")} className={ACTION_BUTTON}>
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
@@ -250,6 +262,7 @@ function AssistantActionBar() {
       {canBranch && (
         <TooltipIconButton
           tooltip={t("chat.branchFromHere")}
+          className={ACTION_BUTTON}
           onClick={() => void useChatStore.getState().forkSession(sessionId, entryId)}
         >
           <GitBranchIcon />
@@ -274,7 +287,7 @@ function UserActionBar() {
   return (
     <div className="flex items-center gap-1 text-muted-foreground">
       <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip={t("common.copy")}>
+        <TooltipIconButton tooltip={t("common.copy")} className={ACTION_BUTTON}>
           <AuiIf condition={(s) => s.message.isCopied}>
             <CheckIcon className="animate-in fade-in zoom-in-50 duration-200 ease-out" />
           </AuiIf>
@@ -286,7 +299,7 @@ function UserActionBar() {
       <ActionBarPrimitive.Edit asChild>
         <TooltipIconButton
           tooltip={t("chat.editMessage")}
-          className="aui-user-action-edit"
+          className={cn("aui-user-action-edit", ACTION_BUTTON)}
           onClick={() => beginEditMessage(messageId)}
         >
           <PencilIcon />
@@ -328,7 +341,7 @@ function UserMessage() {
         </div>
         {/*
           hover 或键盘聚焦时显形的操作栏，坐在气泡下方的常驻高度里。
-          高度与助手那边同值（ACTION_BAR_HEIGHT），两条流的节奏因此一致；
+          上间距与助手那边同源（ACTION_BAR_ROW 的 --density-gap），两条流的节奏因此一致；
           关键是**常驻 DOM、只切 CSS 可见性** —— 换成条件挂载会让按钮在 Tab 序列里消失，
           而编辑没有别的入口，键盘与辅助技术就再也用不到它。
           运行中不给编辑入口（会与流式冲突），此时这个容器只占位。
@@ -336,7 +349,7 @@ function UserMessage() {
         <div
           className={cn(
             "flex items-center justify-end",
-            ACTION_BAR_HEIGHT,
+            ACTION_BAR_ROW,
             "peer-empty:hidden",
             "pointer-events-none opacity-0 transition-opacity duration-200 motion-reduce:transition-none",
             "group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
@@ -365,7 +378,9 @@ function AssistantMessage() {
       <div
         data-slot="aui_assistant-message-content"
         // flex + gap：块（思考 / 工具 / 正文）之间由 gap 统一控制，块自身不带纵向外边距
-        className="flex flex-col gap-y-3 px-2 leading-relaxed text-foreground wrap-break-word"
+        // flex + gap：块（思考 / 工具 / 正文）之间由 gap 统一控制，块自身不带纵向外边距；
+        // 间距走 --density-gap（舒适 16px / 紧凑 12px，见 index.css）
+        className="flex flex-col gap-y-(--density-gap) px-2 leading-relaxed text-foreground wrap-break-word"
       >
         {/*
           运行状态固定在**整段回复**的左上角：只在段首渲染，且整段还在跑时一直显示。
@@ -378,7 +393,10 @@ function AssistantMessage() {
               case "group-chainOfThought":
                 // 思维链把推理与工具折在一起，这里也要 flex + gap，否则组内两块贴在一起
                 return (
-                  <div data-slot="aui_chain-of-thought" className="flex flex-col gap-y-3">
+                  <div
+                    data-slot="aui_chain-of-thought"
+                    className="flex flex-col gap-y-(--density-gap)"
+                  >
                     {children}
                   </div>
                 );
@@ -421,12 +439,14 @@ function AssistantMessage() {
       {/*
         段尾那块位置：底部操作栏。运行中由 hideWhenRunning 整条收起，
         状态指示已经上移到消息顶部，这里不再兼任。
-        高度常驻（ACTION_BAR_HEIGHT），所以它显隐时不改变消息间距。
+        上间距与段落 / 思考块 / 工具块同用 --density-gap，所以操作栏与正文的间距、
+        以及块与块之间的间距是同一个值；高度常驻（ACTION_BAR_ROW 的 min-h），
+        按钮显隐时不改变消息间距。
       */}
       {isRunEnd && (
         <div
-          data-slot="aui_assistant-message-footer"
-          className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+          data-slot="aui-assistant-message-footer"
+          className={cn("ms-2 flex items-center", ACTION_BAR_ROW)}
         >
           <AssistantActionBar />
         </div>
@@ -578,7 +598,8 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
 
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root flex min-h-0 flex-1 flex-col"
+      // relative：左侧消息地图（MessageRail）要相对它绝对定位，落在视口左侧的留白里
+      className="aui-root aui-thread-root relative flex min-h-0 flex-1 flex-col"
       style={{
         ["--thread-max-width" as string]: "var(--layout-thread-max-width)",
         ["--composer-bg" as string]: "var(--card)",
@@ -613,7 +634,18 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
               {t("chat.loadingOlder")}
             </div>
           )}
-          <div data-slot="aui_message-group" className="mb-2 flex flex-col gap-y-3 empty:hidden">
+          {/*
+            对话正文的字体与字号挂在这一层：fontSize 取自设置的 --chat-font-size（<html> 上），
+            字体取自 --chat-font。消息组同时包住用户消息、助手正文、推理与工具输出，因此
+            「对话字号」一改整段正文都跟着走；审批卡（下方 ApprovalSection）与 Composer
+            （脚注）在这一层之外，不受影响（Composer 自己带 text-sm）。
+            块间距交给 --density-gap：舒适 16px / 紧凑 12px。
+          */}
+          <div
+            data-slot="aui_message-group"
+            style={{ fontFamily: "var(--chat-font)", fontSize: "var(--chat-font-size)" }}
+            className="mb-2 flex flex-col gap-y-(--density-gap) empty:hidden"
+          >
             {messages.map((message, index) => {
               const prev = messages[index - 1];
               const next = messages[index + 1];
@@ -666,12 +698,24 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
           {/* 审批卡接在消息流尾部，与 Composer 之前 */}
           <ApprovalSection requests={approvals} onResolve={onResolve} />
 
-          <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible bg-background pt-4 pb-4">
+          {/*
+            脚注带是**透明**的：消息会从 Composer 身下滚过，衬在它四周，
+            靠 Composer 自己的不透明面 + --composer-shadow 把它抬起来（见 index.css）。
+            这里不铺 bg-background —— 铺了就成一条把内容盖掉的横带，输入框也就不浮了。
+          */}
+          <ThreadPrimitive.ViewportFooter
+            // data-slot 供消息地图测量脚注高度（刻度条要避开输入框，见 MessageRail）
+            data-slot="aui_thread-viewport-footer"
+            className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-4"
+          >
             <ScrollToBottom />
             <Composer />
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>
+
+      {/* 左侧消息地图：一条消息一格，hover 出预览、点击跳到那条 */}
+      <MessageRail messages={messages} viewportRef={viewportRef} />
     </ThreadPrimitive.Root>
   );
 }

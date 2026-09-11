@@ -38,7 +38,8 @@ export function CodeDiff({
   return (
     <div
       data-slot="code-diff"
-      className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-xs", className)}
+      // 相对正文缩放（12/14 基准）：diff 正文跟随对话字号
+      className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]", className)}
       {...props}
     >
       <div className="flex items-center justify-between px-4 pt-3 pb-2">

@@ -7,6 +7,7 @@ import { IPC } from "@/shared/contracts/ipc";
 const api = {
   app: {
     getInfo: () => ipcRenderer.invoke(IPC.app.getInfo),
+    openPath: (target) => ipcRenderer.invoke(IPC.app.openPath, { path: target }),
   },
   window: {
     minimize: () => ipcRenderer.invoke(IPC.window.minimize),

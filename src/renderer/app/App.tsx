@@ -31,12 +31,14 @@ export function App() {
     <TooltipProvider delayDuration={200}>
       {/* reducedMotion="user"：JS 动效统一跟随系统偏好，与 CSS 侧的 prefers-reduced-motion 兜底对齐 */}
       <MotionConfig reducedMotion="user">
-        <div className="flex h-screen flex-col bg-background text-foreground">
-          <TitleBar />
+        {/* 左右两栏都从窗口顶边开始：侧栏自带顶行（品牌 + 折叠/搜索），内容区顶栏只横跨内容区，
+            所以这里是「一行两栏」，而不是原来的「整宽顶栏 + 两栏」。 */}
+        <div className="flex h-screen bg-background text-foreground">
           {/* 运行时包住侧栏与主区：侧栏的会话列表走官方 ThreadList primitives，需要 runtime 上下文 */}
           <PolarRuntimeProvider>
-            <div className="flex min-h-0 flex-1">
-              <SidebarShell />
+            <SidebarShell />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <TitleBar />
               <MainShell />
             </div>
           </PolarRuntimeProvider>

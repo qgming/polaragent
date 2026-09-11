@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { field } from "@/renderer/components/assistant-ui/elements/surfaces";
-import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
+import { typeEyebrow, typeSection } from "@/renderer/components/assistant-ui/type";
 import {
   Select,
   SelectContent,
@@ -63,6 +63,17 @@ export function SettingsField({
       <div className="flex shrink-0 items-center gap-2">{control}</div>
     </div>
   );
+}
+
+/**
+ * 面板大标题：右侧每个分类左上角都有一行，与左栏的「设置」标题同档（display 衬线 text-xl）。
+ *
+ * 由 SettingsModal 统一渲染，面板自己不必各写一个 —— 分类名就是标题，词条取
+ * settings.general / services / permissions / skills / personalization / about。
+ * 面板内部的分组标题仍是 SettingsSection 的 mono 眉题（h3），层级为 大标题 h2 → 分组 h3。
+ */
+export function SettingsPanelTitle({ children }: { children: ReactNode }) {
+  return <h2 className={cn(typeSection, "mb-5 text-foreground")}>{children}</h2>;
 }
 
 /**

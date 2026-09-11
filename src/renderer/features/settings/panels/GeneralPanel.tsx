@@ -9,23 +9,61 @@ import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { Settings } from "@/shared/contracts/settings";
 import {
   PanelLoading,
+  SELECT_NONE,
   Segmented,
   SettingsField,
   SettingsSection,
+  SettingsSelect,
   secondaryButton,
   settingsInput,
 } from "../settings-shared";
+
+/**
+ * 「打开目录」按钮：走主进程的 app.openPath（那里会校验绝对路径再交给系统）。
+ * 失败原因挂在该按钮的 tooltip 上，不静默吞掉 —— 打开失败通常意味着目录被删或被占用。
+ */
+function OpenDirButton({ target, label }: { target: string | null; label: string }) {
+  const { t } = useTranslation();
+  const [reason, setReason] = useState<string | null>(null);
+
+  const handleClick = async () => {
+    if (target === null || target === "") return;
+    const result = await window.polaragent.app.openPath(target).catch(() => null);
+    setReason(result === null || !result.ok ? (result?.reason ?? t("errors.generic")) : null);
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={secondaryButton}
+            disabled={target === null || target === ""}
+            onClick={() => void handleClick()}
+          >
+            {label}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {reason !== null ? (
+        <TooltipContent>{`${t("settings.openFailed")}：${reason}`}</TooltipContent>
+      ) : null}
+    </Tooltip>
+  );
+}
 
 /** 面板主体：settings 已就绪后由外层传入，避免内部到处判空 */
 function GeneralPanelBody({ settings }: { settings: Settings }) {
   const { t, i18n } = useTranslation();
   const update = useSettingsStore((s) => s.update);
-  // 输入类字段先用本地状态承接，失焦/回车才落盘，避免每次按键都写配置
-  const [chatFont, setChatFont] = useState(settings.chatFont);
+  // 滑块拖动过程只更新本地，松开指针或键盘释放时才落盘
   const [chatFontSize, setChatFontSize] = useState(settings.chatFontSize);
   const [dataDir, setDataDir] = useState<string | null>(null);
 
-  // 数据目录：打开目录能力当前 IPC 未提供，只读展示
+  // 数据目录：读取一次用于展示；「打开目录」走 app.openPath（见下）
   useEffect(() => {
     void window.polaragent.app
       .getInfo()
@@ -34,12 +72,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
   }, []);
 
   // 外部（同步/回滚）改变设置时，同步本地编辑值
-  useEffect(() => setChatFont(settings.chatFont), [settings.chatFont]);
   useEffect(() => setChatFontSize(settings.chatFontSize), [settings.chatFontSize]);
-
-  const commitChatFont = () => {
-    if (chatFont !== settings.chatFont) void update({ chatFont });
-  };
 
   // 滑块拖动过程只更新本地，松开指针或键盘释放时才写入
   const commitChatFontSize = () => {
@@ -80,6 +113,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
         />
         <SettingsField
           label={t("settings.density")}
+          description={t("settings.densityDesc")}
           control={
             <Segmented
               ariaLabel={t("settings.density")}
@@ -114,21 +148,31 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
         <SettingsField
           label={t("settings.chatFont")}
           description={t("settings.chatFontDesc")}
-          htmlFor="settings-chat-font"
           control={
-            <Input
-              id="settings-chat-font"
-              value={chatFont}
-              placeholder={t("settings.chatFontDesc")}
-              onChange={(e) => setChatFont(e.target.value)}
-              onBlur={commitChatFont}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              className={cn(settingsInput, "w-56")}
+            /*
+              原来是一个自由文本输入框，要用户自己敲字体名，留空才回落到默认 ——
+              基本没人用，等于一个死设置。改成字体栈下拉：值直接写 CSS 变量引用
+              （自定义属性的间接引用会在使用处解析，因此仍然跟随主题令牌），
+              空串仍然表示「跟随界面」；Radix Select 不接受空串值，用 SELECT_NONE 哨兵顶上。
+              下拉没有「失焦提交」这一步，所以直接落盘（store 是乐观更新）。
+            */
+            <SettingsSelect
+              ariaLabel={t("settings.chatFont")}
+              className="w-32"
+              value={settings.chatFont === "" ? SELECT_NONE : settings.chatFont}
+              onChange={(value) => void update({ chatFont: value === SELECT_NONE ? "" : value })}
+              items={[
+                { value: SELECT_NONE, label: t("settings.chatFontDefault") },
+                { value: "var(--font-sans)", label: t("settings.chatFontSans") },
+                { value: "var(--font-display)", label: t("settings.chatFontSerif") },
+                { value: "var(--font-mono)", label: t("settings.chatFontMono") },
+              ]}
             />
           }
         />
         <SettingsField
           label={t("settings.chatFontSize")}
+          description={t("settings.chatFontSizeDesc")}
           htmlFor="settings-chat-font-size"
           control={
             <div className="flex items-center gap-2">
@@ -168,6 +212,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
                 placeholder="—"
                 className={cn(settingsInput, "w-56 font-mono")}
               />
+              <OpenDirButton target={settings.defaultWorkingDir} label={t("settings.openFolder")} />
               <Button
                 type="button"
                 variant="outline"
@@ -185,29 +230,14 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
           description={t("settings.dataDirDesc")}
           control={
             <div className="flex items-center gap-2">
-              {/* 路径是唯一信息来源，用 mono 截断展示；无 openPath IPC，按钮保持禁用 */}
+              {/* 路径是唯一信息来源，用 mono 截断展示；完整路径在 title 里 */}
               <span
                 className={cn(typePackage, "max-w-[240px] truncate text-foreground/40")}
                 title={dataDir ?? undefined}
               >
                 {dataDir ?? "—"}
               </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className={secondaryButton}
-                      disabled
-                    >
-                      {t("settings.openDataDir")}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{`${t("settings.openDataDir")} · ${t("common.disabled")}`}</TooltipContent>
-              </Tooltip>
+              <OpenDirButton target={dataDir} label={t("settings.openDataDir")} />
             </div>
           }
         />

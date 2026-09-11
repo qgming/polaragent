@@ -12,6 +12,8 @@ import type { SkillInfo } from "./skills";
 export interface PolarAgentApi {
   app: {
     getInfo(): Promise<AppInfo>;
+    /** 用系统默认程序打开一个绝对路径（目录或文件）；失败时返回原因，不抛异常 */
+    openPath(path: string): Promise<{ ok: true } | { ok: false; reason: string }>;
   };
   window: {
     minimize(): Promise<void>;

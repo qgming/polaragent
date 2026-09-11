@@ -19,7 +19,6 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
-    archivedVisible: false,
   };
 }
 

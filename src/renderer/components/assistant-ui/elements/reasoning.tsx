@@ -225,7 +225,8 @@ function ReasoningContent({
     <CollapsibleContent
       data-slot="reasoning-content"
       className={cn(
-        "aui-reasoning-content text-muted-foreground relative overflow-hidden text-sm outline-none",
+        // 不写死字号：推理正文跟随对话字号（--chat-font-size，挂在上面的消息组上）
+        "aui-reasoning-content text-muted-foreground relative overflow-hidden outline-none",
         "group/collapsible-content ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:animate-none",
         "data-closed:animate-collapsible-up",
         "data-open:animate-collapsible-down",
@@ -310,7 +311,8 @@ function ReasoningText({ className, children, ...props }: React.ComponentProps<"
       )}
       {...props}
     >
-      <div ref={contentRef} className="aui-reasoning-text-content space-y-4">
+      {/* 组内条目（推理正文的段落等）与块间距同档：舒适 16px / 紧凑 12px */}
+      <div ref={contentRef} className="aui-reasoning-text-content space-y-(--density-gap)">
         {children}
       </div>
     </div>

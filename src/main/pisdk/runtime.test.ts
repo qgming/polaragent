@@ -30,7 +30,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
-    archivedVisible: false,
     ...overrides,
   };
 }

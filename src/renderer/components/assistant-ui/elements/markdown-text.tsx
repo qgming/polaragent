@@ -126,8 +126,13 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
+  // 段间距由界面密度驱动：舒适 16px / 紧凑 12px（--density-gap，见 index.css）。
+  // 下面的列表、引用、分隔线、表格用同一个令牌，让整篇正文的纵向节奏一致。
   p: ({ className, ...props }) => (
-    <p className={cn("aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0", className)} {...props} />
+    <p
+      className={cn("aui-md-p my-(--density-gap) leading-relaxed first:mt-0 last:mb-0", className)}
+      {...props}
+    />
   ),
   a: ({ className, ...props }) => (
     <a
@@ -141,7 +146,7 @@ const defaultComponents = memoizeMarkdownComponents({
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(
-        "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4",
+        "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-(--density-gap) border-s-2 ps-4",
         className,
       )}
       {...props}
@@ -150,7 +155,7 @@ const defaultComponents = memoizeMarkdownComponents({
   ul: ({ className, ...props }) => (
     <ul
       className={cn(
-        "aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1",
+        "aui-md-ul marker:text-muted-foreground my-(--density-gap) ms-5 list-disc [&>li]:mt-1",
         className,
       )}
       {...props}
@@ -159,17 +164,20 @@ const defaultComponents = memoizeMarkdownComponents({
   ol: ({ className, ...props }) => (
     <ol
       className={cn(
-        "aui-md-ol marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1",
+        "aui-md-ol marker:text-muted-foreground my-(--density-gap) ms-5 list-decimal [&>li]:mt-1",
         className,
       )}
       {...props}
     />
   ),
   hr: ({ className, ...props }) => (
-    <hr className={cn("aui-md-hr border-muted-foreground/20 my-3", className)} {...props} />
+    <hr
+      className={cn("aui-md-hr border-muted-foreground/20 my-(--density-gap)", className)}
+      {...props}
+    />
   ),
   table: ({ className, ...props }) => (
-    <div className="aui-md-table-wrapper my-3 overflow-x-auto">
+    <div className="aui-md-table-wrapper my-(--density-gap) overflow-x-auto">
       <table
         className={cn("aui-md-table w-full border-separate border-spacing-0", className)}
         {...props}
@@ -215,7 +223,8 @@ const defaultComponents = memoizeMarkdownComponents({
   pre: ({ className, ...props }) => (
     <pre
       className={cn(
-        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
+        // 代码块相对正文缩放（13/14）：跟随对话字号，而不是钉死像素
+        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[0.93em] leading-relaxed",
         className,
       )}
       {...props}
