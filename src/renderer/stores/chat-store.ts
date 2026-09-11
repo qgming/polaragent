@@ -82,6 +82,89 @@ function updateMessage(
   };
 }
 
+/**
+ * 「替换这条用户消息及其后的回复」的执行计划。
+ *
+ * 关键在回退点取该消息的**父条目**，而不是它自己：这样新用户条目与旧的成为兄弟（同父），
+ * 旧消息与它之后的回复**都不再在 tip 路径上**。这一点同时决定了两件事：
+ *   · 界面上旧回复消失（调用方会按 keepCount 截断）
+ *   · fork 新会话时不会把旧回复一起复制过去 —— 复制的是「根 → 当前条目」这一条路径
+ *
+ * 早先重新生成只做「截断列表 + 重发」而不回退，新用户条目的父级因此是**旧回复**，
+ * 于是旧回复仍在 tip 路径上，fork 时新旧回复会一起出现在新会话里。
+ *
+ * `mode` 决定那条用户消息本身留不留：
+ *   · `resend`（重新生成）：文本没变，保留它并把它的 UI id 回传给主进程 →
+ *     回显时按同一个 id 原地替换，界面不闪
+ *   · `edit`（编辑）：文本变了，立刻移除且**不复用 id** → 新消息作为新条目出现，
+ *     否则会短暂显示改前的旧文本
+ *
+ * @returns `null` 表示这条不能这样替换（不是用户消息，或父级未知）
+ */
+export function planRewrite(
+  messages: readonly ChatMessage[],
+  index: number,
+  mode: "resend" | "edit",
+): { keepCount: number; rewindTo: string | null; reuseId: string | null } | null {
+  const target = messages[index];
+  if (target?.role !== "user") return null;
+  /**
+   * 父级未知（尚未落盘）时不能替换：拼 `null` 会被当成「回退到会话开头」，
+   * 把整段历史从 tip 上摘掉 —— 列表看着还在，模型那边已经清零。
+   */
+  if (target.parentId === undefined) return null;
+  return mode === "resend"
+    ? { keepCount: index + 1, rewindTo: target.parentId, reuseId: target.id }
+    : { keepCount: index, rewindTo: target.parentId, reuseId: null };
+}
+
+/** store 自己的 `set`；只用到「返回部分状态」这一种形式 */
+type StoreSet = (updater: (state: ChatState) => Partial<ChatState>) => void;
+
+/** 重发用户消息时附带的图片 */
+export interface RewriteImages {
+  data: string;
+  mimeType: string;
+}
+
+/**
+ * 按计划替换用户消息：先截断界面列表，再回退到父条目重发。
+ *
+ * 两处必须一起做，缺一不可：
+ *   · 截断 —— 旧回复在界面上立刻消失（不是留在分支上等切换）
+ *   · 带 rewindToEntryId —— 旧的用户条目与回复**落到 tip 路径之外**，
+ *     于是 fork 新会话时不会把它们一起复制过去
+ * 只截断不回退，就是之前那个「重新生成后 fork 出来新旧回复都在」的 bug。
+ *
+ * keepCount 含这条用户消息本身：新用户消息复用同一个 UI id，到达时原地替换，
+ * 界面上不会闪一下「消失又出现」。
+ */
+async function rewriteUserMessage(
+  set: StoreSet,
+  get: () => ChatState,
+  sessionId: string,
+  plan: { keepCount: number; rewindTo: string | null; reuseId: string | null },
+  list: ChatMessage[],
+  text: string,
+  images: RewriteImages[] | undefined,
+): Promise<void> {
+  const kept = list.slice(0, plan.keepCount);
+
+  set((state) => ({
+    messagesBySession: { ...state.messagesBySession, [sessionId]: kept },
+  }));
+
+  try {
+    await window.polaragent.chat.send(sessionId, text, images, plan.reuseId ?? undefined, {
+      rewindToEntryId: plan.rewindTo,
+    });
+  } catch (error) {
+    // 已截断的列表无法干净回滚（磁盘那边可能已经回退），但至少别让失败静默
+    console.warn(`替换用户消息失败：${String(error)}`);
+    await get().loadMessages(sessionId);
+  }
+}
+
 export const useChatStore = create<ChatState>()((set, get) => ({
   sessions: [],
   activeSessionId: null,
@@ -251,6 +334,11 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
     const lastUser = lastUserIndex >= 0 ? list[lastUserIndex] : undefined;
     if (!lastUser) return;
+    const plan = planRewrite(list, lastUserIndex, "resend");
+    if (plan === null) {
+      console.warn("该用户消息尚未落盘，无法重新生成");
+      return;
+    }
     const text = lastUser.parts
       .filter((p) => p.type === "text")
       .map((p) => p.text)
@@ -258,32 +346,15 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const images = lastUser.parts
       .filter((p) => p.type === "image")
       .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType }));
-    /**
-     * 重新生成：截断到最后一条用户消息（含）再重发，也就是**替换**当前这条回复。
-     *
-     * 不试图让新回复成为旧回复的兄弟：pi 的 `acceptRun` 会拒收空 prompt
-     * （`InvalidMessage{reason:"empty"}`，「Acceptance must append at least one message」），
-     * 所以「回退到该用户条目 + 空 prompt 沿用旧消息」这条路走不通；
-     * 照旧传文本则会在历史里多写一条重复的用户消息。
-     * 代价是重新生成后无法在旧回复之间切换 —— 这是明确接受的取舍。
-     *
-     * 复用被保留的用户消息 id，避免重发时 UI 里出现两条。
-     */
-    set((state) => ({
-      messagesBySession: {
-        ...state.messagesBySession,
-        [sessionId]: list.slice(0, lastUserIndex + 1),
-      },
-    }));
-    await window.polaragent.chat.send(sessionId, text, images, lastUser.id);
+
+    await rewriteUserMessage(set, get, sessionId, plan, list, text, images);
   },
 
   /**
    * 编辑用户消息：把这条替换成新文本并重跑。
    *
-   * 与重新生成的区别是「回退到**父条目**、把新文本作为新用户消息发出」，
-   * 所以新用户条目与旧的是兄弟（同父），旧消息与它之后的回复都不再在 tip 上。
-   * 列表同步截断到该消息之前 —— 那些回复既然已被回退掉，就不该再显示。
+   * 与重新生成走同一条路径（见 planRewrite），区别只是文本来源与是否带图片：
+   * 都是「回退到该消息的父条目 + 把用户消息重新发出」，旧回复因此不在 tip 路径上。
    */
   async editUserMessage(messageId, text) {
     const sessionId = get().activeSessionId;
@@ -291,34 +362,13 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     if (get().runningBySession[sessionId]) return;
     const list = get().messagesBySession[sessionId] ?? [];
     const index = list.findIndex((m) => m.id === messageId);
-    const target = index >= 0 ? list[index] : undefined;
-    if (target?.role !== "user") return;
-    /**
-     * 回退点必须是**已知**的父条目。
-     *
-     * `parentId` 缺失说明这条消息还没落盘（乐观消息，或运行失败时没配到条目），
-     * 此时拼 `?? null` 会被当成「回退到会话开头」，把整段历史从 tip 上摘掉 ——
-     * 列表看着还在，模型那边已经清零。宁可不动。
-     */
-    const parentId = target.parentId;
-    if (parentId === undefined) {
-      console.warn("该消息尚未落盘，无法编辑");
+    const plan = planRewrite(list, index, "edit");
+    if (plan === null) {
+      console.warn("该消息不能编辑（不是用户消息，或尚未落盘）");
       return;
     }
 
-    set((state) => ({
-      messagesBySession: { ...state.messagesBySession, [sessionId]: list.slice(0, index) },
-    }));
-
-    try {
-      await window.polaragent.chat.send(sessionId, text, undefined, undefined, {
-        rewindToEntryId: parentId,
-      });
-    } catch (error) {
-      // 已截断的列表无法干净回滚（磁盘那边可能已经回退），但至少把失败暴露出来
-      console.warn(`编辑消息失败：${String(error)}`);
-      await get().loadMessages(sessionId);
-    }
+    await rewriteUserMessage(set, get, sessionId, plan, list, text, undefined);
   },
 
   applyEvent(sessionId, event) {
