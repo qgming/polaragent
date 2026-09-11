@@ -1,7 +1,6 @@
 import {
   ActionBarPrimitive,
   AuiIf,
-  BranchPickerPrimitive,
   ErrorPrimitive,
   type FileMessagePartComponent,
   groupPartByType,
@@ -47,6 +46,8 @@ import { useChatStore } from "@/renderer/stores/chat-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
+import { ReplyBranchContext } from "./reply-branch-context";
+import type { ReplyBranchInfo } from "./reply-variants";
 import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 
 /**
@@ -107,35 +108,38 @@ function MessageError() {
 const ACTION_BAR_HEIGHT = "min-h-7.5 pt-1.5";
 
 /**
- * 重新生成后切换回复：上一版 / 第 n 版 / 下一版。
- * 位置在底部操作栏按钮的右侧，所以留的是左间距（原来在左侧时用的是负左外边距）。
- * 只有一条回复时（branchCount ≤ 1）由 hideWhenSingleBranch 整个隐藏。
+ * 重新生成后切换回复：上一版 / 第 n 版 / 下一版，位置在底部操作栏按钮的右侧。
+ *
+ * 用 store 里的分支数据而不是 assistant-ui 的 BranchPickerPrimitive：
+ * 后者的分支来自运行时的消息仓库，而我们的运行时喂的是「已按分支收敛过」的扁平列表
+ * （看 provider 里的 resolveReplies），它看不到兄弟，永远只会显示 1 条。
+ * 视觉沿用官方 message-branches 的形态：左右箭头 + n / m。
  */
-function BranchPicker({ className, ...rest }: BranchPickerPrimitive.Root.Props) {
+function ReplyBranchNav({ branch }: { branch: ReplyBranchInfo }) {
   const { t } = useTranslation();
+  const { onSelect } = useContext(ReplyBranchContext);
+  const { parentId, index, count } = branch;
+
   return (
-    <BranchPickerPrimitive.Root
-      hideWhenSingleBranch
-      className={cn(
-        "aui-branch-picker-root ms-1 inline-flex items-center text-xs text-muted-foreground",
-        className,
-      )}
-      {...rest}
-    >
-      <BranchPickerPrimitive.Previous asChild>
-        <TooltipIconButton tooltip={t("chat.searchPrev")}>
-          <ChevronLeftIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Previous>
-      <span className="aui-branch-picker-state font-medium tabular-nums">
-        <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
+    <div className="aui-reply-branch-nav ms-1 flex items-center">
+      <TooltipIconButton
+        tooltip={t("chat.searchPrev")}
+        disabled={index === 0}
+        onClick={() => onSelect(parentId, index - 1)}
+      >
+        <ChevronLeftIcon />
+      </TooltipIconButton>
+      <span className={cn(mono, "text-foreground/45 px-0.5 tabular-nums")}>
+        {index + 1} / {count}
       </span>
-      <BranchPickerPrimitive.Next asChild>
-        <TooltipIconButton tooltip={t("chat.searchNext")}>
-          <ChevronRightIcon />
-        </TooltipIconButton>
-      </BranchPickerPrimitive.Next>
-    </BranchPickerPrimitive.Root>
+      <TooltipIconButton
+        tooltip={t("chat.searchNext")}
+        disabled={index >= count - 1}
+        onClick={() => onSelect(parentId, index + 1)}
+      >
+        <ChevronRightIcon />
+      </TooltipIconButton>
+    </div>
   );
 }
 
@@ -309,14 +313,15 @@ function UserMessage() {
           {running ? null : <UserActionBar />}
         </div>
       </div>
-
-      <BranchPicker className="col-span-full col-start-1 row-start-3 justify-end" />
     </MessagePrimitive.Root>
   );
 }
 
 function AssistantMessage() {
   const isRunEnd = useContext(IsRunEndContext);
+  const { branchByMessageId } = useContext(ReplyBranchContext);
+  const messageId = useAuiState((s) => s.message.id);
+  const branch = branchByMessageId[messageId];
   const messageRunning = useAuiState((s) => s.message.status?.type === "running");
 
   return (
@@ -398,7 +403,7 @@ function AssistantMessage() {
           className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
         >
           <AssistantActionBar />
-          <BranchPicker />
+          {branch !== undefined && <ReplyBranchNav branch={branch} />}
         </div>
       )}
     </MessagePrimitive.Root>

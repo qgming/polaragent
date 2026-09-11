@@ -28,6 +28,11 @@ interface ChatState {
   pendingApprovals: ApprovalRequest[];
   /** 各会话最近一次压缩摘要 */
   compactionNotices: Record<string, string>;
+  /**
+   * 回复分支的选择：会话 id → (父消息 id → 变体下标)。
+   * 缺省不写，由 reply-variants 的规则取最新一条。
+   */
+  replySelectionBySession: Record<string, Record<string, number>>;
   loading: boolean;
 
   loadSessions(): Promise<void>;
@@ -42,6 +47,8 @@ interface ChatState {
   stop(): Promise<void>;
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(instructions?: string): Promise<void>;
+  /** 切换到某个回复分支（parentId 下的第 index 条） */
+  selectReply(parentId: string, index: number): void;
   /** 重新生成最后一条助手回复：截断到最后一条用户消息并重发 */
   reload(): Promise<void>;
   /** 核心 reducer：按事件类型更新状态，未知事件忽略不抛错 */
@@ -88,6 +95,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   queueBySession: {},
   pendingApprovals: [],
   compactionNotices: {},
+  replySelectionBySession: {},
   loading: false,
 
   async loadSessions() {
@@ -210,6 +218,17 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
     await window.polaragent.chat.compact(sessionId, instructions);
+  },
+
+  selectReply(parentId, index) {
+    const sessionId = get().activeSessionId;
+    if (sessionId === null) return;
+    set((state) => ({
+      replySelectionBySession: {
+        ...state.replySelectionBySession,
+        [sessionId]: { ...state.replySelectionBySession[sessionId], [parentId]: index },
+      },
+    }));
   },
 
   async reload() {

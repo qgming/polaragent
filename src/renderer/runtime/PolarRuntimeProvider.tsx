@@ -7,6 +7,11 @@ import {
 } from "@assistant-ui/react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo } from "react";
+import {
+  ReplyBranchContext,
+  type ReplyBranchValue,
+} from "@/renderer/features/chat/reply-branch-context";
+import { resolveReplies } from "@/renderer/features/chat/reply-variants";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts";
@@ -27,6 +32,22 @@ export function PolarRuntimeProvider({
     state.activeSessionId
       ? (state.messagesBySession[state.activeSessionId] ?? EMPTY_MESSAGES)
       : EMPTY_MESSAGES,
+  );
+  const replySelection = useChatStore((state) =>
+    state.activeSessionId === null
+      ? undefined
+      : state.replySelectionBySession[state.activeSessionId],
+  );
+  const selectReply = useChatStore((state) => state.selectReply);
+  /**
+   * 回复分支收敛：同一父消息下的多条助手回复只把选中的那条交给运行时。
+   * 不这么做的话，重新生成后旧回复与新回复会线性并排显示（运行时的扁平列表按位置串链，
+   * 不认 parentId），看起来就像重复了一条回答。
+   */
+  const replies = useMemo(() => resolveReplies(messages, replySelection), [messages, replySelection]);
+  const branchValue = useMemo<ReplyBranchValue>(
+    () => ({ branchByMessageId: replies.branchByMessageId, onSelect: selectReply }),
+    [replies.branchByMessageId, selectReply],
   );
   const isRunning = useChatStore((state) =>
     state.activeSessionId ? state.runningBySession[state.activeSessionId] === true : false,
@@ -102,7 +123,7 @@ export function PolarRuntimeProvider({
 
   // ChatMessage 是自定义类型，必须显式提供 convertMessage
   const runtime = useExternalStoreRuntime<ChatMessage>({
-    messages,
+    messages: replies.visible,
     isRunning,
     onNew,
     onCancel,
@@ -111,5 +132,9 @@ export function PolarRuntimeProvider({
     adapters,
   });
 
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ReplyBranchContext.Provider value={branchValue}>{children}</ReplyBranchContext.Provider>
+    </AssistantRuntimeProvider>
+  );
 }
