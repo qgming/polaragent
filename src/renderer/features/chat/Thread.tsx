@@ -132,6 +132,55 @@ function useElapsedLabel(active: boolean): string | undefined {
 }
 
 /**
+ * 一段过程的耗时（秒）：跑的时候不给值，跑完给总秒数。
+ *
+ * 挂载时就已经结束（历史回读）不给值 —— 那种情况下没有起点，凭空的耗时是编的，
+ * 触发行的文字就退回「思考过程」。
+ */
+function useFinishedSeconds(active: boolean): number | undefined {
+  const startRef = useRef<number | null>(null);
+  const [seconds, setSeconds] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (active) {
+      startRef.current = Date.now();
+      setSeconds(undefined);
+      return;
+    }
+    const start = startRef.current;
+    if (start === null) return;
+    startRef.current = null;
+    // 不足一秒也记 1s：既然跑过一轮，显示 0s 会显得没执行
+    setSeconds(Math.max(1, Math.round((Date.now() - start) / 1000)));
+  }, [active]);
+
+  return seconds;
+}
+
+/**
+ * 思考块：不描边的折叠块（ghost），触发行直接坐在正文左线上。
+ * 收尾后带上实际耗时 —— 上游的 `duration` 一直是个悬着的参数，从未被传入，这里把它接上。
+ */
+function ReasoningGroup({ running, children }: { running: boolean; children: React.ReactNode }) {
+  const { t } = useTranslation();
+  const duration = useFinishedSeconds(running);
+
+  return (
+    <ReasoningRoot variant="ghost" streaming={running}>
+      <ReasoningTrigger
+        active={running}
+        label={t("chat.thinking")}
+        duration={duration}
+        durationLabel={(seconds) => t("chat.thoughtFor", { seconds })}
+      />
+      <ReasoningContent aria-busy={running}>
+        <ReasoningText>{children}</ReasoningText>
+      </ReasoningContent>
+    </ReasoningRoot>
+  );
+}
+
+/**
  * 运行状态行：整段回复还在跑时展示，有未完成的工具调用就报它的名字，否则是笼统的思考中。
  *
  * 标签从**线程**里取而不是从所在消息取：状态行挂在段首，而正在流式的往往已经是后面那几条
@@ -335,18 +384,12 @@ function AssistantMessage() {
                 );
               case "group-tool":
                 return <ToolRunGroup indices={part.indices}>{children}</ToolRunGroup>;
-              case "group-reasoning": {
-                const running = part.status.type === "running";
+              case "group-reasoning":
                 return (
-                  // ghost：思考块不描边，触发行直接坐在正文左线上
-                  <ReasoningRoot variant="ghost" streaming={running}>
-                    <ReasoningTrigger active={running} />
-                    <ReasoningContent aria-busy={running}>
-                      <ReasoningText>{children}</ReasoningText>
-                    </ReasoningContent>
-                  </ReasoningRoot>
+                  <ReasoningGroup running={part.status.type === "running"}>
+                    {children}
+                  </ReasoningGroup>
                 );
-              }
               case "text":
                 return <MarkdownText />;
               case "reasoning":

@@ -1,5 +1,15 @@
 "use client";
 
+/**
+ * 侧栏会话列表。相对上游 registry 的**有意偏差**只有一处：文字走 i18n 而不是硬编码英文
+ * （可见文案与无障碍标签都是），因为这一支是本应用的界面语言，不该在中文界面里露出英文。
+ *
+ * 之所以在这里直接 `useTranslation` 而不是像其它 vendored 组件那样由调用侧传 props：
+ * 列表项是通过 `components={{ ThreadListItem }}` 以**组件引用**交给 primitives 的，
+ * 没有可用的 props 通道，硬要传就得给这个引用包一层、逐级把标签透下去 ——
+ * 那比直接用词条更绕。与上游的其余差异（导入别名、格式）都是落地约定，非本文件的逻辑。
+ */
+
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
@@ -27,6 +37,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/renderer/components/ui/button";
 import { Input } from "@/renderer/components/ui/input";
 import { Skeleton } from "@/renderer/components/ui/skeleton";
@@ -110,10 +121,14 @@ export const ThreadListItems: FC<ComponentPropsWithoutRef<"div"> & { searchQuery
 
 const DAY_IN_MS = 86_400_000;
 
-const dateGroupLabel = (date: Date | undefined, startOfToday: number): string => {
-  if (!date || date.getTime() >= startOfToday) return "Today";
-  if (date.getTime() >= startOfToday - DAY_IN_MS) return "Yesterday";
-  return "Earlier";
+/**
+ * 分组标签返回的是**词条键**而不是译文：它同时当分组标识用（React key、相邻合并的比较），
+ * 键比译文稳定 —— 切语言时分组关系不该变，显示时再翻译。
+ */
+const dateGroupKey = (date: Date | undefined, startOfToday: number): string => {
+  if (!date || date.getTime() >= startOfToday) return "sidebar.today";
+  if (date.getTime() >= startOfToday - DAY_IN_MS) return "sidebar.yesterday";
+  return "sidebar.earlier";
 };
 
 export type ThreadListGroup = { label: string; indices: number[] };
@@ -124,6 +139,7 @@ export type ThreadListGroup = { label: string; indices: number[] };
  * date, in which case `filteredIndices` keeps the runtime order.
  */
 export const useThreadListGroups = (searchQuery = "") => {
+  const { t } = useTranslation();
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
 
@@ -134,9 +150,11 @@ export const useThreadListGroups = (searchQuery = "") => {
     const dates = threadIds.map((id) => itemsById.get(id)?.lastMessageAt);
     const filteredIndices = threadIds
       .map((id, index) => ({ id, index }))
+      // 无标题的会话照它**显示出来的**兜底文字参与匹配，否则搜「新对话」搜不到
       .filter(
         ({ id }) =>
-          !query || (itemsById.get(id)?.title || "New Chat").toLowerCase().includes(query),
+          !query ||
+          (itemsById.get(id)?.title || t("sidebar.newChat")).toLowerCase().includes(query),
       )
       .map(({ index }) => index);
     if (!filteredIndices.some((index) => dates[index])) {
@@ -150,7 +168,7 @@ export const useThreadListGroups = (searchQuery = "") => {
 
     const result: ThreadListGroup[] = [];
     for (const index of sorted) {
-      const label = dateGroupLabel(dates[index], startOfToday);
+      const label = dateGroupKey(dates[index], startOfToday);
       const lastGroup = result[result.length - 1];
       if (lastGroup?.label === label) {
         lastGroup.indices.push(index);
@@ -159,17 +177,19 @@ export const useThreadListGroups = (searchQuery = "") => {
       }
     }
     return { threadIds, filteredIndices, groups: result };
-  }, [threadIds, threadItems, query]);
+    // t 进依赖：切语言时无标题会话的匹配文字要跟着变
+  }, [threadIds, threadItems, query, t]);
 };
 
 const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({ searchQuery = "" }) => {
+  const { t } = useTranslation();
   const { threadIds, filteredIndices, groups } = useThreadListGroups(searchQuery);
   const query = searchQuery.trim();
 
   if (query && filteredIndices.length === 0) {
     return (
       <div data-slot="aui_thread-list-empty" className="text-muted-foreground px-2.5 py-4 text-sm">
-        No threads found
+        {t("sidebar.noThreadsFound")}
       </div>
     );
   }
@@ -190,7 +210,8 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({ searchQuery = "" }
         data-slot="aui_thread-list-group-label"
         className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium"
       >
-        {group.label}
+        {/* group.label 是词条键（见 dateGroupKey），显示时才翻译 */}
+        {t(group.label)}
       </div>
       {group.indices.map((index) => (
         <ThreadListPrimitive.ItemByIndex
@@ -238,13 +259,14 @@ export const ThreadListNew = forwardRef<
 ThreadListNew.displayName = "ThreadListNew";
 
 const ThreadListSkeleton: FC = () => {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-0.5">
       {Array.from({ length: 5 }, (_, i) => (
         <div
           key={i}
           role="status"
-          aria-label="Loading threads"
+          aria-label={t("sidebar.loadingThreads")}
           data-slot="aui_thread-list-skeleton-wrapper"
           className="flex h-8 items-center px-2.5"
         >
@@ -256,6 +278,7 @@ const ThreadListSkeleton: FC = () => {
 };
 
 export const ThreadListItem: FC = () => {
+  const { t } = useTranslation();
   const isRunning = useAuiState((s) => s.threadListItem.isRunning);
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -293,9 +316,9 @@ export const ThreadListItem: FC = () => {
             />
           )}
           <span data-slot="aui_thread-list-item-title" className="min-w-0 flex-1 truncate">
-            <ThreadListItemPrimitive.Title fallback="New Chat" />
+            <ThreadListItemPrimitive.Title fallback={t("sidebar.newChat")} />
           </span>
-          {isRunning && <span className="sr-only">Running</span>}
+          {isRunning && <span className="sr-only">{t("chat.running")}</span>}
         </ThreadListItemPrimitive.Trigger>
       )}
       <ThreadListItemMore onRename={() => setIsRenaming(true)} />
@@ -306,6 +329,7 @@ export const ThreadListItem: FC = () => {
 const ThreadListItemRename: FC<{
   onDone: (restoreFocus: boolean) => void;
 }> = ({ onDone }) => {
+  const { t } = useTranslation();
   const aui = useAui();
   const title = useAuiState((s) => s.threadListItem.title) ?? "";
   const [value, setValue] = useState(title);
@@ -349,7 +373,7 @@ const ThreadListItemRename: FC<{
       ref={inputRef}
       autoFocus
       data-slot="aui_thread-list-item-rename"
-      aria-label="Rename thread"
+      aria-label={t("sidebar.renameThread")}
       value={value}
       className="h-7 min-w-0 flex-1 ps-2.5 pe-9 text-sm"
       onChange={(event) => setValue(event.target.value)}
@@ -368,6 +392,7 @@ const ThreadListItemRename: FC<{
 };
 
 const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
+  const { t } = useTranslation();
   return (
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
       <ThreadListItemMorePrimitive.Trigger asChild>
@@ -378,7 +403,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 group-has-focus-visible:opacity-100 group-data-active:opacity-100 data-[state=open]:opacity-100"
         >
           <MoreHorizontalIcon className="size-3.5" />
-          <span className="sr-only">More options</span>
+          <span className="sr-only">{t("sidebar.moreOptions")}</span>
         </Button>
       </ThreadListItemMorePrimitive.Trigger>
       <ThreadListItemMorePrimitive.Content
@@ -394,7 +419,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           onSelect={onRename}
         >
           <PencilIcon className="size-4" />
-          Rename
+          {t("sidebar.rename")}
         </ThreadListItemMorePrimitive.Item>
         <ThreadListItemPrimitive.Archive asChild>
           <ThreadListItemMorePrimitive.Item
@@ -402,7 +427,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
             className="hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
           >
             <ArchiveIcon className="size-4" />
-            Archive
+            {t("sidebar.archive")}
           </ThreadListItemMorePrimitive.Item>
         </ThreadListItemPrimitive.Archive>
         <ThreadListItemPrimitive.Delete asChild>
@@ -411,7 +436,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
             className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
           >
             <TrashIcon className="size-4" />
-            Delete
+            {t("sidebar.delete")}
           </ThreadListItemMorePrimitive.Item>
         </ThreadListItemPrimitive.Delete>
       </ThreadListItemMorePrimitive.Content>

@@ -160,13 +160,23 @@ function ReasoningFade({
 function ReasoningTrigger({
   active,
   duration,
+  label = "Reasoning",
+  durationLabel,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   active?: boolean;
   duration?: number;
+  /** 收尾态的文字；缺省为英文原值 */
+  label?: string;
+  /** 给定时用整句替换「label (Ns)」，便于中文这类不用括号后缀的语言 */
+  durationLabel?: (seconds: number) => string;
 }) {
-  const durationText = duration ? ` (${duration}s)` : "";
+  // 与上游一致：无耗时（0 或缺省）时不追加任何后缀
+  const text =
+    duration !== undefined && duration > 0
+      ? (durationLabel ?? ((seconds: number) => `${label} (${seconds}s)`))(duration)
+      : label;
 
   return (
     <CollapsibleTrigger
@@ -188,7 +198,7 @@ function ReasoningTrigger({
           active && "shimmer motion-reduce:animate-none",
         )}
       >
-        Reasoning{durationText}
+        {text}
       </span>
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"
