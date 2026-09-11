@@ -297,6 +297,38 @@ data-closed:fill-mode-forwards data-closed:pointer-events-none motion-reduce:ani
 - 输出行按面板宽度换行（`whitespace-pre-wrap break-words`），不横向溢出。终端里长行换行
   比横向滚动更好读，也与面板不可横向滚动的现状一致。
 
+### [S2.11] 底部操作栏：助手收编、用户补上
+
+助手操作栏原本是「复制 / 重新生成 / 更多（导出 Markdown）」。**去掉"更多"及其导出**
+—— 导出是整段会话的能力，挂在每条消息上语义不对，而且多一层点击。现在只剩复制与重新生成。
+
+用户消息原本只有一个"编辑"，且**绝对定位在气泡左侧垂直居中**（`absolute start-0 top-1/2
+-translate-x-full`），与助手右下角的操作栏在位置上完全不对称。改为：
+
+- 位置从气泡左侧移到**气泡下方、右对齐**（`flex justify-end`），与助手的底部操作栏同侧同向。
+- 内容由单个"编辑"变为**复制 + 编辑**。复制用 `ActionBarPrimitive.Copy`：它的谓词
+  `actionBarCopyDisabled` 与角色无关（只在 assistant 处于流式中禁用），用户消息同样可复制；
+  `Reload` 的谓词要求 `role === "assistant"`，所以不放这里。
+- 触发方式为 **hover**（`autohide="always"` → 只在 `s.message.isHovering` 时渲染）。
+  `MessagePrimitive.Root` 自带 `mouseenter`/`mouseleave` → `setIsHovering`，两条流都可用。
+  保留 `hideWhenRunning`：运行中不允许编辑用户消息。
+
+**为 hover 留位，避免显隐改变间距**。`ActionBarPrimitive.Root` 在 hidden 时直接 `return null`，
+若让它在流里自然占位，显隐就会推动上下内容。所以两边的操作栏都坐在一段**常驻高度**里：
+
+| | 预留方式 | 常驻高度 |
+| --- | --- | --- |
+| 助手 | footer 自带 `min-h-7.5 pt-1.5`（`ACTION_BAR_HEIGHT`） | 30px |
+| 用户 | 气泡下方的 wrapper 复用同一个 `ACTION_BAR_HEIGHT` | 30px |
+
+复用同一个常量让两条流的节奏一致：用户气泡 → 下一条消息、与助手正文 → 下一条消息，
+都是 30px + 容器 gap 12px = 42px。用户那边额外挂 `peer-empty:hidden`，纯图片等无文本消息
+不占这块高度。
+
+顺带清掉助手消息根上自我抵消的 `pb-7.5 -mb-7.5`：两者同为 30px，净效果为零，真正的空间来自
+footer 自身的高度，原来那句注释把因果关系说反了。同时把 `RunPosition` 四值枚举收成
+`IsRunEndContext` 布尔 —— 段首不再影响间距（见 [S2.9]），枚举里只剩"是否段尾"一个有效语义。
+
 ## [S3] Out of Scope
 
 - 官方 `ReasoningTrigger` 的 "Reasoning"、`ToolFallback` 的 "Used tool"、`ToolCall` 内置面板的
@@ -335,8 +367,17 @@ data-closed:fill-mode-forwards data-closed:pointer-events-none motion-reduce:ani
 
 第三轮（用户实测反馈：嵌套展开被裁、思考间距过大）：
 
-- [ ] T15: `collapsePanel` 换键帧口径 — acceptance: 面板静止高度回到 `auto`，`tool-timeline` 的嵌套详情与 `tool-call` 的流式输出不再被外层裁掉；生产 CSS 里 `.data-open:animate-collapsible-down` 命中 Radix 的 `[data-state=open]`，且钉高工具类不再由本仓源码生成 (covers: S2.8)
-- [ ] T16: 间距统一到 12px — acceptance: 思考行、工具行与正文之间的距离都等于段落之间；失败行同样是 12px；非成组分支不再用 flex 容器挡住外边距相叠 (covers: S2.9)
-- [ ] T17: 终端块的长命令行 — acceptance: 长命令单行省略且 exit 徽标不被顶出边界；输出长行按宽度换行而非溢出裁切 (covers: S2.10)
-- [ ] T18: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome check` 无新增问题（结果写入 Report）(covers: S2.8, S2.9, S2.10)
-- [ ] T19: 独立评审 — acceptance: 子代理对本轮改动给出三份结论，且证实 S2.8 的自锁论断与 CSS 证据 (covers: S2.8, S2.9, S2.10)
+- [x] T15: `collapsePanel` 换键帧口径 — acceptance: 面板静止高度回到 `auto`，`tool-timeline` 的嵌套详情与 `tool-call` 的流式输出不再被外层裁掉；生产 CSS 里 `.data-open:animate-collapsible-down` 命中 Radix 的 `[data-state=open]`，且钉高工具类不再由本仓源码生成 (covers: S2.8)
+- [x] T16: 间距统一到 12px — acceptance: 思考行、工具行与正文之间的距离都等于段落之间；失败行同样是 12px；改由容器 gap 驱动（flex gap 不与 margin 相叠，原方案跨消息时失效）(covers: S2.9)
+- [x] T17: 终端块的长命令行 — acceptance: 长命令单行省略且 exit 徽标不被顶出边界；输出长行按宽度换行而非溢出裁切 (covers: S2.10)
+- [x] T18: 验证 — acceptance: `npm run typecheck`、`npm test`（182 全过）、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.8, S2.9, S2.10)
+- [x] T19: 独立评审 — acceptance: 子代理复核 S2.8/S2.10 成立、S2.9 的失败行 18px 不成立（已用 `-my-1.5` 修），并指出 `useSize` 措辞不实（已改）(covers: S2.8, S2.9, S2.10)
+
+第四轮（用户实测反馈：底部操作栏）：
+
+- [x] T20: 助手操作栏去掉"更多 / 导出 Markdown" — acceptance: `Thread.tsx` 不再引用 `ActionBarMorePrimitive`、`DownloadIcon`、`MoreHorizontalIcon`；`common.more` 与 `chat.exportMarkdown` 两个死词条从 zh/en 移除 (covers: S2.11)
+- [x] T21: 用户消息改为 hover 的复制 + 编辑工具栏 — acceptance: 位置在气泡下方右对齐（不再是左侧垂直居中）；`autohide="always"` 只在 hover 时渲染；两个按钮分别是 `ActionBarPrimitive.Copy` 与 `.Edit` (covers: S2.11)
+- [x] T22: 操作栏预留高度，显隐不影响间距 — acceptance: 助手与用户两边都用 `ACTION_BAR_HEIGHT`（30px）常驻占位，`ActionBarPrimitive.Root` 返回 null 时该高度仍在；无文本的用户消息因 `peer-empty:hidden` 不占位 (covers: S2.11)
+- [x] T23: 清理本轮暴露的冗余 — acceptance: 助手消息根上自我抵消的 `pb-7.5 -mb-7.5` 已删且布局等价；`RunPosition` 四值枚举收成 `IsRunEndContext` 布尔 (covers: S2.11)
+- [ ] T24: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.11)
+- [ ] T25: 独立评审 — acceptance: 子代理对第四轮改动给出三份结论，特别是 hover 显隐是否真的不影响布局、`Copy` 在 user 消息下是否真的可用 (covers: S2.11)

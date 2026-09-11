@@ -1,5 +1,4 @@
 import {
-  ActionBarMorePrimitive,
   ActionBarPrimitive,
   AuiIf,
   BranchPickerPrimitive,
@@ -17,8 +16,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
-  DownloadIcon,
-  MoreHorizontalIcon,
   PencilIcon,
   RefreshCwIcon,
 } from "lucide-react";
@@ -50,29 +47,14 @@ import { Composer } from "./Composer";
 import { ToolCallPart, ToolRunGroup } from "./ToolParts";
 
 /**
- * 助手消息在一次运行里的位置。
+ * 这条助手消息是不是所在运行段的最后一条。
  *
  * pi 的 harness 每遇到一次 message_start 就新开一条助手消息，所以「推理 → 工具 → 正文」
- * 这样一次运行会落成好几条消息。段首决定与上一段之间的间距，段尾决定唯一的底部操作栏
- * 挂在哪条上。由 ThreadView 遍历时算好，避免每条消息各自扫一遍整个列表；
- * 用字符串而不是对象，让 context 只在位置真变化时才传下去。
+ * 这样一次运行会落成好几条相邻的助手消息。整段只在末尾挂一个底部操作栏。
+ * 由 ThreadView 遍历时按邻居是否助手算好传进来，避免每条消息各自扫一遍整个列表。
+ * 默认 true：渲染在消息流之外时按"末条"处理，操作栏仍可见。
  */
-type RunPosition = "solo" | "start" | "middle" | "end";
-
-const RunPositionContext = createContext<RunPosition | null>(null);
-
-/** 按左右邻居的角色定位置：非助手消息不属于任何助手段 */
-function runPosition(
-  role: string,
-  prevRole: string | undefined,
-  nextRole: string | undefined,
-): RunPosition | null {
-  if (role !== "assistant") return null;
-  const starts = prevRole !== "assistant";
-  const ends = nextRole !== "assistant";
-  if (starts) return ends ? "solo" : "start";
-  return ends ? "end" : "middle";
-}
+const IsRunEndContext = createContext(true);
 
 /**
  * 助手消息的 part 分组：连续推理与工具调用折进「思维链」组，其余按类型单独出。
@@ -149,12 +131,17 @@ function BranchPicker({ className, ...rest }: BranchPickerPrimitive.Root.Props) 
   );
 }
 
+/**
+ * 助手消息的底部操作栏：复制 + 重新生成。
+ * 运行中整条收起（hideWhenRunning）——重新生成会在半途截断当前运行。
+ * 高度由外层的 ACTION_BAR_HEIGHT 常驻预留，所以它的显隐不改变消息间距。
+ */
 function AssistantActionBar() {
   const { t } = useTranslation();
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      className="aui-assistant-action-bar-root flex animate-in gap-1 text-muted-foreground fade-in duration-200"
+      className="aui-assistant-action-bar-root flex items-center gap-1 text-muted-foreground"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip={t("common.copy")}>
@@ -171,38 +158,34 @@ function AssistantActionBar() {
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
-      <ActionBarMorePrimitive.Root>
-        <ActionBarMorePrimitive.Trigger asChild>
-          <TooltipIconButton tooltip={t("common.more")} className="data-[state=open]:bg-accent">
-            <MoreHorizontalIcon />
-          </TooltipIconButton>
-        </ActionBarMorePrimitive.Trigger>
-        <ActionBarMorePrimitive.Content
-          side="bottom"
-          align="start"
-          sideOffset={6}
-          className="aui-action-bar-more-content z-50 min-w-[8rem] overflow-hidden rounded-xl border bg-popover p-1.5 text-popover-foreground data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-        >
-          <ActionBarPrimitive.ExportMarkdown asChild>
-            <ActionBarMorePrimitive.Item className="aui-action-bar-more-item flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground">
-              <DownloadIcon className="size-4" />
-              {t("chat.exportMarkdown")}
-            </ActionBarMorePrimitive.Item>
-          </ActionBarPrimitive.ExportMarkdown>
-        </ActionBarMorePrimitive.Content>
-      </ActionBarMorePrimitive.Root>
     </ActionBarPrimitive.Root>
   );
 }
 
+/**
+ * 用户消息的底部操作栏：复制 + 编辑，hover 才出现（autohide="always"）。
+ *
+ * 用 ActionBarPrimitive.Copy 是因为它的谓词与角色无关（只在 assistant 流式中禁用），
+ * 用户消息同样可复制。Reload 才是 assistant 专属，所以不放这里。
+ */
 function UserActionBar() {
   const { t } = useTranslation();
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="not-last"
-      className="flex flex-col items-end"
+      autohide="always"
+      className="flex items-center gap-1 text-muted-foreground"
     >
+      <ActionBarPrimitive.Copy asChild>
+        <TooltipIconButton tooltip={t("common.copy")}>
+          <AuiIf condition={(s) => s.message.isCopied}>
+            <CheckIcon className="animate-in fade-in zoom-in-50 duration-200 ease-out" />
+          </AuiIf>
+          <AuiIf condition={(s) => !s.message.isCopied}>
+            <CopyIcon className="animate-in fade-in zoom-in-75 duration-150" />
+          </AuiIf>
+        </TooltipIconButton>
+      </ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Edit asChild>
         <TooltipIconButton tooltip={t("chat.editMessage")} className="aui-user-action-edit">
           <PencilIcon />
@@ -239,7 +222,18 @@ function UserMessage() {
             components={{ ...USER_PARTS, File: UserFilePart, Image: UserImagePart }}
           />
         </div>
-        <div className="absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
+        {/*
+          hover 时出现的操作栏，坐在气泡下方的常驻高度里。
+          高度与助手那边同值（ACTION_BAR_HEIGHT），所以两条流的节奏一致；
+          因为它始终占位，按钮的显隐不会改变消息的上下间距。
+        */}
+        <div
+          className={cn(
+            "flex items-center justify-end",
+            ACTION_BAR_HEIGHT,
+            "peer-empty:hidden",
+          )}
+        >
           <UserActionBar />
         </div>
       </div>
@@ -251,20 +245,13 @@ function UserMessage() {
 
 function AssistantMessage() {
   const { t } = useTranslation();
-  // null 表示这条消息不在某次运行的助手段里（渲染在消息流之外时也走这个兜底）
-  const position = useContext(RunPositionContext);
-  const endsRun = position === null || position === "solo" || position === "end";
+  const isRunEnd = useContext(IsRunEndContext);
 
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className={cn(
-        "relative animate-in duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]",
-        // 纵向间距全部交给容器 gap（消息间与消息内同为 12px），不用负外边距去抵 gap。
-        // 这里只留操作栏那块高度：pb 撑出来、负 mb 还回给相邻间距。
-        endsRun && "-mb-7.5 pb-7.5",
-      )}
+      className="relative animate-in duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
     >
       <div
         data-slot="aui_assistant-message-content"
@@ -335,7 +322,7 @@ function AssistantMessage() {
       </div>
 
       {/* 一次运行只有段尾那条挂操作栏，运行中由 hideWhenRunning 整条收起 */}
-      {endsRun && (
+      {isRunEnd && (
         <div
           data-slot="aui_assistant-message-footer"
           className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
@@ -421,7 +408,8 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
               const prev = messages[index - 1];
               const next = messages[index + 1];
               const isHit = searchHit?.messageId === message.id;
-              const position = runPosition(message.role, prev?.role, next?.role);
+              // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
+              const isRunEnd = next?.role !== "assistant";
               return (
                 <Fragment key={message.id}>
                   {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
@@ -444,12 +432,12 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
                         {searchHit.indexInMessage + 1}/{searchHit.count}
                       </div>
                     )}
-                    <RunPositionContext.Provider value={position}>
+                    <IsRunEndContext.Provider value={isRunEnd}>
                       <ThreadPrimitive.MessageByIndex
                         index={index}
                         components={MESSAGE_COMPONENTS}
                       />
-                    </RunPositionContext.Provider>
+                    </IsRunEndContext.Provider>
                   </div>
                 </Fragment>
               );
