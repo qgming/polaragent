@@ -16,7 +16,6 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
   };

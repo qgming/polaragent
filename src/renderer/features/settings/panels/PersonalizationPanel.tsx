@@ -7,6 +7,12 @@ import { Textarea } from "@/renderer/components/ui/textarea";
 import { cn } from "@/renderer/lib/utils";
 import { PanelLoading, settingsTextarea } from "../settings-shared";
 
+/**
+ * 个性化：AGENTS.md。
+ *
+ * AI 审批与会话命名都用内置英文提示词，没有用户可见的自定义入口，
+ * 所以这个面板只保留长期偏好（AGENTS.md）。
+ */
 export function PersonalizationPanel() {
   const { t } = useTranslation();
   const [content, setContent] = useState<string | null>(null);
@@ -65,9 +71,10 @@ export function PersonalizationPanel() {
         value={content}
         placeholder={t("settings.agentsMdPlaceholder")}
         aria-label={t("settings.agentsMd")}
-        onChange={(e) => {
-          setContent(e.target.value);
+        onChange={(event) => {
+          setContent(event.target.value);
           setDirty(true);
+          setSaved(false);
         }}
         className={cn(settingsTextarea, "min-h-[300px] resize-y")}
       />

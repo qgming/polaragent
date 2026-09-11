@@ -26,6 +26,11 @@ export interface LoadMessagesOptions {
   limit?: number;
   /** 游标：加载 seq 严格小于该值的更早条目 */
   beforeSeq?: number;
+  /**
+   * 取哪一端：默认 newestFirst（会话尾部，供翻页加载）；
+   * oldestFirst 取会话开头的条目 —— 自动命名要看首轮问答，必须从开头读。
+   */
+  order?: "newestFirst" | "oldestFirst";
 }
 
 export interface LoadMessagesResult {
@@ -40,7 +45,10 @@ export interface SessionStore {
   create(options?: { cwd?: string; title?: string }): Promise<SessionSummary>;
   open(id: string): Promise<{ session: SqliteOpenSession; branch: Branch } | undefined>;
   /** 写 pi 会话名 + 索引标题 */
+  /** 写 pi 会话名 + 索引标题 */
   rename(id: string, title: string): Promise<void>;
+  /** 当前标题（null = 还没有名字，自动命名据此判断是否该生成） */
+  readTitle(id: string): Promise<string | null>;
   setArchived(id: string, archived: boolean): Promise<void>;
   /** 物理删除 sqlite 文件并清索引 */
   remove(id: string): Promise<void>;
@@ -192,6 +200,11 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(id, { title });
   }
 
+  async function readTitle(id: string): Promise<string | null> {
+    const title = (await index.read())[id]?.title?.trim() ?? "";
+    return title === "" ? null : title;
+  }
+
   async function setArchived(id: string, archived: boolean): Promise<void> {
     await updateIndex(id, { archived });
   }
@@ -298,20 +311,23 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     if (!opened) return { messages: [], compactionSummaries: [] };
 
     try {
-      // newestFirst + cursor 取尾部，再倒转为时间正序
+      // 默认取尾部（newestFirst + cursor），再倒转为时间正序；oldestFirst 用于从会话开头读
+      const order = options.order ?? "newestFirst";
       const raw = await opened.branch.findEntries(
         {
-          order: "newestFirst",
+          order,
           limit,
           ...(options.beforeSeq === undefined ? {} : { cursor: { seq: options.beforeSeq } }),
         },
         BACKGROUND_CONTEXT,
       );
-      const ordered = [...raw].reverse();
+      const ordered = order === "newestFirst" ? [...raw].reverse() : [...raw];
       const { messages, compactionSummaries } = mapEntriesToMessages(ordered);
-      const oldestSeq = ordered[0]?.seq;
-      // 批次未取满说明已到分支起点；取满才给游标继续向上翻页
-      const nextCursor = raw.length === limit && oldestSeq !== undefined ? oldestSeq : undefined;
+      // 游标指向「已读到的另一端」：尾部模式向上翻，开头模式向下翻
+      const cursorSeq =
+        order === "newestFirst" ? ordered[0]?.seq : ordered[ordered.length - 1]?.seq;
+      // 批次未取满说明已到分支边界；取满才给游标继续翻页
+      const nextCursor = raw.length === limit && cursorSeq !== undefined ? cursorSeq : undefined;
 
       // 索引 messageCount 与真实统计对账，避免运行结束后列表计数滞后（不刷新 updatedAt）
       const entry = (await index.read())[id];
@@ -340,6 +356,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     create,
     open: openHandle,
     rename,
+    readTitle,
     setArchived,
     remove,
     fork,

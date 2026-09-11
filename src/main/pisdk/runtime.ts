@@ -27,9 +27,14 @@ import type {
 import type { Settings } from "@/shared/contracts/settings";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
-import { assessToolRisk, createPermissionRuleStore, type PermissionRuleStore } from "./permissions";
+import {
+  assessToolRisk,
+  getSharedPermissionRuleStore,
+  type PermissionRuleStore,
+} from "./permissions";
 import { buildProviders, resolveModel } from "./providers";
 import type { SessionStore } from "./session-store";
+import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { buildTools, TOOL_NAMES } from "./tools";
 
 export interface ChatRuntimeDeps {
@@ -38,6 +43,8 @@ export interface ChatRuntimeDeps {
   /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离） */
   emit: (event: ChatEvent) => void;
   approvals: ApprovalService;
+  /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
+  sessionTitles?: SessionTitleGenerator;
   /** 会话工作目录解析；默认取索引 cwd，其次 settings.defaultWorkingDir */
   resolveWorkingDir: (sessionId: string) => Promise<string>;
 }
@@ -126,6 +133,8 @@ interface SessionRuntime {
   toolParts: Map<string, ToolCallPartRef>;
   queue: QueuedMessage[];
   unsubscribers: Array<() => void>;
+  /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
+  titleAttempted?: boolean;
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -135,7 +144,6 @@ export interface PendingEntry {
 }
 
 let defaultRuntime: ChatRuntime | null = null;
-let sharedRuleStore: PermissionRuleStore | null = null;
 
 /** 默认单例：bootstrap 装配时经 createChatRuntime 注册，IPC 层通过 getChatRuntime 取用 */
 export function getChatRuntime(): ChatRuntime {
@@ -143,9 +151,9 @@ export function getChatRuntime(): ChatRuntime {
   return defaultRuntime;
 }
 
+/** 规则库：与 IPC 层共用同一实例（见 permissions.ts 的共享单例），避免两份缓存不同步 */
 function getRuleStore(): PermissionRuleStore {
-  sharedRuleStore ??= createPermissionRuleStore(dataDir());
-  return sharedRuleStore;
+  return getSharedPermissionRuleStore(dataDir());
 }
 
 function toErrorText(error: unknown): string {
@@ -596,6 +604,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSafe({ type: "queue-updated", items: [] });
     emitSafe({ type: "run-ended", runId: runtime.runId ?? event.runId, reason: event.status });
     void touchSession(runtime);
+    // 一轮问答结束：会话还没名字时，用这轮内容生成标题
+    void maybeTitleSession(runtime, event.status);
   }
 
   function handleUsage(
@@ -652,6 +662,41 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   /**
+   * 自动命名：仅在会话还没有名字（索引 title 为空）时做一次。
+   *
+   * 触发点是「首轮问答结束」，素材取会话里第一条用户消息与它之后的助手回复；
+   * 标题本身即「已命名」的标记 —— 所以用户手动改过名、或分支会话带着来源标题时，
+   * 这里都不会覆盖。命名失败（无模型 / 超时 / 输出为空）保持默认名，且本次进程内不再重试；
+   * 只有「素材不足」不记账，留给下一轮（见 title-generator 的 onAttempt）。
+   */
+  async function maybeTitleSession(
+    runtime: SessionRuntime,
+    status: Extract<HarnessEvent, { type: "run_end" }>["status"],
+  ): Promise<void> {
+    const generate = deps.sessionTitles;
+    if (!generate || runtime.titleAttempted) return;
+    if (status !== "completed") return;
+
+    try {
+      const title = await autoTitleSession(runtime.sessionId, {
+        generate,
+        readTitle: (id) => deps.sessionStore.readTitle(id),
+        // 从会话开头取：命名素材必须是「首轮问答」，尾部窗口在大会话里会拿到后面几轮
+        loadMessages: async (id) =>
+          (await deps.sessionStore.loadMessages(id, { limit: 20, order: "oldestFirst" })).messages,
+        rename: (id, next) => deps.sessionStore.rename(id, next),
+        onAttempt: () => {
+          runtime.titleAttempted = true;
+        },
+      });
+      if (title === null) return;
+      emitSafe({ type: "session-titled", sessionId: runtime.sessionId, title });
+    } catch (error) {
+      console.warn(`会话自动命名失败，保留默认名称：${toErrorText(error)}`);
+    }
+  }
+
+  /**
    * 条目落盘：把 pi 的 entryId / parentId 配回对应的那条助手消息。
    *
    * 渲染层的「分支」入口要求消息带 entryId（主进程按条目 id 复制会话），
@@ -689,7 +734,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
   }
 
-  /** 权限门：根据设置与风险评估决定放行、审批或阻断 */
+  /** 权限门：根据审批模式与风险评估决定放行、审批或阻断 */
   async function gateTool(
     runtime: SessionRuntime,
     toolName: string,
@@ -697,15 +742,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     args: Record<string, unknown>,
   ): Promise<ToolPermissionResult | undefined> {
     const settings = await deps.getSettings();
+    // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
     if (settings.permissionMode === "full") return undefined;
-
     const risk = assessToolRisk(toolName, args);
     if (risk === "low") return undefined;
 
-    // 「始终允许」规则优先于审批；default 与 ai_review 模式均生效
+    // 「始终允许」规则优先于审批；三种模式均生效
     const argsText = safeStringify(args);
     if (await runtime.rules.matches(toolName, argsText)) return undefined;
-
     const ref = runtime.toolParts.get(toolCallId);
     if (ref) {
       ref.part.status = "pending-approval";
@@ -723,6 +767,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       toolName,
       argsText,
       risk,
+      // 交给 AI 预审：它需要工作目录来判断操作是否越出项目范围
+      workingDir: runtime.env.cwd,
     });
     if (decision === "deny") {
       if (ref) {

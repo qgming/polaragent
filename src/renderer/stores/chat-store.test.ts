@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/shared/contracts/session";
-import { planRewrite } from "./chat-store";
+import { planRewrite, useChatStore } from "./chat-store";
 
 function msg(id: string, role: ChatMessage["role"], parentId?: string | null): ChatMessage {
   return {
@@ -63,5 +63,56 @@ describe("planRewrite", () => {
   it("不是用户消息时拒绝", () => {
     expect(planRewrite(CONVERSATION, 2, "resend")).toBeNull();
     expect(planRewrite([], 0, "resend")).toBeNull();
+  });
+
+  describe("applyEvent 的 session-titled", () => {
+    function seedSessions() {
+      useChatStore.setState({
+        sessions: [
+          {
+            id: "s1",
+            title: null,
+            createdAt: 1,
+            updatedAt: 2,
+            cwd: "",
+            archived: false,
+            messageCount: 0,
+          },
+          {
+            id: "s2",
+            title: "旧名字",
+            createdAt: 1,
+            updatedAt: 1,
+            cwd: "",
+            archived: false,
+            messageCount: 0,
+          },
+        ],
+      });
+    }
+
+    it("按事件自带的会话 id 就地替换标题，其它会话不受影响", () => {
+      seedSessions();
+      useChatStore.getState().applyEvent("s1", {
+        type: "session-titled",
+        sessionId: "s1",
+        title: "修复登录超时",
+      });
+      const sessions = useChatStore.getState().sessions;
+      expect(sessions.find((item) => item.id === "s1")?.title).toBe("修复登录超时");
+      expect(sessions.find((item) => item.id === "s2")?.title).toBe("旧名字");
+    });
+
+    it("会话不在列表里时安静忽略", () => {
+      seedSessions();
+      expect(() =>
+        useChatStore.getState().applyEvent("missing", {
+          type: "session-titled",
+          sessionId: "missing",
+          title: "新名字",
+        }),
+      ).not.toThrow();
+      expect(useChatStore.getState().sessions.map((item) => item.id)).toEqual(["s1", "s2"]);
+    });
   });
 });

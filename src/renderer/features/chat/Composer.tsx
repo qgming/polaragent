@@ -86,6 +86,7 @@ const chipTrigger = cn(
 /** 浮层菜单面板：Elements 的 floating 面（16 圆角 + 1.5 内边距） */
 const menuPanel = cn(floating, "rounded-2xl p-1.5");
 
+/** 权限三模式：真实生效 —— default 弹卡询问 / ai_review 交 AI 审批（模型＝默认路由模型）/ full 全部放行 */
 const PERMISSION_MODES = [
   { value: "default", labelKey: "chat.permissionDefault" },
   { value: "ai_review", labelKey: "chat.permissionAiReview" },
@@ -172,7 +173,7 @@ function AttachmentThumb({ attachment }: { attachment: Attachment }) {
   );
 }
 
-/** 权限模式 chip（B5 〇）：三模式单选，写回 settings.permissionMode */
+/** 权限模式 chip（B5 〇）：三模式单选，写回 settings.permissionMode（主进程权限门据此放行/审批） */
 function PermissionChip({ mode }: { mode: PermissionMode }) {
   const { t } = useTranslation();
   const update = useSettingsStore((s) => s.update);
@@ -186,14 +187,14 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
           type="button"
           className={chipTrigger}
           aria-expanded={open}
-          aria-label={t("settings.permissionMode")}
+          aria-label={t("chat.permissionMode")}
         >
           <span>{t(current.labelKey)}</span>
           <ChevronDown className="size-3 opacity-60" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className={cn(menuPanel, "w-56")}>
-        <p className={cn(typeEyebrow, "px-2.5 pt-2 pb-1")}>{t("settings.permissionMode")}</p>
+        <p className={cn(typeEyebrow, "px-2.5 pt-2 pb-1")}>{t("chat.permissionMode")}</p>
         {PERMISSION_MODES.map((item) => (
           <PickerItem
             key={item.value}

@@ -546,9 +546,8 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
     const patch: Partial<Settings> = {
       services: settings.services.filter((item) => item.id !== service.id),
     };
-    // 被删服务若被默认模型/AI 审批模型引用，一并清空避免悬空引用
+    // 被删服务若被默认模型引用，一并清空避免悬空引用
     if (settings.defaultModel?.serviceId === service.id) patch.defaultModel = null;
-    if (settings.aiApprovalModel?.serviceId === service.id) patch.aiApprovalModel = null;
     void update(patch);
     setConfirmRemove(null);
   };

@@ -410,6 +410,22 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           return { pendingApprovals: [...state.pendingApprovals, event.request] };
         });
         break;
+      // AI 出结论但不放行：卡片交回用户（保持挂起，理由随事件一起更新）
+      case "approval-reviewed":
+        set((state) => ({
+          pendingApprovals: state.pendingApprovals.map((item) =>
+            item.id === event.id ? { ...item, aiReviewed: true, reason: event.reason } : item,
+          ),
+        }));
+        break;
+      // AI 自动命名：主进程已落盘，这里就地替换列表里的默认名（用事件自带的会话 id）
+      case "session-titled":
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === event.sessionId ? { ...session, title: event.title } : session,
+          ),
+        }));
+        break;
       case "approval-resolved":
         set((state) => ({
           pendingApprovals: state.pendingApprovals.filter((a) => a.id !== event.id),

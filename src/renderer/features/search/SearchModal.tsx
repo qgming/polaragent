@@ -16,7 +16,7 @@ import { formatRelativeDay, formatTime } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
+import { SETTINGS_SECTIONS, useUiStore } from "@/renderer/stores/ui-store";
 import { findMatches } from "./find-matches";
 
 /** 输入即搜的防抖时长 */
@@ -25,16 +25,6 @@ const DEBOUNCE_MS = 150;
 const MESSAGE_LIMIT = 20;
 /** 空输入时展示的最近会话数 */
 const RECENT_SESSION_LIMIT = 5;
-
-const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  "general",
-  "services",
-  "permissions",
-  "skills",
-  "personalization",
-  "about",
-];
-
 type CommandId = "new-chat" | "toggle-theme";
 
 /**
@@ -171,7 +161,7 @@ export function SearchModal() {
       }
     }
 
-    // 设置：固定六个分类，按当前语言标签过滤
+    // 设置：分类清单取自 ui-store 的规范顺序，按当前语言标签过滤
     for (const section of SETTINGS_SECTIONS) {
       const label = t(`settings.${section}`);
       if (!label.toLocaleLowerCase().includes(lowered)) continue;

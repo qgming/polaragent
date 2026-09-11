@@ -79,6 +79,35 @@ describe("session-store", () => {
     await expect(opened.session.getName(BACKGROUND_CONTEXT)).resolves.toBe("新标题");
   });
 
+  it("readTitle 区分「还没命名」与已有标题", async () => {
+    const summary = await store.create();
+    await expect(store.readTitle(summary.id)).resolves.toBeNull();
+
+    await store.rename(summary.id, "自动命名结果");
+    await expect(store.readTitle(summary.id)).resolves.toBe("自动命名结果");
+
+    // 空白的标题视为未命名，自动命名仍可补上
+    await store.rename(summary.id, "   ");
+    await expect(store.readTitle(summary.id)).resolves.toBeNull();
+  });
+
+  it("oldestFirst 从会话开头取，newestFirst 取尾部（自动命名需要前者）", async () => {
+    const summary = await store.create();
+    const opened = await store.open(summary.id);
+    if (!opened) throw new Error("会话应能打开");
+
+    for (const text of ["第一问", "第一答", "第二问", "第二答"]) {
+      await opened.branch.appendMessage(userMessage(text), BACKGROUND_CONTEXT);
+    }
+    const head = await store.loadMessages(summary.id, { limit: 2, order: "oldestFirst" });
+    expect(head.messages.map(textOf)).toEqual(["第一问", "第一答"]);
+    // 取满即给游标，供继续向下翻
+    expect(head.nextCursor).toBeTypeOf("number");
+
+    const tail = await store.loadMessages(summary.id, { limit: 2 });
+    expect(tail.messages.map(textOf)).toEqual(["第二问", "第二答"]);
+  });
+
   it("setArchived 生效", async () => {
     const summary = await store.create();
     await store.setArchived(summary.id, true);

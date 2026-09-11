@@ -48,7 +48,8 @@ export function ApprovalSection({ requests, onResolve }: ApprovalSectionProps) {
       */}
       <AnimatePresence initial={false}>
         {requests.map((request) => {
-          const state: ApprovalState = request.source === "ai" ? "running" : "request";
+          const reviewing = request.source === "ai" && request.aiReviewed !== true;
+          const state: ApprovalState = reviewing ? "running" : "request";
           const risk = t(request.risk === "high" ? "approval.riskHigh" : "approval.riskLow");
           const source = request.source === "ai" ? ` · ${t("approval.sourceAi")}` : "";
 
@@ -66,6 +67,13 @@ export function ApprovalSection({ requests, onResolve }: ApprovalSectionProps) {
                 title={t("approval.title")}
                 subtitle={`${request.toolName} · ${risk}${source}`}
                 command={request.argsText}
+                reason={request.reason}
+                labels={{
+                  allowOnce: t("approval.allowOnce"),
+                  alwaysAllow: t("approval.alwaysAllow"),
+                  deny: t("approval.deny"),
+                  running: t("approval.aiReviewing"),
+                }}
                 onAllowOnce={() => onResolve?.(request.id, "allow_once")}
                 onAlwaysAllow={() => onResolve?.(request.id, "always_allow")}
                 onDeny={() => setDenyFor(request.id)}

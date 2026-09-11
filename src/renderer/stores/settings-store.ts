@@ -5,8 +5,8 @@ interface SettingsState {
   settings: Settings | null;
   loaded: boolean;
   load(): Promise<void>;
-  /** 乐观更新 + 落盘，失败回滚 */
-  update(patch: Partial<Settings>): Promise<void>;
+  /** 乐观更新 + 落盘，失败只回滚本次改动的字段；返回值表示是否真的写成功 */
+  update(patch: Partial<Settings>): Promise<boolean>;
   /** 把 theme 应用到 html 的 dark 类（system 跟随系统偏好） */
   applyTheme(): void;
   /** 把 chatFont / chatFontSize 写到 CSS 变量 */
@@ -20,10 +20,22 @@ interface SettingsState {
 /** 系统主题监听器（模块级，避免重复注册） */
 let mediaQuery: MediaQueryList | null = null;
 
+/**
+ * 写入串行化：并发 patch 时后写的必须落盘。
+ * 之前每个 update 各自 await 一次 write，两个快速操作（例如权限 chip 连点两下）
+ * 若先写的那次失败，整体回滚会把后写的值一起抹掉 —— 界面显示的模式会与磁盘不一致。
+ */
+let writeChain: Promise<unknown> = Promise.resolve();
+
 function onSystemThemeChange(): void {
   const { settings, applyTheme } = useSettingsStore.getState();
   // 仅当用户选择跟随系统时才响应
   if (settings?.theme === "system") applyTheme();
+}
+
+/** 取某字段值：回滚与比较都要在无类型的键上操作，集中在这里收敛 */
+function readField(source: Settings, key: string): unknown {
+  return (source as unknown as Record<string, unknown>)[key];
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
@@ -37,22 +49,39 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   async update(patch) {
     const prev = get().settings;
-    if (!prev) return;
+    if (!prev) return false;
     const next = { ...prev, ...patch };
     set({ settings: next });
+
+    const task = writeChain
+      .catch(() => undefined)
+      .then(() => window.polaragent.settings.write(next));
+    writeChain = task;
+
     try {
-      await window.polaragent.settings.write(next);
+      await task;
     } catch (error) {
-      // 落盘失败：回滚并告警
-      set({ settings: prev });
-      console.warn("settings.write 失败，已回滚", error);
-      return;
+      // 落盘失败：只回滚本次真的改过、且之后没人再改的字段
+      const current = get().settings;
+      if (current) {
+        const rolled = { ...current } as unknown as Record<string, unknown>;
+        for (const key of Object.keys(patch)) {
+          if (Object.is(readField(current, key), readField(next, key))) {
+            rolled[key] = readField(prev, key);
+          }
+        }
+        set({ settings: rolled as unknown as Settings });
+      }
+      console.warn("settings.write 失败，已回滚本次改动", error);
+      return false;
     }
+
     if (patch.theme !== undefined) get().applyTheme();
     if (patch.chatFont !== undefined || patch.chatFontSize !== undefined) {
       get().applyTypography();
     }
     if (patch.density !== undefined) get().applyDensity();
+    return true;
   },
 
   applyTheme() {

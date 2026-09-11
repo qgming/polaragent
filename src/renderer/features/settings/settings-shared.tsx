@@ -69,7 +69,7 @@ export function SettingsField({
  * 面板大标题：右侧每个分类左上角都有一行，与左栏的「设置」标题同档（display 衬线 text-xl）。
  *
  * 由 SettingsModal 统一渲染，面板自己不必各写一个 —— 分类名就是标题，词条取
- * settings.general / services / permissions / skills / personalization / about。
+ * settings.general / services / skills / personalization / about。
  * 面板内部的分组标题仍是 SettingsSection 的 mono 眉题（h3），层级为 大标题 h2 → 分组 h3。
  */
 export function SettingsPanelTitle({ children }: { children: ReactNode }) {

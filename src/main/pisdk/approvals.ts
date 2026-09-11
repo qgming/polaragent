@@ -1,4 +1,4 @@
-// 审批服务：挂起 Promise + 事件桥；AI 预审可用时自动放行，拒绝/失败则退回用户审批。
+// 审批服务：挂起 Promise + 事件桥；「帮我审批」模式下先交 AI 预审，拒绝/失败则退回用户审批。
 
 import { randomUUID } from "node:crypto";
 import type {
@@ -13,7 +13,7 @@ import type { AiApprover, AiApproverResult } from "./ai-approver";
 export interface ApprovalServiceDeps {
   getSettings: () => Promise<Settings>;
   emit: (event: ChatEvent) => void;
-  /** AI 审批器（"帮我审批"模式）；未注入时该模式退化为用户审批 */
+  /** AI 审批器（「帮我审批」模式用）；未注入时该模式退化为用户审批卡 */
   aiApprover?: AiApprover;
 }
 
@@ -25,6 +25,8 @@ export interface ApprovalService {
     toolName: string;
     argsText: string;
     risk: "low" | "high";
+    /** 会话工作目录：AI 预审据此判断操作是否越出项目范围 */
+    workingDir?: string;
   }): Promise<ApprovalDecision>;
   /** 渲染进程回传决定 */
   respond(id: string, decision: ApprovalDecision, note?: string): void;
@@ -44,6 +46,7 @@ interface PendingApproval {
   toolCallId: string;
   promise: Promise<ApprovalDecision>;
   resolve: (decision: ApprovalDecision) => void;
+  workingDir?: string;
 }
 
 export function createApprovalService(deps: ApprovalServiceDeps): ApprovalService {
@@ -99,24 +102,37 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     return true;
   }
 
-  /** AI 预审：放行则直接结算；拒绝则保留挂起等待用户覆盖；异常按用户审批兜底 */
+  /**
+   * AI 预审：放行则直接结算；拒绝或调用失败则把结论交回渲染层，
+   * 请求继续挂起等用户覆盖（卡片必须离开「审批中」，否则用户无从操作）。
+   */
   async function runAiApproval(entry: PendingApproval, aiApprover: AiApprover): Promise<void> {
     let result: AiApproverResult;
     try {
       result = await aiApprover({
         toolName: entry.request.toolName,
         argsText: entry.request.argsText,
+        ...(entry.workingDir === undefined ? {} : { workingDir: entry.workingDir }),
       });
     } catch (error) {
-      entry.request.reason = `AI 审批失败：${String(error)}`;
+      handBack(entry, `AI 审批失败：${String(error)}`);
       return;
     }
     // 用户可能已在 AI 返回前处理；已结算则忽略本次结果
     if (!pendingById.has(entry.request.id)) return;
-    entry.request.reason = result.reason;
     if (result.allow) {
-      settle(entry.request.id, "allow_once", "ai", `AI：${result.reason}`);
+      settle(entry.request.id, "allow_once", "ai", `AI: ${result.reason}`);
+      return;
     }
+    handBack(entry, result.reason);
+  }
+
+  /** 把 AI 的结论（拒绝/失败）落到请求上并通知渲染层，请求保持挂起等用户决定 */
+  function handBack(entry: PendingApproval, reason: string): void {
+    if (!pendingById.has(entry.request.id)) return;
+    entry.request.aiReviewed = true;
+    entry.request.reason = reason;
+    emitSafe({ type: "approval-reviewed", id: entry.request.id, reason });
   }
 
   async function request(input: {
@@ -125,11 +141,13 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     toolName: string;
     argsText: string;
     risk: "low" | "high";
+    workingDir?: string;
   }): Promise<ApprovalDecision> {
     const duplicate = findPending(input.toolCallId);
     if (duplicate) return duplicate.promise;
 
-    // 读取设置失败时退回用户审批；「帮我审批」模式本身即代表 AI 审批，无需额外开关
+    // 只有「帮我审批」模式启用 AI 预审，其余模式一律等用户确认；
+    // 读取设置失败时退回用户审批（审批卡照常弹出，不打断链路）。
     let aiApprover: AiApprover | undefined;
     try {
       const settings = await deps.getSettings();
@@ -161,6 +179,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
       toolCallId: input.toolCallId,
       promise,
       resolve: resolvePromise,
+      ...(input.workingDir === undefined ? {} : { workingDir: input.workingDir }),
     };
     pendingById.set(request.id, entry);
     pendingByToolCall.set(input.toolCallId, request.id);

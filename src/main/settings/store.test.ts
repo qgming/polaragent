@@ -155,3 +155,46 @@ describe("saveSettings", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("无法解密"));
   });
 });
+
+/** 审批模式与语言：写入后可完整读回，坏数据有兜底 */
+describe("审批模式与语言", () => {
+  it("非默认的 permissionMode 可完整往返", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const settings: Settings = {
+      ...sampleSettings("sk-mode"),
+      permissionMode: "ai_review",
+    };
+    await store.save(settings);
+    const loaded = await store.load();
+    expect(loaded.permissionMode).toBe("ai_review");
+  });
+
+  it("非法 permissionMode / language 回落到默认值", async () => {
+    // 手改坏的 settings.json：模式与语言都是非法取值
+    await writeRawSettings({ permissionMode: "yolo", language: "fr-FR" });
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded.permissionMode).toBe(DEFAULT_SETTINGS.permissionMode);
+    expect(loaded.language).toBe(DEFAULT_SETTINGS.language);
+  });
+
+  it("旧版本残留的提示词字段被忽略，重新保存后不再落盘", async () => {
+    // 旧版 settings.json：顶层就是完整设置，多出两个已移除的提示词字段
+    await writeRawSettings({
+      ...sampleSettings("sk-legacy-prompt"),
+      aiApprovalPrompt: "旧的自定义审批提示词",
+      aiTitlePrompt: "旧的自定义命名提示词",
+    });
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded).not.toHaveProperty("aiApprovalPrompt");
+    expect(loaded).not.toHaveProperty("aiTitlePrompt");
+    // 有效字段照旧读回，不被残留字段带偏
+    expect(loaded.services[0]?.apiKey).toBe("sk-legacy-prompt");
+
+    await store.save(loaded);
+    const raw = JSON.parse(await readFile(settingsFile, "utf8")) as Record<string, unknown>;
+    expect(raw).not.toHaveProperty("aiApprovalPrompt");
+    expect(raw).not.toHaveProperty("aiTitlePrompt");
+  });
+});

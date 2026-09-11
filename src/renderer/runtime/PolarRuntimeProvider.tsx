@@ -41,7 +41,6 @@ export function PolarRuntimeProvider({
     });
     return unsubscribe;
   }, []);
-
   const onNew = useCallback(async (message: AppendMessage) => {
     const text = appendMessageToText(message);
     const images = appendMessageToImages(message);

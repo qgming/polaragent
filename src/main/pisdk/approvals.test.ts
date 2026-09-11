@@ -18,7 +18,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
     ...overrides,
@@ -134,7 +133,7 @@ describe("createApprovalService", () => {
     await expect(service.request(makeInput())).resolves.toBe("allow_once");
     expect(requestedRequest(events).source).toBe("ai");
     expect(service.pending()).toHaveLength(0);
-    expect(service.history()[0]).toMatchObject({ decidedBy: "ai", note: "AI：只读命令" });
+    expect(service.history()[0]).toMatchObject({ decidedBy: "ai", note: "AI: 只读命令" });
   });
 
   it("AI 拒绝时仍挂起，等待用户覆盖", async () => {
@@ -170,6 +169,64 @@ describe("createApprovalService", () => {
     expect(requestedRequest(defaultMode.events).source).toBe("user");
     defaultMode.service.respond(defaultMode.service.pending("s1")[0]?.id ?? "", "allow_once");
     await expect(promiseB).resolves.toBe("allow_once");
+  });
+
+  it("AI 拒绝时把结论交回渲染层（approval-reviewed + aiReviewed）", async () => {
+    const aiApprover: AiApprover = async () => ({ allow: false, reason: "命中危险命令" });
+    const { service, events } = createHarness({
+      settings: { permissionMode: "ai_review" },
+      aiApprover,
+    });
+
+    const promise = service.request(makeInput());
+    await flush();
+
+    const reviewed = events.find((item) => item.type === "approval-reviewed");
+    expect(reviewed).toMatchObject({ reason: "命中危险命令" });
+    const pending = service.pending("s1")[0];
+    expect(pending?.aiReviewed).toBe(true);
+    expect(pending?.reason).toBe("命中危险命令");
+
+    // 请求仍在等用户决定
+    service.respond(pending?.id ?? "", "deny");
+    await expect(promise).resolves.toBe("deny");
+  });
+
+  it("把工作目录交给 AI 预审（判断操作是否越出项目范围）", async () => {
+    let seen: { workingDir?: string } = {};
+    const aiApprover: AiApprover = async (input) => {
+      seen = { ...(input.workingDir === undefined ? {} : { workingDir: input.workingDir }) };
+      return { allow: true, reason: "只读命令" };
+    };
+    const { service } = createHarness({
+      settings: { permissionMode: "ai_review" },
+      aiApprover,
+    });
+
+    await expect(service.request({ ...makeInput(), workingDir: "D:/work/demo" })).resolves.toBe(
+      "allow_once",
+    );
+    expect(seen.workingDir).toBe("D:/work/demo");
+  });
+
+  it("AI 调用失败也把结论交回，用户仍可放行", async () => {
+    const aiApprover: AiApprover = async () => {
+      throw new Error("网络中断");
+    };
+    const { service, events } = createHarness({
+      settings: { permissionMode: "ai_review" },
+      aiApprover,
+    });
+
+    const promise = service.request(makeInput());
+    await flush();
+
+    const reviewed = events.find((item) => item.type === "approval-reviewed");
+    expect(reviewed).toMatchObject({ reason: expect.stringContaining("AI 审批失败") });
+    expect(service.pending("s1")[0]?.aiReviewed).toBe(true);
+
+    service.respond(service.pending("s1")[0]?.id ?? "", "allow_once");
+    await expect(promise).resolves.toBe("allow_once");
   });
 
   it("设置读取失败时退回用户审批", async () => {

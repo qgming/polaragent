@@ -34,7 +34,6 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
-  aiApprovalModel: null,
   skillDirs: [],
   disabledSkillNames: [],
 };
@@ -89,7 +88,8 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
   return {
     ...(merged as unknown as Settings),
     defaultModel: normalizeModelRef(raw.defaultModel),
-    aiApprovalModel: normalizeModelRef(raw.aiApprovalModel),
+    permissionMode: normalizePermissionMode(raw.permissionMode),
+    language: normalizeLanguage(raw.language),
     services: normalizeServices(raw.services, crypto, warn),
     skillDirs: Array.isArray(raw.skillDirs)
       ? raw.skillDirs.filter((dir) => typeof dir === "string")
@@ -105,6 +105,16 @@ function normalizeModelRef(raw: unknown): Settings["defaultModel"] {
   const { serviceId, modelId } = raw;
   if (typeof serviceId !== "string" || typeof modelId !== "string") return null;
   return { serviceId, modelId };
+}
+
+/** 审批模式容错：非法取值一律回落到 default（安全侧弹卡询问） */
+function normalizePermissionMode(raw: unknown): Settings["permissionMode"] {
+  return raw === "ai_review" || raw === "full" ? raw : "default";
+}
+
+/** 语言容错：非法取值回落到默认语言（提示词、占位文案都按它索引） */
+function normalizeLanguage(raw: unknown): Settings["language"] {
+  return raw === "en-US" ? "en-US" : "zh-CN";
 }
 
 function normalizeServices(raw: unknown, crypto: Crypto | null, warn: Warn): ModelServiceConfig[] {

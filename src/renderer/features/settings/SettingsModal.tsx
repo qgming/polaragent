@@ -1,4 +1,4 @@
-import { FileText, Info, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { FileText, Info, Server, Settings2, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { typeSection } from "@/renderer/components/assistant-ui/type";
@@ -14,7 +14,6 @@ import { cn } from "@/renderer/lib/utils";
 import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
 import { AboutPanel } from "./panels/AboutPanel";
 import { GeneralPanel } from "./panels/GeneralPanel";
-import { PermissionsPanel } from "./panels/PermissionsPanel";
 import { PersonalizationPanel } from "./panels/PersonalizationPanel";
 import { ServicesPanel } from "./panels/ServicesPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
@@ -28,7 +27,6 @@ const SECTIONS: readonly {
 }[] = [
   { id: "general", labelKey: "settings.general", Icon: Settings2 },
   { id: "services", labelKey: "settings.services", Icon: Server },
-  { id: "permissions", labelKey: "settings.permissions", Icon: ShieldCheck },
   { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
   { id: "personalization", labelKey: "settings.personalization", Icon: FileText },
   { id: "about", labelKey: "settings.about", Icon: Info },
@@ -50,8 +48,6 @@ function renderPanel(section: SettingsSection) {
       return <GeneralPanel />;
     case "services":
       return <ServicesPanel />;
-    case "permissions":
-      return <PermissionsPanel />;
     case "skills":
       return <SkillsPanel />;
     case "personalization":
@@ -114,7 +110,7 @@ export function SettingsModal() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
                   >
-                    {/* 大标题：分类名。六个分类在这里统一渲染，面板自身不写标题 */}
+                    {/* 大标题：分类名。五个分类在这里统一渲染，面板自身不写标题 */}
                     <SettingsPanelTitle>{t(section.labelKey)}</SettingsPanelTitle>
                     {renderPanel(section.id)}
                   </motion.div>

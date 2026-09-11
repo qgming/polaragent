@@ -2,6 +2,14 @@ import { useChatStore } from "@/renderer/stores/chat-store";
 import type { ChatEvent } from "@/shared/contracts";
 
 /**
+ * 事件自带的会话 id：目前只有命名事件带（会话切换后仍要能更新列表标题）。
+ * 其余事件归属「当前会话」，由 getSessionId 推断。
+ */
+function ownSessionId(event: ChatEvent): string | null {
+  return event.type === "session-titled" ? event.sessionId : null;
+}
+
+/**
  * 单事件分发：会话 id 通过 getSessionId 注入（事件本身不带会话 id），
  * 抽成纯函数便于单测，测试不依赖 window。
  */
@@ -10,7 +18,7 @@ export function dispatchEvent(
   onEvent: (sessionId: string, event: ChatEvent) => void,
   event: ChatEvent,
 ): void {
-  const sessionId = getSessionId();
+  const sessionId = ownSessionId(event) ?? getSessionId();
   if (!sessionId) return;
   onEvent(sessionId, event);
 }

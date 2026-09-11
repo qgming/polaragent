@@ -16,7 +16,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
     ...overrides,
@@ -67,15 +66,15 @@ function configuredSettings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe("createAiApprover", () => {
-  it("未配置模型时安全拒绝", async () => {
+  it("未选择默认路由模型时安全拒绝", async () => {
     const approver = createAiApprover({ getSettings: async () => makeSettings() });
     await expect(approver({ toolName: "write", argsText: "{}" })).resolves.toEqual({
       allow: false,
-      reason: "未配置审批模型",
+      reason: "未选择默认模型，已拒绝",
     });
   });
 
-  it("读取设置失败时安全拒绝", async () => {
+  it("读取设置失败时安全拒绝（用中性语言兜底）", async () => {
     const approver = createAiApprover({
       getSettings: async () => {
         throw new Error("磁盘错误");
@@ -83,7 +82,46 @@ describe("createAiApprover", () => {
     });
     const result = await approver({ toolName: "write", argsText: "{}" });
     expect(result.allow).toBe(false);
-    expect(result.reason).toContain("读取设置失败");
+    expect(result.reason).toContain("Failed to read settings");
+  });
+  it("系统提示词说明角色，用户消息用内置英文模板填入这次调用", async () => {
+    let seen: { systemPrompt?: string; content?: string } = {};
+    const models = fakeModels({ text: '{"allow": true, "reason": "ok"}' });
+    const approver = createAiApprover({
+      getSettings: async () => configuredSettings(),
+      buildModels: () => {
+        const fake = models as unknown as {
+          completeSimple: (
+            model: unknown,
+            params: { systemPrompt?: string; messages?: { content?: unknown }[] },
+          ) => unknown;
+        };
+        return {
+          completeSimple: (
+            model: unknown,
+            params: { systemPrompt?: string; messages?: { content?: unknown }[] },
+          ) => {
+            seen = {
+              systemPrompt: params.systemPrompt,
+              content:
+                typeof params.messages?.[0]?.content === "string"
+                  ? params.messages[0].content
+                  : undefined,
+            };
+            return fake.completeSimple(model, params);
+          },
+        } as unknown as typeof models;
+      },
+    });
+
+    await approver({ toolName: "write", argsText: '{"path":"a.ts"}', workingDir: "D:/work" });
+    expect(seen.systemPrompt).toContain("tool-call safety reviewer for PolarAgent");
+    expect(seen.content).toContain("Tool: write");
+    expect(seen.content).toContain('{"path":"a.ts"}');
+    expect(seen.content).toContain("Working directory: D:/work");
+    // 理由语言跟随界面语言（zh-CN）
+    expect(seen.content).toContain("written in Simplified Chinese");
+    expect(seen.content).not.toContain("{{");
   });
 
   it("解析模型输出的 JSON 决定（代码块包裹也可识别）", async () => {
@@ -130,6 +168,27 @@ describe("createAiApprover", () => {
     await expect(approver({ toolName: "bash", argsText: "{}" })).resolves.toEqual({
       allow: false,
       reason: "AI 审批超时，已拒绝",
+    });
+  });
+
+  it("英文界面下的兜底理由也是英文", async () => {
+    const approver = createAiApprover({
+      getSettings: async () => configuredSettings({ language: "en-US" }),
+      buildModels: () => fakeModels({ text: "I think it is fine" }),
+    });
+    await expect(approver({ toolName: "bash", argsText: "{}" })).resolves.toEqual({
+      allow: false,
+      reason: "AI verdict could not be parsed — denied",
+    });
+  });
+
+  it("英文界面且未选默认模型时拒绝理由为英文", async () => {
+    const approver = createAiApprover({
+      getSettings: async () => makeSettings({ language: "en-US" }),
+    });
+    await expect(approver({ toolName: "write", argsText: "{}" })).resolves.toEqual({
+      allow: false,
+      reason: "No default model selected — denied",
     });
   });
 });

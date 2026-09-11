@@ -4,6 +4,7 @@ import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
 import { createChatRuntime } from "./runtime";
 import { getSessionStore } from "./session-store";
+import { createSessionTitleGenerator } from "./title-generator";
 
 type ApprovalService = ReturnType<typeof createApprovalService>;
 type ChatRuntime = ReturnType<typeof createChatRuntime>;
@@ -27,8 +28,10 @@ async function resolveWorkingDir(): Promise<string> {
 export function bootstrapPisdk(options: { emit: (event: ChatEvent) => void }): () => void {
   const { emit } = options;
   const sessionStore = getSessionStore();
-  // 「帮我审批」模式下由该审批器自动给出结论；其余模式一律等用户确认
+  // 「帮我审批」模式下由该审批器给出结论（模型取默认路由模型）；其余模式一律等用户确认
   const aiApprover = createAiApprover({ getSettings: loadSettings });
+  // 首轮问答结束后用同一模型给会话命名
+  const sessionTitles = createSessionTitleGenerator({ getSettings: loadSettings });
 
   approvalService = createApprovalService({ getSettings: loadSettings, emit, aiApprover });
   chatRuntime = createChatRuntime({
@@ -36,6 +39,7 @@ export function bootstrapPisdk(options: { emit: (event: ChatEvent) => void }): (
     sessionStore,
     emit,
     approvals: approvalService,
+    sessionTitles,
     resolveWorkingDir,
   });
 

@@ -30,6 +30,13 @@ export type ChatEvent =
   | { type: "queue-updated"; items: QueuedMessage[] }
   | { type: "approval-requested"; request: ApprovalRequest }
   | { type: "approval-resolved"; id: string; decision: ApprovalDecision }
+  /** 会话被 AI 自动命名（或改标题）：渲染层据此就地替换侧栏里的默认名 */
+  | { type: "session-titled"; sessionId: string; title: string }
+  /**
+   * AI 预审出结论但不放行：请求仍挂起，等待用户覆盖。
+   * 渲染层据此把审批卡从「审批中」切回可操作态，并显示 AI 给的理由。
+   */
+  | { type: "approval-reviewed"; id: string; reason: string }
   | { type: "compaction-started" }
   | { type: "compaction-ended"; summaryPreview: string }
   | { type: "run-ended"; runId: string; reason: string };

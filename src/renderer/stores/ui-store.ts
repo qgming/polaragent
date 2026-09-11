@@ -1,14 +1,19 @@
 import { create } from "zustand";
 
 /** 设置弹窗内的分栏 */
-export type SettingsSection =
-  | "general"
-  | "services"
-  | "permissions"
-  | "skills"
-  | "personalization"
-  | "about";
+export type SettingsSection = "general" | "services" | "skills" | "personalization" | "about";
 
+/**
+ * 设置分类的规范顺序：左栏导航与搜索里的「设置」结果都按它渲染。
+ * 两处各写一份列表时，删掉一个分类就会漏改另一处（搜索会打开一个没有面板的分栏）。
+ */
+export const SETTINGS_SECTIONS = [
+  "general",
+  "services",
+  "skills",
+  "personalization",
+  "about",
+] as const satisfies readonly SettingsSection[];
 /**
  * 从搜索模态窗跳到某条消息。
  * token 只增不减：Thread 用它做「同一目标只滚一次」的去重键，

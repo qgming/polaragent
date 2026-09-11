@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatEvent } from "@/shared/contracts";
 import { dispatchEvent } from "./event-bridge";
 
-/** ChatEvent 全部 10 种事件各构造一个样本 */
+/** ChatEvent 全部 11 种事件各构造一个样本 */
 const sampleEvents: ChatEvent[] = [
   { type: "run-started", runId: "r1" },
   {
@@ -24,10 +24,19 @@ const sampleEvents: ChatEvent[] = [
     },
   },
   { type: "approval-resolved", id: "a1", decision: "allow_once" },
+  { type: "approval-reviewed", id: "a1", reason: "命中危险命令" },
   { type: "compaction-started" },
   { type: "compaction-ended", summaryPreview: "sum" },
   { type: "run-ended", runId: "r1", reason: "stop" },
+  { type: "session-titled", sessionId: "s1", title: "修复登录超时" },
 ];
+
+/** 自带会话 id 的事件不受「当前会话」影响 */
+const selfScopedEvent: ChatEvent = {
+  type: "session-titled",
+  sessionId: "s9",
+  title: "来自后台的命名",
+};
 
 describe("dispatchEvent", () => {
   it("把各种事件类型原样转发给 onEvent（绑定当前会话 id）", () => {
@@ -52,5 +61,11 @@ describe("dispatchEvent", () => {
     const unknown = { type: "unknown-event", payload: 1 } as unknown as ChatEvent;
     expect(() => dispatchEvent(() => "s1", onEvent, unknown)).not.toThrow();
     expect(onEvent).toHaveBeenCalledWith("s1", unknown);
+  });
+
+  it("自带会话 id 的事件在无活动会话时也转发", () => {
+    const onEvent = vi.fn();
+    dispatchEvent(() => null, onEvent, selfScopedEvent);
+    expect(onEvent).toHaveBeenCalledWith("s9", selfScopedEvent);
   });
 });

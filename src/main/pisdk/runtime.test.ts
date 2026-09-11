@@ -27,7 +27,6 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    aiApprovalModel: null,
     skillDirs: [],
     disabledSkillNames: [],
     ...overrides,

@@ -7,11 +7,29 @@ import { field, inkButton, paper } from "./surfaces";
 
 export type ApprovalState = "request" | "running" | "done" | "denied";
 
+/** 卡片文案：调用方传本地化文案，缺省回落英文（元素单独使用时也立得住） */
+export interface ApprovalCardLabels {
+  allowOnce?: string;
+  alwaysAllow?: string;
+  deny?: string;
+  /** 「审批中」态文案：AI 预审出结论前显示 */
+  running?: string;
+}
+
+const DEFAULT_LABELS: Required<ApprovalCardLabels> = {
+  allowOnce: "Allow once",
+  alwaysAllow: "Always allow",
+  deny: "Deny",
+  running: "Approved, running",
+};
+
 export function ApprovalCard({
   state,
   command,
   title,
   subtitle,
+  reason,
+  labels,
   onAllowOnce,
   onAlwaysAllow,
   onDeny,
@@ -32,6 +50,9 @@ export function ApprovalCard({
   command: string;
   title: string;
   subtitle: string;
+  /** 审批结论：AI 拒绝或调用失败时的理由，交回用户时展示 */
+  reason?: string;
+  labels?: ApprovalCardLabels;
   onAllowOnce?: () => void;
   onAlwaysAllow?: () => void;
   onDeny?: () => void;
@@ -56,6 +77,11 @@ export function ApprovalCard({
         {command}
       </div>
 
+      {/* 理由只在有结论时出现（AI 交回用户）；没有结论的普通请求不占位 */}
+      {reason !== undefined && reason !== "" ? (
+        <p className="text-foreground/55 text-xs leading-relaxed">{reason}</p>
+      ) : null}
+
       <div className="flex h-8 items-center justify-end gap-2">
         {state === "request" ? (
           <>
@@ -64,14 +90,14 @@ export function ApprovalCard({
               onClick={onDeny}
               className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
-              Deny
+              {labels?.deny ?? DEFAULT_LABELS.deny}
             </button>
             <button
               type="button"
               onClick={onAlwaysAllow}
               className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
-              Always allow
+              {labels?.alwaysAllow ?? DEFAULT_LABELS.alwaysAllow}
             </button>
             <button
               type="button"
@@ -81,7 +107,7 @@ export function ApprovalCard({
                 "flex h-8 items-center rounded-full px-3.5 text-xs font-medium",
               )}
             >
-              Allow once
+              {labels?.allowOnce ?? DEFAULT_LABELS.allowOnce}
             </button>
           </>
         ) : (
@@ -92,7 +118,7 @@ export function ApprovalCard({
             {state === "running" ? (
               <>
                 <Loader2Icon className="text-foreground/45 size-3.5 animate-spin" />
-                Approved, running
+                {labels?.running ?? DEFAULT_LABELS.running}
               </>
             ) : state === "denied" ? (
               <>

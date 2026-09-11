@@ -15,6 +15,7 @@ export const enUS = {
     empty: "Nothing here yet",
     enabled: "Enabled",
     disabled: "Disabled",
+    saved: "Saved",
   },
   app: {
     name: "PolarAgent",
@@ -59,6 +60,7 @@ export const enUS = {
     toolCalls: "Tool calls",
     running: "Running",
     queueCount: "{{count}} queued",
+    permissionMode: "Permission mode",
     permissionDefault: "Default permissions",
     permissionAiReview: "AI review",
     permissionFull: "Full access",
@@ -98,7 +100,6 @@ export const enUS = {
   settings: {
     general: "General",
     services: "Model services",
-    permissions: "Permissions",
     skills: "Skills",
     personalization: "Personalization",
     about: "About",
@@ -163,20 +164,6 @@ export const enUS = {
     defaultModelDesc: "Model used by new sessions",
     noServices: "No model services configured yet",
     noServicesHint: "Add an OpenAI-compatible service to start chatting",
-    permissionMode: "Permission mode",
-    permissionDefaultDesc: "Low-risk actions run automatically; high-risk ones ask you first",
-    permissionAiReviewDesc:
-      "High-risk actions go to an AI reviewer; its verdict and reason stay visible",
-    permissionFullDesc: "Allow everything without asking; use only for fully trusted tasks",
-    permissionRules: "Always-allow rules",
-    permissionRulesDesc: "Matching tool calls are never asked again; remove them anytime",
-    permissionRulesEmpty: "No rules yet",
-    ruleTool: "Tool",
-    rulePattern: "Pattern",
-    ruleCreatedAt: "Added",
-    removeRule: "Remove rule",
-    aiApprovalModel: "AI approval model",
-    aiApprovalModelDesc: "Model used by AI review; falls back to the default model",
     skillDirs: "Skill directories",
     skillDirsDesc:
       "SKILL.md files are loaded recursively; .pi/skills under the session directory is always scanned",
@@ -204,6 +191,7 @@ export const enUS = {
   approval: {
     allowOnce: "Allow once",
     alwaysAllow: "Always allow",
+    deny: "Deny",
     denyWithReason: "Deny with reason",
     aiReviewing: "AI reviewing…",
     title: "Approval required",

@@ -35,9 +35,8 @@ export interface Settings {
   services: ModelServiceConfig[];
   defaultModel: { serviceId: string; modelId: string } | null;
   thinkingLevel: ThinkingLevel;
+  /** 审批模式：default 高风险弹卡 / ai_review 交 AI 审批 / full 全部放行；由 Composer 的权限 chip 切换 */
   permissionMode: PermissionMode;
-  aiApprovalModel: { serviceId: string; modelId: string } | null;
   skillDirs: string[];
-  /** 被用户禁用的技能名；技能仍会被扫描到但排除出系统提示词 */
   disabledSkillNames: string[];
 }
