@@ -1,17 +1,13 @@
-import {
-  Archive,
-  BarChart3,
-  GitBranch,
-  MoreHorizontal,
-  PanelLeft,
-  Pencil,
-  Plus,
-  Search,
-  Settings2,
-  Trash2,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { PanelLeft, Plus, Settings2 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  ThreadListItems,
+  ThreadListNew,
+  ThreadListRoot,
+  ThreadListSearch,
+} from "@/renderer/components/assistant-ui/elements/thread-list.aui";
+import { ThemeToggle } from "@/renderer/components/ThemeToggle";
 import { Button } from "@/renderer/components/ui/button";
 import {
   Dialog,
@@ -21,365 +17,139 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/renderer/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/renderer/components/ui/dropdown-menu";
-import { Input } from "@/renderer/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
-import { formatRelativeDay } from "@/renderer/lib/format";
-import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
-import type { SessionSummary } from "@/shared/contracts/session";
 
-type DayGroup = "today" | "yesterday" | "earlier";
-
-// 日期分组的展示顺序与词条 key
-const GROUP_ORDER: readonly DayGroup[] = ["today", "yesterday", "earlier"];
-const GROUP_LABEL_KEYS: Record<
-  DayGroup,
-  "sidebar.today" | "sidebar.yesterday" | "sidebar.earlier"
-> = {
-  today: "sidebar.today",
-  yesterday: "sidebar.yesterday",
-  earlier: "sidebar.earlier",
-};
-
-// format 车道返回的是显示文案（「今天」/「昨天」/「M月D日」），据此映射到分组枚举
-function toDayGroup(label: string): DayGroup {
-  if (label === "今天") return "today";
-  if (label === "昨天") return "yesterday";
-  return "earlier";
-}
-
-interface SessionItemProps {
-  session: SessionSummary;
-  active: boolean;
-  running: boolean;
-  onSelect: () => void;
-  onRename: () => void;
-  onArchive: () => void;
-  onRemove: () => void;
-}
-
-/** 单条会话：当前项品牌浅底 + 左竖条；fork 子项缩进 + 分支符；hover 出 ··· 菜单 */
-function SessionItem({
-  session,
-  active,
-  running,
-  onSelect,
-  onRename,
-  onArchive,
-  onRemove,
-}: SessionItemProps) {
-  const { t } = useTranslation();
-  const isFork = Boolean(session.parentSessionId);
-
+/** 折叠态图标轨道里的单个按钮：图标 + 右侧 tooltip */
+function RailButton({
+  label,
+  onClick,
+  disabled = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="group relative">
-      <button
-        type="button"
-        onClick={onSelect}
-        className={cn(
-          "flex h-8 w-full items-center gap-2 rounded-md text-sm transition-colors",
-          isFork ? "pl-8" : "pl-3",
-          active
-            ? "bg-brand-muted text-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-accent",
-        )}
-      >
-        {/* 当前项左侧 2px 品牌竖条（E2 落点 ③） */}
-        {active && (
-          <span className="absolute top-1 bottom-1 left-0 w-0.5 bg-brand" aria-hidden="true" />
-        )}
-        {isFork && (
-          <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-left">
-          {session.title ?? t("chat.newChat")}
-        </span>
-        {/* 运行中：品牌脉冲点（E2 落点 ④） */}
-        {running && (
-          <span
-            className="size-1.5 shrink-0 rounded-full bg-brand animate-pulse"
-            aria-hidden="true"
-          />
-        )}
-      </button>
-
-      {/* hover 或键盘聚焦时显示 ··· 菜单 */}
-      <div className="absolute top-0 right-1 bottom-0 flex items-center opacity-0 transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-xs" aria-label={t("common.more")}>
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-36">
-            <DropdownMenuItem onClick={onRename}>
-              <Pencil />
-              {t("sidebar.rename")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onArchive}>
-              <Archive />
-              {session.archived ? t("sidebar.unarchive") : t("sidebar.archive")}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={onRemove}>
-              <Trash2 />
-              {t("sidebar.delete")}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  );
-}
-
-export function SidebarShell() {
-  const { t } = useTranslation();
-
-  const collapsed = useUiStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-  const openSettings = useUiStore((s) => s.openSettings);
-
-  const sessions = useChatStore((s) => s.sessions);
-  const activeSessionId = useChatStore((s) => s.activeSessionId);
-  const runningBySession = useChatStore((s) => s.runningBySession);
-  const { createSession, setActiveSession, renameSession, archiveSession, removeSession } =
-    useChatStore.getState();
-
-  const [filter, setFilter] = useState("");
-  // 重命名与删除确认对话框的目标会话（null = 关闭）
-  const [renaming, setRenaming] = useState<SessionSummary | null>(null);
-  const [renameTitle, setRenameTitle] = useState("");
-  const [confirmRemove, setConfirmRemove] = useState<SessionSummary | null>(null);
-
-  // 本地标题过滤 + 按相对日期分组（今天 / 昨天 / 更早）
-  const groups = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const filtered = q ? sessions.filter((s) => s.title?.toLowerCase().includes(q)) : sessions;
-    const buckets: Record<DayGroup, SessionSummary[]> = {
-      today: [],
-      yesterday: [],
-      earlier: [],
-    };
-    for (const s of filtered) {
-      buckets[toDayGroup(formatRelativeDay(s.updatedAt))].push(s);
-    }
-    return GROUP_ORDER.map((key) => ({ key, items: buckets[key] })).filter(
-      (g) => g.items.length > 0,
-    );
-  }, [sessions, filter]);
-
-  const openRename = (session: SessionSummary) => {
-    setRenameTitle(session.title ?? "");
-    setRenaming(session);
-  };
-
-  const confirmRename = () => {
-    const title = renameTitle.trim();
-    if (renaming && title) void renameSession(renaming.id, title);
-    setRenaming(null);
-  };
-
-  const confirmRemoveSession = () => {
-    if (confirmRemove) void removeSession(confirmRemove.id);
-    setConfirmRemove(null);
-  };
-
-  // 折叠开关：展开/收起切换提示词条
-  const collapseToggle = (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={collapsed ? t("app.expandSidebar") : t("app.collapseSidebar")}
-          onClick={toggleSidebar}
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
         >
-          <PanelLeft className="size-4" />
+          {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="right">
-        {collapsed ? t("app.expandSidebar") : t("app.collapseSidebar")}
-      </TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/**
+ * 侧栏：会话列表整体交给 assistant-ui 官方的 thread-list 部件
+ *（ThreadListRoot / New / Search / Items + ThreadListItem），
+ * 会话数据由 PolarRuntimeProvider 的 threadList 适配器从 chat-store 供上。
+ * 折叠轨道与底部设置/主题是该部件的扩展位，不在官方组件内，按 Elements 的图标按钮口径自建。
+ */
+export function SidebarShell() {
+  const { t } = useTranslation();
+
+  const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const openSettings = useUiStore((s) => s.openSettings);
+  const pendingDeleteSessionId = useUiStore((s) => s.pendingDeleteSessionId);
+  const settleDeleteSession = useUiStore((s) => s.settleDeleteSession);
+  const createSession = useChatStore((s) => s.createSession);
+
+  const [search, setSearch] = useState("");
+
+  const collapseLabel = collapsed ? t("app.expandSidebar") : t("app.collapseSidebar");
+
+  const deleteTitle = useChatStore(
+    (s) => s.sessions.find((item) => item.id === pendingDeleteSessionId)?.title ?? null,
   );
 
   return (
     <aside
-      className={cn(
-        "flex shrink-0 flex-col border-border border-r bg-sidebar transition-[width] duration-200",
-        collapsed ? "w-12" : "w-60",
-      )}
+      className="flex shrink-0 flex-col border-r border-border/60 bg-sidebar transition-[width] duration-200 motion-reduce:transition-none"
+      style={{
+        width: collapsed ? "var(--layout-sidebar-width-collapsed)" : "var(--layout-sidebar-width)",
+      }}
     >
       {collapsed ? (
-        /* 折叠态：48px 图标轨道，hover 出 tooltip */
+        /* 折叠态：图标轨道，hover 出 tooltip */
         <div className="flex flex-col items-center gap-1 p-2">
-          {collapseToggle}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("sidebar.newChat")}
-                onClick={() => void createSession()}
-              >
-                <Plus className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">{t("sidebar.newChat")}</TooltipContent>
-          </Tooltip>
+          <RailButton label={collapseLabel} onClick={toggleSidebar}>
+            <PanelLeft className="size-4" />
+          </RailButton>
+          <RailButton label={t("sidebar.newChat")} onClick={() => void createSession()}>
+            <Plus className="size-4" />
+          </RailButton>
         </div>
       ) : (
-        /* 展开态：折叠开关 + 新对话 + 筛选 */
-        <div className="flex flex-col gap-1 p-2">
-          <div className="flex items-center gap-1">
-            {collapseToggle}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 flex-1 justify-start gap-1.5"
-              onClick={() => void createSession()}
-            >
-              <Plus className="size-4" />
-              {t("sidebar.newChat")}
-            </Button>
+        <>
+          {/* 折叠开关是官方列表之外的控件，单独一行，避免挤压 New 的整宽按钮 */}
+          <div className="flex items-center p-2 pb-0">
+            <RailButton label={collapseLabel} onClick={toggleSidebar}>
+              <PanelLeft className="size-4" />
+            </RailButton>
           </div>
-          <div className="relative">
-            <Search
-              className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+
+          <ThreadListRoot className="min-h-0 flex-1 overflow-hidden px-2 pb-2">
+            <ThreadListNew>
+              <Plus className="size-4 shrink-0" />
+              <span className="whitespace-nowrap">{t("sidebar.newChat")}</span>
+            </ThreadListNew>
+            <ThreadListSearch
+              value={search}
+              onValueChange={setSearch}
               placeholder={t("sidebar.filterSessions")}
               aria-label={t("sidebar.filterSessions")}
-              className="h-8 border-transparent bg-muted pl-8"
             />
-          </div>
-        </div>
+            <ThreadListItems
+              searchQuery={search}
+              className="app-scrollbar min-h-0 flex-1 overflow-y-auto"
+            />
+          </ThreadListRoot>
+        </>
       )}
 
-      {/* 会话列表：按日期分组；折叠时隐藏 */}
-      {!collapsed && (
-        <div className="app-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-          {groups.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground">{t("common.empty")}</p>
-          ) : (
-            groups.map((group) => (
-              <div key={group.key} className="mb-1">
-                {/* 组标题：mono 11px 眉题，保持安静 */}
-                <p className="px-3 py-1 font-mono text-[11px] tracking-wide text-muted-foreground">
-                  {t(GROUP_LABEL_KEYS[group.key])}
-                </p>
-                {group.items.map((session) => (
-                  <SessionItem
-                    key={session.id}
-                    session={session}
-                    active={session.id === activeSessionId}
-                    running={Boolean(runningBySession[session.id])}
-                    onSelect={() => void setActiveSession(session.id)}
-                    onRename={() => openRename(session)}
-                    onArchive={() => void archiveSession(session.id, !session.archived)}
-                    onRemove={() => setConfirmRemove(session)}
-                  />
-                ))}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* 底部：设置（左）+ 用量（右，占位） */}
+      {/* 底部：设置（左）+ 主题切换（右） */}
       <div
-        className={cn(
-          "border-border border-t p-2",
-          collapsed && "flex flex-col items-center gap-1",
-        )}
+        className={`border-t border-border/60 p-2 ${collapsed ? "flex flex-col items-center gap-1" : ""}`}
       >
-        <div className={cn(!collapsed && "flex items-center justify-between")}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("sidebar.settings")}
-                onClick={() => openSettings()}
-              >
-                <Settings2 className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">{t("sidebar.settings")}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("sidebar.usage")}
-                onClick={() => {
-                  // TODO(feature)：用量 popover 后续 checkpoint 接入
-                }}
-              >
-                <BarChart3 className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">{t("sidebar.usage")}</TooltipContent>
-          </Tooltip>
+        <div className={collapsed ? "" : "flex items-center justify-between"}>
+          <RailButton label={t("sidebar.settings")} onClick={() => openSettings()}>
+            <Settings2 className="size-4" />
+          </RailButton>
+          <ThemeToggle side="right" />
         </div>
       </div>
 
-      {/* 重命名对话框：输入新标题，Enter 或「保存」确认 */}
-      <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("sidebar.rename")}</DialogTitle>
-            <DialogDescription className="sr-only">{t("sidebar.rename")}</DialogDescription>
-          </DialogHeader>
-          <Input
-            value={renameTitle}
-            onChange={(e) => setRenameTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && confirmRename()}
-            autoFocus
-          />
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setRenaming(null)}>
-              {t("common.cancel")}
-            </Button>
-            <Button type="button" onClick={confirmRename}>
-              {t("common.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 删除二次确认（设计稿 D1：删除类操作一律走确认） */}
+      {/* 删除确认：官方 thread-list 的 Delete 立即执行，这里兜住不可撤销的删除 */}
       <Dialog
-        open={confirmRemove !== null}
-        onOpenChange={(open) => !open && setConfirmRemove(null)}
+        open={pendingDeleteSessionId !== null}
+        onOpenChange={(open) => {
+          if (!open) settleDeleteSession(false);
+        }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("common.delete")}</DialogTitle>
-            <DialogDescription>「{confirmRemove?.title ?? ""}」</DialogDescription>
+            <DialogDescription>「{deleteTitle ?? ""}」</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setConfirmRemove(null)}>
+            <Button type="button" variant="ghost" onClick={() => settleDeleteSession(false)}>
               {t("common.cancel")}
             </Button>
-            <Button type="button" variant="destructive" onClick={confirmRemoveSession}>
+            <Button type="button" variant="destructive" onClick={() => settleDeleteSession(true)}>
               {t("common.delete")}
             </Button>
           </DialogFooter>

@@ -1,5 +1,7 @@
 import { FileText, Info, Server, Settings2, ShieldCheck, Sparkles } from "lucide-react";
+import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
+import { typeSection } from "@/renderer/components/assistant-ui/type";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +9,7 @@ import {
   DialogTitle,
 } from "@/renderer/components/ui/dialog";
 import { ScrollArea } from "@/renderer/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/renderer/components/ui/tabs";
 import { cn } from "@/renderer/lib/utils";
 import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
 import { AboutPanel } from "./panels/AboutPanel";
@@ -30,7 +33,16 @@ const SECTIONS: readonly {
   { id: "about", labelKey: "settings.about", Icon: Info },
 ];
 
-/** 按当前分类渲染面板；本地条件渲染，不引入 Tabs（浮层内不需要额外键盘层） */
+/** 分类项：官方 Tabs 的垂直变体，只把选中态改成中性墨色淡底（Elements 的 field 量级），不画竖条 */
+const navItem = cn(
+  "h-8 w-full flex-none justify-start gap-2 rounded-[10px] px-3 text-sm font-normal",
+  "text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground",
+  "data-[state=active]:bg-foreground/[0.06] data-[state=active]:text-foreground",
+  "dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-foreground/[0.09]",
+  "focus-visible:ring-1 focus-visible:ring-foreground/20 focus-visible:outline-none",
+);
+
+/** 按当前分类渲染面板：每个分类一个 tabpanel，官方 Tabs 默认只挂载当前项 */
 function renderPanel(section: SettingsSection) {
   switch (section) {
     case "general":
@@ -59,45 +71,55 @@ export function SettingsModal() {
     <Dialog open={settingsOpen} onOpenChange={(open) => !open && closeSettings()}>
       {/* 大模态：880×640，12px 圆角（xl 档）；内部自行控制内边距 */}
       <DialogContent className="flex h-[640px] max-h-[86vh] w-[880px] max-w-[92vw] gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[92vw]">
-        {/* 左侧 200px 分类导航；标题同时作为 Dialog 可访问名称 */}
-        <nav className="flex w-[200px] shrink-0 flex-col gap-0.5 border-border border-r bg-sidebar p-2">
-          <DialogTitle className="px-3 py-2 text-sm font-medium">{t("settings.title")}</DialogTitle>
-          <DialogDescription className="sr-only">{t("settings.title")}</DialogDescription>
-          {SECTIONS.map((section) => {
-            const active = section.id === settingsSection;
-            return (
-              <button
-                key={section.id}
-                type="button"
-                aria-current={active ? "page" : undefined}
-                onClick={() => openSettings(section.id)}
-                className={cn(
-                  "relative flex h-8 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-                  active
-                    ? "bg-brand-muted text-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground",
-                )}
-              >
-                {/* 当前分类左侧 2px 品牌竖条（E2 落点③） */}
-                {active ? (
-                  <span
-                    className="absolute top-1 bottom-1 left-0 w-0.5 bg-brand"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                <section.Icon className="size-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">{t(section.labelKey)}</span>
-              </button>
-            );
-          })}
-        </nav>
+        <Tabs
+          orientation="vertical"
+          value={settingsSection}
+          // 值只来自 SECTIONS，断言安全
+          onValueChange={(value) => openSettings(value as SettingsSection)}
+          className="flex min-h-0 w-full gap-0"
+        >
+          {/* 左侧 200px 分类导航。标题不能放进 TabsList 内 —— tablist 只允许包含 tab */}
+          <div className="flex w-[200px] shrink-0 flex-col border-border/60 border-r bg-sidebar p-2">
+            {/* 标题同时作为 Dialog 的可访问名称 */}
+            <DialogTitle className={cn(typeSection, "px-2.5 pt-1 pb-2")}>
+              {t("settings.title")}
+            </DialogTitle>
+            <DialogDescription className="sr-only">{t("settings.title")}</DialogDescription>
+            <TabsList
+              aria-label={t("settings.title")}
+              className="w-full flex-col items-stretch justify-start gap-0.5 rounded-none bg-transparent p-0"
+            >
+              {SECTIONS.map((section) => (
+                <TabsTrigger key={section.id} value={section.id} className={navItem}>
+                  <section.Icon className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{t(section.labelKey)}</span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
-        {/* 右侧面板：独立滚动，内容区留 20px 内边距 */}
-        <section className="min-w-0 flex-1">
-          <ScrollArea className="h-full">
-            <div className="p-5">{renderPanel(settingsSection)}</div>
-          </ScrollArea>
-        </section>
+          {/* 右侧面板：独立滚动，内容区留 20px 内边距 */}
+          <div className="min-w-0 flex-1">
+            <ScrollArea className="h-full">
+              {SECTIONS.map((section) => (
+                <TabsContent key={section.id} value={section.id} className="p-5">
+                  {/*
+                    分类切换是「内容换了一屏」，做一次轻微的淡入 + 上移来说明这件事。
+                    官方 Tabs 只挂载当前项，所以只需要进场；reducedMotion="user" 下
+                    位移被抑制、只留透明度变化（见 App.tsx 的 MotionConfig）。
+                  */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
+                  >
+                    {renderPanel(section.id)}
+                  </motion.div>
+                </TabsContent>
+              ))}
+            </ScrollArea>
+          </div>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

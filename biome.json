@@ -70,6 +70,29 @@
       "assist": {
         "enabled": false
       }
+    },
+    {
+      "includes": [
+        "src/renderer/components/assistant-ui/elements/**",
+        "src/renderer/components/assistant-ui/utils/**",
+        "src/renderer/components/ui/diff-viewer.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useSemanticElements": "off",
+            "useKeyWithClickEvents": "off",
+            "useAriaPropsSupportedByRole": "off"
+          },
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noAssignInExpressions": "off"
+          },
+          "correctness": { "useExhaustiveDependencies": "off" },
+          "style": { "noNonNullAssertion": "off" },
+          "complexity": { "noUselessFragments": "off" }
+        }
+      }
     }
   ]
 }

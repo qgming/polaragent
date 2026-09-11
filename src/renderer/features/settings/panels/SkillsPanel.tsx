@@ -1,14 +1,21 @@
 import { FolderOpen, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  fieldInteractive,
+  ghostButton,
+  mono,
+} from "@/renderer/components/assistant-ui/elements/surfaces";
+import { typePackage } from "@/renderer/components/assistant-ui/type";
 import { Badge } from "@/renderer/components/ui/badge";
 import { Button } from "@/renderer/components/ui/button";
 import { Skeleton } from "@/renderer/components/ui/skeleton";
 import { Switch } from "@/renderer/components/ui/switch";
+import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { Settings } from "@/shared/contracts/settings";
 import type { SkillInfo } from "@/shared/contracts/skills";
-import { PanelLoading, SettingsField, SettingsSection } from "../settings-shared";
+import { PanelLoading, SettingsField, SettingsSection, secondaryButton } from "../settings-shared";
 
 function SkillsPanelBody({ settings }: { settings: Settings }) {
   const { t } = useTranslation();
@@ -59,31 +66,29 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
     <div className="space-y-6">
       <SettingsSection title={t("settings.skillDirs")} description={t("settings.skillDirsDesc")}>
         {settings.skillDirs.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t("common.empty")}</p>
+          <p className="text-[13px] text-foreground/45">{t("common.empty")}</p>
         ) : (
           <div className="space-y-1">
             {settings.skillDirs.map((dir) => (
               <div
                 key={dir}
-                className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5"
+                className={cn(
+                  fieldInteractive,
+                  "flex items-center gap-2 rounded-[10px] px-2.5 py-1.5",
+                )}
               >
-                <FolderOpen
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={dir}>
+                <FolderOpen className="size-3.5 shrink-0 text-foreground/40" aria-hidden="true" />
+                <span className={cn(typePackage, "min-w-0 flex-1 truncate")} title={dir}>
                   {dir}
                 </span>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon-xs"
                   aria-label={t("common.delete")}
-                  className="text-muted-foreground hover:text-destructive"
+                  className={cn(ghostButton, "size-6 shrink-0 hover:text-destructive")}
                   onClick={() => handleRemoveDir(dir)}
                 >
                   <Trash2 className="size-3.5" />
-                </Button>
+                </button>
               </div>
             ))}
           </div>
@@ -91,7 +96,13 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
         <SettingsField
           label={t("settings.skillDirs")}
           control={
-            <Button type="button" variant="outline" size="sm" onClick={() => void handleAddDir()}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={secondaryButton}
+              onClick={() => void handleAddDir()}
+            >
               {t("settings.addSkillDir")}
             </Button>
           }
@@ -101,21 +112,29 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
       <SettingsSection title={t("settings.skillsList")} description={t("settings.skillsListDesc")}>
         {failed ? (
           <div className="flex items-center gap-2">
-            <p className="text-sm text-destructive">{t("errors.loadFailed")}</p>
-            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>
+            <p className="text-[13px] text-destructive">{t("errors.loadFailed")}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={secondaryButton}
+              onClick={() => void refresh()}
+            >
               {t("common.retry")}
             </Button>
           </div>
         ) : skills === null ? (
           <div className="space-y-2">
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
-            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
+            <Skeleton className="h-14 w-full rounded-xl" />
           </div>
         ) : skills.length === 0 ? (
-          <p className="rounded-lg border border-border p-4 text-center text-sm text-muted-foreground">
+          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-foreground/45">
             {t("settings.skillsEmpty")}
-            <span className="mt-1 block text-xs">{t("settings.skillsEmptyHint")}</span>
+            <span className="mt-1 block text-xs text-foreground/40">
+              {t("settings.skillsEmptyHint")}
+            </span>
           </p>
         ) : (
           <div className="space-y-2">
@@ -125,22 +144,25 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
               return (
                 <div
                   key={skill.filePath}
-                  className="flex items-start justify-between gap-3 rounded-lg border border-border p-3"
+                  className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">{skill.name}</span>
-                      <Badge variant="outline" className="rounded-sm text-[11px]">
+                      <span className="truncate text-[13.5px] font-medium">{skill.name}</span>
+                      <Badge
+                        variant="outline"
+                        className={cn(mono, "border-border/60 px-1.5 text-foreground/50")}
+                      >
                         {skill.source === "global"
                           ? t("settings.skillSourceGlobal")
                           : t("settings.skillSourceProject")}
                       </Badge>
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                    <p className="mt-0.5 line-clamp-2 text-xs text-foreground/45">
                       {skill.description}
                     </p>
                     <p
-                      className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground"
+                      className={cn(mono, "mt-1 truncate text-foreground/40")}
                       title={skill.filePath}
                     >
                       {skill.filePath}

@@ -34,7 +34,12 @@ function mapUsage(message: AssistantMessage): ChatMessageUsage | undefined {
   };
 }
 
-function mapUserMessage(entryId: string, message: UserMessage, createdAt: number): ChatMessage {
+function mapUserMessage(
+  entryId: string,
+  message: UserMessage,
+  createdAt: number,
+  parentId: string | null,
+): ChatMessage {
   const parts: ChatPart[] = [];
   if (typeof message.content === "string") {
     if (message.content.trim().length > 0) parts.push({ type: "text", text: message.content });
@@ -53,7 +58,7 @@ function mapUserMessage(entryId: string, message: UserMessage, createdAt: number
       }
     }
   }
-  return { id: entryId, entryId, role: "user", createdAt, parts, status: "complete" };
+  return { id: entryId, entryId, parentId, role: "user", createdAt, parts, status: "complete" };
 }
 
 function mapAssistantMessage(
@@ -61,6 +66,7 @@ function mapAssistantMessage(
   message: AssistantMessage,
   createdAt: number,
   pending: PendingToolCalls,
+  parentId: string | null,
 ): ChatMessage {
   const parts: ChatPart[] = [];
   for (const block of message.content) {
@@ -94,6 +100,7 @@ function mapAssistantMessage(
   return {
     id: entryId,
     entryId,
+    parentId,
     role: "assistant",
     createdAt,
     parts,
@@ -120,6 +127,8 @@ function applyToolResult(message: ToolResultMessage, pending: PendingToolCalls):
   // 找不到匹配调用的结果直接忽略（可能来自分支外的历史残留）
   if (!part) return;
   part.result = toolResultValue(message);
+  // 文本结果会盖住 details，两者都留：工具的结构化详情（edit 的 patch 等）只有 details 里有
+  if (message.details !== undefined) part.details = message.details;
   part.isError = message.isError;
   part.status = message.isError ? "error" : "done";
 }
@@ -147,9 +156,9 @@ export function mapEntriesToMessages(entries: Entry[]): {
     const { message } = entry;
     const createdAt = entry.timestamp || message.timestamp;
     if (message.role === "user") {
-      messages.push(mapUserMessage(entry.id, message, createdAt));
+      messages.push(mapUserMessage(entry.id, message, createdAt, entry.parentId));
     } else if (message.role === "assistant") {
-      messages.push(mapAssistantMessage(entry.id, message, createdAt, pending));
+      messages.push(mapAssistantMessage(entry.id, message, createdAt, pending, entry.parentId));
     } else if (message.role === "toolResult") {
       // toolResult 是独立消息条目：只回填对应 tool-call，不单独成条
       applyToolResult(message, pending);

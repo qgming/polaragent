@@ -1,13 +1,22 @@
-import { Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { field, ghostButton } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { PermissionMode } from "@/shared/contracts/common";
 import type { PermissionRuleView } from "@/shared/contracts/permissions";
 import type { Settings } from "@/shared/contracts/settings";
-import { NativeSelect, PanelLoading, SettingsField, SettingsSection } from "../settings-shared";
+import {
+  PanelLoading,
+  SELECT_NONE,
+  SettingsField,
+  SettingsSection,
+  SettingsSelect,
+  secondaryButton,
+} from "../settings-shared";
 
 const MODEL_VALUE_SEPARATOR = "::";
 
@@ -67,10 +76,21 @@ function PermissionsPanelBody({ settings }: { settings: Settings }) {
   const aiReviewActive = settings.permissionMode === "ai_review";
   const approvalModelValue = settings.aiApprovalModel
     ? `${settings.aiApprovalModel.serviceId}${MODEL_VALUE_SEPARATOR}${settings.aiApprovalModel.modelId}`
-    : "";
+    : SELECT_NONE;
+
+  // 下拉项的值不允许为空串，「跟随默认模型」走 SELECT_NONE 哨兵
+  const approvalModelItems = [
+    { value: SELECT_NONE, label: t("settings.defaultModel") },
+    ...settings.services.flatMap((service) =>
+      service.models.map((model) => ({
+        value: `${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`,
+        label: `${service.name} · ${model.name ?? model.id}`,
+      })),
+    ),
+  ];
 
   const handleApprovalModelChange = (value: string) => {
-    if (value === "") {
+    if (value === SELECT_NONE) {
       void update({ aiApprovalModel: null });
       return;
     }
@@ -83,7 +103,7 @@ function PermissionsPanelBody({ settings }: { settings: Settings }) {
   return (
     <div className="space-y-6">
       <SettingsSection title={t("settings.permissionMode")}>
-        <div className="space-y-2">
+        <div className="space-y-1">
           {MODES.map((mode) => {
             const selected = settings.permissionMode === mode.value;
             return (
@@ -93,13 +113,18 @@ function PermissionsPanelBody({ settings }: { settings: Settings }) {
                 aria-pressed={selected}
                 onClick={() => void update({ permissionMode: mode.value })}
                 className={cn(
-                  "block w-full rounded-lg border p-3 text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-                  selected ? "border-brand bg-brand-muted" : "border-border hover:bg-accent",
+                  "flex w-full items-start gap-3 rounded-[10px] px-3 py-2.5 text-left outline-none transition-colors",
+                  "focus-visible:ring-1 focus-visible:ring-foreground/20",
+                  selected ? field : "hover:bg-foreground/[0.04]",
                 )}
               >
-                <span className="block text-sm font-medium">{t(mode.labelKey)}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
-                  {t(mode.descKey)}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-[13.5px] font-medium">{t(mode.labelKey)}</span>
+                  <span className="mt-0.5 text-xs text-foreground/45">{t(mode.descKey)}</span>
+                </span>
+                {/* 选中态用墨色勾，不再用品牌色描边 */}
+                <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
+                  {selected ? <Check className="size-3.5 text-foreground/70" /> : null}
                 </span>
               </button>
             );
@@ -111,31 +136,19 @@ function PermissionsPanelBody({ settings }: { settings: Settings }) {
       <SettingsSection>
         <div
           aria-disabled={!aiReviewActive}
-          className={cn("space-y-4", !aiReviewActive && "pointer-events-none opacity-50")}
+          className={cn("space-y-3.5", !aiReviewActive && "pointer-events-none opacity-50")}
         >
           <SettingsField
             label={t("settings.aiApprovalModel")}
             description={t("settings.aiApprovalModelDesc")}
             control={
-              <NativeSelect
+              <SettingsSelect
                 ariaLabel={t("settings.aiApprovalModel")}
                 value={approvalModelValue}
+                items={approvalModelItems}
                 onChange={handleApprovalModelChange}
                 className="w-72"
-              >
-                {/* 空值 = 跟随默认模型 */}
-                <option value="">{t("settings.defaultModel")}</option>
-                {settings.services.flatMap((service) =>
-                  service.models.map((model) => (
-                    <option
-                      key={`${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`}
-                      value={`${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`}
-                    >
-                      {`${service.name} · ${model.name ?? model.id}`}
-                    </option>
-                  )),
-                )}
-              </NativeSelect>
+              />
             }
           />
         </div>
@@ -147,47 +160,51 @@ function PermissionsPanelBody({ settings }: { settings: Settings }) {
       >
         {rulesFailed ? (
           <div className="flex items-center gap-2">
-            <p className="text-sm text-destructive">{t("errors.loadFailed")}</p>
-            <Button type="button" variant="outline" size="sm" onClick={() => void refreshRules()}>
+            <p className="text-[13px] text-destructive">{t("errors.loadFailed")}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={secondaryButton}
+              onClick={() => void refreshRules()}
+            >
               {t("common.retry")}
             </Button>
           </div>
         ) : rules === null ? (
           <PanelLoading />
         ) : rules.length === 0 ? (
-          <p className="rounded-lg border border-border p-4 text-center text-sm text-muted-foreground">
+          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-foreground/45">
             {t("settings.permissionRulesEmpty")}
           </p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-border">
-            <div className="grid grid-cols-[1fr_1fr_150px_36px] items-center gap-2 border-border border-b px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
-              <span>{t("settings.ruleTool")}</span>
-              <span>{t("settings.rulePattern")}</span>
-              <span>{t("settings.ruleCreatedAt")}</span>
+          <div className="overflow-hidden rounded-xl border border-border/60">
+            <div className="grid grid-cols-[1fr_1fr_150px_36px] items-center gap-2 border-border/60 border-b px-3 py-2">
+              <span className={typeEyebrow}>{t("settings.ruleTool")}</span>
+              <span className={typeEyebrow}>{t("settings.rulePattern")}</span>
+              <span className={typeEyebrow}>{t("settings.ruleCreatedAt")}</span>
               <span />
             </div>
             {rules.map((rule) => (
               <div
                 key={`${rule.toolName}${MODEL_VALUE_SEPARATOR}${rule.pattern ?? ""}`}
-                className="grid grid-cols-[1fr_1fr_150px_36px] items-center gap-2 border-border border-b px-3 py-2 text-sm transition-colors last:border-b-0 hover:bg-accent"
+                className="grid grid-cols-[1fr_1fr_150px_36px] items-center gap-2 border-border/60 border-b px-3 py-1.5 transition-colors last:border-b-0 hover:bg-foreground/[0.04]"
               >
-                <span className="truncate font-mono text-xs">{rule.toolName}</span>
-                <span className="truncate font-mono text-xs text-muted-foreground">
+                <span className={cn(typePackage, "truncate")}>{rule.toolName}</span>
+                <span className={cn(typePackage, "truncate text-foreground/45")}>
                   {rule.pattern ?? "—"}
                 </span>
-                <span className="font-mono text-xs text-muted-foreground">
+                <span className={cn(typePackage, "text-foreground/45")}>
                   {formatRuleTime(rule.createdAt)}
                 </span>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon-xs"
                   aria-label={t("settings.removeRule")}
-                  className="text-muted-foreground hover:text-destructive"
+                  className={cn(ghostButton, "size-6 hover:text-destructive")}
                   onClick={() => void handleRemoveRule(rule)}
                 >
                   <Trash2 className="size-3.5" />
-                </Button>
+                </button>
               </div>
             ))}
           </div>

@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { typePackage } from "@/renderer/components/assistant-ui/type";
 import { Button } from "@/renderer/components/ui/button";
 import { Input } from "@/renderer/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
+import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { Settings } from "@/shared/contracts/settings";
-import { PanelLoading, Segmented, SettingsField, SettingsSection } from "../settings-shared";
+import {
+  PanelLoading,
+  Segmented,
+  SettingsField,
+  SettingsSection,
+  secondaryButton,
+  settingsInput,
+} from "../settings-shared";
 
 /** 面板主体：settings 已就绪后由外层传入，避免内部到处判空 */
 function GeneralPanelBody({ settings }: { settings: Settings }) {
@@ -114,7 +123,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
               onChange={(e) => setChatFont(e.target.value)}
               onBlur={commitChatFont}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              className="h-8 w-56"
+              className={cn(settingsInput, "w-56")}
             />
           }
         />
@@ -135,9 +144,9 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
                 onPointerUp={commitChatFontSize}
                 onKeyUp={commitChatFontSize}
                 onBlur={commitChatFontSize}
-                className="w-32 cursor-pointer accent-brand focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+                className="h-1 w-32 cursor-pointer accent-foreground focus-visible:ring-1 focus-visible:ring-foreground/20 focus-visible:outline-none"
               />
-              <span className="w-10 text-right font-mono text-xs text-muted-foreground">
+              <span className={cn(typePackage, "w-10 shrink-0 text-right text-foreground/40")}>
                 {chatFontSize}px
               </span>
             </div>
@@ -157,12 +166,13 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
                 readOnly
                 value={settings.defaultWorkingDir ?? ""}
                 placeholder="—"
-                className="h-8 w-56 font-mono text-xs"
+                className={cn(settingsInput, "w-56 font-mono")}
               />
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
+                className={secondaryButton}
                 onClick={() => void handlePickWorkingDir()}
               >
                 {t("settings.pickDirectory")}
@@ -177,7 +187,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
             <div className="flex items-center gap-2">
               {/* 路径是唯一信息来源，用 mono 截断展示；无 openPath IPC，按钮保持禁用 */}
               <span
-                className="max-w-[240px] truncate font-mono text-xs text-muted-foreground"
+                className={cn(typePackage, "max-w-[240px] truncate text-foreground/40")}
                 title={dataDir ?? undefined}
               >
                 {dataDir ?? "—"}
@@ -185,7 +195,13 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="inline-flex">
-                    <Button type="button" variant="outline" size="sm" disabled>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className={secondaryButton}
+                      disabled
+                    >
                       {t("settings.openDataDir")}
                     </Button>
                   </span>

@@ -1,3 +1,4 @@
+import { MotionConfig } from "motion/react";
 import { useEffect } from "react";
 import { TooltipProvider } from "@/renderer/components/ui/tooltip";
 import { GlobalSearch } from "@/renderer/features/search";
@@ -28,18 +29,22 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex h-screen flex-col bg-background text-foreground">
-        <TitleBar />
-        <div className="flex min-h-0 flex-1">
-          <SidebarShell />
+      {/* reducedMotion="user"：JS 动效统一跟随系统偏好，与 CSS 侧的 prefers-reduced-motion 兜底对齐 */}
+      <MotionConfig reducedMotion="user">
+        <div className="flex h-screen flex-col bg-background text-foreground">
+          <TitleBar />
+          {/* 运行时包住侧栏与主区：侧栏的会话列表走官方 ThreadList primitives，需要 runtime 上下文 */}
           <PolarRuntimeProvider>
-            <MainShell />
+            <div className="flex min-h-0 flex-1">
+              <SidebarShell />
+              <MainShell />
+            </div>
           </PolarRuntimeProvider>
         </div>
-      </div>
-      {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}
-      <SettingsModal />
-      <GlobalSearch />
+        {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}
+        <SettingsModal />
+        <GlobalSearch />
+      </MotionConfig>
     </TooltipProvider>
   );
 }

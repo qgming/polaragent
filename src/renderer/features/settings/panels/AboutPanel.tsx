@@ -1,7 +1,9 @@
 import { Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/renderer/components/ui/button";
+import { ghostButton } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { typePackage } from "@/renderer/components/assistant-ui/type";
+import { cn } from "@/renderer/lib/utils";
 import type { AppInfo } from "@/shared/contracts/app";
 import { PanelLoading, SettingsField, SettingsSection } from "../settings-shared";
 
@@ -41,45 +43,44 @@ export function AboutPanel() {
       <SettingsSection>
         <SettingsField
           label={t("app.name")}
-          control={<span className="text-sm">{info.name}</span>}
+          control={<span className="text-[13.5px]">{info.name}</span>}
         />
         <SettingsField
           label={t("settings.aboutVersion")}
-          control={<span className="font-mono text-sm">{info.version}</span>}
+          control={<span className={typePackage}>{info.version}</span>}
         />
         <SettingsField
           label={t("settings.aboutPlatform")}
-          control={<span className="font-mono text-sm">{info.platform}</span>}
+          control={<span className={typePackage}>{info.platform}</span>}
         />
         <SettingsField
           label={t("settings.dataDir")}
           control={
             <div className="flex items-center gap-2">
               <span
-                className="max-w-[280px] truncate font-mono text-xs text-muted-foreground"
+                className={cn(typePackage, "max-w-[280px] truncate text-foreground/40")}
                 title={info.dataDir}
               >
                 {info.dataDir}
               </span>
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                size="icon-sm"
                 aria-label={t("common.copy")}
+                className={cn(ghostButton, "size-7 shrink-0")}
                 onClick={() => void handleCopyDataDir()}
               >
                 {copied ? (
-                  <Check className="size-4 text-brand-text" />
+                  <Check className="size-3.5 text-foreground/70" />
                 ) : (
-                  <Copy className="size-4" />
+                  <Copy className="size-3.5" />
                 )}
-              </Button>
+              </button>
             </div>
           }
         />
       </SettingsSection>
 
-      <p className="border-border border-t pt-4 text-xs text-muted-foreground">MIT License</p>
+      <p className="border-border/60 border-t pt-4 text-xs text-foreground/40">MIT License</p>
     </div>
   );
 }

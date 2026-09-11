@@ -1,44 +1,66 @@
 /* ==========================================================================
-   PolarAgent 设计令牌 · checkpoint-1（Tailwind v4 CSS-first）
-   规范来源：docs/design/ui-v2-ascii.md
-     · 0.1  圆角体系：page 0 / document 6 / control 8 / surface 10 / xl 12 / thread 16
-     · E1   明暗语义色 / 字体 / 圆角
-     · E2   品牌色落点（全界面唯一强调色）
-     · E3   间距与密度
+   PolarAgent 设计令牌层（Tailwind v4 CSS-first）
+
+   权威来源只有两个，不在别处发明规则：
+     · assistant-ui design.md —— 印刷文档隐喻、半径表、颜色 register、字体 register、线预算
+     · assistant-ui Elements 原版 —— surfaces.tsx 的类名词汇、--aui-* 取值、折叠面板动效
+
+   约束：
+     · 无紫色。唯一强调色是 live 蓝（--aui-live），且只表示「正在进行」。
+     · 全部中性色由单一 --tint 派生（低彩度 oklch 单色相，沙色），chrome 只用明度分层。
+     · 只有 section 边界配得上一条线；细线一律 foreground/10 量级。
+     · 阴影全局归零，只有浮层允许轻微 lift。
+
    本文件只定义令牌与基础层，不含任何组件样式。
    ========================================================================== */
 
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Elements 的 shimmer 基座：提供 shimmer / shimmer-bg / shimmer-container 工具类 */
+@import "tw-shimmer";
 
 /* 暗色由 useTheme 挂到 <html> 的 .dark 类驱动，不跟随系统偏好 */
 @custom-variant dark (&:is(.dark *));
 
-/* 兼容变体：assistant-ui 折叠面板（reasoning / tool-group / tool-fallback）在用，
-   等价 Radix 的 data-state 语义，勿删。 */
+/* 折叠面板的状态变体：同时匹配 Radix 的 data-state 与 Base UI 的 data-open/data-closed。
+   Elements 的 reasoning / tool-group / tool-fallback 依赖它驱动展开收起动画，勿删。 */
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
 @custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
 
-/* 字体与圆角用 static：设计稿把它们定位为「可被 var() 直接消费的令牌」，
-   而 Tailwind 默认只输出被工具类引用到的主题变量，static 保证它们始终存在。 */
+/* 字体与圆角用 static：它们要能被 var() 直接消费（例如 select.tsx 的
+   rounded-[var(--radius-surface,var(--radius-lg))]），而 Tailwind 默认只输出被工具类
+   引用到的主题变量。static 保证这些名字始终存在于产物里。 */
 @theme static {
-  /* ── 字体（E1）：display 印刷感标题 / sans 界面与正文 / mono 代码·路径·眉题 ── */
+  /* ── 字体三职（design.md：按含义分配，不按字号） ──
+     display：页面自己的声音（衬线）／sans：阅读正文／mono：你敲的东西 + 眉题 */
   --font-display: "Source Serif 4", "Noto Serif SC", Georgia, serif;
   --font-sans: "Segoe UI Variable", "Microsoft YaHei UI", "Segoe UI", sans-serif;
   --font-mono: "Cascadia Code", "Consolas", "SF Mono", monospace;
 
-  /* ── 圆角（0.1）：sm=document / md=control / lg=surface / xl=dialog·toast ── */
+  /* ── 半径表（design.md 的封闭集合） ──
+     page 0 / document 6 / control 8 / surface 10 / xl 12 / thread 16 / capsule 9999 */
   --radius-page: 0px;
+  --radius-document: 6px;
   --radius-sm: 6px;
+  --radius-control: 8px;
   --radius-md: 8px;
   --radius-lg: 10px;
+  --radius-surface: 10px;
   --radius-xl: 12px;
   --radius-thread: 16px;
+  --radius-capsule: 9999px;
+
+  /* ── 折叠面板动效（Elements 原值：200ms 与同一 easing） ──
+     键名进入 --animate-* 命名空间，产出 animate-collapsible-* / animate-accordion-* 工具类。
+     Elements 会用 animation-duration-(--animation-duration) 覆盖时长。 */
+  --animate-collapsible-down: collapsible-down 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-collapsible-up: collapsible-up 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-accordion-down: accordion-down 200ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-accordion-up: accordion-up 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* 语义色只做工具类别名：色值只在 :root / .dark 各维护一份，不产出多余的 --color-* 变量 */
 @theme inline {
-  /* ── 语义色映射（E1）── */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -62,127 +84,158 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-code-surface: var(--code-surface);
 
-  /* ── 品牌族（E2）：唯一强调色 #b99af1，落点固定 6 类 ── */
-  --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
-  --color-brand-text: var(--brand-text);
-  --color-brand-muted: var(--brand-muted);
-  --color-brand-border: var(--brand-border);
+  /* 唯一强调色的语义名。Elements 的 surfaces.tsx 写的是 text-blue-500/400，
+     那组类名保持原样不动；这里的 live 用于我们自己的新增件，避免再写裸色名。 */
+  --color-live: var(--aui-live);
+
+  /* 数据色：只给产品内容（图表、热力图）用，chrome 禁用 */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 }
 
-/* 亮色（默认）。中性色全部由 --tint 的色相派生，chrome 只用明度分层；
-   品牌色仅用于 6 个落点（见设计稿 E2）：
-   ① 发送键 / ② 审批卡主按钮 / ③ 侧栏当前项 / ④ 运行中指示 /
-   ⑤ 焦点环（--ring）/ ⑥ 链接与命中高亮。禁止扩大使用面积。 */
+/* 亮色（默认）。全部中性由 --tint 这一个旋钮派生：色相固定、彩度极低，是沙色不是灰。
+   要整体挪动氛围，只改 --tint。 */
 :root {
-  --tint: #6b7168; /* 唯一色相来源，仅用于派生，不直接消费 */
+  --tint: 106;
 
-  --background: #fbfbfa;
-  --foreground: #202421;
-  --card: #ffffff;
-  --card-foreground: #202421;
-  --popover: #ffffff;
-  --popover-foreground: #202421;
-  --primary: #1b1d1b;
-  --primary-foreground: #fafafa;
-  --secondary: #f0f1ef;
-  --secondary-foreground: #2d332f;
-  --muted: #f3f4f2;
-  --muted-foreground: #7d837e;
-  --accent: #eef0ed;
-  --accent-foreground: #202421;
-  --destructive: #c04343;
-  --destructive-foreground: #ffffff;
-  --border: #e6e7e4;
-  --input: #dfe1dd;
-  --ring: #a683e8;
-  --sidebar: #f5f5f2;
-  --sidebar-foreground: #4e554f;
-  --sidebar-accent: #ecece9;
-  --sidebar-accent-foreground: #202421;
+  --background: oklch(0.995 0.002 var(--tint));
+  --foreground: oklch(0.24 0.008 var(--tint));
+  --card: oklch(1 0 var(--tint));
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 var(--tint));
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.24 0.008 var(--tint));
+  --primary-foreground: oklch(0.99 0.002 var(--tint));
+  --secondary: oklch(0.965 0.004 var(--tint));
+  --secondary-foreground: oklch(0.28 0.008 var(--tint));
+  --muted: oklch(0.965 0.004 var(--tint));
+  --muted-foreground: oklch(0.5 0.008 var(--tint));
+  --accent: oklch(0.955 0.005 var(--tint));
+  --accent-foreground: oklch(0.24 0.008 var(--tint));
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.99 0.002 var(--tint));
+  --border: oklch(0.9 0.005 var(--tint));
+  --input: oklch(0.87 0.005 var(--tint));
+  /* 焦点环取墨色，消费侧用 ring-ring/50、outline foreground/20 控制强度 */
+  --ring: var(--foreground);
+  --sidebar: oklch(0.98 0.003 var(--tint));
+  --sidebar-foreground: oklch(0.3 0.008 var(--tint));
+  --sidebar-accent: oklch(0.955 0.005 var(--tint));
+  --sidebar-accent-foreground: oklch(0.24 0.008 var(--tint));
+  --code-surface: oklch(0.965 0.004 var(--tint));
 
-  /* 品牌族：亮色下小字不得直接用 #b99af1（白底对比不足），统一走 --brand-text */
-  --brand: #b99af1;
-  --brand-foreground: #241a35;
-  --brand-text: #6f4fc7;
-  --brand-muted: #f2ecfd;
-  --brand-border: #ddccf7;
+  /* Elements 原值：live 蓝 / success / warning */
+  --aui-live: oklch(0.623 0.214 259.815);
+  --aui-success: oklch(0.6 0.15 149);
+  --aui-warning: oklch(0.68 0.16 70);
 
-  /* shadcn 组件派生基准（半径六档见 @theme inline） */
-  --radius: 0.625rem;
+  --chart-1: oklch(0.55 0.2 259);
+  --chart-2: oklch(0.6 0.15 149);
+  --chart-3: oklch(0.68 0.16 70);
+  --chart-4: oklch(0.55 0.2 27);
+  --chart-5: oklch(0.5 0.1 200);
 
-  /* 滚动条：细、中性、hover 加深；不使用彩色 */
-  --scrollbar-thumb: rgb(32 36 33 / 0.22);
-  --scrollbar-thumb-hover: rgb(32 36 33 / 0.36);
+  /* 滚动条：细、中性、hover 加深。由前景派生，不再手写色值 */
+  --scrollbar-thumb: color-mix(in oklab, var(--foreground) 18%, transparent);
+  --scrollbar-thumb-hover: color-mix(in oklab, var(--foreground) 32%, transparent);
 
-  /* 对话正文的字体与字号（由设置页覆盖，这里给默认兜底） */
+  /* 对话正文的字体与字号（设置页覆盖，这里兜底） */
   --chat-font: var(--font-sans);
   --chat-font-size: 14px;
 
-  /* E3 布局与密度：供组件层消费，不生成工具类 */
+  /* 布局：侧栏两态与线程最大宽度。组件必须消费这些变量，不得再硬编码像素值 */
   --layout-sidebar-width: 240px;
   --layout-sidebar-width-collapsed: 48px;
   --layout-thread-max-width: 44rem;
-  --density-panel-padding: 16px;
-  --density-gap-message: 24px;
-  --density-gap-message-compact: 20px;
-  --density-gap-group: 32px;
-  --density-eyebrow-size: 11px;
-  --density-eyebrow-size-compact: 10px;
-
-  /* E1 字号阶梯：仅作单一来源；不放进 @theme，避免 text-ui / text-secondary
-     这类工具名与颜色工具类撞名 */
-  --type-display: 24px;
-  --type-title: 15px;
-  --type-body: 14px;
-  --type-ui: 13px;
-  --type-secondary: 12px;
-  --type-eyebrow: 11px;
-  --leading-display: 1.3;
-  --leading-body: 1.7;
 }
 
-/* 暗色：同一套语义名，仅明度台阶不同；品牌色保持同一主值 */
+/* 暗色：同一套语义名，只换明度台阶；--tint 保持不变 */
 .dark {
-  --tint: #8f948d;
+  --background: oklch(0.17 0.004 var(--tint));
+  --foreground: oklch(0.94 0.004 var(--tint));
+  --card: oklch(0.21 0.004 var(--tint));
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.23 0.004 var(--tint));
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.94 0.004 var(--tint));
+  --primary-foreground: oklch(0.17 0.004 var(--tint));
+  --secondary: oklch(0.26 0.005 var(--tint));
+  --secondary-foreground: oklch(0.92 0.004 var(--tint));
+  --muted: oklch(0.26 0.005 var(--tint));
+  --muted-foreground: oklch(0.66 0.006 var(--tint));
+  --accent: oklch(0.28 0.005 var(--tint));
+  --accent-foreground: oklch(0.94 0.004 var(--tint));
+  --destructive: oklch(0.62 0.19 25);
+  --destructive-foreground: oklch(0.16 0.01 25);
+  --border: oklch(0.32 0.005 var(--tint));
+  --input: oklch(0.4 0.005 var(--tint));
+  --ring: var(--foreground);
+  --sidebar: oklch(0.19 0.004 var(--tint));
+  --sidebar-foreground: oklch(0.8 0.005 var(--tint));
+  --sidebar-accent: oklch(0.26 0.005 var(--tint));
+  --sidebar-accent-foreground: oklch(0.94 0.004 var(--tint));
+  --code-surface: oklch(0.24 0.004 var(--tint));
 
-  --background: #121212;
-  --foreground: #ededed;
-  --card: #1a1a1a;
-  --card-foreground: #ededed;
-  --popover: #1c1c1c;
-  --popover-foreground: #ededed;
-  --primary: #f0f0f0;
-  --primary-foreground: #151515;
-  --secondary: #232323;
-  --secondary-foreground: #e6e6e6;
-  --muted: #1f1f1f;
-  --muted-foreground: #9b9b9b;
-  --accent: #262626;
-  --accent-foreground: #ededed;
-  --destructive: #e0574f;
-  --destructive-foreground: #2a0f0d;
-  --border: #2c2c2c;
-  --input: #383838;
-  --ring: #b898f0;
-  --sidebar: #171717;
-  --sidebar-foreground: #c9c9c9;
-  --sidebar-accent: #232323;
-  --sidebar-accent-foreground: #ededed;
+  --aui-live: oklch(0.707 0.165 254.624);
+  --aui-success: oklch(0.72 0.17 149);
+  --aui-warning: oklch(0.8 0.17 75);
 
-  /* 暗色下 #b99af1 可作文字与指示点，但实底按钮仍配深紫字，避免大面积刺眼 */
-  --brand: #b99af1;
-  --brand-foreground: #1b1327;
-  --brand-text: #c9aef5;
-  --brand-muted: #2a2140;
-  --brand-border: #4a3a6e;
+  --chart-1: oklch(0.7 0.16 259);
+  --chart-2: oklch(0.72 0.17 149);
+  --chart-3: oklch(0.8 0.17 75);
+  --chart-4: oklch(0.68 0.18 25);
+  --chart-5: oklch(0.66 0.09 200);
+}
 
-  --scrollbar-thumb: rgb(237 237 237 / 0.18);
-  --scrollbar-thumb-hover: rgb(237 237 237 / 0.3);
+/* 折叠面板高度键。Elements 的 collapsePanel 读 --collapsible-panel-height，
+   这是 Base UI 的变量名；本项目用 Radix，所以把 Radix 的高度键桥接过来。
+   只对带 data-state 的节点生效（Radix 必设、Base UI 不设），避免覆盖 Base UI 自身的值。 */
+@keyframes collapsible-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--collapsible-panel-height);
+  }
+}
+
+@keyframes collapsible-up {
+  from {
+    height: var(--collapsible-panel-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
 }
 
 @layer base {
+  [data-slot="collapsible-content"][data-state] {
+    --collapsible-panel-height: var(--radix-collapsible-content-height);
+  }
+
   /* Tailwind v4 preflight 只把 border 重置为 `0 solid`，不再设 border-color，
      裸 border 会落到 currentColor（近黑）。统一落到 --border；显式声明
      （border-input / border-destructive 等）优先级更高，不受影响。 */
@@ -228,16 +281,17 @@
     -webkit-app-region: drag;
   }
 
-  /* 选区用品牌浅底（E2 落点 ⑥） */
+  /* 选区：中性墨色浅底，不引入强调色 */
   ::selection {
-    background: var(--brand-muted);
+    background: color-mix(in oklab, var(--foreground) 12%, transparent);
     color: var(--foreground);
   }
 
-  /* 键盘焦点环（E2 落点 ⑤）；组件自带的 ring / outline-none 会覆盖此兜底 */
+  /* 键盘焦点环：与 Elements 的按钮焦点样式取同一口径（2px、前景 20%、偏移 2px）。
+     组件自带的 ring / outline-none 会覆盖此兜底。 */
   :focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 1px;
+    outline: 2px solid color-mix(in oklab, var(--foreground) 20%, transparent);
+    outline-offset: 2px;
   }
 
   /* 滚动条：细轨、中性、hover 加深（thumb 的胶囊形状是轨道习惯，不属表面圆角） */
@@ -283,7 +337,7 @@
   }
 }
 
-/* 动效兜底：减少动态时停用全部 CSS 过渡与动画（含 shimmer / 骨架 / 脉冲点）。
+/* 动效兜底：减少动态时停用全部 CSS 过渡与动画（含 shimmer / 骨架 / 折叠面板）。
    JS 动效由 motion 的 <MotionConfig reducedMotion="user"> 负责；
    Tailwind 的 motion-reduce: 变体为核心内建，仍然可用。 */
 @media (prefers-reduced-motion: reduce) {

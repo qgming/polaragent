@@ -1,6 +1,8 @@
 import { Eye, EyeOff, Pencil, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
 import { Badge } from "@/renderer/components/ui/badge";
 import { Button } from "@/renderer/components/ui/button";
 import {
@@ -19,7 +21,15 @@ import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { WireFormat } from "@/shared/contracts/common";
 import type { ModelCatalogEntry } from "@/shared/contracts/models";
 import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
-import { NativeSelect, PanelLoading, SettingsField, SettingsSection } from "../settings-shared";
+import {
+  PanelLoading,
+  SELECT_NONE,
+  SettingsField,
+  SettingsSection,
+  SettingsSelect,
+  secondaryButton,
+  settingsInput,
+} from "../settings-shared";
 
 /** 草稿模型携带稳定 key，避免用数组下标做 React key；保存时剥离 */
 interface DraftModel extends ModelEntry {
@@ -72,7 +82,7 @@ function parseOptionalNumber(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/** 表单字段块：小标签 + 控件 + 可选说明 */
+/** 表单字段块：眉题 + 控件 + 可选说明 */
 function FieldBlock({
   label,
   hint,
@@ -83,10 +93,10 @@ function FieldBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <span className="text-xs text-muted-foreground">{label}</span>
+    <div className="space-y-1.5">
+      <span className={typeEyebrow}>{label}</span>
       {children}
-      {hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+      {hint ? <p className="text-[11px] text-foreground/40">{hint}</p> : null}
     </div>
   );
 }
@@ -262,8 +272,8 @@ function ServiceEditor({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[86vh] w-[560px] max-w-[92vw] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[92vw]">
-        <DialogHeader className="border-border border-b p-4 pr-12">
-          <DialogTitle className="text-sm font-medium">
+        <DialogHeader className="border-border/60 border-b p-4 pr-12">
+          <DialogTitle className={cn(typeEyebrow, "font-normal")}>
             {isNew ? t("settings.addService") : t("settings.editService")}
           </DialogTitle>
           <DialogDescription className="sr-only">
@@ -278,7 +288,7 @@ function ServiceEditor({
               placeholder={t("settings.serviceName")}
               aria-label={t("settings.serviceName")}
               onChange={(e) => onChange({ ...draft, name: e.target.value })}
-              className="h-8"
+              className={settingsInput}
             />
           </FieldBlock>
 
@@ -288,7 +298,7 @@ function ServiceEditor({
               placeholder="https://api.example.com/v1"
               aria-label={t("settings.baseUrl")}
               onChange={(e) => onChange({ ...draft, baseUrl: e.target.value })}
-              className="h-8 font-mono text-xs"
+              className={cn(settingsInput, "font-mono")}
             />
           </FieldBlock>
 
@@ -302,13 +312,13 @@ function ServiceEditor({
                 aria-label={t("settings.apiKey")}
                 autoComplete="off"
                 onChange={(e) => onChange({ ...draft, apiKeyInput: e.target.value })}
-                className="h-8 pr-9 font-mono text-xs"
+                className={cn(settingsInput, "pr-9 font-mono")}
               />
               <button
                 type="button"
                 aria-label={t("settings.apiKey")}
                 onClick={() => setShowApiKey((value) => !value)}
-                className="absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+                className={cn(ghostButton, "absolute top-1/2 right-1 size-6 -translate-y-1/2")}
               >
                 {showApiKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
               </button>
@@ -316,20 +326,21 @@ function ServiceEditor({
           </FieldBlock>
 
           <FieldBlock label={t("settings.wireFormat")}>
-            <NativeSelect
+            <SettingsSelect
               ariaLabel={t("settings.wireFormat")}
               value={draft.wireFormat}
               onChange={(value) => onChange({ ...draft, wireFormat: value as WireFormat })}
               className="w-full max-w-none"
-            >
-              <option value="openai-completions">{t("settings.wireFormatCompletions")}</option>
-              <option value="openai-responses">{t("settings.wireFormatResponses")}</option>
-            </NativeSelect>
+              items={[
+                { value: "openai-completions", label: t("settings.wireFormatCompletions") },
+                { value: "openai-responses", label: t("settings.wireFormatResponses") },
+              ]}
+            />
           </FieldBlock>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
+              <span className={typeEyebrow}>
                 {t("settings.models")} · {draft.models.length}
               </span>
               <Button type="button" variant="ghost" size="xs" onClick={addModel}>
@@ -347,7 +358,10 @@ function ServiceEditor({
                 model.maxTokens >= model.contextWindow;
               const note = matchNotes[model.key];
               return (
-                <div key={model.key} className="space-y-2 rounded-md border border-border p-2.5">
+                <div
+                  key={model.key}
+                  className="space-y-2 rounded-[10px] border border-border/60 p-2.5"
+                >
                   <div className="flex items-center gap-2">
                     <Input
                       value={model.id}
@@ -355,40 +369,36 @@ function ServiceEditor({
                       aria-label={t("settings.modelId")}
                       onChange={(e) => patchModel(index, { id: e.target.value })}
                       onBlur={() => void handleIdBlur(model.key)}
-                      className="h-8 flex-1 font-mono text-xs"
+                      className={cn(settingsInput, "flex-1 font-mono")}
                     />
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
+                        <button
                           type="button"
-                          variant="ghost"
-                          size="icon-sm"
                           aria-label={t("settings.catalogMatch")}
-                          className="text-muted-foreground"
+                          className={cn(ghostButton, "size-7 shrink-0")}
                           onClick={() => void handleCatalogMatch(model.key)}
                         >
-                          <WandSparkles className="size-4" />
-                        </Button>
+                          <WandSparkles className="size-3.5" />
+                        </button>
                       </TooltipTrigger>
                       <TooltipContent>{t("settings.catalogMatch")}</TooltipContent>
                     </Tooltip>
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon-sm"
                       aria-label={t("common.delete")}
-                      className="text-muted-foreground hover:text-destructive"
+                      className={cn(ghostButton, "size-7 shrink-0 hover:text-destructive")}
                       onClick={() => removeModel(index)}
                     >
-                      <Trash2 className="size-4" />
-                    </Button>
+                      <Trash2 className="size-3.5" />
+                    </button>
                   </div>
                   <Input
                     value={model.name ?? ""}
                     placeholder={t("settings.modelName")}
                     aria-label={t("settings.modelName")}
                     onChange={(e) => patchModel(index, { name: e.target.value })}
-                    className="h-8"
+                    className={settingsInput}
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <Input
@@ -399,7 +409,7 @@ function ServiceEditor({
                       onChange={(e) =>
                         patchModel(index, { contextWindow: parseOptionalNumber(e.target.value) })
                       }
-                      className="h-8 font-mono text-xs"
+                      className={cn(settingsInput, "font-mono")}
                     />
                     <Input
                       type="number"
@@ -411,7 +421,8 @@ function ServiceEditor({
                         patchModel(index, { maxTokens: parseOptionalNumber(e.target.value) })
                       }
                       className={cn(
-                        "h-8 font-mono text-xs",
+                        settingsInput,
+                        "font-mono",
                         exceedsContext && "border-destructive",
                       )}
                     />
@@ -421,12 +432,10 @@ function ServiceEditor({
                       {t("settings.maxTokensExceedsContext")}
                     </p>
                   ) : (
-                    <p className="text-[11px] text-muted-foreground">
-                      {t("settings.maxTokensHint")}
-                    </p>
+                    <p className="text-[11px] text-foreground/40">{t("settings.maxTokensHint")}</p>
                   )}
                   <div className="flex flex-wrap items-center gap-4">
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5 text-xs text-foreground/45">
                       <Switch
                         size="sm"
                         aria-label={t("settings.reasoning")}
@@ -435,7 +444,7 @@ function ServiceEditor({
                       />
                       {t("settings.reasoning")}
                     </span>
-                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5 text-xs text-foreground/45">
                       <Switch
                         size="sm"
                         aria-label={t("settings.inputImage")}
@@ -455,7 +464,7 @@ function ServiceEditor({
                     <p
                       className={cn(
                         "text-[11px]",
-                        note.tone === "error" ? "text-destructive" : "text-muted-foreground",
+                        note.tone === "error" ? "text-destructive" : "text-foreground/40",
                       )}
                     >
                       {note.text}
@@ -469,7 +478,7 @@ function ServiceEditor({
               <p
                 className={cn(
                   "text-xs",
-                  fetch.status === "error" ? "text-destructive" : "text-muted-foreground",
+                  fetch.status === "error" ? "text-destructive" : "text-foreground/45",
                 )}
               >
                 {fetch.status === "loading" ? t("common.loading") : fetch.message}
@@ -478,11 +487,12 @@ function ServiceEditor({
           </div>
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between border-border border-t p-4 sm:justify-between">
+        <DialogFooter className="flex-row items-center justify-between border-border/60 border-t p-4 sm:justify-between">
           <Button
             type="button"
             variant="outline"
             size="sm"
+            className={secondaryButton}
             disabled={fetch.status === "loading" || draft.baseUrl.trim() === ""}
             onClick={() => void handleFetch()}
           >
@@ -545,10 +555,21 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
 
   const defaultModelValue = settings.defaultModel
     ? `${settings.defaultModel.serviceId}${MODEL_VALUE_SEPARATOR}${settings.defaultModel.modelId}`
-    : "";
+    : SELECT_NONE;
+
+  // 下拉项的值不允许为空串，「未指定」走 SELECT_NONE 哨兵
+  const defaultModelItems = [
+    { value: SELECT_NONE, label: "—" },
+    ...settings.services.flatMap((service) =>
+      service.models.map((model) => ({
+        value: `${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`,
+        label: `${service.name} · ${model.name ?? model.id}`,
+      })),
+    ),
+  ];
 
   const handleDefaultModelChange = (value: string) => {
-    if (value === "") {
+    if (value === SELECT_NONE) {
       void update({ defaultModel: null });
       return;
     }
@@ -562,8 +583,8 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium">{t("settings.modelServices")}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t("settings.modelServicesDesc")}</p>
+          <h3 className={typeEyebrow}>{t("settings.modelServices")}</h3>
+          <p className="mt-1 text-xs text-foreground/45">{t("settings.modelServicesDesc")}</p>
         </div>
         <Button type="button" size="sm" onClick={() => setDraft(toDraft())}>
           <Plus className="size-4" />
@@ -572,9 +593,9 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
       </div>
 
       {settings.services.length === 0 ? (
-        <div className="rounded-lg border border-border p-6 text-center">
-          <p className="text-sm font-medium">{t("settings.noServices")}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{t("settings.noServicesHint")}</p>
+        <div className="rounded-xl border border-border/60 p-6 text-center">
+          <p className="text-[13.5px] font-medium">{t("settings.noServices")}</p>
+          <p className="mt-1 text-xs text-foreground/45">{t("settings.noServicesHint")}</p>
           <Button type="button" size="sm" className="mt-3" onClick={() => setDraft(toDraft())}>
             <Plus className="size-4" />
             {t("settings.addService")}
@@ -585,45 +606,45 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
           {settings.services.map((service) => (
             <div
               key={service.id}
-              className="flex items-start justify-between gap-3 rounded-lg border border-border p-3"
+              className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium">{service.name}</span>
-                  <Badge variant="outline" className="rounded-sm font-mono text-[11px]">
+                  <span className="truncate text-[13.5px] font-medium">{service.name}</span>
+                  <Badge
+                    variant="outline"
+                    className={cn(mono, "border-border/60 px-1.5 text-foreground/50")}
+                  >
                     {service.wireFormat === "openai-completions" ? "completions" : "responses"}
                   </Badge>
                 </div>
                 <p
-                  className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
+                  className={cn(typePackage, "mt-1 truncate text-foreground/40")}
                   title={service.baseUrl}
                 >
                   {service.baseUrl}
                 </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <p className="mt-0.5 text-xs text-foreground/45">
                   {t("settings.models")} · {service.models.length}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon-sm"
                   aria-label={t("settings.editService")}
+                  className={cn(ghostButton, "size-7")}
                   onClick={() => setDraft(toDraft(service))}
                 >
-                  <Pencil className="size-4" />
-                </Button>
-                <Button
+                  <Pencil className="size-3.5" />
+                </button>
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon-sm"
                   aria-label={t("common.delete")}
-                  className="text-muted-foreground hover:text-destructive"
+                  className={cn(ghostButton, "size-7 hover:text-destructive")}
                   onClick={() => setConfirmRemove(service)}
                 >
-                  <Trash2 className="size-4" />
-                </Button>
+                  <Trash2 className="size-3.5" />
+                </button>
               </div>
             </div>
           ))}
@@ -637,24 +658,13 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
         <SettingsField
           label={t("settings.defaultModel")}
           control={
-            <NativeSelect
+            <SettingsSelect
               ariaLabel={t("settings.defaultModel")}
               value={defaultModelValue}
+              items={defaultModelItems}
               onChange={handleDefaultModelChange}
               className="w-72"
-            >
-              <option value="">—</option>
-              {settings.services.flatMap((service) =>
-                service.models.map((model) => (
-                  <option
-                    key={`${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`}
-                    value={`${service.id}${MODEL_VALUE_SEPARATOR}${model.id}`}
-                  >
-                    {`${service.name} · ${model.name ?? model.id}`}
-                  </option>
-                )),
-              )}
-            </NativeSelect>
+            />
           }
         />
       </SettingsSection>

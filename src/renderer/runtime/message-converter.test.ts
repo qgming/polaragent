@@ -72,6 +72,56 @@ describe("toThreadMessage", () => {
     ]);
   });
 
+  it("工具 details 映射到 assistant-ui 的 artifact 槽位", () => {
+    const details = { diff: "@@ -1 +1 @@\n-旧\n+新\n", patch: "--- a/a.ts\n+++ b/a.ts\n" };
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-2",
+          toolName: "edit",
+          argsText: '{"path":"a.ts"}',
+          result: "Successfully replaced 1 block(s)",
+          details,
+          status: "done",
+        },
+      ],
+    };
+    const thread = toThreadMessage(message);
+    // details 与 result 并存；自造字段会被归一化丢掉，只能走 artifact
+    expect(thread.content).toEqual([
+      {
+        type: "tool-call",
+        toolCallId: "call-2",
+        toolName: "edit",
+        argsText: '{"path":"a.ts"}',
+        result: "Successfully replaced 1 block(s)",
+        artifact: details,
+      },
+    ]);
+  });
+
+  it("工具无 details 时不写 artifact", () => {
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-3",
+          toolName: "read",
+          argsText: "{}",
+          result: "内容",
+          status: "done",
+        },
+      ],
+    };
+    const part = toThreadMessage(message).content?.[0];
+    expect(part).toBeDefined();
+    // content 允许是字符串，先收窄成对象再看字段
+    expect(typeof part === "object" && part !== null && "artifact" in part).toBe(false);
+  });
+
   it("映射 role / id / createdAt", () => {
     const thread = toThreadMessage({ ...baseMessage, role: "user" });
     expect(thread.role).toBe("user");

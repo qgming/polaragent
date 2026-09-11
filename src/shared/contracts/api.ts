@@ -1,6 +1,6 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
-import type { ChatEvent } from "./chat";
+import type { ChatEvent, ChatSendOptions } from "./chat";
 import type { WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
@@ -39,6 +39,8 @@ export interface PolarAgentApi {
       text: string,
       images?: { data: string; mimeType: string }[],
       messageId?: string,
+      /** 重新生成 / 编辑：先回退到指定条目再运行 */
+      options?: ChatSendOptions,
     ): Promise<void>;
     stop(sessionId: string): Promise<void>;
     queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;

@@ -33,8 +33,8 @@ const api = {
     loadMessages: (id, options) => ipcRenderer.invoke(IPC.sessions.loadMessages, { id, options }),
   },
   chat: {
-    send: (sessionId, text, images, messageId) =>
-      ipcRenderer.invoke(IPC.chat.send, { sessionId, text, images, messageId }),
+    send: (sessionId, text, images, messageId, options) =>
+      ipcRenderer.invoke(IPC.chat.send, { sessionId, text, images, messageId, options }),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chat.stop, { sessionId }),
     queue: (sessionId, text, mode) => ipcRenderer.invoke(IPC.chat.queue, { sessionId, text, mode }),
     compact: (sessionId, instructions) =>
