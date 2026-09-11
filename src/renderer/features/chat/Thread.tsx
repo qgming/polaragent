@@ -141,7 +141,7 @@ function AssistantActionBar() {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      className="aui-assistant-action-bar-root flex items-center gap-1 text-muted-foreground"
+      className="aui-assistant-action-bar-root flex animate-in items-center gap-1 text-muted-foreground fade-in duration-200 motion-reduce:animate-none"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip={t("common.copy")}>
@@ -174,7 +174,7 @@ function UserActionBar() {
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="always"
-      className="flex items-center gap-1 text-muted-foreground"
+      className="flex animate-in items-center gap-1 text-muted-foreground fade-in duration-200 motion-reduce:animate-none"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip={t("common.copy")}>
