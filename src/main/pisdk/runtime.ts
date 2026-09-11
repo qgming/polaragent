@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Usage } from "@earendil-works/pi-ai";
 import { dataDir } from "@/main/app/paths";
-import type { ChatEvent, QueuedMessage } from "@/shared/contracts/chat";
+import type { ChatEvent, ChatSendOptions, QueuedMessage } from "@/shared/contracts/chat";
 import type {
   ChatMessageUsage,
   ChatPart,
@@ -43,30 +43,42 @@ export interface ChatRuntimeDeps {
 }
 
 /**
+ * 当前 lane 的 tip 条目 id。
+ *
+ * 重新生成前用它判断「是否已经在目标上」—— pi 对导航到当前 tip 会直接报错，
+ * 而目标恰好是 tip 是正常情形（上一条回复还没落盘）。
+ * 取不到时返回 null（当作「不知道」），调用方照常尝试导航，由 pi 给出真实错误。
+ */
+async function currentTipId(runtime: SessionRuntime): Promise<string | null> {
+  try {
+    const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
+    return info.tipId;
+  } catch (error) {
+    console.warn(`读取当前 tip 失败：${toErrorText(error)}`);
+    return null;
+  }
+}
+
+/**
  * 这次运行该怎么驱动 lane。
  *
- * 重新生成（给了回退点）时必须用**空 prompt**：`acceptRun` 只在「prompt 为空且无图片」时
- * 不追加任何消息，用的正是当前 tip 上已有的那条用户消息。若照旧传文本，
- * 会再写一条 user 条目 —— 分支点就落到用户消息上，历史里也多一份重复对话。
+ * 重新生成（回退 + 沿用已有用户消息）时必须用**空 prompt**：`acceptRun` 只在
+ * 「prompt 为空且无图片」时不追加任何消息，用的正是当前 tip 上已有的那条用户消息。
+ * 若照旧传文本，会再写一条 user 条目 —— 分支点落到用户消息上，历史里也留一份重复对话。
+ *
+ * 编辑则是「回退到用户消息的父条目 + 把新文本作为新用户消息发出」，
+ * 于是新用户条目与旧的是兄弟（同父），旧消息与它之后的回复都不再在 tip 上。
  */
 export function runPromptFor(input: {
   text: string;
   images?: ImageContent[];
-  rewindToEntryId?: string;
+  rewindToEntryId?: string | null;
+  reuseUserMessage?: boolean;
 }): { prompt: string; images: ImageContent[] | undefined } {
-  if (input.rewindToEntryId === undefined) return { prompt: input.text, images: input.images };
-  return { prompt: "", images: undefined };
-}
-
-export interface SendOptions {
-  /**
-   * 重新生成：先把 lane 的 tip 退回这条（用户消息）条目，再让模型重跑一次。
-   *
-   * 退回之后用**空 prompt** 驱动 —— `acceptRun` 在「prompt 为空且无图片」时不追加任何消息，
-   * 正是我们要的「重新回答上一条，而不是再发一条」。新回复的 parent 因此就是那条用户条目，
-   * 与旧回复成为 pi 条目树里的兄弟（可直接切换），也不会像原来那样在历史里留下重复的用户消息。
-   */
-  rewindToEntryId?: string;
+  if (input.rewindToEntryId !== undefined && input.reuseUserMessage === true) {
+    return { prompt: "", images: undefined };
+  }
+  return { prompt: input.text, images: input.images };
 }
 
 export interface ChatRuntime {
@@ -75,7 +87,7 @@ export interface ChatRuntime {
     text: string,
     images?: ImageContent[],
     messageId?: string,
-    options?: SendOptions,
+    options?: ChatSendOptions,
   ): Promise<void>;
   stop(sessionId: string): Promise<void>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
@@ -122,18 +134,25 @@ interface SessionRuntime {
   stream?: AssistantStream;
   lastAssistantMessageId?: string;
   /**
-   * 已建好但还没拿到 entryId 的助手消息 id，按建立顺序排队。
+   * 已建好但还没拿到 entryId 的消息，按建立顺序排队。
    *
-   * 流式期渲染层需要 entryId 才有「分支」入口，而条目要到消息落盘时才产生
-   * （entry_added 事件）。一次运行里的多轮工具调用会交替产生多条助手消息与多个条目，
-   * 所以不能简单地取「最新一条」去配 —— 用 FIFO 保证一一对应、不错配。
+   * 条目要到消息落盘时才产生（entry_added 事件），而渲染层需要 entryId 才有「分支」入口、
+   * 重新生成也需要它作为回退点。**必须带角色**：一次运行会先落用户条目再落助手条目，
+   * 只按顺序弹队首会把助手条目配到用户消息上（用户消息永远拿不到 id、助手拿到错 id，
+   * 重新生成随即报 "target must differ from the current tip"）。
    */
-  awaitingEntryIds: string[];
+  pendingEntries: PendingEntry[];
   /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
   pendingUserMessageId?: string;
   toolParts: Map<string, ToolCallPartRef>;
   queue: QueuedMessage[];
   unsubscribers: Array<() => void>;
+}
+
+/** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
+export interface PendingEntry {
+  messageId: string;
+  role: "user" | "assistant";
 }
 
 let defaultRuntime: ChatRuntime | null = null;
@@ -219,22 +238,26 @@ function toolResultValue(result: AgentToolResult<unknown>): unknown {
 }
 
 /**
- * 条目落盘 → 配给哪条待配的助手消息，并把该消息移出队列。
+ * 条目落盘 → 配给哪条待配的消息，并把该消息移出队列。
  *
- * 渲染层的「分支」入口要求消息带 entryId，而流式产生的消息一出生是没有的
- * （只有历史回读的消息才自带）。一次运行里的多轮工具调用会交替产生多条助手消息与多个条目，
- * 所以取「最新一条」会错配，必须按 FIFO 一一对应。
+ * 按**角色**配对，而不是弹队首：运行会先落用户条目、后落助手条目，
+ * 弹队首会让助手条目认领用户消息的 id（用户消息拿不到 entryId，助手拿到错的）。
+ * 同一角色内部仍按 FIFO —— 一次运行的多轮工具调用会连续产生多条助手消息与多个条目。
  * 提到模块级是为了可测：这段判定在 createChatRuntime 的闭包里够不到。
  */
 export function pairEntryWithMessage(
-  awaiting: string[],
+  pending: PendingEntry[],
   entry: { type: string; id: string; parentId: string | null; message?: { role?: string } },
 ): { messageId: string; patch: { entryId: string; parentId: string | null } } | null {
-  // 只认助手消息条目：用户消息、toolResult、compaction 都不该消费队列
-  if (entry.type !== "message" || entry.message?.role !== "assistant") return null;
-  const messageId = awaiting.shift();
-  if (messageId === undefined) return null;
-  return { messageId, patch: { entryId: entry.id, parentId: entry.parentId } };
+  if (entry.type !== "message") return null;
+  const role = entry.message?.role;
+  if (role !== "user" && role !== "assistant") return null;
+
+  const index = pending.findIndex((item) => item.role === role);
+  if (index < 0) return null;
+  const [matched] = pending.splice(index, 1);
+  if (matched === undefined) return null;
+  return { messageId: matched.messageId, patch: { entryId: entry.id, parentId: entry.parentId } };
 }
 
 /**
@@ -392,7 +415,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.stream = { messageId, parts: [], partIndexByContent: new Map() };
       runtime.lastAssistantMessageId = messageId;
       // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
-      runtime.awaitingEntryIds.push(messageId);
+      runtime.pendingEntries.push({ messageId, role: "assistant" });
       emitSafe({
         type: "message-added",
         message: {
@@ -411,7 +434,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.pendingUserMessageId = undefined;
       const messageId = reuseId ?? randomUUID();
       // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
-      runtime.awaitingEntryIds.push(messageId);
+      runtime.pendingEntries.push({ messageId, role: "user" });
       emitSafe({
         type: "message-added",
         message: {
@@ -660,7 +683,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "entry_added" }>,
   ): void {
-    const paired = pairEntryWithMessage(runtime.awaitingEntryIds, event.entry);
+    const paired = pairEntryWithMessage(runtime.pendingEntries, event.entry);
     if (paired === null) return;
     emitSafe({
       type: "message-updated",
@@ -786,7 +809,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       rules: getRuleStore(),
       running: false,
       runEnded: false,
-      awaitingEntryIds: [],
+      pendingEntries: [],
       toolParts: new Map(),
       queue: [],
       unsubscribers: [],
@@ -859,7 +882,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     text: string,
     images?: ImageContent[],
     messageId?: string,
-    options?: SendOptions,
+    options?: ChatSendOptions,
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
     // 运行中再 send 等价于 followUp 排队
@@ -870,8 +893,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     runtime.running = true;
     runtime.runEnded = false;
-    // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期 id：新一次运行先清空
-    runtime.awaitingEntryIds = [];
+    // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期项：新一次运行先清空
+    runtime.pendingEntries = [];
     // 记录渲染层乐观消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
     runtime.pendingUserMessageId = messageId;
     const runId = randomUUID();
@@ -880,11 +903,16 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     try {
       const rewound = options?.rewindToEntryId;
       if (rewound !== undefined) {
-        // 先把 tip 退回那条用户消息，再空 prompt 驱动 —— 新回复与旧回复成为兄弟条目
-        const nav = await runtime.lane.navigateTree(rewound, undefined, BACKGROUND_CONTEXT);
-        if (!nav.ok) {
-          emitRunFailure(runtime, runId, nav.error);
-          return;
+        // 先把 tip 退回目标条目，再用 prompt 驱动。
+        // 目标已经是 tip 时必须跳过：pi 会对「导航到当前 tip」直接报
+        // "Navigation target must differ from the current tip"（上一条回复没落盘时就会这样）。
+        const tipId = await currentTipId(runtime);
+        if (tipId !== rewound) {
+          const nav = await runtime.lane.navigateTree(rewound, undefined, BACKGROUND_CONTEXT);
+          if (!nav.ok) {
+            emitRunFailure(runtime, runId, nav.error);
+            return;
+          }
         }
       }
       const prompt = runPromptFor({ text, images, ...(options ?? {}) });

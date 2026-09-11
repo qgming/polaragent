@@ -38,6 +38,9 @@ export const enUS = {
     attachImage: "Add image",
     removeAttachment: "Remove attachment",
     editMessage: "Edit message",
+    // i18next 的复数键：单数用 _one、其余用 _other（中文没有复数，只用普通键）
+    editDiscards_one: "Sending discards {{count}} reply",
+    editDiscards_other: "Sending discards {{count}} replies",
     scrollToBottom: "Scroll to bottom",
     branch: "Branch",
     branchFromHere: "Branch from here",
@@ -50,7 +53,6 @@ export const enUS = {
     permissionFull: "Full access",
     model: "Model",
     thinkingLevel: "Thinking level",
-    loadOlder: "Load earlier messages",
     loadingOlder: "Loading…",
     noMessages: "No messages yet — start the conversation",
     searchPlaceholder: "Find in conversation",

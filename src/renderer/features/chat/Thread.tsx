@@ -27,6 +27,7 @@ import {
   EmptyStateGreeting,
 } from "@/renderer/components/assistant-ui/elements/empty-state";
 import { File } from "@/renderer/components/assistant-ui/elements/file";
+import { DaySeparatorRow } from "@/renderer/components/assistant-ui/elements/day-separator";
 import { Image } from "@/renderer/components/assistant-ui/elements/image";
 import { MarkdownText } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import {
@@ -43,6 +44,7 @@ import type { SessionSearchHit } from "@/renderer/features/search";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
@@ -61,6 +63,16 @@ import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 const IsRunEndContext = createContext(true);
 
 /**
+ * 这条助手消息是不是**当前正在跑的那次运行**的第一条。
+ *
+ * 状态行只挂在这一条上：一次运行会落成好几条相邻的助手消息，状态要显示在整段的左上角，
+ * 而不是当前恰好在流式的那一条（它会随着工具调用往后挪）。
+ * 必须是「当前这次」而不是「任一次」—— 否则历史上每次运行的段首都会在任一次运行期间亮起。
+ * 默认 true：渲染在消息流之外时按"段首"处理。
+ */
+const IsRunStartContext = createContext(true);
+
+/**
  * 助手消息的 part 分组：连续推理与工具调用折进「思维链」组，其余按类型单独出。
  * 这张表决定折叠边界，改它等于改消息的阅读节奏，不要随手加项。
  */
@@ -75,7 +87,7 @@ const USER_PARTS = {
   Text: ({ text }: { text: string }) => <p className="whitespace-pre-wrap">{text}</p>,
 } satisfies MessagePrimitive.Parts.Props["components"];
 
-/** 跨天分隔条：Elements 的 day-separator 用的就是这条「细线 + 眉题 + 细线」形状 */
+/** 跨天分隔条：视觉取自 Elements 的 day-separator（细线 + 眉题 + 细线） */
 function DayDivider({ timestamp }: { timestamp: Date | number }) {
   const { i18n, t } = useTranslation();
   const offset = dayOffset(timestamp);
@@ -86,13 +98,7 @@ function DayDivider({ timestamp }: { timestamp: Date | number }) {
         ? t("sidebar.yesterday")
         : formatDayDate(timestamp, i18n.language);
 
-  return (
-    <div data-slot="day-divider" className="flex items-center gap-2.5 py-1">
-      <span className="h-px flex-1 bg-foreground/[0.08]" />
-      <span className={cn(mono, "text-foreground/30")}>{label}</span>
-      <span className="h-px flex-1 bg-foreground/[0.08]" />
-    </div>
-  );
+  return <DaySeparatorRow label={label} />;
 }
 
 function MessageError() {
@@ -166,17 +172,28 @@ function useElapsedLabel(active: boolean): string | undefined {
 }
 
 /**
- * 正在输出那条消息尾部的真实状态：有未完成的工具调用就报它的名字，否则是笼统的思考中。
+ * 运行状态行：整段回复还在跑时展示，有未完成的工具调用就报它的名字，否则是笼统的思考中。
+ *
+ * 标签从**线程**里取而不是从所在消息取：状态行挂在段首，而正在流式的往往已经是后面那几条
+ * （工具调用会把运行切成多条助手消息），只看自己这条会读不到在跑的工具。
+ * 只看最后一条助手消息：一次运行里只有它在流式；从尾部往前找，找到就停。
  * 用词条键（字符串）而不是译文做选择器的返回值，Object.is 才稳定。
  */
 function AssistantThinking() {
   const { t } = useTranslation();
   const labelKey = useAuiState((s) => {
-    if (s.message.status?.type !== "running") return undefined;
-    const pending = s.message.parts.find(
-      (part) => part.type === "tool-call" && part.result === undefined,
-    );
-    if (pending?.type === "tool-call") return toolActiveLabelKey(pending.toolName);
+    if (!s.thread.isRunning) return undefined;
+    for (let i = s.thread.messages.length - 1; i >= 0; i -= 1) {
+      const message = s.thread.messages[i];
+      if (message?.role !== "assistant") continue;
+      if (message.status?.type !== "running") break;
+      const pending = message.parts.find(
+        (part) => part.type === "tool-call" && part.result === undefined,
+      );
+      return pending?.type === "tool-call"
+        ? toolActiveLabelKey(pending.toolName)
+        : "tools.thinking";
+    }
     return "tools.thinking";
   });
   const elapsed = useElapsedLabel(labelKey !== undefined);
@@ -242,6 +259,9 @@ function AssistantActionBar() {
  */
 function UserActionBar() {
   const { t } = useTranslation();
+  const beginEditMessage = useUiStore((s) => s.beginEditMessage);
+  // 编辑的是这条消息：id 从 aui 的 message scope 取
+  const messageId = useAuiState((s) => s.message.id);
   return (
     <div className="flex items-center gap-1 text-muted-foreground">
       <ActionBarPrimitive.Copy asChild>
@@ -255,7 +275,11 @@ function UserActionBar() {
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip={t("chat.editMessage")} className="aui-user-action-edit">
+        <TooltipIconButton
+          tooltip={t("chat.editMessage")}
+          className="aui-user-action-edit"
+          onClick={() => beginEditMessage(messageId)}
+        >
           <PencilIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Edit>
@@ -319,10 +343,12 @@ function UserMessage() {
 
 function AssistantMessage() {
   const isRunEnd = useContext(IsRunEndContext);
+  const isRunStart = useContext(IsRunStartContext);
   const { branchByMessageId } = useContext(ReplyBranchContext);
   const messageId = useAuiState((s) => s.message.id);
   const branch = branchByMessageId[messageId];
-  const messageRunning = useAuiState((s) => s.message.status?.type === "running");
+  // 整段是否还在跑：状态行挂在段首，所以看的是线程而不是这条消息
+  const runRunning = useAuiState((s) => s.thread.isRunning);
 
   return (
     <MessagePrimitive.Root
@@ -336,10 +362,10 @@ function AssistantMessage() {
         className="flex flex-col gap-y-3 px-2 leading-relaxed text-foreground wrap-break-word"
       >
         {/*
-          运行状态固定在消息左上角：这条消息还没输出完就一直显示，
+          运行状态固定在**整段回复**的左上角：只在段首渲染，且整段还在跑时一直显示。
           不去跟正文抢位置、也不随正文增长往下漂。
         */}
-        {messageRunning && <AssistantThinking />}
+        {isRunStart && runRunning && <AssistantThinking />}
         <MessagePrimitive.GroupedParts groupBy={GROUP_BY} indicator="never">
           {({ part, children }) => {
             switch (part.type) {
@@ -445,10 +471,56 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
   const { t } = useTranslation();
   const messages = useAuiState((s) => s.thread.messages);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const hasMore = useChatStore(
+    (s) => s.activeSessionId !== null && s.hasMoreBySession[s.activeSessionId] === true,
+  );  const loadingOlder = useChatStore(
+    (s) => s.activeSessionId !== null && s.loadingOlderBySession[s.activeSessionId] === true,
+  );
+
+  /**
+   * 向上滚到顶就看更早的消息：不要求用户去点按钮。
+   *
+   * 观察的是消息组顶部那个哨兵，rootMargin 让它提前 400px 触发（还没真到顶就开始取），
+   * 取完内容前插、哨兵被推上去，因此要等用户再往上滚才会再次触发 —— 不需要额外的节流。
+   * `loadingBySession` 是并发闸门：同一会话已有一次翻页在飞就跳过。
+   */
+  useEffect(() => {
+    if (!hasMore) return;
+    const root = viewportRef.current;
+    const target = sentinelRef.current;
+    if (root === null || target === null) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        const store = useChatStore.getState();
+        const id = store.activeSessionId;
+        if (id === null || store.loadingOlderBySession[id] === true) return;
+        void store.loadMessages(id, { before: true });
+      },
+      { root, rootMargin: "400px 0px 0px 0px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+    // 只依赖 hasMore：换会话时它必然重算，够用了；回调里读的是 store 的最新状态
+  }, [hasMore]);
 
   // 命中键：消息 id + 全局序号。流式更新不会改变键，避免反复滚动；
   // 同一消息内切换命中时键变化，需要重新定位
   const hitKey = searchHit === null ? null : `${searchHit.messageId}#${searchHit.globalIndex}`;
+
+  /**
+   * 当前（末尾）那次运行的起点下标：从末尾往前扫连续的助手消息。
+   * -1 表示末尾不是助手消息（没有在跑的运行）。
+   * 状态行只挂在这一条上；用「末尾连续段」而不是「任意段首」，见 IsRunStartContext 的说明。
+   */
+  let activeRunStart = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role !== "assistant") break;
+    activeRunStart = i;
+  }
 
   useEffect(() => {
     if (hitKey === null) return;
@@ -477,7 +549,27 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
         data-slot="aui_thread-viewport"
         className="app-scrollbar relative min-h-0 flex-1 overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4">
+        {/*
+          min-h-full 而不是 flex-1：这里的父级是 Viewport（overflow-y-auto），不是 flex 容器，
+          flex-1 完全无效 —— 容器只有内容高，脚注上的 mt-auto 就没有可分配空间，
+          输入框会贴着消息往下滑。撑到至少一屏高，mt-auto 才能把它压到底；
+          内容超过一屏后由脚注自己的 sticky bottom-0 接管。
+        */}
+        <div className="mx-auto flex min-h-full w-full max-w-(--thread-max-width) flex-col px-4 pt-4">
+          {/*
+            消息组顶部的哨兵：滚到附近就自动取更早的一页（见上面的 IntersectionObserver）。
+            它必须在消息组**之前**，这样前插内容会把哨兵顶出视野，避免连续触发。
+          */}
+          <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
+          {loadingOlder && (
+            <div
+              className={cn("pb-1 text-center", mono, "text-foreground/35")}
+              role="status"
+              aria-live="polite"
+            >
+              {t("chat.loadingOlder")}
+            </div>
+          )}
           <div data-slot="aui_message-group" className="mb-2 flex flex-col gap-y-3 empty:hidden">
             {messages.map((message, index) => {
               const prev = messages[index - 1];
@@ -485,6 +577,8 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
               const isHit = searchHit?.messageId === message.id;
               // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
               const isRunEnd = next?.role !== "assistant";
+              // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
+              const isRunStart = index === activeRunStart;
               return (
                 <Fragment key={message.id}>
                   {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
@@ -508,10 +602,12 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
                       </div>
                     )}
                     <IsRunEndContext.Provider value={isRunEnd}>
-                      <ThreadPrimitive.MessageByIndex
-                        index={index}
-                        components={MESSAGE_COMPONENTS}
-                      />
+                      <IsRunStartContext.Provider value={isRunStart}>
+                        <ThreadPrimitive.MessageByIndex
+                          index={index}
+                          components={MESSAGE_COMPONENTS}
+                        />
+                      </IsRunStartContext.Provider>
                     </IsRunEndContext.Provider>
                   </div>
                 </Fragment>

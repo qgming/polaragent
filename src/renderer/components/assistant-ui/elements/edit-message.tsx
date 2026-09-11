@@ -13,6 +13,9 @@ export function EditMessage({
   onSave,
   onCancel,
   onStartEdit,
+  cancelLabel = "Cancel",
+  sendLabel = "Send",
+  discardedLabel,
   className,
   ...props
 }: Omit<
@@ -33,6 +36,11 @@ export function EditMessage({
   onSave?: () => void;
   onCancel?: () => void;
   onStartEdit?: () => void;
+  /** 按钮文案；缺省为英文原值。调用侧接 i18n 用（本目录只有这一处消费者） */
+  cancelLabel?: string;
+  sendLabel?: string;
+  /** 丢弃提示文案；缺省为英文原值 */
+  discardedLabel?: (count: number) => string;
 }) {
   if (!editing) {
     return (
@@ -76,7 +84,9 @@ export function EditMessage({
         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
           <AlertTriangleIcon className="size-3.5 shrink-0" />
           <span className={cn(mono, "tabular-nums")}>
-            sending discards {discardedReplies} {discardedReplies === 1 ? "reply" : "replies"}
+            {discardedLabel
+              ? discardedLabel(discardedReplies)
+              : `sending discards ${discardedReplies} ${discardedReplies === 1 ? "reply" : "replies"}`}
           </span>
         </div>
       )}
@@ -87,14 +97,14 @@ export function EditMessage({
           onClick={onCancel}
           className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
         >
-          Cancel
+          {cancelLabel}
         </button>
         <button
           type="button"
           onClick={onSave}
           className={cn(inkButton, "flex h-8 items-center rounded-full px-3.5 text-xs font-medium")}
         >
-          Send
+          {sendLabel}
         </button>
       </div>
     </div>

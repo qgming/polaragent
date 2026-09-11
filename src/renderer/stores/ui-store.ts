@@ -20,6 +20,8 @@ interface UiState {
   pendingDeleteSessionId: string | null;
   /** 待确认的删除所对应的解决函数：确认与否决都要调它，否则适配器那边的 Promise 悬挂 */
   resolveDeleteSession: ((confirmed: boolean) => void) | null;
+  /** 正在编辑的用户消息 id（null = 未编辑）；由 ChatView 渲染编辑模态 */
+  editingMessageId: string | null;
 
   toggleSidebar(): void;
   openGlobalSearch(): void;
@@ -37,6 +39,9 @@ interface UiState {
   requestDeleteSession(id: string): Promise<boolean>;
   /** 由确认对话框调用：记录用户选择并关闭对话框 */
   settleDeleteSession(confirmed: boolean): void;
+  /** 打开某条用户消息的编辑模态 */
+  beginEditMessage(id: string): void;
+  closeEditMessage(): void;
 }
 
 export const useUiStore = create<UiState>()((set, get) => ({
@@ -48,6 +53,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   sessionSearchQuery: "",
   pendingDeleteSessionId: null,
   resolveDeleteSession: null,
+  editingMessageId: null,
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   openGlobalSearch: () => set({ globalSearchOpen: true }),
@@ -70,4 +76,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
     set({ pendingDeleteSessionId: null, resolveDeleteSession: null });
     resolve?.(confirmed);
   },
+
+  beginEditMessage: (id) => set({ editingMessageId: id }),
+  closeEditMessage: () => set({ editingMessageId: null }),
 }));

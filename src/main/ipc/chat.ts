@@ -1,6 +1,7 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { ipcMain } from "electron";
 import { getChatRuntime } from "@/main/pisdk/runtime";
+import type { ChatSendOptions } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
 
 /** 渲染层传入的图片附件：data 为 base64 或 dataUrl；这里补齐 pi 所需的 type 判别字段 */
@@ -37,17 +38,15 @@ export function registerChatIpc(): void {
       text: string;
       images?: ChatImage[];
       messageId?: string;
-      /** 重新生成时给出的用户条目 id：主进程据此把 lane 退回再重跑 */
-      rewindToEntryId?: string;
+      /** 重新生成 / 编辑：先把 lane 回退到指定条目再运行 */
+      options?: ChatSendOptions;
     }) => {
       await getChatRuntime().send(
         request.sessionId,
         request.text,
         toImageContents(request.images),
         request.messageId,
-        request.rewindToEntryId === undefined
-          ? undefined
-          : { rewindToEntryId: request.rewindToEntryId },
+        request.options,
       );
     },
   );

@@ -37,6 +37,9 @@ export const zhCN = {
     attachImage: "添加图片",
     removeAttachment: "移除附件",
     editMessage: "编辑消息",
+    // 复数键与 en-US 保持同形（本仓词条类型由 zh-CN 派生）；中文没有复数，两者同文
+    editDiscards_one: "发送将丢弃其后 {{count}} 条回复",
+    editDiscards_other: "发送将丢弃其后 {{count}} 条回复",
     scrollToBottom: "滚动到底部",
     branch: "分支",
     branchFromHere: "从此处分支",
@@ -49,7 +52,6 @@ export const zhCN = {
     permissionFull: "完全访问",
     model: "模型",
     thinkingLevel: "思考等级",
-    loadOlder: "加载更早消息",
     loadingOlder: "加载中…",
     noMessages: "还没有消息，开始对话吧",
     searchPlaceholder: "在对话中查找",

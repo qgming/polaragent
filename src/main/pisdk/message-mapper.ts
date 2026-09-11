@@ -34,7 +34,12 @@ function mapUsage(message: AssistantMessage): ChatMessageUsage | undefined {
   };
 }
 
-function mapUserMessage(entryId: string, message: UserMessage, createdAt: number): ChatMessage {
+function mapUserMessage(
+  entryId: string,
+  message: UserMessage,
+  createdAt: number,
+  parentId: string | null,
+): ChatMessage {
   const parts: ChatPart[] = [];
   if (typeof message.content === "string") {
     if (message.content.trim().length > 0) parts.push({ type: "text", text: message.content });
@@ -53,7 +58,7 @@ function mapUserMessage(entryId: string, message: UserMessage, createdAt: number
       }
     }
   }
-  return { id: entryId, entryId, role: "user", createdAt, parts, status: "complete" };
+  return { id: entryId, entryId, parentId, role: "user", createdAt, parts, status: "complete" };
 }
 
 function mapAssistantMessage(
@@ -151,7 +156,7 @@ export function mapEntriesToMessages(entries: Entry[]): {
     const { message } = entry;
     const createdAt = entry.timestamp || message.timestamp;
     if (message.role === "user") {
-      messages.push(mapUserMessage(entry.id, message, createdAt));
+      messages.push(mapUserMessage(entry.id, message, createdAt, entry.parentId));
     } else if (message.role === "assistant") {
       messages.push(mapAssistantMessage(entry.id, message, createdAt, pending, entry.parentId));
     } else if (message.role === "toolResult") {

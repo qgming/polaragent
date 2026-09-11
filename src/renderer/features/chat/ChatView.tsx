@@ -1,6 +1,7 @@
 import type { SessionSearchHit } from "@/renderer/features/search";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import type { ApprovalDecision } from "@/shared/contracts/approval";
+import { EditMessageDialog } from "./EditMessageDialog";
 import { ThreadView } from "./Thread";
 import { ThreadToolbar } from "./ThreadToolbar";
 
@@ -27,6 +28,8 @@ export function ChatView({ searchHit = null }: ChatViewProps) {
     <div className="flex min-h-0 flex-1 flex-col">
       <ThreadToolbar />
       <ThreadView approvals={pendingApprovals} onResolve={handleResolve} searchHit={searchHit} />
+      {/* 编辑模态挂在这里：它是对话区的功能，且不该跟着消息滚动 */}
+      <EditMessageDialog />
     </div>
   );
 }

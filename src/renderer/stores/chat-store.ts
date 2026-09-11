@@ -21,6 +21,8 @@ interface ChatState {
   pageCursorBySession: Record<string, number | undefined>;
   /** 各会话是否还有更早消息 */
   hasMoreBySession: Record<string, boolean>;
+  /** 各会话是否正在向上翻页取更早消息（并发闸门 + 顶部加载态） */
+  loadingOlderBySession: Record<string, boolean>;
   /** 各会话是否正在运行 */
   runningBySession: Record<string, boolean>;
   /** 各会话的待发送队列 */
@@ -44,6 +46,8 @@ interface ChatState {
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
   send(text: string, images?: { data: string; mimeType: string }[]): Promise<void>;
+  /** 编辑用户消息：替换为新文本并从该处重跑（回退到父条目） */
+  editUserMessage(messageId: string, text: string): Promise<void>;
   stop(): Promise<void>;
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(instructions?: string): Promise<void>;
@@ -91,6 +95,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   messagesBySession: {},
   pageCursorBySession: {},
   hasMoreBySession: {},
+  loadingOlderBySession: {},
   runningBySession: {},
   queueBySession: {},
   pendingApprovals: [],
@@ -121,18 +126,36 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const before = opts?.before;
     const beforeSeq = before ? get().pageCursorBySession[id] : undefined;
     if (before && beforeSeq === undefined) return;
-    const page = await window.polaragent.sessions.loadMessages(id, { limit: PAGE_SIZE, beforeSeq });
-    const cursor = page.nextCursor;
-    set((state) => {
-      const existing = state.messagesBySession[id] ?? [];
-      // 首页整体替换；向上翻页时更早的消息前插
-      const messages = before ? [...page.messages, ...existing] : page.messages;
-      return {
-        messagesBySession: { ...state.messagesBySession, [id]: messages },
-        pageCursorBySession: { ...state.pageCursorBySession, [id]: cursor },
-        hasMoreBySession: { ...state.hasMoreBySession, [id]: cursor !== undefined },
-      };
-    });
+    // 同一会话已有一次翻页在飞就跳过：自动加载会在滚动中反复触发
+    if (before && get().loadingOlderBySession[id] === true) return;
+    if (before) {
+      set((state) => ({
+        loadingOlderBySession: { ...state.loadingOlderBySession, [id]: true },
+      }));
+    }
+    try {
+      const page = await window.polaragent.sessions.loadMessages(id, {
+        limit: PAGE_SIZE,
+        beforeSeq,
+      });
+      const cursor = page.nextCursor;
+      set((state) => {
+        const existing = state.messagesBySession[id] ?? [];
+        // 首页整体替换；向上翻页时更早的消息前插
+        const messages = before ? [...page.messages, ...existing] : page.messages;
+        return {
+          messagesBySession: { ...state.messagesBySession, [id]: messages },
+          pageCursorBySession: { ...state.pageCursorBySession, [id]: cursor },
+          hasMoreBySession: { ...state.hasMoreBySession, [id]: cursor !== undefined },
+        };
+      });
+    } finally {
+      if (before) {
+        set((state) => ({
+          loadingOlderBySession: { ...state.loadingOlderBySession, [id]: false },
+        }));
+      }
+    }
   },
 
   async createSession() {
@@ -266,8 +289,36 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         .filter((p) => p.type === "image")
         .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType })),
       lastUser.id,
-      lastUser.entryId,
+      { rewindToEntryId: lastUser.entryId, reuseUserMessage: true },
     );
+  },
+
+  /**
+   * 编辑用户消息：把这条替换成新文本并重跑。
+   *
+   * 与重新生成的区别是「回退到**父条目**、把新文本作为新用户消息发出」，
+   * 所以新用户条目与旧的是兄弟（同父），旧消息与它之后的回复都不再在 tip 上。
+   * 列表同步截断到该消息之前 —— 那些回复既然已被回退掉，就不该再显示。
+   */
+  async editUserMessage(messageId, text) {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    if (get().runningBySession[sessionId]) return;
+    const list = get().messagesBySession[sessionId] ?? [];
+    const index = list.findIndex((m) => m.id === messageId);
+    const target = index >= 0 ? list[index] : undefined;
+    if (target?.role !== "user") return;
+
+    set((state) => ({
+      messagesBySession: { ...state.messagesBySession, [sessionId]: list.slice(0, index) },
+      // 截断后旧的回复分支已不可见，选择也一并清掉，避免下标指向不存在的变体
+      replySelectionBySession: { ...state.replySelectionBySession, [sessionId]: {} },
+    }));
+
+    await window.polaragent.chat.send(sessionId, text, undefined, undefined, {
+      rewindToEntryId: target.parentId ?? null,
+      reuseUserMessage: false,
+    });
   },
 
   applyEvent(sessionId, event) {

@@ -12,6 +12,31 @@ export interface DatedMessage {
   text: string;
 }
 
+/**
+ * 单独一行日期分隔（细线 + 眉题 + 细线）。
+ *
+ * 抽出来是因为本应用的消息由逐条 primitives 渲染（markdown、工具调用、审批卡），
+ * 用不了整段转录那套带气泡的 `DaySeparator`；真正需要复用的只有这一行的视觉。
+ * `DaySeparator` 内部也走它，避免两套实现各自漂移。
+ */
+export function DaySeparatorRow({
+  label,
+  className,
+  ...props
+}: Omit<ComponentProps<"div">, "children"> & { label: string }) {
+  return (
+    <div
+      data-slot="day-separator-row"
+      className={cn("flex items-center gap-2.5 py-1", className)}
+      {...props}
+    >
+      <span className="bg-foreground/[0.08] h-px flex-1" />
+      <span className={cn(mono, "text-foreground/30")}>{label}</span>
+      <span className="bg-foreground/[0.08] h-px flex-1" />
+    </div>
+  );
+}
+
 export function DaySeparator({
   messages,
   className,
@@ -33,13 +58,7 @@ export function DaySeparator({
 
         return (
           <div key={message.id} className="flex flex-col gap-2">
-            {newDay && (
-              <div className="flex items-center gap-2.5 py-1">
-                <span className="bg-foreground/[0.08] h-px flex-1" />
-                <span className={cn(mono, "text-foreground/30")}>{message.day}</span>
-                <span className="bg-foreground/[0.08] h-px flex-1" />
-              </div>
-            )}
+            {newDay && <DaySeparatorRow label={message.day} />}
             <div
               className={cn(
                 "group flex items-baseline gap-2",

@@ -10,6 +10,7 @@ import {
   createChatRuntime,
   deriveRulePattern,
   getChatRuntime,
+  type PendingEntry,
   pairEntryWithMessage,
   runPromptFor,
 } from "./runtime";
@@ -76,17 +77,33 @@ describe("runPromptFor", () => {
 
   // 回归：传文本会让 acceptRun 再追加一条 user 条目，
   // 分支点落到用户消息上、历史里多一份重复对话
-  it("重新生成：回退后必须用空 prompt，且不带图片", () => {
-    expect(runPromptFor({ text: "你好", images, rewindToEntryId: "u1" })).toEqual({
-      prompt: "",
-      images: undefined,
-    });
+  it("重新生成：回退并沿用已有用户消息时用空 prompt，且不带图片", () => {
+    expect(
+      runPromptFor({
+        text: "你好",
+        images,
+        rewindToEntryId: "u1",
+        reuseUserMessage: true,
+      }),
+    ).toEqual({ prompt: "", images: undefined });
   });
 
-  it("回退点为空字符串（拿不到条目 id）时按普通发送处理", () => {
-    const result = runPromptFor({ text: "你好", images, rewindToEntryId: "" });
-    expect(result.prompt).toBe("");
-    expect(result.images).toBeUndefined();
+  // 编辑是「回退到父条目 + 把新文本作为新用户消息发出」，所以文本必须传下去
+  it("编辑：回退但不沿用旧消息时照常传新文本", () => {
+    expect(
+      runPromptFor({
+        text: "改过的内容",
+        images,
+        rewindToEntryId: "p0",
+        reuseUserMessage: false,
+      }),
+    ).toEqual({ prompt: "改过的内容", images });
+  });
+
+  it("给了回退点但没声明沿用旧消息时，按新增用户消息处理（不会静默丢文本）", () => {
+    const result = runPromptFor({ text: "你好", images, rewindToEntryId: "u1" });
+    expect(result.prompt).toBe("你好");
+    expect(result.images).toEqual(images);
   });
 });
 
@@ -97,43 +114,75 @@ describe("pairEntryWithMessage", () => {
     parentId,
     message: { role: "assistant" },
   });
+  const userEntry = (id: string, parentId: string | null = null) => ({
+    type: "message",
+    id,
+    parentId,
+    message: { role: "user" },
+  });
+  const assistant = (messageId: string) => ({ messageId, role: "assistant" as const });
+  const user = (messageId: string) => ({ messageId, role: "user" as const });
 
-  it("按 FIFO 配对，多轮工具调用不会错配", () => {
-    const awaiting = ["m1", "m2"];
+  it("同一角色内部按 FIFO 配对，多轮工具调用不会错配", () => {
+    const pending = [assistant("m1"), assistant("m2")];
 
-    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))).toEqual({
+    expect(pairEntryWithMessage(pending, assistantEntry("e1"))).toEqual({
       messageId: "m1",
       patch: { entryId: "e1", parentId: "u1" },
     });
-    expect(pairEntryWithMessage(awaiting, assistantEntry("e2"))).toEqual({
+    expect(pairEntryWithMessage(pending, assistantEntry("e2"))).toEqual({
       messageId: "m2",
       patch: { entryId: "e2", parentId: "u1" },
     });
-    expect(awaiting).toEqual([]);
+    expect(pending).toEqual([]);
   });
 
-  it("非助手条目不吃掉队列位置", () => {
-    const awaiting = ["m1"];
-    const userEntry = { type: "message", id: "e0", parentId: null, message: { role: "user" } };
-    const toolResult = { type: "message", id: "e0b", parentId: "u1", message: { role: "toolResult" } };
+  // 回归：队列原来只存 id、弹队首，于是先落的用户条目把助手消息挤出去，
+  // 助手条目反认领了用户消息 —— 用户消息永远没 entryId（分支按钮不出现），
+  // 且重新生成拿到的是助手条目（= 当前 tip），报 "target must differ from the current tip"
+  it("按角色配对：助手条目不会认领用户消息", () => {
+    const pending = [user("u-msg"), assistant("a-msg")];
+
+    expect(pairEntryWithMessage(pending, userEntry("u-entry"))).toEqual({
+      messageId: "u-msg",
+      patch: { entryId: "u-entry", parentId: null },
+    });
+    expect(pairEntryWithMessage(pending, assistantEntry("a-entry", "u-entry"))).toEqual({
+      messageId: "a-msg",
+      patch: { entryId: "a-entry", parentId: "u-entry" },
+    });
+    expect(pending).toEqual([]);
+  });
+
+  it("toolResult / compaction 之类的条目不吃掉队列位置", () => {
+    const pending = [assistant("m1")];
+    const toolResult = {
+      type: "message",
+      id: "e0b",
+      parentId: "u1",
+      message: { role: "toolResult" },
+    };
     const compaction = { type: "compaction", id: "c1", parentId: "u1" };
 
-    expect(pairEntryWithMessage(awaiting, userEntry)).toBeNull();
-    expect(pairEntryWithMessage(awaiting, toolResult)).toBeNull();
-    expect(pairEntryWithMessage(awaiting, compaction)).toBeNull();
+    expect(pairEntryWithMessage(pending, toolResult)).toBeNull();
+    expect(pairEntryWithMessage(pending, compaction)).toBeNull();
     // 队列原封不动，助手条目仍配到它身上
-    expect(awaiting).toEqual(["m1"]);
-    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))?.messageId).toBe("m1");
+    expect(pending).toEqual([assistant("m1")]);
+    expect(pairEntryWithMessage(pending, assistantEntry("e1"))?.messageId).toBe("m1");
   });
 
-  it("队列为空时返回 null（例如历史回读期不会走到这里）", () => {
-    const awaiting: string[] = [];
-    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))).toBeNull();
+  it("没有同角色待配项时返回 null 且不动队列", () => {
+    const pending = [assistant("m1")];
+    expect(pairEntryWithMessage(pending, userEntry("u-entry"))).toBeNull();
+    expect(pending).toEqual([assistant("m1")]);
+
+    const empty: PendingEntry[] = [];
+    expect(pairEntryWithMessage(empty, assistantEntry("e1"))).toBeNull();
   });
 
   it("parentId 为 null（会话首条）也照常带出", () => {
-    const awaiting = ["m1"];
-    expect(pairEntryWithMessage(awaiting, assistantEntry("e1", null))?.patch).toEqual({
+    const pending = [assistant("m1")];
+    expect(pairEntryWithMessage(pending, assistantEntry("e1", null))?.patch).toEqual({
       entryId: "e1",
       parentId: null,
     });

@@ -329,6 +329,81 @@ data-closed:fill-mode-forwards data-closed:pointer-events-none motion-reduce:ani
 footer 自身的高度，原来那句注释把因果关系说反了。同时把 `RunPosition` 四值枚举收成
 `IsRunEndContext` 布尔 —— 段首不再影响间距（见 [S2.9]），枚举里只剩"是否段尾"一个有效语义。
 
+### [S2.12] 运行状态行挂在「当前这次运行」的段首
+
+一次运行会落成多条相邻的助手消息（工具调用把运行切开），所以状态行不能挂在「恰好在流式
+的那一条」上——它会随工具调用往后挪。挂在**段首**，整段还在跑时一直显示。
+
+两个细节容易写错：
+
+- 段首必须是「**当前这次**运行的段首」。只判「上一条不是助手消息」会让历史上每次运行的段首
+  在任何一次运行期间都亮起来。判据取「末尾连续助手段」的起点：从末尾往前扫到第一个非助手消息。
+- 标签要从**线程**取，不能从所在消息取：状态行在段首，而正在流式的往往已经是后面那几条，
+  只看自己这条读不到在跑的工具。从末尾往前找最后一条 running 的助手消息，找到就停（一次运行
+  里只有它在流式），因此扫描是 O(1) 而不是每帧遍历全部消息。
+
+`AssistantThinking` 返回词条**键**（字符串）而非译文，`useAuiState` 的 `Object.is` 才稳定。
+
+### [S2.13] 输入框固定在底部
+
+内层容器原来写 `flex-1`，但它的父级是 `Viewport`（`overflow-y-auto`），**不是 flex 容器**——
+`flex-1` 完全无效，容器只有内容高，脚注上的 `mt-auto` 没有可分配空间，输入框于是贴着消息往下滑。
+
+改为 `min-h-full`：容器至少一屏高，`mt-auto` 才把它压到底；内容超过一屏后由脚注自己的
+`sticky bottom-0` 接管。两段机制各管一半，不需要额外 JS。
+
+### [S2.14] entryId 按角色配对（修 bug）
+
+`handleMessageStart` 把用户消息与助手消息**都**推进待配队列，而配对函数写着「只认助手条目」
+且命中非助手时**不弹队列**。于是用户条目的 `entry_added` 被丢弃后，助手条目配到了队列头那个
+**用户消息 id** 上：用户消息永远拿不到 entryId，助手拿到的是错的。
+
+两个症状同源：会话内新产生的回复没有「分支」按钮（它需要 entryId）；重新生成报
+`Navigation target must differ from the current tip`——`lastUser.entryId` 存的其实是助手条目，
+也就是当前 tip。
+
+修法：队列元素带上**角色**，按角色匹配（同角色内部仍 FIFO）。另外重新生成前先读 tip，
+目标已经是 tip 时跳过导航——pi 对「导航到当前 tip」直接报错，而这在取消后重试、或上一条回复
+没落盘时是正常情形。
+
+### [S2.15] 编辑用户消息（模态）
+
+官方 `EditMessage` 是**就地替换气泡**的形态；本应用把它固定成编辑态放进模态里用，因为消息气泡
+与 hover 工具栏已有自己的实现，只需要它的「文本框 + 取消/发送 + 丢弃提示」那一套。为此给
+vendored 文件加了三个可选文案参数（`cancelLabel` / `sendLabel` / `discardedLabel`），缺省值即
+原英文，对其它消费者零影响。
+
+编辑与重新生成的语义差别是本轮的关键：
+
+| | 回退目标 | prompt | 效果 |
+| --- | --- | --- | --- |
+| 重新生成 | 该**用户消息**条目 | 空 | 新回复与旧回复成为兄弟（同父），可切换 |
+| 编辑 | 该用户消息的**父**条目 | 新文本 | 新用户条目与旧的是兄弟；旧消息与其后回复都不再在 tip 上 |
+
+因此 `ChatSendOptions` 是 `{ rewindToEntryId, reuseUserMessage }` 两个字段：`reuseUserMessage`
+决定「沿用已有用户消息（空 prompt）」还是「把 text 作为新用户消息发出」。这条判定抽成纯函数
+`runPromptFor`，有回归用例锁住——传错会让历史里多一份重复对话。
+
+编辑后渲染层同步**截断**到该消息之前（用户明确要求的「移除后面的所有消息」语义），
+与重新生成「保留旧回复以便切换」形成对照。
+
+### [S2.16] 历史回读也要带 parentId
+
+`mapUserMessage` 原来不写 `parentId`。编辑要回退到用户消息的**父**条目，这个字段必须能从
+回读路径拿到，否则重开会话后编辑首条消息会退到会话开头而不是它的父级。
+
+### [S2.17] day-separator 只取分隔行 + 向上滑动自动加载
+
+`elements-day-separator` 实际是**整段转录渲染器**：接收 `{id, day, time, role, text}[]`，
+自己渲染日期分隔 **+ 消息气泡 + hover 时间戳**。本应用的消息由逐条 primitives 渲染
+（markdown、工具调用、审批卡），用不了它那套气泡，所以只把分隔行抽成 `DaySeparatorRow` 导出，
+`DaySeparator` 内部也改走它——避免两套实现各自漂移。这是又一处有意为之的 vendored 偏差。
+
+自动加载：消息组**之前**放一个 1px 哨兵，`IntersectionObserver` 以视口为 root、
+`rootMargin: 400px 0 0 0` 提前触发。取完内容前插会把哨兵顶出视野，因此不需要额外节流；
+另加 `loadingOlderBySession` 作为并发闸门（滚动过程中可能连续触发）。
+手动「加载更早消息」按钮与其死词条一并移除，加载中状态改在顶部呈现。
+
 ## [S3] Out of Scope
 
 - 官方 `ReasoningTrigger` 的 "Reasoning"、`ToolFallback` 的 "Used tool"、`ToolCall` 内置面板的
@@ -381,3 +456,14 @@ footer 自身的高度，原来那句注释把因果关系说反了。同时把 
 - [x] T23: 清理本轮暴露的冗余 — acceptance: 助手消息根上自我抵消的 `pb-7.5 -mb-7.5` 已删且布局等价；`RunPosition` 四值枚举收成 `IsRunEndContext` 布尔 (covers: S2.11)
 - [ ] T24: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.11)
 - [ ] T25: 独立评审 — acceptance: 子代理对第四轮改动给出三份结论，特别是 hover 显隐是否真的不影响布局、`Copy` 在 user 消息下是否真的可用 (covers: S2.11)
+
+第五轮（用户实测反馈：六项问题）：
+
+- [x] T27: entryId 按角色配对 — acceptance: 用户条目与助手条目各配到自己的消息上；`pairEntryWithMessage` 的回归用例在退回「弹队首」实现时变红 (covers: S2.14)
+- [x] T28: 输入框固定底部 — acceptance: 内容不足一屏时脚注仍贴底（`flex-1` 换成 `min-h-full`）；超一屏由 sticky 接管 (covers: S2.13)
+- [x] T29: 状态行挂当前运行的段首 — acceptance: 只有末尾连续助手段的**首条**在运行期间显示状态行；标签取自线程里最后一条 running 消息的工具名 (covers: S2.12)
+- [x] T30: 编辑用户消息 + 模态 — acceptance: 编辑按钮打开模态；发送回退到该消息的父条目并把新文本作为新用户消息发出；列表截断到该消息之前 (covers: S2.15)
+- [x] T31: 回读路径带 parentId — acceptance: 历史回读的用户消息有 `parentId`，编辑首条消息能退回其父级 (covers: S2.16)
+- [x] T32: day-separator 只取分隔行 + 自动加载 — acceptance: 日期分隔走 `DaySeparatorRow`；滚到顶部附近自动取更早一页且有并发闸门；手动按钮与其死词条移除 (covers: S2.17)
+- [ ] T33: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.12–S2.17)
+- [ ] T34: 独立评审 — acceptance: 子代理对本轮改动给出三份结论，重点复核两条回退语义（重新生成 vs 编辑）与「当前运行段首」的判定 (covers: S2.12, S2.14, S2.15)
