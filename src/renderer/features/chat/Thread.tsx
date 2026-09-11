@@ -16,10 +16,11 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
+  GitBranchIcon,
   PencilIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { createContext, Fragment, useContext, useEffect, useRef } from "react";
+import { createContext, Fragment, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
 import {
@@ -37,14 +38,16 @@ import {
   ReasoningTrigger,
 } from "@/renderer/components/assistant-ui/elements/reasoning.aui";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/thinking-indicator";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import type { SessionSearchHit } from "@/renderer/features/search";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
+import { useChatStore } from "@/renderer/stores/chat-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
-import { ToolCallPart, ToolRunGroup } from "./ToolParts";
+import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 
 /**
  * 这条助手消息是不是所在运行段的最后一条。
@@ -132,12 +135,62 @@ function BranchPicker({ className, ...rest }: BranchPickerPrimitive.Root.Props) 
 }
 
 /**
- * 助手消息的底部操作栏：复制 + 重新生成。
+ * 运行秒数。官方没有 selector —— `metadata.timing` 要等消息结束才定下来 —— 所以自己起计时器。
+ */
+function useElapsedLabel(active: boolean): string | undefined {
+  const [label, setLabel] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!active) {
+      setLabel(undefined);
+      return;
+    }
+    const start = Date.now();
+    setLabel("0s");
+    const id = setInterval(() => {
+      setLabel(`${Math.round((Date.now() - start) / 1000)}s`);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [active]);
+
+  return label;
+}
+
+/**
+ * 正在输出那条消息尾部的真实状态：有未完成的工具调用就报它的名字，否则是笼统的思考中。
+ * 用词条键（字符串）而不是译文做选择器的返回值，Object.is 才稳定。
+ */
+function AssistantThinking() {
+  const { t } = useTranslation();
+  const labelKey = useAuiState((s) => {
+    if (s.message.status?.type !== "running") return undefined;
+    const pending = s.message.parts.find(
+      (part) => part.type === "tool-call" && part.result === undefined,
+    );
+    if (pending?.type === "tool-call") return toolActiveLabelKey(pending.toolName);
+    return "tools.thinking";
+  });
+  const elapsed = useElapsedLabel(labelKey !== undefined);
+
+  if (labelKey === undefined) return null;
+  return <ThinkingIndicator label={t(labelKey)} elapsed={elapsed} />;
+}
+
+/**
+ * 助手消息的底部操作栏：复制 + 重新生成 + 分支。
  * 运行中整条收起（hideWhenRunning）——重新生成会在半途截断当前运行。
  * 高度由外层的 ACTION_BAR_HEIGHT 常驻预留，所以它的显隐不改变消息间距。
  */
 function AssistantActionBar() {
   const { t } = useTranslation();
+  const sessionId = useChatStore((s) => s.activeSessionId);
+  // 这条助手消息对应的 pi 条目 id；流式中的临时消息还没有，此时不给分支入口
+  const entryId = useAuiState((s) => {
+    const custom = s.message.metadata?.custom as { entryId?: unknown } | undefined;
+    return typeof custom?.entryId === "string" ? custom.entryId : undefined;
+  });
+  const canBranch = entryId !== undefined && sessionId !== null;
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
@@ -158,24 +211,30 @@ function AssistantActionBar() {
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
+      {/* 分支：以这条消息为切点复制出新的会话（主进程 sessions.fork），并切到新会话 */}
+      {canBranch && (
+        <TooltipIconButton
+          tooltip={t("chat.branchFromHere")}
+          onClick={() => void useChatStore.getState().forkSession(sessionId, entryId)}
+        >
+          <GitBranchIcon />
+        </TooltipIconButton>
+      )}
     </ActionBarPrimitive.Root>
   );
 }
 
 /**
- * 用户消息的底部操作栏：复制 + 编辑，hover 才出现（autohide="always"）。
+ * 用户消息的操作栏：复制 + 编辑。
  *
- * 用 ActionBarPrimitive.Copy 是因为它的谓词与角色无关（只在 assistant 流式中禁用），
- * 用户消息同样可复制。Reload 才是 assistant 专属，所以不放这里。
+ * 不用 `ActionBarPrimitive.Root` 包：它在隐藏时直接 `return null`（不渲染），
+ * 于是「hover 才出现」的按钮在键盘与辅助技术下根本不存在 —— 而编辑没有别的入口。
+ * 这里改成常驻 DOM、只切 CSS 可见性，Tab 进来时该行会自行显形。
  */
 function UserActionBar() {
   const { t } = useTranslation();
   return (
-    <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="always"
-      className="flex animate-in items-center gap-1 text-muted-foreground fade-in duration-200 motion-reduce:animate-none"
-    >
+    <div className="flex items-center gap-1 text-muted-foreground">
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip={t("common.copy")}>
           <AuiIf condition={(s) => s.message.isCopied}>
@@ -191,7 +250,7 @@ function UserActionBar() {
           <PencilIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Edit>
-    </ActionBarPrimitive.Root>
+    </div>
   );
 }
 
@@ -208,11 +267,14 @@ const UserImagePart: ImageMessagePartComponent = (part) => (
 );
 
 function UserMessage() {
+  const running = useAuiState((s) => s.thread.isRunning);
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
       data-role="user"
-      className="grid animate-in grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [&:where(>*)]:col-start-2"
+      // group/msg：下方操作栏的 hover 显隐挂在这个消息根上，鼠标落在消息任意处都能唤出
+      className="group/msg grid animate-in grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [&:where(>*)]:col-start-2"
     >
       <UserMessageAttachments />
 
@@ -223,18 +285,23 @@ function UserMessage() {
           />
         </div>
         {/*
-          hover 时出现的操作栏，坐在气泡下方的常驻高度里。
-          高度与助手那边同值（ACTION_BAR_HEIGHT），所以两条流的节奏一致；
-          因为它始终占位，按钮的显隐不会改变消息的上下间距。
+          hover 或键盘聚焦时显形的操作栏，坐在气泡下方的常驻高度里。
+          高度与助手那边同值（ACTION_BAR_HEIGHT），两条流的节奏因此一致；
+          关键是**常驻 DOM、只切 CSS 可见性** —— 换成条件挂载会让按钮在 Tab 序列里消失，
+          而编辑没有别的入口，键盘与辅助技术就再也用不到它。
+          运行中不给编辑入口（会与流式冲突），此时这个容器只占位。
         */}
         <div
           className={cn(
             "flex items-center justify-end",
             ACTION_BAR_HEIGHT,
             "peer-empty:hidden",
+            "pointer-events-none opacity-0 transition-opacity duration-200 motion-reduce:transition-none",
+            "group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
+            "focus-within:pointer-events-auto focus-within:opacity-100",
           )}
         >
-          <UserActionBar />
+          {running ? null : <UserActionBar />}
         </div>
       </div>
 
@@ -244,8 +311,8 @@ function UserMessage() {
 }
 
 function AssistantMessage() {
-  const { t } = useTranslation();
   const isRunEnd = useContext(IsRunEndContext);
+  const messageRunning = useAuiState((s) => s.message.status?.type === "running");
 
   return (
     <MessagePrimitive.Root
@@ -258,7 +325,7 @@ function AssistantMessage() {
         // flex + gap：块（思考 / 工具 / 正文）之间由 gap 统一控制，块自身不带纵向外边距
         className="flex flex-col gap-y-3 px-2 leading-relaxed text-foreground wrap-break-word"
       >
-        <MessagePrimitive.GroupedParts groupBy={GROUP_BY}>
+        <MessagePrimitive.GroupedParts groupBy={GROUP_BY} indicator="never">
           {({ part, children }) => {
             switch (part.type) {
               case "group-chainOfThought":
@@ -302,17 +369,6 @@ function AssistantMessage() {
                     <Image {...part} />
                   </div>
                 );
-              case "indicator":
-                return (
-                  <span
-                    data-slot="aui_assistant-message-indicator"
-                    role="status"
-                    className="animate-pulse font-sans motion-reduce:animate-none"
-                    aria-label={t("chat.running")}
-                  >
-                    {"●"}
-                  </span>
-                );
               default:
                 return null;
             }
@@ -321,14 +377,23 @@ function AssistantMessage() {
         <MessageError />
       </div>
 
-      {/* 一次运行只有段尾那条挂操作栏，运行中由 hideWhenRunning 整条收起 */}
+      {/*
+        段尾那块位置：运行中是真实状态指示，结束后是唯一的操作栏。
+        两者高度同值（ACTION_BAR_HEIGHT），所以切换不改变消息间距。
+      */}
       {isRunEnd && (
         <div
           data-slot="aui_assistant-message-footer"
           className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
         >
-          <BranchPicker />
-          <AssistantActionBar />
+          {messageRunning ? (
+            <AssistantThinking />
+          ) : (
+            <>
+              <BranchPicker />
+              <AssistantActionBar />
+            </>
+          )}
         </div>
       )}
     </MessagePrimitive.Root>

@@ -209,6 +209,7 @@ export const zhCN = {
     callActive: "正在调用",
     groupCount: "{{count}} 个工具",
     groupActive: "正在工作",
+    thinking: "正在思考",
     bashLinesOmitted: "… 前 {{count}} 行已省略",
     diffLinesOmitted: "… 余 {{count}} 行已省略",
   },

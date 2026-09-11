@@ -51,6 +51,11 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
 
 const FALLBACK_LABELS = { resting: "tools.call", active: "tools.callActive" };
 
+/** 工具进行态的词条键；未登记的工具落到通用「调用」。给消息尾部的运行指示器复用 */
+export function toolActiveLabelKey(toolName: string): string {
+  return (TOOL_LABELS[toolName] ?? FALLBACK_LABELS).active;
+}
+
 /** bash 的详情：命令作标题、末尾输出作正文、运行中转圈、完成打勾 */
 function TerminalDetail({
   args,

@@ -214,6 +214,7 @@ export const enUS = {
     callActive: "Calling",
     groupCount: "{{count}} tools",
     groupActive: "Working",
+    thinking: "Thinking",
     bashLinesOmitted: "… {{count}} earlier lines omitted",
     diffLinesOmitted: "… {{count}} more lines omitted",
   },
