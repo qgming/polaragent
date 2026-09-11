@@ -16,6 +16,7 @@ import {
 import type { KeyboardEvent } from "react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ContextDisplayRing } from "@/renderer/components/assistant-ui/elements/context-display";
 import {
   collapsePanel,
   field,
@@ -40,12 +41,42 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/u
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { ModelEntry, PermissionMode, QueuedMessage, ThinkingLevel } from "@/shared/contracts";
+import type {
+  ChatMessage,
+  ChatMessageUsage,
+  ModelEntry,
+  PermissionMode,
+  QueuedMessage,
+  ThinkingLevel,
+} from "@/shared/contracts";
 
 /** 队列面板默认展示的条数，超出以 +N 表示 */
 const QUEUE_PREVIEW = 3;
 /** 稳定空引用：避免 zustand selector 每次返回新数组导致多余渲染 */
 const EMPTY_QUEUE: QueuedMessage[] = [];
+
+/** 模型未配上下文窗口时的缺省值，与主进程 providers.ts 的 DEFAULT_CONTEXT_WINDOW 对齐 */
+const FALLBACK_CONTEXT_WINDOW = 128_000;
+
+/**
+ * 本次会话的上下文用量：取最后一条带 usage 的助手消息。
+ * 返回的是消息里那个 usage 对象自身——流式期间文本增量只会替换 parts，
+ * usage 的引用不变，zustand 的 Object.is 比较因此不会让 Composer 跟着每个 token 重渲染。
+ */
+function selectSessionUsage(state: {
+  activeSessionId: string | null;
+  messagesBySession: Record<string, ChatMessage[]>;
+}): ChatMessageUsage | null {
+  const { activeSessionId } = state;
+  if (activeSessionId === null) return null;
+  const messages = state.messagesBySession[activeSessionId];
+  if (messages === undefined) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && message.usage !== undefined) return message.usage;
+  }
+  return null;
+}
 
 /** chip 触发键：形状抄自 elements/composer.tsx 的 ComposerModelTrigger，三个 chip 共用 */
 const chipTrigger = cn(
@@ -417,6 +448,8 @@ export function Composer() {
     s.activeSessionId === null ? EMPTY_QUEUE : (s.queueBySession[s.activeSessionId] ?? EMPTY_QUEUE),
   );
   const canSend = useAuiState((s) => s.composer.canSend);
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const sessionUsage = useChatStore(selectSessionUsage);
 
   const permissionMode = settings?.permissionMode ?? "default";
   const thinkingLevel = settings?.thinkingLevel ?? "medium";
@@ -433,6 +466,16 @@ export function Composer() {
       (option) =>
         option.serviceId === defaultModel?.serviceId && option.model.id === defaultModel.modelId,
     ) ?? null;
+
+  // 发送键左侧的用量环：无 usage（新会话 / 供应商不上报）时组件自身返回 null
+  const usageRing = (
+    <ContextDisplayRing
+      modelContextWindow={currentModel?.model.contextWindow ?? FALLBACK_CONTEXT_WINDOW}
+      usage={sessionUsage ?? undefined}
+      resetKey={activeSessionId ?? undefined}
+      className="h-8"
+    />
+  );
 
   /**
    * 运行中 Enter 排队 / Ctrl(⌘)+Enter 插话（B4 ④）。
@@ -511,6 +554,7 @@ export function Composer() {
                 <ShimmerLabel className="hidden max-w-56 truncate text-[11px] text-muted-foreground md:inline">
                   {t("approval.stopAfterStep")}
                 </ShimmerLabel>
+                {usageRing}
                 <Button
                   type="button"
                   variant="default"
@@ -523,20 +567,23 @@ export function Composer() {
                 </Button>
               </div>
             ) : (
-              <ComposerPrimitive.Send asChild>
-                {/* 空输入时禁用（前景 40% 不透明，B1 ③） */}
-                <button
-                  type="button"
-                  disabled={!canSend}
-                  aria-label={t("chat.send")}
-                  className={cn(
-                    inkButton,
-                    "grid size-8 shrink-0 place-items-center rounded-full disabled:opacity-40",
-                  )}
-                >
-                  <ArrowUp className="size-4" />
-                </button>
-              </ComposerPrimitive.Send>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {usageRing}
+                <ComposerPrimitive.Send asChild>
+                  {/* 空输入时禁用（前景 40% 不透明，B1 ③） */}
+                  <button
+                    type="button"
+                    disabled={!canSend}
+                    aria-label={t("chat.send")}
+                    className={cn(
+                      inkButton,
+                      "grid size-8 shrink-0 place-items-center rounded-full disabled:opacity-40",
+                    )}
+                  >
+                    <ArrowUp className="size-4" />
+                  </button>
+                </ComposerPrimitive.Send>
+              </div>
             )}
           </div>
         </ComposerPrimitive.AttachmentDropzone>

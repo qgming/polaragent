@@ -82,7 +82,6 @@ export const enUS = {
     unarchive: "Unarchive",
     delete: "Delete",
     newChat: "New chat",
-    usage: "Usage",
     settings: "Settings",
     branchOf: "Branch",
   },

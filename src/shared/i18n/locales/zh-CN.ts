@@ -81,7 +81,6 @@ export const zhCN = {
     unarchive: "取消归档",
     delete: "删除",
     newChat: "新对话",
-    usage: "用量",
     settings: "设置",
     branchOf: "分支",
   },

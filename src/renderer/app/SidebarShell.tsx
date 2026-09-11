@@ -1,4 +1,4 @@
-import { BarChart3, PanelLeft, Plus, Settings2 } from "lucide-react";
+import { PanelLeft, Plus, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -7,6 +7,7 @@ import {
   ThreadListRoot,
   ThreadListSearch,
 } from "@/renderer/components/assistant-ui/elements/thread-list.aui";
+import { ThemeToggle } from "@/renderer/components/ThemeToggle";
 import { Button } from "@/renderer/components/ui/button";
 import {
   Dialog,
@@ -55,7 +56,7 @@ function RailButton({
  * 侧栏：会话列表整体交给 assistant-ui 官方的 thread-list 部件
  *（ThreadListRoot / New / Search / Items + ThreadListItem），
  * 会话数据由 PolarRuntimeProvider 的 threadList 适配器从 chat-store 供上。
- * 折叠轨道与底部设置/用量是该部件的扩展位，不在官方组件内，按 Elements 的图标按钮口径自建。
+ * 折叠轨道与底部设置/主题是该部件的扩展位，不在官方组件内，按 Elements 的图标按钮口径自建。
  */
 export function SidebarShell() {
   const { t } = useTranslation();
@@ -120,7 +121,7 @@ export function SidebarShell() {
         </>
       )}
 
-      {/* 底部：设置（左）+ 用量（右） */}
+      {/* 底部：设置（左）+ 主题切换（右） */}
       <div
         className={`border-t border-border/60 p-2 ${collapsed ? "flex flex-col items-center gap-1" : ""}`}
       >
@@ -128,9 +129,7 @@ export function SidebarShell() {
           <RailButton label={t("sidebar.settings")} onClick={() => openSettings()}>
             <Settings2 className="size-4" />
           </RailButton>
-          <RailButton label={t("sidebar.usage")} onClick={() => {}} disabled>
-            <BarChart3 className="size-4" />
-          </RailButton>
+          <ThemeToggle side="right" />
         </div>
       </div>
 

@@ -1,7 +1,6 @@
 import { Copy, Minus, Square, X } from "lucide-react";
 import { type CSSProperties, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ThemeToggle } from "@/renderer/components/ThemeToggle";
 import { Button } from "@/renderer/components/ui/button";
 
 // Electron 自定义拖拽属性不属于标准 CSS，补充到类型里
@@ -31,9 +30,8 @@ export function TitleBar() {
         <span className="truncate text-sm font-medium">{t("app.name")}</span>
       </div>
 
-      {/* 右侧：主题切换 + 窗口控制；按钮区不可拖拽 */}
+      {/* 右侧：窗口控制；按钮区不可拖拽。主题切换在侧栏底部 */}
       <div style={noDragStyle} className="flex items-center gap-1">
-        <ThemeToggle />
         <Button
           type="button"
           variant="ghost"

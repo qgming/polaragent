@@ -21,7 +21,7 @@ const THEME_META: Record<
   system: { Icon: Monitor, labelKey: "app.themeSystem" },
 };
 
-export function ThemeToggle() {
+export function ThemeToggle({ side = "top" }: { side?: "top" | "right" }) {
   const { t } = useTranslation();
   // 设置未加载完成前按 system 兜底（Monitor 图标）
   const theme = useSettingsStore((s) => s.settings?.theme ?? "system");
@@ -48,7 +48,7 @@ export function ThemeToggle() {
           <Icon className="size-4" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{t(labelKey)}</TooltipContent>
+      <TooltipContent side={side}>{t(labelKey)}</TooltipContent>
     </Tooltip>
   );
 }
