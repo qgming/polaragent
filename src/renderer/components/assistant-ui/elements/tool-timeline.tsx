@@ -65,6 +65,7 @@ export function ToolTimeline({
     });
   };
 
+  // 纵向间距交给父容器的 gap（与正文段落、思考块同为 12px），块自身不带到外边距
   return (
     <Collapsible
       data-slot="tool-timeline"
@@ -72,7 +73,7 @@ export function ToolTimeline({
       onOpenChange={onOpenChange}
       className={cn("w-full", className)}
     >
-      <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-1.5 rounded-md py-1 text-[13.5px] transition-colors outline-none">
+      <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-1.5 rounded-md py-0 text-[13.5px] transition-colors outline-none">
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" />
         <SwapLabel active={streaming ? 0 : 1} className="text-start tabular-nums">
           <ShimmerLabel active={streaming} className="relative inline-block leading-none">

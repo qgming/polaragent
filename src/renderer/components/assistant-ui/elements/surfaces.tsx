@@ -36,8 +36,20 @@ export const labelSwapIn = "opacity-100 blur-none";
 
 export const labelSwapOut = "pointer-events-none select-none opacity-0 blur-[2px]";
 
+/**
+ * 折叠面板：键帧动画收尾，静止高度回到 `auto`。
+ *
+ * 不能沿用 Base UI 那套「把高度钉在 `--collapsible-panel-height` 变量上」的写法。该变量在
+ * Radix 下由 `--radix-collapsible-content-height` 桥接而来，而 Radix 是把它设在**内层内容元素
+ * 自己**的 style 上、值来自 `useLayoutEffect` 里对该元素自身 `getBoundingClientRect` 的测量——
+ * 高度因此自锁：元素高度由变量决定，变量又由元素自己的高度决定，那个 effect 只依赖
+ * `open`/`present`，一旦定住就不再随内容重测，`overflow-hidden` 把后续多出来的部分裁掉
+ * （嵌套折叠展开、bash 输出流式追加都属于这一类）。Radix 也不设
+ * `data-starting-style` / `data-ending-style`，没有松手的时机。
+ * 本目录的 reasoning / tool-fallback / tool-group 都是这个键帧口径，这里跟齐。
+ */
 export const collapsePanel =
-  "h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] data-[ending-style]:h-0 data-[starting-style]:h-0 motion-reduce:transition-none";
+  "overflow-hidden data-open:animate-collapsible-down data-closed:animate-collapsible-up data-closed:fill-mode-forwards data-closed:pointer-events-none motion-reduce:animate-none";
 
 export const live = "text-blue-500 dark:text-blue-400";
 

@@ -188,7 +188,15 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
     [props.toolName, props.artifact, isError],
   );
 
-  if (isError) return <ToolFallback {...props} />;
+  // ToolFallback 的触发行自带 py-1.5（vendored 的既定样式），那 6px 会让它的视觉间距
+  // 比同为 gap 驱动的其它块多出一截；用负外边距抵掉，不动 vendored 文件
+  if (isError) {
+    return (
+      <div className="-my-1.5">
+        <ToolFallback {...props} />
+      </div>
+    );
+  }
 
   const labels = TOOL_LABELS[props.toolName] ?? FALLBACK_LABELS;
   return (
@@ -237,8 +245,10 @@ export function ToolRunGroup({
   const signature = useAuiState((s) => JSON.stringify(toolRows(s.message.parts, indices)));
   const streaming = useAuiState((s) => s.message.status?.type === "running");
   const rows = useMemo(() => JSON.parse(signature) as ToolRow[], [signature]);
+
   if (rows.length < 2 || rows.some((row) => row.failed)) {
-    return <div className="flex flex-col gap-1.5">{children}</div>;
+    // 直接给 children：父容器是 flex + gap，包一层 flex 会再叠一道 gap
+    return <>{children}</>;
   }
 
   const steps: TimelineStep[] = rows.map((row) => ({

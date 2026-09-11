@@ -253,7 +253,6 @@ function AssistantMessage() {
   const { t } = useTranslation();
   // null 表示这条消息不在某次运行的助手段里（渲染在消息流之外时也走这个兜底）
   const position = useContext(RunPositionContext);
-  const startsRun = position === null || position === "solo" || position === "start";
   const endsRun = position === null || position === "solo" || position === "end";
 
   return (
@@ -262,21 +261,26 @@ function AssistantMessage() {
       data-role="assistant"
       className={cn(
         "relative animate-in duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none [contain-intrinsic-size:auto_200px] [content-visibility:auto]",
-        // 同一次运行里的续条紧贴上一段，整次输出读作一块；
-        // 只有段尾留出操作栏的高度（负外边距把那块高度还回给相邻间距）
-        !startsRun && "-mt-4",
+        // 纵向间距全部交给容器 gap（消息间与消息内同为 12px），不用负外边距去抵 gap。
+        // 这里只留操作栏那块高度：pb 撑出来、负 mb 还回给相邻间距。
         endsRun && "-mb-7.5 pb-7.5",
       )}
     >
       <div
         data-slot="aui_assistant-message-content"
-        className="px-2 leading-relaxed text-foreground wrap-break-word"
+        // flex + gap：块（思考 / 工具 / 正文）之间由 gap 统一控制，块自身不带纵向外边距
+        className="flex flex-col gap-y-3 px-2 leading-relaxed text-foreground wrap-break-word"
       >
         <MessagePrimitive.GroupedParts groupBy={GROUP_BY}>
           {({ part, children }) => {
             switch (part.type) {
               case "group-chainOfThought":
-                return <div data-slot="aui_chain-of-thought">{children}</div>;
+                // 思维链把推理与工具折在一起，这里也要 flex + gap，否则组内两块贴在一起
+                return (
+                  <div data-slot="aui_chain-of-thought" className="flex flex-col gap-y-3">
+                    {children}
+                  </div>
+                );
               case "group-tool":
                 return <ToolRunGroup indices={part.indices}>{children}</ToolRunGroup>;
               case "group-reasoning": {
@@ -412,7 +416,7 @@ export function ThreadView({ approvals = [], onResolve, searchHit = null }: Thre
         className="app-scrollbar relative min-h-0 flex-1 overflow-y-auto"
       >
         <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4">
-          <div data-slot="aui_message-group" className="mb-2 flex flex-col gap-y-6 empty:hidden">
+          <div data-slot="aui_message-group" className="mb-2 flex flex-col gap-y-3 empty:hidden">
             {messages.map((message, index) => {
               const prev = messages[index - 1];
               const next = messages[index + 1];

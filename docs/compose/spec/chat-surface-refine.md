@@ -1,7 +1,7 @@
 ---
 feature: chat-surface-refine
-status: delivered
-updated: 2026-09-11
+status: in-progress
+updated: 2026-09-12
 branch: feat/assistant-ui-elements
 commits: 9abbce7..eb5fec5
 ---
@@ -223,6 +223,80 @@ const part = useAuiState((s) => (open ? s.message.parts[index] : undefined));
 `ToolRunGroup` 汇总步骤用的 `signature`（名字 / chip / 失败标记）仍走 JSON 字符串，
 但**不含 result**——那份快照要按 token 重算，不能带大块文本。
 
+### [S2.8] 折叠面板的高度不能钉死
+
+第二轮实测暴露：`tool-timeline` 里嵌套的步骤详情展开后只露出一截，其余被裁。
+
+根因是 `surfaces.tsx` 的 `collapsePanel` 把高度钉在 `--collapsible-panel-height` 上。该变量由
+`index.css` 桥接到 `--radix-collapsible-content-height`，而 Radix 是把它设在**内层内容元素自己**
+的 style 上、值来自 `useLayoutEffect` 里对该元素自身 `getBoundingClientRect` 的测量
+（`@radix-ui/react-collapsible` 的 `CollapsibleContentImpl`），而那个 effect 只依赖
+`open`/`present`。于是自锁：
+
+```
+元素高度 = 变量值 = 用元素自己的高度量出来的值
+```
+
+一旦定住就不再随内容重测，`overflow-hidden` 把多出来的部分裁掉。嵌套详情展开时外层内容增高、
+外层高度却停在展开那一刻的旧值，所以内层被外层裁掉。释放路径本应是
+`data-ending-style` / `data-starting-style`，但那是 Base UI 的属性，Radix 从不设，高度没有
+任何松手的时机。
+
+修法：`collapsePanel` 换成键帧口径，静止高度回到 `auto`，动画期间才读那个变量。
+
+```
+overflow-hidden data-open:animate-collapsible-down data-closed:animate-collapsible-up
+data-closed:fill-mode-forwards data-closed:pointer-events-none motion-reduce:animate-none
+```
+
+`--animate-collapsible-down/up` 与 `@keyframes collapsible-down/up` 早已在本仓 theme 里定义
+（`src/index.css`），`reasoning` / `tool-fallback` / `tool-group` 三个组件本来就是这个口径——
+只有 `collapsePanel` 还停在 Base UI 那套。改完之后 4 个消费方一起受益，其中
+`tool-call` 的详情面板（bash 输出流式追加）与 `tool-timeline` 的嵌套详情是属于"内容会增长"
+的那类，此前都会被裁。`index.css` 里 `--radix-collapsible-content-height` 的桥接保留，
+键帧仍然要用它。
+
+### [S2.9] 思考 / 工具 / 文字的间距统一到 12px
+
+实测的空间节奏（触发文字到相邻文字）：
+
+| 相邻关系 | 初始 | 首次尝试 | 最终 |
+| --- | --- | --- | --- |
+| 正文段落 ↔ 正文段落 | 12px | 12px | 12px |
+| 思考行 → 正文 | 22px（行内 6 + `mb-4` 16 压过段落 12） | 12px | 12px |
+| 块 → 文字（跨消息） | 24px（容器 gap） | 20px | 12px |
+
+初次尝试按"给块加 `my-3`、靠外边距相叠"来做，只对了一半：**flex 容器的 `gap` 不与 `margin`
+相叠，是直接相加**。块自己的 `my-3` 在消息内部能和段落的外边距叠成 12px，但跨到消息边界时
+它没有相叠对象，于是原样加在容器 `gap-y-6`（24px）之上，扣掉续条的 `-mt-4` 仍是 20px ——
+这就是"回复之中思考块上间距偏大"的成因。而 `content-visibility: auto`（`AssistantMessage`）
+建立了布局包含，跨消息的外边距**永远不会相叠**，所以靠调 margin 无解。
+
+最终改为**由容器 gap 统一驱动、块自身不带纵向外边距**：
+
+| 位置 | 改动 |
+| --- | --- |
+| `Thread.tsx` 消息容器 | `gap-y-6` → `gap-y-3` |
+| `Thread.tsx` 消息内容层 | 加 `flex flex-col gap-y-3`（承载消息内所有块） |
+| `Thread.tsx` 消息根 | 去掉 `-mt-4`（不再需要负外边距抵 gap） |
+| `ReasoningRoot` / `ToolCall` / `ToolTimeline` | 去掉 `my-3`，改由父容器 gap 驱动 |
+| `group-chainOfThought` 包裹层 | 加 `flex flex-col gap-y-3`，否则组内推理与工具两块贴在一起 |
+| `ToolFallback` 外层 | `-my-1.5`：它的触发行自带 `py-1.5`（vendored 既定样式），不抵掉就比别的块多 6px |
+| 触发行 | 纵向内边距为 0，否则总间距一定大于 gap |
+
+消息内与消息间因此同为 12px，与正文段落一致（这是本次明确接受的取舍：上下一条消息之间
+不再比消息内的块更松）。折叠行的点击区少 8~12px（仍为整行宽）。
+
+### [S2.10] 终端块的长命令与长输出行
+
+`terminal-block.tsx` 的根是 `overflow-hidden`，但内部对超宽内容没有任何处理，于是溢出即被裁：
+
+- 命令标题 `<span>{command}</span>` 没有 `min-w-0 truncate`，右侧的 exit 徽标也没有 `shrink-0`，
+  长命令把徽标顶出边界。改为标题单行省略（`min-w-0 truncate` + `title` 给出完整命令）、
+  右侧固定不缩。
+- 输出行按面板宽度换行（`whitespace-pre-wrap break-words`），不横向溢出。终端里长行换行
+  比横向滚动更好读，也与面板不可横向滚动的现状一致。
+
 ## [S3] Out of Scope
 
 - 官方 `ReasoningTrigger` 的 "Reasoning"、`ToolFallback` 的 "Used tool"、`ToolCall` 内置面板的
@@ -258,3 +332,11 @@ const part = useAuiState((s) => (open ? s.message.parts[index] : undefined));
 - [x] T14: 修 chip 的命令截断 — acceptance: 带斜杠的长命令按命令规则保留开头，不再被截成 `…/末级`；`tool-presentation.test.ts` 有实测红-绿记录 (covers: S2.1)
 - [x] T8: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 无新增问题（命令结果汇总到 Report，由 Finalize 步骤写入）(covers: S2.1, S2.2, S2.3, S2.4, S2.5, S2.7)
 - [x] T9: 独立评审 — acceptance: 子代理对 `9abbce7..HEAD` 完整改动给出 spec 合规 / 正确性 / 一致性三份结论；首轮 3 条 critical 已修并复核成立，第二轮确认无 critical (covers: S2.1, S2.2, S2.3, S2.4, S2.5, S2.7)
+
+第三轮（用户实测反馈：嵌套展开被裁、思考间距过大）：
+
+- [ ] T15: `collapsePanel` 换键帧口径 — acceptance: 面板静止高度回到 `auto`，`tool-timeline` 的嵌套详情与 `tool-call` 的流式输出不再被外层裁掉；生产 CSS 里 `.data-open:animate-collapsible-down` 命中 Radix 的 `[data-state=open]`，且钉高工具类不再由本仓源码生成 (covers: S2.8)
+- [ ] T16: 间距统一到 12px — acceptance: 思考行、工具行与正文之间的距离都等于段落之间；失败行同样是 12px；非成组分支不再用 flex 容器挡住外边距相叠 (covers: S2.9)
+- [ ] T17: 终端块的长命令行 — acceptance: 长命令单行省略且 exit 徽标不被顶出边界；输出长行按宽度换行而非溢出裁切 (covers: S2.10)
+- [ ] T18: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome check` 无新增问题（结果写入 Report）(covers: S2.8, S2.9, S2.10)
+- [ ] T19: 独立评审 — acceptance: 子代理对本轮改动给出三份结论，且证实 S2.8 的自锁论断与 CSS 证据 (covers: S2.8, S2.9, S2.10)
