@@ -23,9 +23,9 @@ export interface SessionsIndexStore {
   remove(id: string): Promise<void>;
 }
 
-/** 轻量索引文件：默认位于 {baseDir}/config/sessions-index.json */
+/** 轻量索引文件：位于 {baseDir}/sessions-index.json（baseDir 即数据根 ~/.oint） */
 export function createSessionsIndex(baseDir: string): SessionsIndexStore {
-  const filePath = path.join(baseDir, "config", "sessions-index.json");
+  const filePath = path.join(baseDir, "sessions-index.json");
   // 串行化读-改-写，避免并发 update 互相覆盖
   let queue: Promise<void> = Promise.resolve();
 

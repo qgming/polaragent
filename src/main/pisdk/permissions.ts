@@ -71,9 +71,9 @@ function sanitizeRule(value: unknown): PermissionRule | undefined {
   };
 }
 
-/** 创建规则库：持久化到 {baseDir}/config/permission-rules.json，内存缓存避免重复读盘 */
+/** 创建规则库：持久化到 {baseDir}/permission-rules.json，内存缓存避免重复读盘 */
 export function createPermissionRuleStore(baseDir: string): PermissionRuleStore {
-  const filePath = path.join(baseDir, "config", "permission-rules.json");
+  const filePath = path.join(baseDir, "permission-rules.json");
   let cache: PermissionRule[] | undefined;
   // 串行化写入，避免并发 add 覆盖彼此的落盘结果
   let writeChain: Promise<void> = Promise.resolve();

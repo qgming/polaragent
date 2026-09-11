@@ -367,7 +367,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
 
 let defaultStore: SessionStore | null = null;
 
-/** 默认单例：会话库位于 dataDir()/sessions，索引位于 dataDir()/config */
+/** 默认单例：会话库位于 dataDir()/sessions，索引位于数据根下的 sessions-index.json */
 export function getSessionStore(): SessionStore {
   defaultStore ??= createSessionStore(dataDir());
   return defaultStore;

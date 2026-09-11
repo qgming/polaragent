@@ -9,7 +9,7 @@ import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
 
 /** preload 暴露给渲染进程的全部能力面；渲染进程除此外无特权通道 */
-export interface PolarAgentApi {
+export interface OintApi {
   app: {
     getInfo(): Promise<AppInfo>;
     /** 用系统默认程序打开一个绝对路径（目录或文件）；失败时返回原因，不抛异常 */

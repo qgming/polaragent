@@ -13,7 +13,7 @@ export function AboutPanel() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    void window.polaragent.app
+    void window.oint.app
       .getInfo()
       .then(setInfo)
       .catch(() => setInfo(null));

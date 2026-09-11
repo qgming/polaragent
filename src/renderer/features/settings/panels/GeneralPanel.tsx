@@ -28,7 +28,7 @@ function OpenDirButton({ target, label }: { target: string | null; label: string
 
   const handleClick = async () => {
     if (target === null || target === "") return;
-    const result = await window.polaragent.app.openPath(target).catch(() => null);
+    const result = await window.oint.app.openPath(target).catch(() => null);
     setReason(result === null || !result.ok ? (result?.reason ?? t("errors.generic")) : null);
   };
 
@@ -65,7 +65,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
 
   // 数据目录：读取一次用于展示；「打开目录」走 app.openPath（见下）
   useEffect(() => {
-    void window.polaragent.app
+    void window.oint.app
       .getInfo()
       .then((info) => setDataDir(info.dataDir))
       .catch(() => setDataDir(null));
@@ -80,7 +80,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
   };
 
   const handlePickWorkingDir = async () => {
-    const dir = await window.polaragent.dialog
+    const dir = await window.oint.dialog
       .pickDirectory(settings.defaultWorkingDir ?? undefined)
       .catch(() => null);
     if (dir) void update({ defaultWorkingDir: dir });
@@ -143,7 +143,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
         />
       </SettingsSection>
 
-      {/* 对话排版：不设分区标题，保持与设计稿一致的安静行式布局 */}
+      {/* 对话排版：不设分区标题，保持安静的行式布局 */}
       <SettingsSection>
         <SettingsField
           label={t("settings.chatFont")}

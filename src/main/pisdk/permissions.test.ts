@@ -49,7 +49,7 @@ describe("createPermissionRuleStore", () => {
   let baseDir: string;
 
   beforeEach(async () => {
-    baseDir = await mkdtemp(path.join(os.tmpdir(), "polaragent-rules-"));
+    baseDir = await mkdtemp(path.join(os.tmpdir(), "oint-rules-"));
   });
 
   afterEach(async () => {

@@ -68,7 +68,7 @@ function BrandMark() {
 /**
  * 侧栏：会话列表整体交给 assistant-ui 官方的 thread-list 部件
  *（ThreadListRoot / New / Items + ThreadListItem），
- * 会话数据由 PolarRuntimeProvider 的 threadList 适配器从 chat-store 供上。
+ * 会话数据由 OintRuntimeProvider 的 threadList 适配器从 chat-store 供上。
  * 顶部的搜索入口、底部的设置/主题是该部件的扩展位，不在官方组件内，
  * 按 Elements 的图标按钮口径自建。搜索不在这里做（不做列表内筛选），统一走搜索模态窗。
  *

@@ -18,7 +18,7 @@ import { appendMessageToImages, appendMessageToText, toThreadMessage } from "./m
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
 /** 渲染层运行时桥：把 chat-store 接入 assistant-ui 的 ExternalStoreRuntime */
-export function PolarRuntimeProvider({
+export function OintRuntimeProvider({
   children,
 }: {
   children: React.ReactNode;
@@ -63,7 +63,7 @@ export function PolarRuntimeProvider({
    * 会话列表适配器：把 chat-store 的 sessions 接到官方的 thread-list primitives。
    * threads 的顺序即渲染顺序，store 已按 updatedAt 降序维护，这里不再排序。
    *
-   * 两点取舍（接受的功能回退，见 docs/compose/spec 的 S3）：
+   * 两点取舍（都是接受的功能回退）：
    * · 外部存储适配器的数据没有 lastMessageAt，官方 useThreadListGroups 因此拿不到日期，
    *   列表退化成平铺（原实现按今天/昨天/更早分组）。
    * · 官方 thread list 只为「主线程」保留 runtime，非当前会话读不到运行状态，

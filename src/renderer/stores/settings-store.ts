@@ -43,7 +43,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   loaded: false,
 
   async load() {
-    const settings = await window.polaragent.settings.read();
+    const settings = await window.oint.settings.read();
     set({ settings, loaded: true });
   },
 
@@ -53,9 +53,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const next = { ...prev, ...patch };
     set({ settings: next });
 
-    const task = writeChain
-      .catch(() => undefined)
-      .then(() => window.polaragent.settings.write(next));
+    const task = writeChain.catch(() => undefined).then(() => window.oint.settings.write(next));
     writeChain = task;
 
     try {

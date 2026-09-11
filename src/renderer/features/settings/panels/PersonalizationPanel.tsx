@@ -24,7 +24,7 @@ export function PersonalizationPanel() {
   // 载入 AGENTS.md；失败按空文档处理，避免面板卡在加载态
   useEffect(() => {
     let cancelled = false;
-    void window.polaragent.agents
+    void window.oint.agents
       .read()
       .then((text) => {
         if (!cancelled) setContent(text);
@@ -49,7 +49,7 @@ export function PersonalizationPanel() {
     setSaving(true);
     setSaveFailed(false);
     try {
-      await window.polaragent.agents.write(content);
+      await window.oint.agents.write(content);
       setDirty(false);
       setSaved(true);
     } catch {

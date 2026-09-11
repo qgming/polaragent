@@ -59,7 +59,7 @@ describe("deriveRulePattern", () => {
 
   it("write/edit 取路径首段并跳过盘符", () => {
     expect(deriveRulePattern("write", { path: "src/foo.ts" })).toBe("src");
-    expect(deriveRulePattern("edit", { path: "D:\\dev\\polaragent\\a.ts" })).toBe("dev");
+    expect(deriveRulePattern("edit", { path: "D:\\dev\\oint\\a.ts" })).toBe("dev");
     expect(deriveRulePattern("write", {})).toBeUndefined();
   });
 });

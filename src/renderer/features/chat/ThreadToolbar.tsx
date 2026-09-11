@@ -50,7 +50,7 @@ export function ThreadToolbar() {
         </CollapsibleTrigger>
         {notice.length > 0 && (
           <CollapsibleContent>
-            {/* 摘要正文：左侧 2px 竖线引用样式（同 B3 ②） */}
+            {/* 摘要正文：左侧 2px 竖线引用样式 */}
             <div className="mt-1 border-l-2 border-border px-3 py-1 text-xs leading-relaxed text-muted-foreground">
               {notice}
             </div>

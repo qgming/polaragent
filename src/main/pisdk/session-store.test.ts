@@ -26,7 +26,7 @@ function textOf(message: { parts: unknown[] } | undefined): string {
 }
 
 beforeEach(async () => {
-  baseDir = await mkdtemp(path.join(os.tmpdir(), "polaragent-sessions-"));
+  baseDir = await mkdtemp(path.join(os.tmpdir(), "oint-sessions-"));
   clock = 1_700_000_000_000;
   // 注入递增时钟，保证 list 排序断言稳定
   repo = new SqliteSessionRepo({

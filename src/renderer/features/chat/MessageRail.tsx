@@ -1,5 +1,5 @@
 import type { ThreadMessage } from "@assistant-ui/react";
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { cn } from "@/renderer/lib/utils";
@@ -133,7 +133,28 @@ export function MessageRail({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hovered, setHovered] = useState<{ index: number; top: number } | null>(null);
 
+  /**
+   * 高亮值的写入闸门：**只在值真的变了才 setState**。
+   *
+   * `messages` 的数组身份会随每次渲染变化（库把 thread 消息重新归一化），
+   * 于是下面那个「消息变化就重算」的 effect 会在每次渲染后重跑。
+   * 若这里无条件 setState，就变成 effect → setState → 重渲染 → effect 的无限循环：
+   * React 嵌套更新超过 50 层会抛 #185（Maximum update depth exceeded），
+   * 而没有错误边界时整棵树会被卸载 —— 表现就是流式输出中途**整屏变白**。
+   * 闸门把「同值重复写入」变成 no-op，循环从根上断掉。
+   */
+  const commitActiveId = useCallback((next: string | null) => {
+    setActiveId((prev) => (prev === next ? prev : next));
+  }, []);
+
   const ticks = useMemo(() => buildTicks(messages), [messages]);
+
+  /**
+   * 消息集合的稳定签名：条数 + 末条 id。
+   * 用它当 effect 依赖，而不是 `messages` 数组本身 —— 数组身份每次渲染都变，
+   * 直接依赖会让 effect 每渲染必跑一次（内容增长已由 MutationObserver / ResizeObserver 覆盖）。
+   */
+  const railSignature = `${messages.length}:${messages.at(-1)?.id ?? ""}`;
 
   /**
    * 「高亮哪一格」的重算函数。存进 ref：滚动监听挂在视口上（只随视口重建），
@@ -187,7 +208,8 @@ export function MessageRail({
       }
       // 一条都还没进入可见范围（会话刚打开、内容还没铺满）时，指出开头那一条
       if (current === null) current = nodes[0]?.dataset.messageId ?? null;
-      setActiveId(current);
+      // 走闸门写入：同值重复写入是 no-op，避免 effect ↔ setState 互相触发
+      commitActiveId(current);
     };
 
     const schedule = () => {
@@ -214,13 +236,16 @@ export function MessageRail({
       resize?.disconnect();
       if (frame !== 0) window.cancelAnimationFrame(frame);
     };
-  }, [viewportRef]);
+    // commitActiveId 是 useCallback([]) 的空依赖稳定引用，加上不会让 effect 重建
+  }, [viewportRef, commitActiveId]);
 
-  // 消息变化后重算一次：新消息刚渲染进 DOM，当前读到的那条可能已经变了
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 消息变化就是这次的触发条件
+  // 消息集合变化后重算一次：新消息刚渲染进 DOM，当前读到的那条可能已经变了。
+  // 依赖用签名而不是 messages 数组本身：数组身份每次渲染都变，直接依赖会让
+  // 这个 effect 每渲染后必跑（配合下面 setState 就是 React #185 白屏的那条循环）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 签名变化才是这次的触发条件
   useEffect(() => {
     updateActiveRef.current();
-  }, [messages]);
+  }, [railSignature]);
 
   if (messages.length < 2) return null;
 

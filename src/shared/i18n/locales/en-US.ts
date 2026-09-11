@@ -18,7 +18,7 @@ export const enUS = {
     saved: "Saved",
   },
   app: {
-    name: "PolarAgent",
+    name: "Oint",
     minimize: "Minimize",
     maximize: "Maximize",
     closeWindow: "Close window",
@@ -34,7 +34,7 @@ export const enUS = {
     inputPlaceholder: "Type a message. Enter to send, Shift+Enter for a new line",
     newChat: "New chat",
     welcome: "What would you like to do today?",
-    welcomeSubtitle: "Hand the task to PolarAgent — it can read and write code and run commands.",
+    welcomeSubtitle: "Hand the task to Oint — it can read and write code and run commands.",
     composerDisabledHint: "The conversation area will be wired up in a later version",
     attachImage: "Add image",
     removeAttachment: "Remove attachment",

@@ -173,7 +173,7 @@ function AttachmentThumb({ attachment }: { attachment: Attachment }) {
   );
 }
 
-/** 权限模式 chip（B5 〇）：三模式单选，写回 settings.permissionMode（主进程权限门据此放行/审批） */
+/** 权限模式 chip：三模式单选，写回 settings.permissionMode（主进程权限门据此放行/审批） */
 function PermissionChip({ mode }: { mode: PermissionMode }) {
   const { t } = useTranslation();
   const update = useSettingsStore((s) => s.update);
@@ -361,7 +361,7 @@ function ThinkingChip({ level }: { level: ThinkingLevel }) {
   );
 }
 
-/** 队列面板（B4 ⑤）：可折叠只读列表；编辑/移除 API 缺失，编辑以禁用态 + 说明呈现 */
+/** 队列面板：可折叠只读列表；编辑/移除 API 缺失，编辑以禁用态 + 说明呈现 */
 function QueuePanel({ items }: { items: QueuedMessage[] }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
@@ -431,7 +431,7 @@ function QueuePanel({ items }: { items: QueuedMessage[] }) {
 }
 
 /**
- * Composer（B4）：自绘外壳（--composer-bg 面 + 24px 圆角 + --composer-shadow 抬高）
+ * Composer：自绘外壳（--composer-bg 面 + 24px 圆角 + --composer-shadow 抬高）
  * + 附件（选择/拖拽/粘贴）+ 权限/模型/思考 chip + 发送/停止 + 队列面板与队列提示。
  * 发送走 ComposerPrimitive.Send（runtime 原生）；运行中 Enter 走 store.queue（见下）。
  * store 状态按会话分片：running / queue 均需以 activeSessionId 读取。
@@ -477,8 +477,8 @@ export function Composer() {
   );
 
   /**
-   * 运行中 Enter 排队 / Ctrl(⌘)+Enter 插话（B4 ④）。
-   * PolarRuntimeProvider 未声明 capabilities.queue，库内队列路径不可用，
+   * 运行中 Enter 排队 / Ctrl(⌘)+Enter 插话。
+   * OintRuntimeProvider 未声明 capabilities.queue，库内队列路径不可用，
    * 且库在 isRunning && !hasQueue 时会忽略 Enter；这里显式接管：
    * preventDefault 会让库的按键处理器跳过，避免与发送双触发。
    */
@@ -563,7 +563,7 @@ export function Composer() {
                 </Button>
               ) : (
                 <ComposerPrimitive.Send asChild>
-                  {/* 空输入时禁用（前景 40% 不透明，B1 ③） */}
+                  {/* 空输入时禁用（前景 40% 不透明） */}
                   <button
                     type="button"
                     disabled={!canSend}

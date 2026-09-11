@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { PolarAgentApi } from "@/shared/contracts/api";
+import type { OintApi } from "@/shared/contracts/api";
 import type { ChatEvent } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
 
@@ -72,6 +72,6 @@ const api = {
   models: {
     lookup: (id) => ipcRenderer.invoke(IPC.models.lookup, { id }),
   },
-} satisfies PolarAgentApi;
+} satisfies OintApi;
 
-contextBridge.exposeInMainWorld("polaragent", api);
+contextBridge.exposeInMainWorld("oint", api);

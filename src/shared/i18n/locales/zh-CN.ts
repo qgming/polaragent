@@ -17,7 +17,7 @@ export const zhCN = {
     saved: "已保存",
   },
   app: {
-    name: "PolarAgent",
+    name: "Oint",
     minimize: "最小化",
     maximize: "最大化",
     closeWindow: "关闭窗口",
@@ -33,7 +33,7 @@ export const zhCN = {
     inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
     newChat: "新建对话",
     welcome: "今天想做点什么？",
-    welcomeSubtitle: "把任务交给 PolarAgent，它会读写代码、运行命令。",
+    welcomeSubtitle: "把任务交给 Oint，它会读写代码、运行命令。",
     composerDisabledHint: "对话区将在后续版本接入",
     attachImage: "添加图片",
     removeAttachment: "移除附件",

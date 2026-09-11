@@ -35,6 +35,6 @@ describe("buildSessionTitlePrompt", () => {
   });
 
   it("系统提示词说明角色", () => {
-    expect(SESSION_TITLE_SYSTEM_PROMPT).toContain("PolarAgent");
+    expect(SESSION_TITLE_SYSTEM_PROMPT).toContain("Oint");
   });
 });

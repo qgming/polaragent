@@ -155,7 +155,7 @@ async function rewriteUserMessage(
   }));
 
   try {
-    await window.polaragent.chat.send(sessionId, text, images, plan.reuseId ?? undefined, {
+    await window.oint.chat.send(sessionId, text, images, plan.reuseId ?? undefined, {
       rewindToEntryId: plan.rewindTo,
     });
   } catch (error) {
@@ -181,7 +181,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   async loadSessions() {
     set({ loading: true });
     try {
-      const sessions = await window.polaragent.sessions.list();
+      const sessions = await window.oint.sessions.list();
       sessions.sort((a, b) => b.updatedAt - a.updatedAt);
       set({ sessions });
     } finally {
@@ -209,7 +209,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       }));
     }
     try {
-      const page = await window.polaragent.sessions.loadMessages(id, {
+      const page = await window.oint.sessions.loadMessages(id, {
         limit: PAGE_SIZE,
         beforeSeq,
       });
@@ -234,18 +234,18 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async createSession() {
-    const session = await window.polaragent.sessions.create();
+    const session = await window.oint.sessions.create();
     set((state) => ({ sessions: [session, ...state.sessions] }));
     await get().setActiveSession(session.id);
   },
 
   async renameSession(id, title) {
-    await window.polaragent.sessions.rename(id, title);
+    await window.oint.sessions.rename(id, title);
     await get().loadSessions();
   },
 
   async archiveSession(id, archived) {
-    await window.polaragent.sessions.setArchived(id, archived);
+    await window.oint.sessions.setArchived(id, archived);
     await get().loadSessions();
     // 归档当前会话时切走
     if (archived && get().activeSessionId === id) {
@@ -254,7 +254,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async removeSession(id) {
-    await window.polaragent.sessions.remove(id);
+    await window.oint.sessions.remove(id);
     await get().loadSessions();
     if (get().activeSessionId === id) {
       await get().setActiveSession(null);
@@ -262,7 +262,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async forkSession(id, entryId) {
-    const forked = await window.polaragent.sessions.fork(id, entryId);
+    const forked = await window.oint.sessions.fork(id, entryId);
     await get().loadSessions();
     await get().setActiveSession(forked.id);
   },
@@ -296,26 +296,26 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       };
     });
     // 带上乐观消息 id：主进程回显该用户消息时复用同 id，避免 UI 出现两条
-    await window.polaragent.chat.send(sessionId, text, images, optimistic.id);
+    await window.oint.chat.send(sessionId, text, images, optimistic.id);
   },
 
   async stop() {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await window.polaragent.chat.stop(sessionId);
+    await window.oint.chat.stop(sessionId);
     set((state) => ({ runningBySession: { ...state.runningBySession, [sessionId]: false } }));
   },
 
   async queue(text, mode) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await window.polaragent.chat.queue(sessionId, text, mode);
+    await window.oint.chat.queue(sessionId, text, mode);
   },
 
   async compact(instructions) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await window.polaragent.chat.compact(sessionId, instructions);
+    await window.oint.chat.compact(sessionId, instructions);
   },
 
   async reload() {
@@ -452,7 +452,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async resolveApproval(id, decision, note) {
-    await window.polaragent.approvals.respond(id, decision, note);
+    await window.oint.approvals.respond(id, decision, note);
     set((state) => ({ pendingApprovals: state.pendingApprovals.filter((a) => a.id !== id) }));
   },
 

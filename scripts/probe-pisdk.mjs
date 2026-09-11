@@ -1,7 +1,7 @@
 // pisdk 关键装配探针（checkpoint-2 关键路径验证）
 // 用途：使用真实 OpenAI 兼容端点，跑通 @earendil-works/pi-agent-core 的 AgentHarness 主进程装配链路。
 // 运行：node scripts/probe-pisdk.mjs
-// 产物：事件样本写入系统临时目录（polaragent-probe/probe-events.json），不修改项目文件。
+// 产物：事件样本写入系统临时目录（oint-probe/probe-events.json），不修改项目文件。
 
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
@@ -32,7 +32,7 @@ const API_KEY = process.env.POLAR_PROBE_API_KEY ?? "";
 const MODEL_ID = process.env.POLAR_PROBE_MODEL ?? "deepseek-v4-flash";
 const PROVIDER_ID = "probe-svc";
 
-const DATA_DIR = path.join(os.tmpdir(), "polaragent-probe");
+const DATA_DIR = path.join(os.tmpdir(), "oint-probe");
 const WORK_DIR = path.join(DATA_DIR, "work");
 const EVENTS_PATH = path.join(DATA_DIR, "probe-events.json");
 
@@ -431,7 +431,7 @@ async function main() {
           session: state.session,
           models: state.models,
           model: state.model,
-          systemPrompt: "你是 PolarAgent 的装配探针代理。严格按用户指令执行，回复尽量简短。",
+          systemPrompt: "你是 Oint 的装配探针代理。严格按用户指令执行，回复尽量简短。",
           tools: [createBashTool(), createReadTool(), createWriteTool(), createEditTool()],
           toolContext: { env: state.env },
           compaction: { enabled: true, reserveTokens: 20000, keepRecentTokens: 40000 },

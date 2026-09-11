@@ -291,7 +291,7 @@ export function deriveRulePattern(
 export async function buildSystemPrompt(settings: Settings, cwd: string): Promise<string> {
   const replyLanguage = settings.language === "en-US" ? "英文" : "简体中文";
   const sections = [
-    `你是 PolarAgent 桌面应用中的智能编程助手。当前会话工作目录：${cwd}，相对路径均基于该目录解析。`,
+    `你是 Oint 桌面应用中的智能编程助手。当前会话工作目录：${cwd}，相对路径均基于该目录解析。`,
     [
       "工作规则：",
       "1. 修改代码前先阅读相关文件，不要凭空猜测；",

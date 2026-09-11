@@ -8,7 +8,7 @@ function matchesModifier(event: KeyboardEvent): boolean {
 }
 
 /**
- * 全局快捷键（设计稿 F-14）：
+ * 全局快捷键：
  * Ctrl/Cmd+K 搜索模态窗、Ctrl/Cmd+N 新建对话、Ctrl/Cmd+, 打开设置、Ctrl/Cmd+B 折叠侧栏。
  * 监听挂在 window 上，输入框内同样生效——这些组合键不承担文本编辑职责。
  */

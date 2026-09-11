@@ -2,7 +2,7 @@
 // 覆盖：设置写入与安全存储、会话创建、流式对话、低风险工具自动放行、
 //       高风险工具用户审批、完全访问模式免审批、消息持久化、进程重启后的会话恢复。
 // 用法：POLAR_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
-// 说明：使用临时 user-data-dir，不触碰真实用户数据。
+// 说明：user-data-dir 与 OINT_HOME 都指向临时目录，不触碰真实用户数据。
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -19,9 +19,10 @@ const MODEL_ID = process.env.POLAR_PROBE_MODEL ?? "deepseek-v4-flash";
 
 const PORT = 19333;
 const ROOT = process.cwd();
-const TMP = path.join(os.tmpdir(), "polaragent-e2e");
+const TMP = path.join(os.tmpdir(), "oint-e2e");
 const USER_DATA = path.join(TMP, "userdata");
 const WORK_DIR = path.join(TMP, "work");
+const DATA_DIR = path.join(TMP, "data");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -89,6 +90,9 @@ class CdpClient {
 function launchApp() {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
+  // 应用数据（~/.oint）同样要隔离：OINT_HOME 指到临时目录，
+  // 否则冒烟测试会读写真实的 ~/.oint，污染开发者的会话与设置。
+  env.OINT_HOME = DATA_DIR;
   const child = spawn(
     electronPath,
     [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${USER_DATA}`],
@@ -179,20 +183,20 @@ async function main() {
     await cdp.send("Runtime.enable");
     ok("启动", `已连接渲染进程 ${target.url}`);
 
-    // ---- 探针：确认 preload 桥与临时数据目录生效 ----
+    // ---- 探针：确认 preload 桥生效、且数据目录被 OINT_HOME 隔离到临时目录 ----
     const info = await evaluate(`(async () => {
-      const info = await window.polaragent.app.getInfo();
+      const info = await window.oint.app.getInfo();
       return { name: info.name, version: info.version, dataDir: info.dataDir };
     })()`);
     assertStep(
-      "preload 桥与用户数据目录",
-      typeof info.dataDir === "string" && info.dataDir.toLowerCase().includes("polaragent-e2e"),
+      "preload 桥与隔离的数据目录",
+      typeof info.dataDir === "string" && path.resolve(info.dataDir) === path.resolve(DATA_DIR),
       `dataDir=${info.dataDir}`,
     );
 
     // ---- 配置模型服务（含 safeStorage 加密落盘）----
     const settingsEcho = await evaluate(`(async () => {
-      const settings = await window.polaragent.settings.read();
+      const settings = await window.oint.settings.read();
       const service = {
         id: "e2e-svc",
         name: "E2E 工装服务",
@@ -210,8 +214,8 @@ async function main() {
         services: [service],
         defaultModel: { serviceId: "e2e-svc", modelId: ${JSON.stringify(MODEL_ID)} },
       };
-      await window.polaragent.settings.write(next);
-      const back = await window.polaragent.settings.read();
+      await window.oint.settings.write(next);
+      const back = await window.oint.settings.read();
       return {
         serviceCount: back.services.length,
         modelId: back.defaultModel && back.defaultModel.modelId,
@@ -228,10 +232,10 @@ async function main() {
     const sessionId = await evaluate(`(async () => {
       if (!window.__e2e) {
         window.__e2e = { events: [] };
-        window.__e2e.unsub = window.polaragent.chat.onEvent((event) => window.__e2e.events.push(event));
+        window.__e2e.unsub = window.oint.chat.onEvent((event) => window.__e2e.events.push(event));
       }
       window.__e2e.events.length = 0;
-      const session = await window.polaragent.sessions.create({ title: "E2E 冒烟会话" });
+      const session = await window.oint.sessions.create({ title: "E2E 冒烟会话" });
       window.__e2e.sessionId = session.id;
       return session.id;
     })()`);
@@ -239,7 +243,7 @@ async function main() {
 
     // ---- 第一轮：纯文本流式对话 ----
     await evaluate(
-      `window.polaragent.chat.send(window.__e2e.sessionId, ${JSON.stringify("只回复两个字：你好")})`,
+      `window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify("只回复两个字：你好")})`,
     );
     await waitFor(
       `window.__e2e.events.some((e) => e.type === "run-ended")`,
@@ -261,7 +265,7 @@ async function main() {
     // ---- 第二轮：低风险 bash（默认权限下应自动放行）----
     await evaluate(`(async () => {
       window.__e2e.events.length = 0;
-      await window.polaragent.chat.send(window.__e2e.sessionId, ${JSON.stringify(
+      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
         '请用 bash 工具执行 node -e "console.log(2+3)"，完成后只回复结果数字',
       )});
       return true;
@@ -291,7 +295,7 @@ async function main() {
     const writeTarget = path.join(WORK_DIR, "e2e-written.txt");
     await evaluate(`(async () => {
       window.__e2e.events.length = 0;
-      await window.polaragent.chat.send(window.__e2e.sessionId, ${JSON.stringify(
+      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
         `请用 write 工具把内容 hello-e2e 写入文件 ${writeTarget}，完成后只回复 OK`,
       )});
       return true;
@@ -305,7 +309,7 @@ async function main() {
       120000,
     );
     await evaluate(
-      `window.polaragent.approvals.respond(${JSON.stringify(approvalId)}, "allow_once")`,
+      `window.oint.approvals.respond(${JSON.stringify(approvalId)}, "allow_once")`,
     );
     await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第三轮审批后结束");
     const writeRun = await evaluate(`(() => {
@@ -332,10 +336,10 @@ async function main() {
     // ---- 第四轮：完全访问模式（write 不再弹审批）----
     const fullTarget = path.join(WORK_DIR, "e2e-full.txt");
     await evaluate(`(async () => {
-      const settings = await window.polaragent.settings.read();
-      await window.polaragent.settings.write({ ...settings, permissionMode: "full" });
+      const settings = await window.oint.settings.read();
+      await window.oint.settings.write({ ...settings, permissionMode: "full" });
       window.__e2e.events.length = 0;
-      await window.polaragent.chat.send(window.__e2e.sessionId, ${JSON.stringify(
+      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
         `请用 write 工具把内容 full-mode 写入文件 ${fullTarget}，完成后只回复 OK`,
       )});
       return true;
@@ -364,7 +368,7 @@ async function main() {
 
     // ---- 持久化：渲染层回读 ----
     const persisted = await evaluate(`(async () => {
-      const page = await window.polaragent.sessions.loadMessages(window.__e2e.sessionId, { limit: 40 });
+      const page = await window.oint.sessions.loadMessages(window.__e2e.sessionId, { limit: 40 });
       const toolDone = page.messages.some((m) =>
         m.parts.some((p) => p.type === "tool-call" && p.status === "done"),
       );
@@ -378,7 +382,7 @@ async function main() {
     );
 
     // ---- 优雅退出 ----
-    await evaluate(`window.polaragent.window.close()`);
+    await evaluate(`window.oint.window.close()`);
     const exited = await waitForExit(child, 15000);
     ok("优雅退出", exited ? "进程已退出" : "进程未在 15s 内退出（后续强制结束）");
     cdp.close();
@@ -396,10 +400,10 @@ async function main() {
     await cdp.send("Runtime.enable");
 
     const recovered = await evaluate(`(async () => {
-      const list = await window.polaragent.sessions.list();
+      const list = await window.oint.sessions.list();
       const target = list.find((s) => s.title === "E2E 冒烟会话");
       if (!target) return { found: false, total: list.length };
-      const page = await window.polaragent.sessions.loadMessages(target.id, { limit: 40 });
+      const page = await window.oint.sessions.loadMessages(target.id, { limit: 40 });
       return {
         found: true,
         id: target.id,
@@ -417,7 +421,7 @@ async function main() {
 
     // ---- 会话列表排序与字段 ----
     const listShape = await evaluate(`(async () => {
-      const list = await window.polaragent.sessions.list();
+      const list = await window.oint.sessions.list();
       const first = list[0] || null;
       return first
         ? { hasId: typeof first.id === "string", hasUpdatedAt: typeof first.updatedAt === "number", archived: first.archived }
@@ -429,7 +433,7 @@ async function main() {
       JSON.stringify(listShape),
     );
 
-    await evaluate(`window.polaragent.window.close()`);
+    await evaluate(`window.oint.window.close()`);
     await waitForExit(child, 15000);
     cdp.close();
     cdp = null;

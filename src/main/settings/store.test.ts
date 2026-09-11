@@ -48,8 +48,8 @@ async function writeRawSettings(content: unknown): Promise<void> {
 }
 
 beforeEach(async () => {
-  baseDir = await mkdtemp(path.join(os.tmpdir(), "polaragent-settings-"));
-  settingsFile = path.join(baseDir, "config", "settings.json");
+  baseDir = await mkdtemp(path.join(os.tmpdir(), "oint-settings-"));
+  settingsFile = path.join(baseDir, "settings.json");
 });
 
 afterEach(async () => {

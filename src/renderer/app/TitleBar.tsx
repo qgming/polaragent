@@ -37,7 +37,7 @@ export function TitleBar() {
 
   useEffect(() => {
     // 订阅主进程的最大化状态变化，返回取消订阅函数
-    return window.polaragent.window.onMaximizedChange(setMaximized);
+    return window.oint.window.onMaximizedChange(setMaximized);
   }, []);
 
   return (
@@ -78,7 +78,7 @@ export function TitleBar() {
           variant="ghost"
           size="icon-sm"
           aria-label={t("app.minimize")}
-          onClick={() => void window.polaragent.window.minimize()}
+          onClick={() => void window.oint.window.minimize()}
         >
           <Minus className="size-4" />
         </Button>
@@ -87,7 +87,7 @@ export function TitleBar() {
           variant="ghost"
           size="icon-sm"
           aria-label={t("app.maximize")}
-          onClick={() => void window.polaragent.window.toggleMaximize()}
+          onClick={() => void window.oint.window.toggleMaximize()}
         >
           {maximized ? <Copy className="size-3.5" /> : <Square className="size-3.5" />}
         </Button>
@@ -98,7 +98,7 @@ export function TitleBar() {
           size="icon-sm"
           aria-label={t("app.closeWindow")}
           className="hover:bg-destructive hover:text-destructive-foreground"
-          onClick={() => void window.polaragent.window.close()}
+          onClick={() => void window.oint.window.close()}
         >
           <X className="size-4" />
         </Button>

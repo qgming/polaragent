@@ -19,7 +19,7 @@ import { ServicesPanel } from "./panels/ServicesPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { SettingsPanelTitle } from "./settings-shared";
 
-// 左侧分类导航：图标语义与设计稿 B9 一致
+// 左侧分类导航：图标语义取自 Elements 的 settings 面
 const SECTIONS: readonly {
   id: SettingsSection;
   labelKey: string;

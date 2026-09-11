@@ -167,7 +167,7 @@ export function createSettingsStore(
   options: SettingsStoreOptions = {},
 ): SettingsStore {
   const warn = options.warn ?? ((message: string) => console.warn(message));
-  const filePath = path.join(baseDir, "config", "settings.json");
+  const filePath = path.join(baseDir, "settings.json");
   let warnedFallback = false;
 
   async function resolveCrypto(): Promise<Crypto | null> {
@@ -226,7 +226,7 @@ async function resolveSharedCrypto(): Promise<Crypto | null> {
 
 let defaultStore: SettingsStore | null = null;
 
-/** 默认单例：数据目录来自 Electron userData，首次调用时才解析 */
+/** 默认单例：设置文件位于数据根（~/.oint 或 OINT_HOME 指定的目录），首次调用时才解析 */
 export function getSettingsStore(): SettingsStore {
   defaultStore ??= createSettingsStore(dataDir());
   return defaultStore;

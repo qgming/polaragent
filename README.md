@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="public/logo.png" alt="PolarAgent Logo" width="128" height="128" />
+  <img src="public/logo.png" alt="Oint Logo" width="128" height="128" />
 
-# PolarAgent
+# Oint
 
 **基于 pisdk 的桌面 Agent 工作台**
 
@@ -22,7 +22,7 @@
 
 ## 产品定位
 
-PolarAgent 是面向本地工作流的桌面 Agent 客户端：不自研工具与中间层，把 pisdk 的能力原样呈现。
+Oint 是面向本地工作流的桌面 Agent 客户端：不自研工具与中间层，把 pisdk 的能力原样呈现。
 
 - **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 批量转发。
 - **工具**：Agent 可见工具固定为 pisdk 原生四件套 —— `bash`、`read`、`write`、`edit`。
@@ -81,7 +81,7 @@ src/
 | 会话 | 新建/切换/重命名/归档/删除、标题索引、分页加载历史、**从任意消息分支**、SQLite 持久化 |
 | 权限 | 三模式（默认权限 / 帮我审批 / 完全访问）、审批卡（允许一次 / 始终允许 / 拒绝并说明理由）、「始终允许」规则库 |
 | 技能 | SKILL.md 扫描（全局 + 项目目录）、启用/禁用、提示模板 |
-| 设置 | 通用（主题/语言/密度/字体/数据目录）、模型服务（两种 OpenAI 格式 + 拉取模型）、权限、技能、个性化（AGENTS.md）、关于 |
+| 设置 | 通用（主题/语言/密度/字体/工作目录/数据目录）、模型服务（两种 OpenAI 格式 + 拉取模型）、技能、个性化（AGENTS.md）、关于 |
 | 搜索 | Ctrl+K 全局搜索（会话/消息/设置/命令）、会话内查找（Ctrl+F） |
 
 ### 模型服务
@@ -94,6 +94,43 @@ src/
 | `openai-responses` | `/responses` |
 
 Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（不可用时回退明文并告警）。
+
+---
+
+## 数据目录
+
+应用数据固定放在家目录的点目录，**与 Electron 的 Chromium 缓存分开**：
+
+```
+~/.oint/                    # 应用数据（可用 OINT_HOME 覆盖）
+├── settings.json           # 设置（API Key 经 safeStorage 加密）
+├── sessions-index.json     # 会话索引：标题 / 归档 / 消息计数 / 工作目录
+├── permission-rules.json   # 「始终允许」规则
+├── AGENTS.md               # 个性化长期偏好（可手写，适合纳入版本管理）
+├── sessions/               # 会话库：每会话一个 SQLite
+├── skills/                 # 全局技能（SKILL.md）
+└── cache/                  # 可再生成的缓存（models.dev 模型元数据）
+```
+
+Chromium 的 `Cache`、`Code Cache`、`GPUCache`、`IndexedDB` 等仍由 Electron 放在平台默认位置
+（Windows `%APPDATA%\Oint`、macOS `~/Library/Application Support/Oint`、Linux `~/.config/Oint`）。
+
+之所以分层：这些浏览器缓存实测可达数百 MB，而真正的应用数据只有几十 MB。分开之后，备份、同步、
+迁移或彻底卸载只需要处理 `~/.oint` 一个目录。
+
+| 环境变量 | 作用 |
+| --- | --- |
+| `OINT_HOME` | 覆盖数据根目录，必须是绝对路径（相对路径会告警并回落到 `~/.oint`） |
+
+```powershell
+# 用一次性数据目录启动，适合试验或调试，不污染日常数据
+$env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
+```
+
+> 不要把数据目录放在 OneDrive / Dropbox 等云同步盘内：`sessions/` 是 SQLite + WAL，
+> 同步客户端并发改写有损坏风险。
+
+开发阶段不考虑旧版本数据迁移，换目录即视为全新开始。
 
 ---
 
@@ -158,7 +195,7 @@ POLAR_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
 ## 设计
 
 UI 遵循 assistant-ui 的 design.md 规范：印刷文档隐喻、单色 chrome、唯一强调色（品牌紫 `#b99af1`）、克制的线条与动效。
-完整设计稿（含逐屏 ASCII 线框图、组件映射与主题变量）见 [`docs/design/ui-v2-ascii.md`](docs/design/ui-v2-ascii.md)。
+字体、半径与颜色都是按含义分配的封闭集合，令牌集中在 `src/index.css`，字号角色在 `src/renderer/components/assistant-ui/type.ts`。
 
 ---
 

@@ -15,10 +15,10 @@ import { createExecEnv, resolveBashPath } from "./exec-env";
 let root: string;
 let env: ExecutionEnv;
 // 临时根目录的兄弟文件：位于 allowedRoots 之外
-const outsideFile = path.join(os.tmpdir(), `polaragent-outside-${process.pid}.txt`);
+const outsideFile = path.join(os.tmpdir(), `oint-outside-${process.pid}.txt`);
 
 beforeAll(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "polaragent-exec-"));
+  root = await mkdtemp(path.join(os.tmpdir(), "oint-exec-"));
   env = await createExecEnv({ cwd: root });
 });
 

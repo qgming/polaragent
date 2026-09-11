@@ -188,7 +188,7 @@ describe("createSessionTitleGenerator", () => {
     await expect(
       generate({ userText: "登录总是超时", assistantText: "看下超时配置" }),
     ).resolves.toBe("登录超时排查");
-    expect(seen.system).toContain("You name conversation threads in PolarAgent");
+    expect(seen.system).toContain("You name conversation threads in Oint");
     expect(seen.content).toContain("登录总是超时");
     expect(seen.content).toContain("看下超时配置");
     expect(seen.content).toContain("same language as the user's message");

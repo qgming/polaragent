@@ -7,6 +7,7 @@ import {
   type CodeHeaderProps,
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
+  type SyntaxHighlighterProps,
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -16,6 +17,8 @@ import remarkGfm from "remark-gfm";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { useCopyToClipboard } from "@/renderer/hooks/use-copy-to-clipboard";
 import { cn } from "@/renderer/lib/utils";
+import { MermaidDiagram } from "./mermaid-diagram.aui";
+import { SyntaxHighlighter } from "./shiki-highlighter.aui";
 
 type MarkdownTextProps = Partial<TextMessagePartProps> & {
   components?: Parameters<typeof memoizeMarkdownComponents>[0];
@@ -50,6 +53,12 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
       remarkPlugins={[remarkGfm]}
       className="aui-md"
       components={markdownComponents}
+      /*
+        mermaid 代码块不做语法高亮，改画图。
+        库按围栏语言在这里分派（见 react-markdown 的 CodeOverride），
+        因此只影响 ```mermaid，其余语言仍走 Shiki。
+      */
+      componentsByLanguage={{ mermaid: { SyntaxHighlighter: MermaidDiagram } }}
       defer
     />
   );
@@ -76,8 +85,21 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
     </div>
   );
 };
+/**
+ * 代码块正文：Shiki 高亮 + 沿用本应用的字号口径。
+ *
+ * 高亮器自带一整套 pre 样式（见 shiki-highlighter 的 containerClassName），
+ * 唯一需要对齐的是字号：它默认把 pre 钉在 13px，而本应用的代码块向来按 0.93em
+ * 跟随「对话字号」设置（--chat-font-size），不覆盖的话调大字号时正文会缩放、
+ * 代码块却不动。cn 走 tailwind-merge，同前缀的 text-* 会以后者为准。
+ */
+const CodeBlock: FC<SyntaxHighlighterProps> = (props) => (
+  <SyntaxHighlighter {...props} className="[&_pre]:text-[0.93em]" />
+);
 
 const defaultComponents = memoizeMarkdownComponents({
+  /** 代码块正文（库按此键取用；不提供就退化成无高亮的纯文本） */
+  SyntaxHighlighter: CodeBlock,
   h1: ({ className, ...props }) => (
     <h1
       className={cn(

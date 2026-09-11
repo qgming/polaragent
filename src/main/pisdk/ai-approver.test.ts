@@ -115,7 +115,7 @@ describe("createAiApprover", () => {
     });
 
     await approver({ toolName: "write", argsText: '{"path":"a.ts"}', workingDir: "D:/work" });
-    expect(seen.systemPrompt).toContain("tool-call safety reviewer for PolarAgent");
+    expect(seen.systemPrompt).toContain("tool-call safety reviewer for Oint");
     expect(seen.content).toContain("Tool: write");
     expect(seen.content).toContain('{"path":"a.ts"}');
     expect(seen.content).toContain("Working directory: D:/work");

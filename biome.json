@@ -14,8 +14,7 @@
       "!!dist-electron",
       "!!release",
       "!!node_modules",
-      "!!public",
-      "!!docs"
+      "!!public"
     ]
   },
   "formatter": {
@@ -90,7 +89,8 @@
           },
           "correctness": { "useExhaustiveDependencies": "off" },
           "style": { "noNonNullAssertion": "off" },
-          "complexity": { "noUselessFragments": "off" }
+          "complexity": { "noUselessFragments": "off" },
+          "security": { "noDangerouslySetInnerHtml": "off" }
         }
       }
     }

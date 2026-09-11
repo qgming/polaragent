@@ -1,5 +1,5 @@
 /* ==========================================================================
-   PolarAgent 设计令牌层（Tailwind v4 CSS-first）
+   Oint 设计令牌层（Tailwind v4 CSS-first）
 
    权威来源只有两个，不在别处发明规则：
      · assistant-ui design.md —— 印刷文档隐喻、半径表、颜色 register、字体 register、线预算
@@ -101,6 +101,12 @@
 /* 亮色（默认）。全部中性由 --tint 这一个旋钮派生：色相固定、彩度极低，是沙色不是灰。
    要整体挪动氛围，只改 --tint。 */
 :root {
+  /*
+    声明 color-scheme：这是「原生控件与 CSS light-dark() 属于哪一档」的开关。
+    暗色主题由 .dark 类切换（见下），不是 prefers-color-scheme，
+    所以必须显式声明，否则 Shiki 代码高亮用的 light-dark() 在暗色下会一直取亮色。
+  */
+  color-scheme: light;
   --tint: 106;
 
   --background: oklch(0.995 0.002 var(--tint));
@@ -181,6 +187,8 @@
 
 /* 暗色：同一套语义名，只换明度台阶；--tint 保持不变 */
 .dark {
+  /* 与 :root 的 color-scheme 成对：让 light-dark() 与原生控件跟随暗色主题 */
+  color-scheme: dark;
   --background: oklch(0.17 0.004 var(--tint));
   --foreground: oklch(0.94 0.004 var(--tint));
   --card: oklch(0.21 0.004 var(--tint));

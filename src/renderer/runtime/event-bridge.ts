@@ -28,10 +28,10 @@ export function startEventBridge(
   onEvent: (sessionId: string, event: ChatEvent) => void,
   getSessionId: () => string | null = () => useChatStore.getState().activeSessionId,
 ): () => void {
-  return window.polaragent.chat.onEvent((event) => dispatchEvent(getSessionId, onEvent, event));
+  return window.oint.chat.onEvent((event) => dispatchEvent(getSessionId, onEvent, event));
 }
 
 /** 订阅窗口最大化状态变化；返回取消订阅函数 */
 export function startWindowStateBridge(onChange: (maximized: boolean) => void): () => void {
-  return window.polaragent.window.onMaximizedChange(onChange);
+  return window.oint.window.onMaximizedChange(onChange);
 }

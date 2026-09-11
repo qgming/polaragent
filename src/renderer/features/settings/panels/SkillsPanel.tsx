@@ -29,7 +29,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
     setFailed(false);
     setSkills(null);
     try {
-      setSkills(await window.polaragent.skills.list(workingDir));
+      setSkills(await window.oint.skills.list(workingDir));
     } catch {
       setFailed(true);
       setSkills([]);
@@ -41,7 +41,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
   }, [refresh]);
 
   const handleAddDir = async () => {
-    const dir = await window.polaragent.dialog.pickDirectory().catch(() => null);
+    const dir = await window.oint.dialog.pickDirectory().catch(() => null);
     // 去重：同一目录只保留一条
     if (dir && !settings.skillDirs.includes(dir)) {
       void update({ skillDirs: [...settings.skillDirs, dir] });

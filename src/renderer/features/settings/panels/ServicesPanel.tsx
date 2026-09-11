@@ -193,7 +193,7 @@ function ServiceEditor({
     const untouched = !model.name?.trim() && model.contextWindow == null && model.maxTokens == null;
     if (!untouched) return;
     try {
-      const result = await window.polaragent.models.lookup(id);
+      const result = await window.oint.models.lookup(id);
       if (!result.ok || result.match === null) return;
       // 等待期间用户可能已开始填写，确认仍为空再回填
       const latest = draftRef.current.models.find((item) => item.key === key);
@@ -212,7 +212,7 @@ function ServiceEditor({
     const id = model?.id.trim() ?? "";
     if (id === "") return;
     try {
-      const result = await window.polaragent.models.lookup(id);
+      const result = await window.oint.models.lookup(id);
       if (!result.ok) {
         showNote(key, t("settings.catalogFailed"), "error");
         return;
@@ -240,7 +240,7 @@ function ServiceEditor({
     if (!draft.baseUrl.trim()) return;
     setFetch({ status: "loading" });
     try {
-      const result = await window.polaragent.services.fetchModels({
+      const result = await window.oint.services.fetchModels({
         baseUrl: draft.baseUrl.trim(),
         apiKey: effectiveApiKey,
         wireFormat: draft.wireFormat,

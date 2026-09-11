@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/renderer/components/ui/tooltip";
 import { SearchModal } from "@/renderer/features/search";
 import { SettingsModal } from "@/renderer/features/settings";
 import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
-import { PolarRuntimeProvider } from "@/renderer/runtime/PolarRuntimeProvider";
+import { OintRuntimeProvider } from "@/renderer/runtime/OintRuntimeProvider";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { MainShell } from "./MainShell";
@@ -35,13 +35,13 @@ export function App() {
             所以这里是「一行两栏」，而不是原来的「整宽顶栏 + 两栏」。 */}
         <div className="flex h-screen bg-background text-foreground">
           {/* 运行时包住侧栏与主区：侧栏的会话列表走官方 ThreadList primitives，需要 runtime 上下文 */}
-          <PolarRuntimeProvider>
+          <OintRuntimeProvider>
             <SidebarShell />
             <div className="flex min-w-0 flex-1 flex-col">
               <TitleBar />
               <MainShell />
             </div>
-          </PolarRuntimeProvider>
+          </OintRuntimeProvider>
         </div>
         {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}
         <SettingsModal />

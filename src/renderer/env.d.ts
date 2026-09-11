@@ -1,7 +1,7 @@
-import type { PolarAgentApi } from "@/shared/contracts/api";
+import type { OintApi } from "@/shared/contracts/api";
 
 declare global {
   interface Window {
-    polaragent: PolarAgentApi;
+    oint: OintApi;
   }
 }

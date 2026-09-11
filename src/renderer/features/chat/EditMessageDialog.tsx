@@ -107,7 +107,7 @@ export function EditMessageDialog() {
         if (!open) close();
       }}
     >
-      {/* rounded-xl：DialogContent 基类是 rounded-lg(10px)，设计稿的 dialog 档位是 12px */}
+      {/* rounded-xl：DialogContent 基类是 rounded-lg(10px)，dialog 档位取 12px */}
       <DialogContent className="rounded-xl sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("chat.editMessage")}</DialogTitle>
