@@ -8,19 +8,13 @@ export interface QueuedMessage {
   mode: "steer" | "followUp";
 }
 
-/** 发送时的额外控制：重新生成与编辑都要先把 lane 回退到某个条目 */
+/** 发送时的额外控制：编辑用户消息要先把 lane 回退到该消息的父条目 */
 export interface ChatSendOptions {
   /**
-   * 回退到该条目再运行；`null` 表示回退到会话开头（编辑首条用户消息时用）。
-   * 不传则是一次普通发送。
+   * 回退到该条目再运行；`null` 表示回退到会话开头。不传则是一次普通发送。
+   * 回退后必须随之追加一条消息（`text`）—— pi 拒收空 prompt，见 runtime 的 send。
    */
   rewindToEntryId?: string | null;
-  /**
-   * 回退后是否沿用已存在的那条用户消息。
-   * - `true`（重新生成）：回退到用户消息本身，用空 prompt 驱动，避免再写一条重复的用户条目。
-   * - `false`／不传（编辑、普通发送）：`text` 作为用户消息发出。
-   */
-  reuseUserMessage?: boolean;
 }
 
 /** 主进程 → 渲染进程的聊天事件；渲染进程只消费，不反向发送 */

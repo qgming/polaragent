@@ -37,6 +37,7 @@ export const zhCN = {
     attachImage: "添加图片",
     removeAttachment: "移除附件",
     editMessage: "编辑消息",
+    editMessageDesc: "修改这条消息并重新发送；它之后的回复会被丢弃",
     // 复数键与 en-US 保持同形（本仓词条类型由 zh-CN 派生）；中文没有复数，两者同文
     editDiscards_one: "发送将丢弃其后 {{count}} 条回复",
     editDiscards_other: "发送将丢弃其后 {{count}} 条回复",

@@ -12,8 +12,6 @@ import {
 import {
   ArrowDownIcon,
   CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CopyIcon,
   GitBranchIcon,
   PencilIcon,
@@ -48,8 +46,6 @@ import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import { ApprovalSection } from "./ApprovalSection";
 import { Composer } from "./Composer";
-import { ReplyBranchContext } from "./reply-branch-context";
-import type { ReplyBranchInfo } from "./reply-variants";
 import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 
 /**
@@ -112,42 +108,6 @@ function MessageError() {
 }
 
 const ACTION_BAR_HEIGHT = "min-h-7.5 pt-1.5";
-
-/**
- * 重新生成后切换回复：上一版 / 第 n 版 / 下一版，位置在底部操作栏按钮的右侧。
- *
- * 用 store 里的分支数据而不是 assistant-ui 的 BranchPickerPrimitive：
- * 后者的分支来自运行时的消息仓库，而我们的运行时喂的是「已按分支收敛过」的扁平列表
- * （看 provider 里的 resolveReplies），它看不到兄弟，永远只会显示 1 条。
- * 视觉沿用官方 message-branches 的形态：左右箭头 + n / m。
- */
-function ReplyBranchNav({ branch }: { branch: ReplyBranchInfo }) {
-  const { t } = useTranslation();
-  const { onSelect } = useContext(ReplyBranchContext);
-  const { parentId, index, count } = branch;
-
-  return (
-    <div className="aui-reply-branch-nav ms-1 flex items-center">
-      <TooltipIconButton
-        tooltip={t("chat.searchPrev")}
-        disabled={index === 0}
-        onClick={() => onSelect(parentId, index - 1)}
-      >
-        <ChevronLeftIcon />
-      </TooltipIconButton>
-      <span className={cn(mono, "text-foreground/45 px-0.5 tabular-nums")}>
-        {index + 1} / {count}
-      </span>
-      <TooltipIconButton
-        tooltip={t("chat.searchNext")}
-        disabled={index >= count - 1}
-        onClick={() => onSelect(parentId, index + 1)}
-      >
-        <ChevronRightIcon />
-      </TooltipIconButton>
-    </div>
-  );
-}
 
 /**
  * 运行秒数。官方没有 selector —— `metadata.timing` 要等消息结束才定下来 —— 所以自己起计时器。
@@ -344,9 +304,6 @@ function UserMessage() {
 function AssistantMessage() {
   const isRunEnd = useContext(IsRunEndContext);
   const isRunStart = useContext(IsRunStartContext);
-  const { branchByMessageId } = useContext(ReplyBranchContext);
-  const messageId = useAuiState((s) => s.message.id);
-  const branch = branchByMessageId[messageId];
   // 整段是否还在跑：状态行挂在段首，所以看的是线程而不是这条消息
   const runRunning = useAuiState((s) => s.thread.isRunning);
 
@@ -429,7 +386,6 @@ function AssistantMessage() {
           className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
         >
           <AssistantActionBar />
-          {branch !== undefined && <ReplyBranchNav branch={branch} />}
         </div>
       )}
     </MessagePrimitive.Root>

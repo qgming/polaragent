@@ -30,11 +30,6 @@ interface ChatState {
   pendingApprovals: ApprovalRequest[];
   /** 各会话最近一次压缩摘要 */
   compactionNotices: Record<string, string>;
-  /**
-   * 回复分支的选择：会话 id → (父消息 id → 变体下标)。
-   * 缺省不写，由 reply-variants 的规则取最新一条。
-   */
-  replySelectionBySession: Record<string, Record<string, number>>;
   loading: boolean;
 
   loadSessions(): Promise<void>;
@@ -51,8 +46,6 @@ interface ChatState {
   stop(): Promise<void>;
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(instructions?: string): Promise<void>;
-  /** 切换到某个回复分支（parentId 下的第 index 条） */
-  selectReply(parentId: string, index: number): void;
   /** 重新生成最后一条助手回复：截断到最后一条用户消息并重发 */
   reload(): Promise<void>;
   /** 核心 reducer：按事件类型更新状态，未知事件忽略不抛错 */
@@ -100,7 +93,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   queueBySession: {},
   pendingApprovals: [],
   compactionNotices: {},
-  replySelectionBySession: {},
   loading: false,
 
   async loadSessions() {
@@ -243,17 +235,6 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     await window.polaragent.chat.compact(sessionId, instructions);
   },
 
-  selectReply(parentId, index) {
-    const sessionId = get().activeSessionId;
-    if (sessionId === null) return;
-    set((state) => ({
-      replySelectionBySession: {
-        ...state.replySelectionBySession,
-        [sessionId]: { ...state.replySelectionBySession[sessionId], [parentId]: index },
-      },
-    }));
-  },
-
   async reload() {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
@@ -274,23 +255,27 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       .filter((p) => p.type === "text")
       .map((p) => p.text)
       .join("");
+    const images = lastUser.parts
+      .filter((p) => p.type === "image")
+      .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType }));
     /**
-     * 重新生成：主进程会先把 lane 的 tip 退回这条用户条目，再用空 prompt 重跑，
-     * 所以新回复在 pi 的条目树里是旧回复的**兄弟**（可切换），也不会再追加一条重复的用户消息。
+     * 重新生成：截断到最后一条用户消息（含）再重发，也就是**替换**当前这条回复。
      *
-     * 因此这里**不截断**列表：旧回复留在列表里，两条共享同一个 parentId，
-     * assistant-ui 据此把它们渲染成同一条消息的两个分支。
-     * 回退点要求条目 id；还没拿到（例如消息尚未落盘）时退回老行为，只重发不截断。
+     * 不试图让新回复成为旧回复的兄弟：pi 的 `acceptRun` 会拒收空 prompt
+     * （`InvalidMessage{reason:"empty"}`，「Acceptance must append at least one message」），
+     * 所以「回退到该用户条目 + 空 prompt 沿用旧消息」这条路走不通；
+     * 照旧传文本则会在历史里多写一条重复的用户消息。
+     * 代价是重新生成后无法在旧回复之间切换 —— 这是明确接受的取舍。
+     *
+     * 复用被保留的用户消息 id，避免重发时 UI 里出现两条。
      */
-    await window.polaragent.chat.send(
-      sessionId,
-      text,
-      lastUser.parts
-        .filter((p) => p.type === "image")
-        .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType })),
-      lastUser.id,
-      { rewindToEntryId: lastUser.entryId, reuseUserMessage: true },
-    );
+    set((state) => ({
+      messagesBySession: {
+        ...state.messagesBySession,
+        [sessionId]: list.slice(0, lastUserIndex + 1),
+      },
+    }));
+    await window.polaragent.chat.send(sessionId, text, images, lastUser.id);
   },
 
   /**
@@ -308,17 +293,32 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const index = list.findIndex((m) => m.id === messageId);
     const target = index >= 0 ? list[index] : undefined;
     if (target?.role !== "user") return;
+    /**
+     * 回退点必须是**已知**的父条目。
+     *
+     * `parentId` 缺失说明这条消息还没落盘（乐观消息，或运行失败时没配到条目），
+     * 此时拼 `?? null` 会被当成「回退到会话开头」，把整段历史从 tip 上摘掉 ——
+     * 列表看着还在，模型那边已经清零。宁可不动。
+     */
+    const parentId = target.parentId;
+    if (parentId === undefined) {
+      console.warn("该消息尚未落盘，无法编辑");
+      return;
+    }
 
     set((state) => ({
       messagesBySession: { ...state.messagesBySession, [sessionId]: list.slice(0, index) },
-      // 截断后旧的回复分支已不可见，选择也一并清掉，避免下标指向不存在的变体
-      replySelectionBySession: { ...state.replySelectionBySession, [sessionId]: {} },
     }));
 
-    await window.polaragent.chat.send(sessionId, text, undefined, undefined, {
-      rewindToEntryId: target.parentId ?? null,
-      reuseUserMessage: false,
-    });
+    try {
+      await window.polaragent.chat.send(sessionId, text, undefined, undefined, {
+        rewindToEntryId: parentId,
+      });
+    } catch (error) {
+      // 已截断的列表无法干净回滚（磁盘那边可能已经回退），但至少把失败暴露出来
+      console.warn(`编辑消息失败：${String(error)}`);
+      await get().loadMessages(sessionId);
+    }
   },
 
   applyEvent(sessionId, event) {

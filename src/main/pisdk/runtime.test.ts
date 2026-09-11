@@ -12,7 +12,6 @@ import {
   getChatRuntime,
   type PendingEntry,
   pairEntryWithMessage,
-  runPromptFor,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
@@ -67,45 +66,6 @@ describe("deriveRulePattern", () => {
   });
 });
 
-describe("runPromptFor", () => {
-  const images = [{ type: "image" as const, data: "QUJD", mimeType: "image/png" }];
-
-  it("普通发送：原样透传文本与图片", () => {
-    expect(runPromptFor({ text: "你好", images })).toEqual({ prompt: "你好", images });
-    expect(runPromptFor({ text: "你好" })).toEqual({ prompt: "你好", images: undefined });
-  });
-
-  // 回归：传文本会让 acceptRun 再追加一条 user 条目，
-  // 分支点落到用户消息上、历史里多一份重复对话
-  it("重新生成：回退并沿用已有用户消息时用空 prompt，且不带图片", () => {
-    expect(
-      runPromptFor({
-        text: "你好",
-        images,
-        rewindToEntryId: "u1",
-        reuseUserMessage: true,
-      }),
-    ).toEqual({ prompt: "", images: undefined });
-  });
-
-  // 编辑是「回退到父条目 + 把新文本作为新用户消息发出」，所以文本必须传下去
-  it("编辑：回退但不沿用旧消息时照常传新文本", () => {
-    expect(
-      runPromptFor({
-        text: "改过的内容",
-        images,
-        rewindToEntryId: "p0",
-        reuseUserMessage: false,
-      }),
-    ).toEqual({ prompt: "改过的内容", images });
-  });
-
-  it("给了回退点但没声明沿用旧消息时，按新增用户消息处理（不会静默丢文本）", () => {
-    const result = runPromptFor({ text: "你好", images, rewindToEntryId: "u1" });
-    expect(result.prompt).toBe("你好");
-    expect(result.images).toEqual(images);
-  });
-});
 
 describe("pairEntryWithMessage", () => {
   const assistantEntry = (id: string, parentId: string | null = "u1") => ({

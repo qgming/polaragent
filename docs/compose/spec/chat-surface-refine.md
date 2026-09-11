@@ -370,22 +370,34 @@ footer 自身的高度，原来那句注释把因果关系说反了。同时把 
 
 官方 `EditMessage` 是**就地替换气泡**的形态；本应用把它固定成编辑态放进模态里用，因为消息气泡
 与 hover 工具栏已有自己的实现，只需要它的「文本框 + 取消/发送 + 丢弃提示」那一套。为此给
-vendored 文件加了三个可选文案参数（`cancelLabel` / `sendLabel` / `discardedLabel`），缺省值即
-原英文，对其它消费者零影响。
+vendored 文件加了可选参数（`cancelLabel` / `sendLabel` / `sendDisabled` / `inputLabel` /
+`discardedLabel`），缺省值即原英文，对其它消费者零影响。
 
-编辑与重新生成的语义差别是本轮的关键：
+编辑的语义是「回退到该用户消息的**父**条目 + 把新文本作为新用户消息发出」：新用户条目与旧的是
+兄弟（同父），旧消息与其后的回复都不再在 tip 上。渲染层同步**截断**到该消息之前 ——
+就是用户要求的「移除后面的所有消息」。
 
-| | 回退目标 | prompt | 效果 |
-| --- | --- | --- | --- |
-| 重新生成 | 该**用户消息**条目 | 空 | 新回复与旧回复成为兄弟（同父），可切换 |
-| 编辑 | 该用户消息的**父**条目 | 新文本 | 新用户条目与旧的是兄弟；旧消息与其后回复都不再在 tip 上 |
+**退回点必须是已知的父条目。** `parentId` 缺失说明这条消息还没落盘（乐观消息，或运行失败时没配
+到条目）；此时若拼 `?? null` 会被当成「回退到会话开头」，把整段历史从 tip 上摘掉 —— 列表看着
+还在，模型那边已经清零。因此这种情况直接不执行编辑。
 
-因此 `ChatSendOptions` 是 `{ rewindToEntryId, reuseUserMessage }` 两个字段：`reuseUserMessage`
-决定「沿用已有用户消息（空 prompt）」还是「把 text 作为新用户消息发出」。这条判定抽成纯函数
-`runPromptFor`，有回归用例锁住——传错会让历史里多一份重复对话。
+### [S2.18] 重新生成＝替换当前回复（不做分支切换）
 
-编辑后渲染层同步**截断**到该消息之前（用户明确要求的「移除后面的所有消息」语义），
-与重新生成「保留旧回复以便切换」形成对照。
+原本想让重新生成的新回复成为旧回复的兄弟，从而支持在多个版本间切换。**这条路走不通**：
+
+pi 的 `acceptRun` 在「prompt 为空且无图片」时确实不追加消息，但紧接着就以
+`InvalidMessage{reason:"empty"}`（"Acceptance must append at least one message"）拒收
+（`@earendil-works/pi-agent-core` 的 `lane.js`）。所以「回退到该用户条目 + 空 prompt 沿用旧消息」
+不可用；而照旧传文本又会在历史里多写一条重复的用户消息。
+
+最终按用户决定简化：重新生成 = **截断到最后一条用户消息（含）+ 复用该消息 id 重发**，
+也就是替换掉当前这条回复。代价是重新生成后无法在旧回复之间切换 —— 明确接受的取舍。
+因此也没有必要维护「同一父条目下多条回复」的分组渲染，早先为此加的
+`reply-variants` / 分支切换 UI 一并移除。
+
+顺带修掉一处相关缺陷：判断「目标是否已是 tip」原本拿读失败当 `null`，于是在编辑首条消息
+（回退点是 `null`）且 tip 读取失败时会**跳过**导航，把新消息追加到当前 tip 而不是会话开头。
+现在读失败与 tip 为 `null` 是两回事（`{ known, tipId }`）。
 
 ### [S2.16] 历史回读也要带 parentId
 
@@ -465,5 +477,9 @@ vendored 文件加了三个可选文案参数（`cancelLabel` / `sendLabel` / `d
 - [x] T30: 编辑用户消息 + 模态 — acceptance: 编辑按钮打开模态；发送回退到该消息的父条目并把新文本作为新用户消息发出；列表截断到该消息之前 (covers: S2.15)
 - [x] T31: 回读路径带 parentId — acceptance: 历史回读的用户消息有 `parentId`，编辑首条消息能退回其父级 (covers: S2.16)
 - [x] T32: day-separator 只取分隔行 + 自动加载 — acceptance: 日期分隔走 `DaySeparatorRow`；滚到顶部附近自动取更早一页且有并发闸门；手动按钮与其死词条移除 (covers: S2.17)
-- [ ] T33: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.12–S2.17)
-- [ ] T34: 独立评审 — acceptance: 子代理对本轮改动给出三份结论，重点复核两条回退语义（重新生成 vs 编辑）与「当前运行段首」的判定 (covers: S2.12, S2.14, S2.15)
+- [x] T33: 验证 — acceptance: `npm run typecheck`、`npm test`、`npm run build` 均 exit 0，改动文件 `biome lint` 0 问题 (covers: S2.12–S2.17)
+- [x] T35: 移除重新生成的分支切换 — acceptance: 早先为切换加的 `reply-variants` / 分支上下文 / store 选择全部删除且无残留引用；`reload()` 回到截断 + 重发 (covers: S2.18)
+- [x] T36: 修「空 prompt」导致的重新生成报错 — acceptance: 任何发送路径都带非空 prompt；`acceptRun` 拒收空 prompt 的依据记进 [S2.18]，注释与实现一致 (covers: S2.18)
+- [x] T37: 修编辑回退点未知的缺陷 — acceptance: `parentId` 缺失时不执行编辑（不再把未知父级当成会话开头）；`currentTip` 区分「读失败」与「tip 为 null」 (covers: S2.15)
+- [x] T38: 修评审 minor — acceptance: 空文本禁用发送按钮、编辑失败有捕获并回读、`EditMessageDialog` 有 description 且文本框标签本地化、两处注释与实现一致、并排语句拆开 (covers: S2.15)
+- [ ] T34: 独立评审 — acceptance: 子代理对本轮改动给出三份结论，重点复核两条回退语义与「当前运行段首」的判定 (covers: S2.12, S2.14, S2.15)

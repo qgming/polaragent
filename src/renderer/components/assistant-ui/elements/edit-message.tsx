@@ -15,6 +15,8 @@ export function EditMessage({
   onStartEdit,
   cancelLabel = "Cancel",
   sendLabel = "Send",
+  sendDisabled = false,
+  inputLabel = "Edit your message",
   discardedLabel,
   className,
   ...props
@@ -39,6 +41,10 @@ export function EditMessage({
   /** 按钮文案；缺省为英文原值。调用侧接 i18n 用（本目录只有这一处消费者） */
   cancelLabel?: string;
   sendLabel?: string;
+  /** 空文本时禁用发送；缺省不禁用 */
+  sendDisabled?: boolean;
+  /** 文本框的无障碍标签；缺省为英文原值 */
+  inputLabel?: string;
   /** 丢弃提示文案；缺省为英文原值 */
   discardedLabel?: (count: number) => string;
 }) {
@@ -73,7 +79,7 @@ export function EditMessage({
         value={value}
         onChange={(event) => onValueChange?.(event.target.value)}
         rows={2}
-        aria-label="Edit your message"
+        aria-label={inputLabel}
         className={cn(
           field,
           "text-foreground/90 focus-visible:ring-foreground/20 resize-none rounded-xl px-3 py-2.5 text-[13.5px] leading-relaxed outline-none focus-visible:ring-1",
@@ -102,7 +108,11 @@ export function EditMessage({
         <button
           type="button"
           onClick={onSave}
-          className={cn(inkButton, "flex h-8 items-center rounded-full px-3.5 text-xs font-medium")}
+          disabled={sendDisabled}
+          className={cn(
+            inkButton,
+            "flex h-8 items-center rounded-full px-3.5 text-xs font-medium disabled:pointer-events-none disabled:opacity-40",
+          )}
         >
           {sendLabel}
         </button>

@@ -43,42 +43,19 @@ export interface ChatRuntimeDeps {
 }
 
 /**
- * 当前 lane 的 tip 条目 id。
+ * 当前 lane 的 tip（条目 id，可能为 null 表示空会话）。
  *
- * 重新生成前用它判断「是否已经在目标上」—— pi 对导航到当前 tip 会直接报错，
- * 而目标恰好是 tip 是正常情形（上一条回复还没落盘）。
- * 取不到时返回 null（当作「不知道」），调用方照常尝试导航，由 pi 给出真实错误。
+ * `known: false` 表示读取失败 —— 与「tip 是 null」是两回事，调用方必须能区分：
+ * 把读失败当成 null 会让「回退到会话开头」被误判成「目标已是 tip」而跳过导航。
  */
-async function currentTipId(runtime: SessionRuntime): Promise<string | null> {
+async function currentTip(runtime: SessionRuntime): Promise<{ known: boolean; tipId: string | null }> {
   try {
     const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
-    return info.tipId;
+    return { known: true, tipId: info.tipId };
   } catch (error) {
     console.warn(`读取当前 tip 失败：${toErrorText(error)}`);
-    return null;
+    return { known: false, tipId: null };
   }
-}
-
-/**
- * 这次运行该怎么驱动 lane。
- *
- * 重新生成（回退 + 沿用已有用户消息）时必须用**空 prompt**：`acceptRun` 只在
- * 「prompt 为空且无图片」时不追加任何消息，用的正是当前 tip 上已有的那条用户消息。
- * 若照旧传文本，会再写一条 user 条目 —— 分支点落到用户消息上，历史里也留一份重复对话。
- *
- * 编辑则是「回退到用户消息的父条目 + 把新文本作为新用户消息发出」，
- * 于是新用户条目与旧的是兄弟（同父），旧消息与它之后的回复都不再在 tip 上。
- */
-export function runPromptFor(input: {
-  text: string;
-  images?: ImageContent[];
-  rewindToEntryId?: string | null;
-  reuseUserMessage?: boolean;
-}): { prompt: string; images: ImageContent[] | undefined } {
-  if (input.rewindToEntryId !== undefined && input.reuseUserMessage === true) {
-    return { prompt: "", images: undefined };
-  }
-  return { prompt: input.text, images: input.images };
 }
 
 export interface ChatRuntime {
@@ -903,11 +880,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     try {
       const rewound = options?.rewindToEntryId;
       if (rewound !== undefined) {
-        // 先把 tip 退回目标条目，再用 prompt 驱动。
-        // 目标已经是 tip 时必须跳过：pi 会对「导航到当前 tip」直接报
-        // "Navigation target must differ from the current tip"（上一条回复没落盘时就会这样）。
-        const tipId = await currentTipId(runtime);
-        if (tipId !== rewound) {
+        // 编辑：先把 tip 退回该用户消息的**父**条目，下面再把 text 作为新用户消息发出。
+        // 目标已经是 tip 时跳过导航：pi 对「导航到当前 tip」直接报
+        // "Navigation target must differ from the current tip"。
+        // tip 读不到时按「未知」处理，照常尝试导航，由 pi 给真实错误。
+        const tip = await currentTip(runtime);
+        if (!tip.known || tip.tipId !== rewound) {
           const nav = await runtime.lane.navigateTree(rewound, undefined, BACKGROUND_CONTEXT);
           if (!nav.ok) {
             emitRunFailure(runtime, runId, nav.error);
@@ -915,12 +893,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           }
         }
       }
-      const prompt = runPromptFor({ text, images, ...(options ?? {}) });
-      const result = await runtime.lane.prompt(
-        prompt.prompt,
-        prompt.images,
-        BACKGROUND_CONTEXT,
-      );
+      /**
+       * 必须带上要追加的消息。
+       *
+       * 不能靠「回退 + 空 prompt 沿用已有用户消息」来省掉这次重发：pi 的 `acceptRun` 在
+       * 「prompt 为空且无图片」时确实不追加消息，但紧接着就以
+       * `InvalidMessage{reason:"empty"}`（"Acceptance must append at least one message"）拒收。
+       * 所以 `text` 一律原样传下去。
+       */
+      const result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
       if (!result.ok) emitRunFailure(runtime, runId, result.error);
     } catch (error) {
       emitRunFailure(runtime, runId, error);

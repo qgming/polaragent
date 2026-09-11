@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EditMessage } from "@/renderer/components/assistant-ui/elements/edit-message";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/renderer/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/renderer/components/ui/dialog";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts/session";
@@ -53,6 +53,7 @@ export function EditMessageDialog() {
   const submit = () => {
     const id = editingId;
     const text = value.trim();
+    // 空文本不该提交：按钮已禁用，这里只是第二道闸（回车/外部触发）
     if (id === null || text === "") return;
     close();
     void useChatStore.getState().editUserMessage(id, text);
@@ -68,6 +69,7 @@ export function EditMessageDialog() {
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("chat.editMessage")}</DialogTitle>
+          <DialogDescription>{t("chat.editMessageDesc")}</DialogDescription>
         </DialogHeader>
         <EditMessage
           value={value}
@@ -78,6 +80,8 @@ export function EditMessageDialog() {
           onCancel={close}
           cancelLabel={t("common.cancel")}
           sendLabel={t("chat.send")}
+          sendDisabled={value.trim() === ""}
+          inputLabel={t("chat.editMessage")}
           discardedLabel={(count) => t("chat.editDiscards", { count })}
         />
       </DialogContent>
