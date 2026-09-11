@@ -10,6 +10,7 @@ import {
   createChatRuntime,
   deriveRulePattern,
   getChatRuntime,
+  pairEntryWithMessage,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
@@ -61,6 +62,56 @@ describe("deriveRulePattern", () => {
     expect(deriveRulePattern("write", { path: "src/foo.ts" })).toBe("src");
     expect(deriveRulePattern("edit", { path: "D:\\dev\\polaragent\\a.ts" })).toBe("dev");
     expect(deriveRulePattern("write", {})).toBeUndefined();
+  });
+});
+
+describe("pairEntryWithMessage", () => {
+  const assistantEntry = (id: string, parentId: string | null = "u1") => ({
+    type: "message",
+    id,
+    parentId,
+    message: { role: "assistant" },
+  });
+
+  it("按 FIFO 配对，多轮工具调用不会错配", () => {
+    const awaiting = ["m1", "m2"];
+
+    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))).toEqual({
+      messageId: "m1",
+      patch: { entryId: "e1", parentId: "u1" },
+    });
+    expect(pairEntryWithMessage(awaiting, assistantEntry("e2"))).toEqual({
+      messageId: "m2",
+      patch: { entryId: "e2", parentId: "u1" },
+    });
+    expect(awaiting).toEqual([]);
+  });
+
+  it("非助手条目不吃掉队列位置", () => {
+    const awaiting = ["m1"];
+    const userEntry = { type: "message", id: "e0", parentId: null, message: { role: "user" } };
+    const toolResult = { type: "message", id: "e0b", parentId: "u1", message: { role: "toolResult" } };
+    const compaction = { type: "compaction", id: "c1", parentId: "u1" };
+
+    expect(pairEntryWithMessage(awaiting, userEntry)).toBeNull();
+    expect(pairEntryWithMessage(awaiting, toolResult)).toBeNull();
+    expect(pairEntryWithMessage(awaiting, compaction)).toBeNull();
+    // 队列原封不动，助手条目仍配到它身上
+    expect(awaiting).toEqual(["m1"]);
+    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))?.messageId).toBe("m1");
+  });
+
+  it("队列为空时返回 null（例如历史回读期不会走到这里）", () => {
+    const awaiting: string[] = [];
+    expect(pairEntryWithMessage(awaiting, assistantEntry("e1"))).toBeNull();
+  });
+
+  it("parentId 为 null（会话首条）也照常带出", () => {
+    const awaiting = ["m1"];
+    expect(pairEntryWithMessage(awaiting, assistantEntry("e1", null))?.patch).toEqual({
+      entryId: "e1",
+      parentId: null,
+    });
   });
 });
 

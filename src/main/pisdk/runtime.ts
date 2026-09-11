@@ -88,6 +88,14 @@ interface SessionRuntime {
   runEnded: boolean;
   stream?: AssistantStream;
   lastAssistantMessageId?: string;
+  /**
+   * 已建好但还没拿到 entryId 的助手消息 id，按建立顺序排队。
+   *
+   * 流式期渲染层需要 entryId 才有「分支」入口，而条目要到消息落盘时才产生
+   * （entry_added 事件）。一次运行里的多轮工具调用会交替产生多条助手消息与多个条目，
+   * 所以不能简单地取「最新一条」去配 —— 用 FIFO 保证一一对应、不错配。
+   */
+  awaitingEntryIds: string[];
   /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
   pendingUserMessageId?: string;
   toolParts: Map<string, ToolCallPartRef>;
@@ -175,6 +183,25 @@ function toolResultValue(result: AgentToolResult<unknown>): unknown {
   if (text !== "") return text;
   if (result.details !== undefined) return result.details;
   return "";
+}
+
+/**
+ * 条目落盘 → 配给哪条待配的助手消息，并把该消息移出队列。
+ *
+ * 渲染层的「分支」入口要求消息带 entryId，而流式产生的消息一出生是没有的
+ * （只有历史回读的消息才自带）。一次运行里的多轮工具调用会交替产生多条助手消息与多个条目，
+ * 所以取「最新一条」会错配，必须按 FIFO 一一对应。
+ * 提到模块级是为了可测：这段判定在 createChatRuntime 的闭包里够不到。
+ */
+export function pairEntryWithMessage(
+  awaiting: string[],
+  entry: { type: string; id: string; parentId: string | null; message?: { role?: string } },
+): { messageId: string; patch: { entryId: string; parentId: string | null } } | null {
+  // 只认助手消息条目：用户消息、toolResult、compaction 都不该消费队列
+  if (entry.type !== "message" || entry.message?.role !== "assistant") return null;
+  const messageId = awaiting.shift();
+  if (messageId === undefined) return null;
+  return { messageId, patch: { entryId: entry.id, parentId: entry.parentId } };
 }
 
 /**
@@ -331,6 +358,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const messageId = randomUUID();
       runtime.stream = { messageId, parts: [], partIndexByContent: new Map() };
       runtime.lastAssistantMessageId = messageId;
+      // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
+      runtime.awaitingEntryIds.push(messageId);
       emitSafe({
         type: "message-added",
         message: {
@@ -584,10 +613,31 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
+  /**
+   * 条目落盘：把 pi 的 entryId / parentId 配回对应的那条助手消息。
+   *
+   * 渲染层的「分支」入口要求消息带 entryId（主进程按条目 id 复制会话），
+   * 而流式产生的消息一出生是没有的 —— 只有历史回读的消息才自带。
+   * 按 FIFO 配对：一次运行里的多轮工具调用会交替产生多条助手消息与多个条目。
+   */
+  function handleEntryAdded(
+    runtime: SessionRuntime,
+    event: Extract<HarnessEvent, { type: "entry_added" }>,
+  ): void {
+    const paired = pairEntryWithMessage(runtime.awaitingEntryIds, event.entry);
+    if (paired === null) return;
+    emitSafe({
+      type: "message-updated",
+      messageId: paired.messageId,
+      patch: paired.patch,
+    });
+  }
+
   function registerEvents(runtime: SessionRuntime): void {
     subscribe(runtime, "message_start", (event) => handleMessageStart(runtime, event));
     subscribe(runtime, "message_update", (event) => handleMessageUpdate(runtime, event));
     subscribe(runtime, "message_end", (event) => handleMessageEnd(runtime, event));
+    subscribe(runtime, "entry_added", (event) => handleEntryAdded(runtime, event));
     subscribe(runtime, "tool_start", (event) => handleToolStart(runtime, event));
     subscribe(runtime, "tool_end", (event) => handleToolEnd(runtime, event));
     subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
@@ -700,6 +750,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       rules: getRuleStore(),
       running: false,
       runEnded: false,
+      awaitingEntryIds: [],
       toolParts: new Map(),
       queue: [],
       unsubscribers: [],
@@ -782,6 +833,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     runtime.running = true;
     runtime.runEnded = false;
+    // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期 id：新一次运行先清空
+    runtime.awaitingEntryIds = [];
     // 记录渲染层乐观消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
     runtime.pendingUserMessageId = messageId;
     const runId = randomUUID();

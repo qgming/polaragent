@@ -106,13 +106,18 @@ function MessageError() {
 
 const ACTION_BAR_HEIGHT = "min-h-7.5 pt-1.5";
 
+/**
+ * 重新生成后切换回复：上一版 / 第 n 版 / 下一版。
+ * 位置在底部操作栏按钮的右侧，所以留的是左间距（原来在左侧时用的是负左外边距）。
+ * 只有一条回复时（branchCount ≤ 1）由 hideWhenSingleBranch 整个隐藏。
+ */
 function BranchPicker({ className, ...rest }: BranchPickerPrimitive.Root.Props) {
   const { t } = useTranslation();
   return (
     <BranchPickerPrimitive.Root
       hideWhenSingleBranch
       className={cn(
-        "aui-branch-picker-root -ms-2 me-2 inline-flex items-center text-xs text-muted-foreground",
+        "aui-branch-picker-root ms-1 inline-flex items-center text-xs text-muted-foreground",
         className,
       )}
       {...rest}
@@ -325,6 +330,11 @@ function AssistantMessage() {
         // flex + gap：块（思考 / 工具 / 正文）之间由 gap 统一控制，块自身不带纵向外边距
         className="flex flex-col gap-y-3 px-2 leading-relaxed text-foreground wrap-break-word"
       >
+        {/*
+          运行状态固定在消息左上角：这条消息还没输出完就一直显示，
+          不去跟正文抢位置、也不随正文增长往下漂。
+        */}
+        {messageRunning && <AssistantThinking />}
         <MessagePrimitive.GroupedParts groupBy={GROUP_BY} indicator="never">
           {({ part, children }) => {
             switch (part.type) {
@@ -378,22 +388,17 @@ function AssistantMessage() {
       </div>
 
       {/*
-        段尾那块位置：运行中是真实状态指示，结束后是唯一的操作栏。
-        两者高度同值（ACTION_BAR_HEIGHT），所以切换不改变消息间距。
+        段尾那块位置：底部操作栏。运行中由 hideWhenRunning 整条收起，
+        状态指示已经上移到消息顶部，这里不再兼任。
+        高度常驻（ACTION_BAR_HEIGHT），所以它显隐时不改变消息间距。
       */}
       {isRunEnd && (
         <div
           data-slot="aui_assistant-message-footer"
           className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
         >
-          {messageRunning ? (
-            <AssistantThinking />
-          ) : (
-            <>
-              <BranchPicker />
-              <AssistantActionBar />
-            </>
-          )}
+          <AssistantActionBar />
+          <BranchPicker />
         </div>
       )}
     </MessagePrimitive.Root>

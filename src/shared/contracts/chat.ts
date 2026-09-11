@@ -16,7 +16,7 @@ export type ChatEvent =
   | {
       type: "message-updated";
       messageId: string;
-      patch: Partial<Pick<ChatMessage, "status" | "usage" | "error">>;
+      patch: Partial<Pick<ChatMessage, "status" | "usage" | "error" | "entryId" | "parentId">>;
     }
   | { type: "queue-updated"; items: QueuedMessage[] }
   | { type: "approval-requested"; request: ApprovalRequest }
