@@ -17,6 +17,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     thinkingLevel: "medium",
     permissionMode: "default",
     skillDirs: [],
+    skillsEnabled: true,
+    promptTemplateDirs: [],
     disabledSkillNames: [],
     ...overrides,
   };

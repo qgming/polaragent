@@ -39,4 +39,8 @@ export interface Settings {
   permissionMode: PermissionMode;
   skillDirs: string[];
   disabledSkillNames: string[];
+  /** 是否把技能（SKILL.md）与提示模板注入模型上下文；关闭后退化为纯原生四件套 */
+  skillsEnabled: boolean;
+  /** 用户自定义的提示模板目录（*.md，只读直接子级）；数据目录的 prompts 与会话目录的 .pi/prompts 始终参与扫描 */
+  promptTemplateDirs: string[];
 }

@@ -6,5 +6,6 @@ export * from "./common";
 export * from "./ipc";
 export * from "./models";
 export * from "./project";
+export * from "./prompts";
 export * from "./session";
 export * from "./settings";

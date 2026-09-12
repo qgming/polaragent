@@ -47,6 +47,7 @@ import type {
   QueuedMessage,
   ThinkingLevel,
 } from "@/shared/contracts";
+import { TodoPanel } from "./TodoPanel";
 
 /** 队列面板默认展示的条数，超出以 +N 表示 */
 const QUEUE_PREVIEW = 3;
@@ -514,6 +515,11 @@ export function Composer() {
             "data-[dragging=true]:outline-1 data-[dragging=true]:-outline-offset-1 data-[dragging=true]:outline-dashed data-[dragging=true]:outline-blue-500/40",
           )}
         >
+          {/*
+            待办条贴在输入框顶部、复用 composer 自己的面（圆角 + 边框 + --composer-shadow），
+            所以它不需要自己的容器；没有待办时它整块不渲染。
+          */}
+          <TodoPanel />
           {queue.length > 0 && <QueuePanel items={queue} />}
           {/* Attachments 渲染的是片段，横向排布靠这层容器；空时不留出 gap */}
           <div className="flex flex-wrap gap-2 empty:hidden">

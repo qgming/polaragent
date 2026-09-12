@@ -5,6 +5,7 @@ export type SettingsSection =
   | "general"
   | "services"
   | "skills"
+  | "promptTemplates"
   | "personalization"
   | "data"
   | "about";
@@ -17,6 +18,7 @@ export const SETTINGS_SECTIONS = [
   "general",
   "services",
   "skills",
+  "promptTemplates",
   "personalization",
   "data",
   "about",

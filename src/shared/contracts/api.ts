@@ -5,6 +5,7 @@ import type { WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
+import type { PromptTemplateInfo } from "./prompts";
 import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
@@ -66,6 +67,10 @@ export interface OintApi {
   skills: {
     /** 扫描全局与会话工作目录的技能；workingDir 缺省用默认工作目录 */
     list(workingDir?: string): Promise<SkillInfo[]>;
+  };
+  prompts: {
+    /** 扫描全局与会话工作目录的提示模板；workingDir 缺省用默认工作目录 */
+    list(workingDir?: string): Promise<PromptTemplateInfo[]>;
   };
   permissions: {
     listRules(): Promise<PermissionRuleView[]>;

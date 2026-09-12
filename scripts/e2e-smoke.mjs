@@ -1,7 +1,8 @@
 // 端到端冒烟：启动真实 Electron，经 CDP 驱动渲染进程，走 preload → IPC → pisdk → 真实端点。
-// 覆盖：设置写入与安全存储、会话创建、流式对话、低风险工具自动放行、
-//       高风险工具用户审批、完全访问模式免审批、消息持久化、进程重启后的会话恢复。
-// 用法：POLAR_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
+// 覆盖：设置写入与安全存储、会话创建、流式对话、低风险工具自动放行、高风险工具用户审批、
+//       完全访问模式免审批、技能注入（OINT_HOME/skills 下的 SKILL.md 进入系统提示）、
+//       消息持久化、进程重启后的会话恢复。
+// 用法：OINT_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
 // 说明：user-data-dir 与 OINT_HOME 都指向临时目录，不触碰真实用户数据。
 
 import { spawn, spawnSync } from "node:child_process";
@@ -13,9 +14,14 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const electronPath = require("electron");
 
-const BASE_URL = process.env.POLAR_PROBE_BASE_URL ?? "https://ai.qgming.com/v1";
-const API_KEY = process.env.POLAR_PROBE_API_KEY ?? "";
-const MODEL_ID = process.env.POLAR_PROBE_MODEL ?? "deepseek-v4-flash";
+/** 探测用环境变量：新名优先，兼容改名前的 POLAR_PROBE_* */
+function probeEnv(suffix) {
+  return process.env[`OINT_PROBE_${suffix}`] ?? process.env[`POLAR_PROBE_${suffix}`];
+}
+
+const BASE_URL = probeEnv("BASE_URL") ?? "https://ai.qgming.com/v1";
+const API_KEY = probeEnv("API_KEY") ?? "";
+const MODEL_ID = probeEnv("MODEL") ?? "deepseek-v4-flash";
 
 const PORT = 19333;
 const ROOT = process.cwd();
@@ -23,6 +29,9 @@ const TMP = path.join(os.tmpdir(), "oint-e2e");
 const USER_DATA = path.join(TMP, "userdata");
 const WORK_DIR = path.join(TMP, "work");
 const DATA_DIR = path.join(TMP, "data");
+// 技能夹具：写进 OINT_HOME 数据目录下的 skills/，与主进程 resolveSkillDirs 的扫描位置一致
+const SKILL_NAME = "oint-e2e-skill-7f3a";
+const SKILL_MARKER = "oint-e2e-skill-marker-7f3a";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -165,14 +174,44 @@ async function waitFor(expression, label, timeoutMs = 120000) {
   throw new Error(`等待超时：${label}（最后取值 ${JSON.stringify(last)}）`);
 }
 
+// ==================== 技能夹具 ====================
+/**
+ * 在 OINT_HOME 数据目录下写一个技能，返回 SKILL.md 路径。
+ * 两条硬约束（否则「目录存在却 0 个技能」）：
+ * 1. 必须在启动应用之前调用 —— 主进程在会话 runtime 创建时扫描 `${dataDir()}/skills`；
+ * 2. frontmatter 必须同时写全 name 与 description，缺 description 会被内核静默丢弃。
+ */
+function writeSkillFixture() {
+  const skillFile = path.join(DATA_DIR, "skills", SKILL_NAME, "SKILL.md");
+  fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+  fs.writeFileSync(
+    skillFile,
+    [
+      "---",
+      `name: ${SKILL_NAME}`,
+      `description: "E2E 冒烟夹具技能（标记 ${SKILL_MARKER}）：仅用于验证技能索引进入系统提示，被问及可用技能时应报出该名称。"`,
+      "---",
+      "",
+      "# E2E 冒烟夹具技能",
+      "",
+      `本技能只服务于端到端冒烟，没有实际用途。标记字符串：${SKILL_MARKER}`,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return skillFile;
+}
+
 // ==================== 主流程 ====================
 async function main() {
   if (!API_KEY) {
-    console.error("缺少 POLAR_PROBE_API_KEY 环境变量，无法执行端到端冒烟");
+  console.error("缺少 OINT_PROBE_API_KEY 环境变量，无法执行端到端冒烟");
     process.exit(1);
   }
   fs.rmSync(TMP, { recursive: true, force: true });
   fs.mkdirSync(WORK_DIR, { recursive: true });
+  // 技能夹具必须在启动之前就位，晚于 launchApp 就扫不到了
+  ok("技能夹具写入", `${writeSkillFixture()}（技能名 ${SKILL_NAME}，标记 ${SKILL_MARKER}）`);
 
   let child = null;
   try {
@@ -364,6 +403,40 @@ async function main() {
         fullRun.hasApproval === false &&
         fs.existsSync(fullTarget),
       `工具=${fullRun.toolName}，isError=${fullRun.isError}，是否弹审批=${fullRun.hasApproval}`,
+    );
+
+    // ---- 第五轮：技能注入（系统提示里的 <available_skills> 索引）----
+    // 断言只认一件事：模型回复里出现夹具技能名。多说别的、格式不同都不算失败；
+    // 失败时 detail 带上完整回复，用于区分「索引没注入」与「模型没按要求输出」。
+    await evaluate(`(async () => {
+      window.__e2e.events.length = 0;
+      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
+        "不要调用任何工具，直接回答：你当前可用的技能（skills）有哪些？只输出技能名字，用逗号分隔。",
+      )});
+      return true;
+    })()`);
+    await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第五轮技能问答结束");
+    const skillRun = await evaluate(`(() => {
+      // 同一个文本 part 会随流式多次 part-upsert，按 (messageId, partIndex) 保留最新快照再拼接
+      const latestTexts = new Map();
+      for (const e of window.__e2e.events) {
+        if (e.type === "part-upsert" && e.part && e.part.type === "text") {
+          latestTexts.set(e.messageId + "#" + e.partIndex, e.part.text || "");
+        }
+      }
+      const ended = window.__e2e.events.find((e) => e.type === "run-ended");
+      const approval = window.__e2e.events.find((e) => e.type === "approval-requested");
+      return {
+        text: [...latestTexts.values()].join("\\n"),
+        reason: ended ? ended.reason : null,
+        hasApproval: !!approval,
+      };
+    })()`);
+    const skillHit = typeof skillRun.text === "string" && skillRun.text.toLowerCase().includes(SKILL_NAME);
+    assertStep(
+      "技能注入（系统提示的技能索引）",
+      skillHit,
+      `技能名=${SKILL_NAME}，标记=${SKILL_MARKER}，命中=${skillHit}，reason=${skillRun.reason}，是否弹审批=${skillRun.hasApproval}，模型回复=${JSON.stringify(skillRun.text)}`,
     );
 
     // ---- 持久化：渲染层回读 ----

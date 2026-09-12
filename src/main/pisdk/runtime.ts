@@ -11,8 +11,13 @@ import {
   BACKGROUND_CONTEXT,
   type ExecutionEnv,
   type ExecutionToolContext,
+  formatSkillsForSystemPrompt,
   type HarnessEvent,
   type HarnessEventType,
+  loadPromptTemplates,
+  loadSkills,
+  type PromptTemplate,
+  type Skill,
 } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Usage } from "@earendil-works/pi-ai";
 import { dataDir } from "@/main/app/paths";
@@ -38,9 +43,11 @@ import {
   type PermissionRuleStore,
 } from "./permissions";
 import { buildProviders, resolveModel } from "./providers";
+import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
 import type { SessionStore } from "./session-store";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { buildTools, TOOL_NAMES } from "./tools";
+import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
 export interface ChatRuntimeDeps {
   getSettings: () => Promise<Settings>;
@@ -326,11 +333,32 @@ export function deriveRulePattern(
   return undefined;
 }
 
-/** 系统提示：工作目录 + 基本规则 + 可选 AGENTS.md；保持简洁，不做复杂模板 */
-export async function buildSystemPrompt(settings: Settings, cwd: string): Promise<string> {
+/**
+ * 工具使用指导：对齐 dsh/opencode 的做法，把「什么时候用哪个工具」写进系统提示。
+ *
+ * 这是对四个原生工具 description 的补充而非替代 —— pi 提供的 description 偏操作说明
+ * （返回什么、怎么截断），不讲使用场景；两者的分工见 tools.ts 顶部的注释。
+ */
+const TOOL_GUIDANCE = [
+  "工具使用：",
+  "1. 修改任何文件前先用 read 读取它，edit 需要唯一匹配的 oldText；",
+  "2. 查找内容或文件名优先用 grep / glob，不要用 read 全量读取大文件，也不要用 bash 拼 grep/find；",
+  "3. 需要执行命令、跑测试、看 git 状态时用 bash；",
+  "4. 工具输出超长会被截断（bash 只保留末尾 2000 行 / 50KB），需要更多内容时缩小范围分次取；",
+  "5. 多步任务用 todo 记录进度，每完成一步就更新它；",
+  "6. 只依据工具的真实返回作答，不要编造执行结果。",
+].join("\n");
+
+/** 系统提示：工作目录 + 工具指导 + 基本规则 + 技能索引 + 可选 AGENTS.md；保持简洁，不做复杂模板 */
+export async function buildSystemPrompt(
+  settings: Settings,
+  cwd: string,
+  skillsSection?: string,
+): Promise<string> {
   const replyLanguage = settings.language === "en-US" ? "英文" : "简体中文";
   const sections = [
     `你是 Oint 桌面应用中的智能编程助手。当前会话工作目录：${cwd}，相对路径均基于该目录解析。`,
+    TOOL_GUIDANCE,
     [
       "工作规则：",
       "1. 修改代码前先阅读相关文件，不要凭空猜测；",
@@ -338,6 +366,10 @@ export async function buildSystemPrompt(settings: Settings, cwd: string): Promis
       `3. 使用${replyLanguage}回复用户。`,
     ].join("\n"),
   ];
+
+  // 技能以「名称 + 描述 + 文件路径」的紧凑索引注入，完整 SKILL.md 由模型按需通过 lane.skill 读取。
+  // 该索引稳定不变，放在提示前缀里不会破坏缓存 —— 但**不要**在这里拼接技能全文。
+  if (skillsSection !== undefined && skillsSection !== "") sections.push(skillsSection);
 
   let custom = "";
   try {
@@ -348,6 +380,102 @@ export async function buildSystemPrompt(settings: Settings, cwd: string): Promis
   }
   if (custom !== "") sections.push(`用户自定义指令（AGENTS.md）：\n${custom}`);
   return sections.join("\n\n");
+}
+
+/** 技能与提示模板的装配结果 */
+export interface LoadedAgentResources {
+  skills: Skill[];
+  promptTemplates: PromptTemplate[];
+  /** 已拼好的 <available_skills> 索引；无技能时为空串 */
+  skillsSection: string;
+}
+
+/**
+ * 读取技能与提示模板并拼出系统提示里的技能索引。
+ *
+ * 两条必须遵守的约束：
+ * 1. **路径守卫**：调用方构造的 ExecutionEnv 的 allowedRoots 必须已包含全部技能目录，
+ *    否则 listDir/readTextFile 会被 validatePathAccess 拒绝 —— 表现为「目录存在却 0 个技能」，
+ *    而且只有 diagnostics 里能看到 list_failed，很容易被当成「没有技能」。
+ * 2. **不得阻断会话**：技能只是增强，任何失败都只记 warning 并以空结果继续，
+ *    绝不能让 AgentHarness.create 因此抛错。
+ *
+ * `disabledSkillNames` 在这里过滤；`disableModelInvocation` 的过滤在
+ * formatSkillsForSystemPrompt 内部完成（它只把可被模型主动调用的技能写进索引），这里不重复过滤。
+ */
+export async function loadAgentResources(
+  env: ExecutionEnv,
+  settings: Settings,
+  cwd: string,
+): Promise<LoadedAgentResources> {
+  if (!settings.skillsEnabled) return { skills: [], promptTemplates: [], skillsSection: "" };
+
+  const skillDirs = resolveSkillDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path));
+
+  let skills: Skill[] = [];
+  try {
+    const result = await loadSkills(env, skillDirs, BACKGROUND_CONTEXT);
+    for (const diagnostic of result.diagnostics) {
+      console.warn(
+        `技能加载警告（${diagnostic.code}）：${diagnostic.message}（${diagnostic.path}）`,
+      );
+    }
+    // 缺 description 的技能会被内核静默丢弃，不报错 —— 所以上面必须把 diagnostics 打出来
+    skills = result.skills.filter((skill) => !settings.disabledSkillNames.includes(skill.name));
+  } catch (error) {
+    console.warn(`技能加载失败，按无技能继续：${toErrorText(error)}`);
+  }
+
+  let promptTemplates: PromptTemplate[] = [];
+  try {
+    const result = await loadPromptTemplates(
+      env,
+      resolvePromptTemplateDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path)),
+      BACKGROUND_CONTEXT,
+    );
+    for (const diagnostic of result.diagnostics) {
+      console.warn(`提示模板加载警告（${diagnostic.code}）：${diagnostic.message}`);
+    }
+    promptTemplates = result.promptTemplates;
+  } catch (error) {
+    console.warn(`提示模板加载失败，按无模板继续：${toErrorText(error)}`);
+  }
+
+  return { skills, promptTemplates, skillsSection: formatSkillsForSystemPrompt(skills) };
+}
+
+/** 会话内待办清单在 session 里的 custom entry 类型 */
+const TODO_ENTRY_TYPE = "todo";
+
+/**
+ * 从会话里恢复待办清单。
+ *
+ * 为什么必须做：todo 工具是**整表替换**语义 —— 不恢复的话，应用重启后的第一次 todo 调用
+ * 会以空表为基准覆盖，用户之前那张清单就没了。状态本体存在会话的 custom entry 里
+ * （每次调用追加一条），这里读最后一条即可。
+ *
+ * 读不到、或数据不合法，都只是「当作空表」并记 warning：待办是辅助信息，不能阻断会话创建。
+ */
+async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void> {
+  try {
+    const entry = await lane.findEntry(
+      { type: "custom", customType: TODO_ENTRY_TYPE, order: "newestFirst", limit: 1 },
+      BACKGROUND_CONTEXT,
+    );
+    if (entry === undefined || entry.type !== "custom") return;
+    const data = entry.data;
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return;
+    const record = data as Record<string, unknown>;
+    const todos = parseTodoEntries(record.todos);
+    if (todos === undefined) return;
+    todo.todos = todos;
+    const revision = record.revision;
+    if (typeof revision === "number" && Number.isInteger(revision) && revision >= 0) {
+      todo.revision = revision;
+    }
+  } catch (error) {
+    console.warn(`恢复待办清单失败，按空清单继续：${toErrorText(error)}`);
+  }
 }
 
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
@@ -859,7 +987,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     const settings = await deps.getSettings();
     const cwd = await deps.resolveWorkingDir(sessionId);
-    const env = await createExecEnv({ cwd, allowedRoots: [cwd, dataDir()] });
+    // 技能/模板目录可能与工作目录、数据目录都不重叠，必须一并加入路径守卫的根：
+    // 否则 loadSkills 的 listDir 会被 validatePathAccess 拒绝，表现为「目录明明存在却是 0 个技能」
+    const skillDirPaths = resolveSkillDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path));
+    const env = await createExecEnv({ cwd, allowedRoots: [cwd, dataDir(), ...skillDirPaths] });
+
+    const loaded = await loadAgentResources(env, settings, cwd);
+
+    // 会话级待办状态：create() 时就得交给工具，而 lane 要等 create 之后才有 ——
+    // 所以持久化回调走一个可变的 laneRef（工具真正调用它时 lane 一定已就绪）
+    const todo = createTodoState();
+    let laneRef: AgentLane | undefined;
 
     const { models } = buildProviders(settings);
     const model = resolveModel(settings, settings.defaultModel);
@@ -872,15 +1010,29 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         session: opened.session,
         models,
         model,
-        systemPrompt: await buildSystemPrompt(settings, cwd),
+        systemPrompt: await buildSystemPrompt(settings, cwd, loaded.skillsSection),
         tools: buildTools(),
-        toolContext: { env },
+        toolContext: {
+          env,
+          todo,
+          persistTodo: async (state: TodoState) => {
+            await laneRef?.appendCustomEntry(
+              TODO_ENTRY_TYPE,
+              toTodoPayload(state),
+              BACKGROUND_CONTEXT,
+            );
+          },
+        },
+        resources: { skills: loaded.skills, promptTemplates: loaded.promptTemplates },
         thinkingLevel: settings.thinkingLevel,
         compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
       },
       BACKGROUND_CONTEXT,
     );
     const lane = await created.harness.lane(LANE_NAME, BACKGROUND_CONTEXT);
+    laneRef = lane;
+    // 必须在返回 runtime 之前恢复：否则重启后的第一次 todo 调用会以空表为基准覆盖用户清单
+    await restoreTodoState(lane, todo);
 
     const runtime: SessionRuntime = {
       sessionId,

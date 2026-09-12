@@ -36,6 +36,8 @@ export const DEFAULT_SETTINGS: Settings = {
   permissionMode: "default",
   skillDirs: [],
   disabledSkillNames: [],
+  skillsEnabled: true,
+  promptTemplateDirs: [],
 };
 
 export interface SettingsStoreOptions {
@@ -97,6 +99,11 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
     disabledSkillNames: Array.isArray(raw.disabledSkillNames)
       ? raw.disabledSkillNames.filter((name) => typeof name === "string")
       : base.disabledSkillNames,
+    // 布尔字段必须显式校验：上面按 Object.keys 的透传会把任意类型原样带进来
+    skillsEnabled: typeof raw.skillsEnabled === "boolean" ? raw.skillsEnabled : base.skillsEnabled,
+    promptTemplateDirs: Array.isArray(raw.promptTemplateDirs)
+      ? raw.promptTemplateDirs.filter((dir) => typeof dir === "string")
+      : base.promptTemplateDirs,
   };
 }
 

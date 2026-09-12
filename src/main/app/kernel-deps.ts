@@ -22,7 +22,8 @@ async function readJsonObject(
 ): Promise<Record<string, unknown> | null> {
   try {
     const parsed: unknown = JSON.parse(await read(file));
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed as Record<string, unknown>;
   } catch {
     return null;
   }

@@ -3,22 +3,27 @@
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { useAuiState } from "@assistant-ui/react";
 import {
+  FileSearchIcon,
   FileTextIcon,
+  ListTodoIcon,
   type LucideIcon,
   PenLineIcon,
   SquarePenIcon,
   TerminalIcon,
+  TextSearchIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeDiff } from "@/renderer/components/assistant-ui/elements/code-diff";
+import { paper } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TerminalBlock } from "@/renderer/components/assistant-ui/elements/terminal-block";
+import { type TodoItem, TodoList } from "@/renderer/components/assistant-ui/elements/todo-list";
 import { ToolCall } from "@/renderer/components/assistant-ui/elements/tool-call";
-import { ToolFallback } from "@/renderer/components/assistant-ui/elements/tool-fallback.aui";
 import {
   type TimelineStep,
   ToolTimeline,
 } from "@/renderer/components/assistant-ui/elements/tool-timeline";
+import { cn } from "@/renderer/lib/utils";
 import {
   bashCommand,
   bashOutput,
@@ -31,12 +36,15 @@ import {
   toolRows,
 } from "./tool-presentation";
 
-/** 工具名 → 图标；本应用只暴露 bash/read/write/edit 四个原生工具，未登记的一律用终端图标 */
+/** 工具名 → 图标；未登记的一律用终端图标 */
 const TOOL_ICONS: Record<string, LucideIcon> = {
   bash: TerminalIcon,
   read: FileTextIcon,
   write: SquarePenIcon,
   edit: PenLineIcon,
+  grep: TextSearchIcon,
+  glob: FileSearchIcon,
+  todo: ListTodoIcon,
 };
 
 const DEFAULT_ICON = TerminalIcon;
@@ -47,6 +55,9 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   read: { resting: "tools.read", active: "tools.readActive" },
   write: { resting: "tools.write", active: "tools.writeActive" },
   edit: { resting: "tools.edit", active: "tools.editActive" },
+  grep: { resting: "tools.grep", active: "tools.grepActive" },
+  glob: { resting: "tools.glob", active: "tools.globActive" },
+  todo: { resting: "tools.todo", active: "tools.todoActive" },
 };
 
 const FALLBACK_LABELS = { resting: "tools.call", active: "tools.callActive" };
@@ -111,7 +122,17 @@ function DiffDetail({ diff }: { diff: EditDiff }) {
   );
 }
 
-/** 已解析的详情 → 具体组件 */
+/** todo 清单：与 TerminalBlock / CodeDiff 一样自带 paper 面与圆角，工具流里各详情外观保持一致 */
+function TodoDetail({ items, revision }: { items: TodoItem[]; revision?: number }) {
+  const { t } = useTranslation();
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
+      <TodoList items={items} revision={revision} title={t("chat.todos")} />
+    </div>
+  );
+}
+
+/** 已解析的详情 → 具体组件（TodoList 的 prop 叫 items，映射已在纯逻辑层做完） */
 function ResolvedDetail({
   detail,
   args,
@@ -124,6 +145,9 @@ function ResolvedDetail({
   running: boolean;
 }) {
   if (detail.kind === "diff") return <DiffDetail diff={detail.diff} />;
+  if (detail.kind === "todo") {
+    return <TodoDetail items={detail.items} revision={detail.revision} />;
+  }
   return <TerminalDetail args={args} result={result} running={running} />;
 }
 
@@ -144,8 +168,8 @@ function PartDetail({
   running: boolean;
 }) {
   const detail = useMemo(
-    () => resolveToolDetail(toolName, details, isError),
-    [toolName, details, isError],
+    () => resolveToolDetail(toolName, details, isError, args),
+    [toolName, details, isError, args],
   );
   if (detail === null) return null;
   return <ResolvedDetail detail={detail} args={args} result={result} running={running} />;
@@ -174,14 +198,20 @@ function StepDetail({ index, open }: { index: number; open: boolean }) {
 }
 
 /**
- * 单个工具调用。折叠行始终是官方 ToolCall，rich 组件只作为它的 `detail` 出现在展开的面板里：
+ * 单个工具调用：折叠行**统一**走官方 ToolCall，成功与失败的差别只体现在它的收尾标记与行色上
+ * （`isError` → 红叉 + 整行转红）。rich 组件只作为它的 `detail` 出现在展开的面板里：
  *
- * - 失败 → 整行走 ToolFallback（ToolCall 的收尾标记只有绿勾，报错会被读成成功）
  * - edit 有可解析的 patch → detail 用 CodeDiff
  * - bash → detail 用 TerminalBlock
- * - 其余（read / write / 未知）→ 不给 detail，保留内置的 Request/Result 文本面板
+ * - todo 有清单 → detail 用 TodoList（details 未到时用工具参数里的清单兜底）
+ * - 失败、以及其余（read / write / grep / glob / 未知）→ 不给 detail，保留内置的
+ *   Request/Result 文本面板 —— 工具的错误文案本来就在 result 里，展开就能看到
  *
- * edit 的补丁走 assistant-ui 的 `artifact` 槽位（见 message-converter 的映射）。
+ * 之前失败态是整行走 vendored ToolFallback：它的标记由 part 的 status 决定，而 aui 的 status
+ * 只表达「跑没跑完」，于是失败也会渲染成绿勾 —— 读起来就是成功。失败标记现在由 ToolCall 的
+ * isError 承担，不依赖 aui 的状态推导。
+ *
+ * edit 的补丁与 todo 的清单都走 assistant-ui 的 `artifact` 槽位（见 message-converter 的映射）。
  */
 export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
   const { t } = useTranslation();
@@ -189,19 +219,9 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
 
   const isError = props.isError === true;
   const detail = useMemo(
-    () => resolveToolDetail(props.toolName, props.artifact, isError),
-    [props.toolName, props.artifact, isError],
+    () => resolveToolDetail(props.toolName, props.artifact, isError, props.args),
+    [props.toolName, props.artifact, isError, props.args],
   );
-
-  // ToolFallback 的触发行自带 py-1.5（vendored 的既定样式），那 6px 会让它的视觉间距
-  // 比同为 gap 驱动的其它块多出一截；用负外边距抵掉，不动 vendored 文件
-  if (isError) {
-    return (
-      <div className="-my-1.5">
-        <ToolFallback {...props} />
-      </div>
-    );
-  }
 
   const labels = TOOL_LABELS[props.toolName] ?? FALLBACK_LABELS;
   return (
@@ -212,6 +232,7 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
       request={props.argsText}
       result={toolResultText(props.result)}
       running={props.status.type === "running"}
+      isError={isError}
       open={open}
       onOpenChange={setOpen}
       detail={

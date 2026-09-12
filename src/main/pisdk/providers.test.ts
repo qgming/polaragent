@@ -17,6 +17,8 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     thinkingLevel: "medium",
     permissionMode: "default",
     skillDirs: [],
+    skillsEnabled: true,
+    promptTemplateDirs: [],
     disabledSkillNames: [],
   };
 }

@@ -27,9 +27,14 @@ import {
 
 // ==================== 配置 ====================
 // 密钥从环境变量读取，避免写入仓库；缺少时给出明确提示
-const BASE_URL = process.env.POLAR_PROBE_BASE_URL ?? "https://ai.qgming.com/v1";
-const API_KEY = process.env.POLAR_PROBE_API_KEY ?? "";
-const MODEL_ID = process.env.POLAR_PROBE_MODEL ?? "deepseek-v4-flash";
+/** 探测用环境变量：新名优先，兼容改名前的 POLAR_PROBE_* */
+function probeEnv(suffix) {
+  return process.env[`OINT_PROBE_${suffix}`] ?? process.env[`POLAR_PROBE_${suffix}`];
+}
+
+const BASE_URL = probeEnv("BASE_URL") ?? "https://ai.qgming.com/v1";
+const API_KEY = probeEnv("API_KEY") ?? "";
+const MODEL_ID = probeEnv("MODEL") ?? "deepseek-v4-flash";
 const PROVIDER_ID = "probe-svc";
 
 const DATA_DIR = path.join(os.tmpdir(), "oint-probe");

@@ -1,9 +1,13 @@
-// runtime 单测：只覆盖不依赖真实 harness 的纯逻辑（系统提示、规则模式、单例生命周期）。
+// runtime 单测：只覆盖不依赖真实 harness 的纯逻辑（系统提示、技能装配、规则模式、单例生命周期）。
 // 真实 prompt 往返需要模型服务，留给端到端验收。
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { createApprovalService } from "./approvals";
+import { createExecEnv } from "./exec-env";
 import {
   abortStaleOperation,
   applyToolEnd,
@@ -12,6 +16,7 @@ import {
   deriveRulePattern,
   getChatRuntime,
   isLaneBusy,
+  loadAgentResources,
   type PendingEntry,
   pairEntryWithMessage,
 } from "./runtime";
@@ -30,6 +35,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     thinkingLevel: "medium",
     permissionMode: "default",
     skillDirs: [],
+    skillsEnabled: true,
+    promptTemplateDirs: [],
     disabledSkillNames: [],
     ...overrides,
   };
@@ -50,6 +57,96 @@ describe("buildSystemPrompt", () => {
 
   it("AGENTS.md 不可读时仍返回可用提示（不抛错）", async () => {
     await expect(buildSystemPrompt(makeSettings(), "/tmp/demo")).resolves.toBeTypeOf("string");
+  });
+
+  it("传入技能索引时拼进系统提示", async () => {
+    const section =
+      "<available_skills>\n  <skill>\n    <name>demo-skill</name>\n  </skill>\n</available_skills>";
+    const prompt = await buildSystemPrompt(makeSettings(), "/tmp/demo", section);
+    expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain("demo-skill");
+  });
+
+  it("无技能时不出现技能段（禁用全部技能或关闭注入时不该污染提示）", async () => {
+    expect(await buildSystemPrompt(makeSettings(), "/tmp/demo")).not.toContain(
+      "<available_skills>",
+    );
+    expect(await buildSystemPrompt(makeSettings(), "/tmp/demo", "")).not.toContain(
+      "<available_skills>",
+    );
+  });
+
+  it("包含工具使用指导，且指导里点名了自建工具", async () => {
+    const prompt = await buildSystemPrompt(makeSettings(), "/tmp/demo");
+    expect(prompt).toContain("工具使用：");
+    expect(prompt).toContain("grep / glob");
+    expect(prompt).toContain("todo");
+  });
+});
+
+/** 夹具技能：名称必须是小写字母/数字/连字符，且与所在目录同名（内核校验规则） */
+const SKILL_NAME = "oint-runtime-test-skill";
+const SKILL_MD = [
+  "---",
+  `name: ${SKILL_NAME}`,
+  "description: 仅用于 runtime 单测的夹具技能",
+  "---",
+  "",
+  "# 夹具技能",
+  "",
+].join("\n");
+
+/** 在临时目录里造一个技能目录，返回 { root, skillDir } */
+async function makeSkillFixture(): Promise<{ root: string; skillDir: string }> {
+  const root = await mkdtemp(path.join(tmpdir(), "oint-skill-"));
+  const skillDir = path.join(root, "skills");
+  await mkdir(path.join(skillDir, SKILL_NAME), { recursive: true });
+  await writeFile(path.join(skillDir, SKILL_NAME, "SKILL.md"), SKILL_MD, "utf8");
+  return { root, skillDir };
+}
+
+describe("loadAgentResources", () => {
+  it("skillsEnabled 为 false 时完全跳过加载", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "oint-skill-off-"));
+    const env = await createExecEnv({ cwd: root, allowedRoots: [root] });
+    const loaded = await loadAgentResources(env, makeSettings({ skillsEnabled: false }), root);
+    expect(loaded.skills).toEqual([]);
+    expect(loaded.promptTemplates).toEqual([]);
+    expect(loaded.skillsSection).toBe("");
+  });
+
+  it("技能目录在 allowedRoots 内时能加载，并生成 <available_skills> 索引", async () => {
+    const { root, skillDir } = await makeSkillFixture();
+    const env = await createExecEnv({ cwd: root, allowedRoots: [root, skillDir] });
+    const loaded = await loadAgentResources(env, makeSettings({ skillDirs: [skillDir] }), root);
+    expect(loaded.skills.map((skill) => skill.name)).toContain(SKILL_NAME);
+    expect(loaded.skillsSection).toContain("<available_skills>");
+    expect(loaded.skillsSection).toContain(SKILL_NAME);
+    // 索引里只有名称/描述/路径，不含正文 —— 正文由模型按需读取
+    expect(loaded.skillsSection).not.toContain("# 夹具技能");
+  });
+
+  it("技能目录不在 allowedRoots 内时会被路径守卫拦掉，表现为 0 个技能", async () => {
+    // 这条测试是「为什么 runtime.ts 必须把 skillDirs 加进 allowedRoots」的回归保护：
+    // 守卫拒绝后内核只在 diagnostics 里报 list_failed，接口上看起来就是「这个技能不存在」
+    const { root, skillDir } = await makeSkillFixture();
+    const elsewhere = path.join(root, "elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    const env = await createExecEnv({ cwd: elsewhere, allowedRoots: [elsewhere] });
+    const loaded = await loadAgentResources(env, makeSettings({ skillDirs: [skillDir] }), root);
+    expect(loaded.skills.map((skill) => skill.name)).not.toContain(SKILL_NAME);
+  });
+
+  it("disabledSkillNames 里的技能被过滤掉，也不进索引", async () => {
+    const { root, skillDir } = await makeSkillFixture();
+    const env = await createExecEnv({ cwd: root, allowedRoots: [root, skillDir] });
+    const loaded = await loadAgentResources(
+      env,
+      makeSettings({ skillDirs: [skillDir], disabledSkillNames: [SKILL_NAME] }),
+      root,
+    );
+    expect(loaded.skills.map((skill) => skill.name)).not.toContain(SKILL_NAME);
+    expect(loaded.skillsSection).not.toContain(SKILL_NAME);
   });
 });
 

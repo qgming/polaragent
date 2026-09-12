@@ -17,11 +17,17 @@ export interface TodoItem {
 export function TodoList({
   items,
   revision,
+  title = "Todos",
+  showHeader = true,
   className,
   ...props
-}: Omit<ComponentProps<"div">, "children" | "items" | "revision"> & {
+}: Omit<ComponentProps<"div">, "children" | "items" | "revision" | "title"> & {
   items: readonly TodoItem[];
   revision?: number;
+  /** 标题行里的名称。registry 原版硬编码英文 "Todos"，这里开放出来以便本地化 */
+  title?: string;
+  /** 是否渲染自带的标题行（名称 + done/total）；外层已经有标题时可以关掉，避免两个标题 */
+  showHeader?: boolean;
 }) {
   const done = items.filter((item) => item.status === "done").length;
 
@@ -31,14 +37,16 @@ export function TodoList({
       className={cn("flex w-full max-w-sm flex-col gap-3", className)}
       {...props}
     >
-      <div className="flex items-baseline justify-between">
-        <span className="text-[13.5px] font-medium">Todos</span>
-        <span className={cn(mono, "text-foreground/35 tabular-nums")}>
-          {revision === undefined
-            ? `${done}/${items.length}`
-            : `${done}/${items.length} · rev ${revision}`}
-        </span>
-      </div>
+      {showHeader ? (
+        <div className="flex items-baseline justify-between">
+          <span className="text-[13.5px] font-medium">{title}</span>
+          <span className={cn(mono, "text-foreground/35 tabular-nums")}>
+            {revision === undefined
+              ? `${done}/${items.length}`
+              : `${done}/${items.length} · rev ${revision}`}
+          </span>
+        </div>
+      ) : null}
       <ul className="flex flex-col gap-1">
         {items.map((item) => (
           <li

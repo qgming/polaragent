@@ -4,6 +4,7 @@ import type { WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
+import type { PromptTemplateInfo } from "./prompts";
 import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
@@ -54,6 +55,9 @@ export const IPC = {
   },
   skills: {
     list: "skills:list",
+  },
+  prompts: {
+    list: "prompts:list",
   },
   permissions: {
     listRules: "permissions:list-rules",
@@ -134,6 +138,10 @@ export interface IpcInvokeContract {
   [IPC.skills.list]: {
     request: { workingDir?: string } | undefined;
     response: SkillInfo[];
+  };
+  [IPC.prompts.list]: {
+    request: { workingDir?: string } | undefined;
+    response: PromptTemplateInfo[];
   };
   [IPC.permissions.listRules]: { request: undefined; response: PermissionRuleView[] };
   [IPC.permissions.addRule]: { request: PermissionRuleView; response: undefined };

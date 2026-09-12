@@ -22,10 +22,11 @@
 
 ## 产品定位
 
-Oint 是面向本地工作流的桌面 Agent 客户端：不自研工具与中间层，把 pisdk 的能力原样呈现。
+Oint 是面向本地工作流的桌面 Agent 客户端：把 pisdk 的能力原样呈现，只在其上补少量只读工具。
 
 - **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 批量转发。
-- **工具**：Agent 可见工具固定为 pisdk 原生四件套 —— `bash`、`read`、`write`、`edit`。
+- **工具**：内核原生四件套 `bash`/`read`/`write`/`edit` + 自建只读增强 `grep`/`glob`/`todo`；
+  刻意不做持久终端、任意代码执行这类会引入新权限面的工具。
 - **能力归属**：模型路由、流式请求、会话持久化、上下文压缩、分支 fork 全部由 pisdk 承担。
 - **本地优先**：会话、设置、AGENTS.md 与技能都在本机；模型请求只发往你配置的 OpenAI 兼容服务。
 
@@ -41,7 +42,7 @@ Oint 是面向本地工作流的桌面 Agent 客户端：不自研工具与中�
                         │ preload（contextBridge，白名单 API）
 ┌───────────────────────┴────────────────────────────────────┐
 │  主进程（唯一特权进程）                                      │
-│  ├─ pisdk 装配：AgentHarness / Provider / 四工具 / 权限门     │
+│  ├─ pisdk 装配：AgentHarness / Provider / 工具层 / 权限门     │
 │  ├─ SQLite 会话仓储（分页游标 + 标题索引）                     │
 │  ├─ 三模式权限：默认权限 / 帮我审批（AI）/ 完全访问            │
 │  ├─ 安全层：路径守卫、命令黑名单、safeStorage 加密            │
@@ -78,10 +79,12 @@ src/
 | 分区 | 内容 |
 | --- | --- |
 | 对话 | 流式回复、思考链折叠、工具调用分组、Markdown、停止/重试、图片附件、运行中排队与插话 |
+| 工具 | 内核原生 `bash`/`read`/`write`/`edit`（description 已覆盖，补「何时用/何时不要用」）+ 自建只读 `grep`/`glob`/`todo` |
+| 待办 | `todo` 工具维护会话级清单（整表替换语义）；对话区上方另有**独立可折叠面板**，重启后由会话记录恢复 |
 | 会话 | 新建/切换/重命名/归档/删除、**侧栏「置顶 / 项目 / 最近」分组**（绑定文件夹即为项目，会话按其工作目录自动归组）、标题索引、分页加载历史、**从任意消息分支**、SQLite 持久化 |
 | 权限 | 三模式（默认权限 / 帮我审批 / 完全访问）、审批卡（允许一次 / 始终允许 / 拒绝并说明理由）、「始终允许」规则库 |
-| 技能 | SKILL.md 扫描（全局 + 项目目录）、启用/禁用、提示模板 |
-| 设置 | 通用（主题/语言/密度/字体）、模型服务（两种 OpenAI 格式 + 拉取模型）、技能、个性化（AGENTS.md）、数据（数据目录 / 默认工作目录）、关于（名称 / 版本 / pi 内核） |
+| 技能 | SKILL.md 扫描（全局 + 项目目录 + 自定义目录）、总开关、启用/禁用、把「名称 + 描述 + 路径」索引注入系统提示（正文按需读取） |
+| 设置 | 通用（主题/语言/密度/字体）、模型服务（两种 OpenAI 格式 + 拉取模型）、技能、提示模板、个性化（AGENTS.md）、数据（数据目录 / 默认工作目录）、关于（名称 / 版本 / pi 内核） |
 | 搜索 | Ctrl+K 全局搜索（会话/消息/设置/命令）、会话内查找（Ctrl+F） |
 
 ### 模型服务
@@ -109,7 +112,8 @@ Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（
 ├── permission-rules.json   # 「始终允许」规则
 ├── AGENTS.md               # 个性化长期偏好（可手写，适合纳入版本管理）
 ├── sessions/               # 会话库：每会话一个 SQLite
-├── skills/                 # 全局技能（SKILL.md）
+├── skills/                 # 全局技能（SKILL.md，递归扫描）
+├── prompts/                # 全局提示模板（*.md，只读直接子级，供显式调用）
 └── cache/                  # 可再生成的缓存（models.dev 模型元数据）
 ```
 
@@ -165,7 +169,8 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 | `npm run start` | 启动已构建的应用 |
 | `npm run typecheck` | 检查渲染进程、主进程与 preload 类型 |
 | `npm run lint` | Biome 检查（`lint:fix` / `format` 可自动修复） |
-| `npm run test` | 运行单元测试（vitest） |
+| `npm run test` | 运行单元测试（vitest；`node` project 收 `*.test.ts`，`ui` project 收 `*.test.tsx` + jsdom） |
+| `npm run check:unwired` | 检查 `elements/` 下「已建好但未接线」的组件；存在未接线文件时退出码为 1 |
 | `npm run build` | 类型检查并构建 renderer、主进程与 preload |
 | `npm run pack` | 生成 `release/` 下的可运行应用目录 |
 | `npm run dist` | 生成当前平台安装包 |
@@ -180,8 +185,8 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 两者都从环境变量读取凭据：
 
 ```bash
-POLAR_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
-# 可选：POLAR_PROBE_BASE_URL / POLAR_PROBE_MODEL
+OINT_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
+# 可选：OINT_PROBE_BASE_URL / OINT_PROBE_MODEL（改名前的 POLAR_PROBE_* 仍然兼容）
 ```
 
 ### 首次配置

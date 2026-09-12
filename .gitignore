@@ -20,5 +20,7 @@ release
 
 # 日志 / 系统文件
 *.log
+# 运行时日志目录（当前代码未使用，保留目录但别让它被提交）
+logs/
 .DS_Store
 Thumbs.db

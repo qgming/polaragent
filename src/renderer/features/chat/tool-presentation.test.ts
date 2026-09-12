@@ -24,6 +24,13 @@ const PATCH = [
   "",
 ].join("\n");
 
+/** 一份典型清单：done / active / pending 各一条，chip 与详情用例共用 */
+const TODOS = [
+  { id: "1", text: "读代码", status: "done" },
+  { id: "2", text: "改实现", status: "active" },
+  { id: "3", text: "补测试", status: "pending" },
+];
+
 describe("toolChip", () => {
   it("取 command 或 path，再其次任意字符串参数", () => {
     expect(toolChip({ path: "src/a.ts" })).toBe("src/a.ts");
@@ -39,6 +46,14 @@ describe("toolChip", () => {
     expect(toolChip(undefined)).toBe("");
   });
 
+  // todo 的主参数是数组：chip 给「已完成/总数」。空清单不占位，与其它非字符串参数同一个结果
+  it("todo 的清单参数给进度", () => {
+    expect(toolChip({ todos: TODOS })).toBe("1/3");
+    expect(toolChip({ todos: [{ id: "a", text: "只有一条", status: "done" }] })).toBe("1/1");
+    expect(toolChip({ todos: [] })).toBe("");
+    // 非数组的 todos 不命中这条分支：数值参数没有可截的字符串，走通用兜底给空串
+    expect(toolChip({ todos: 3 })).toBe("");
+  });
   it("长路径保留末级、长命令保留开头", () => {
     const longPath = `${"nested/".repeat(10)}file.ts`;
     expect(longPath.length).toBeGreaterThan(CHIP_LIMIT);
@@ -230,6 +245,111 @@ describe("resolveToolDetail", () => {
     expect(resolveToolDetail("read", { truncation: { lines: 5 } })).toBeNull();
     expect(resolveToolDetail("write", undefined)).toBeNull();
     expect(resolveToolDetail("未知工具", undefined)).toBeNull();
+  });
+});
+
+describe("resolveToolDetail · todo", () => {
+  it("details 里的清单映射成 TodoList 的 items（todos → items，revision 一并带上）", () => {
+    expect(resolveToolDetail("todo", { todos: TODOS, revision: 7 })).toEqual({
+      kind: "todo",
+      items: TODOS,
+      revision: 7,
+    });
+  });
+
+  it("失败条目带 reason；缺 revision 时不硬塞", () => {
+    const details = { todos: [{ id: "1", text: "跑测试", status: "failed", reason: "超时" }] };
+    expect(resolveToolDetail("todo", details)).toEqual({
+      kind: "todo",
+      items: [{ id: "1", text: "跑测试", status: "failed", reason: "超时" }],
+    });
+  });
+
+  // 回归：调用刚抵达、结果还没回来时 details（artifact）是 undefined，
+  // 这时要靠工具参数里的清单先把卡片画出来，而不是退成 JSON 文本面板
+  it("details 还没到（流式中）时用工具参数里的清单兜底", () => {
+    expect(resolveToolDetail("todo", undefined, false, { todos: TODOS })).toEqual({
+      kind: "todo",
+      items: TODOS,
+    });
+    expect(
+      resolveToolDetail("todo", undefined, false, { todos: TODOS, revision: 2 }),
+    ).toMatchObject({
+      kind: "todo",
+      revision: 2,
+    });
+  });
+
+  // 真实 schema：新条目的 id 是可选的（缺了由主进程自动编号），流式期的参数因此常常没有 id。
+  // 这时按位置补一个临时 key 先把清单画出来，details 到了再换成真正的 id
+  it("参数里的条目缺 id 也能渲染，key 由位置补", () => {
+    const args = { todos: [{ text: "新条目", status: "pending" }] };
+    expect(resolveToolDetail("todo", undefined, false, args)).toEqual({
+      kind: "todo",
+      items: [{ id: "todo-0", text: "新条目", status: "pending" }],
+    });
+    // details 侧仍然要求 id：主进程产出的成品不允许缺
+    expect(
+      resolveToolDetail("todo", { todos: [{ text: "新条目", status: "pending" }] }),
+    ).toBeNull();
+  });
+
+  it("details 优先于参数", () => {
+    const args = { todos: [{ id: "x", text: "参数里的旧清单", status: "pending" }] };
+    expect(resolveToolDetail("todo", { todos: TODOS, revision: 9 }, false, args)).toEqual({
+      kind: "todo",
+      items: TODOS,
+      revision: 9,
+    });
+  });
+
+  it("空清单是合法的「已清空」，不是脏数据", () => {
+    expect(resolveToolDetail("todo", { todos: [], revision: 3 })).toEqual({
+      kind: "todo",
+      items: [],
+      revision: 3,
+    });
+  });
+
+  it("非法 details 一律回退到 null 且不抛异常", () => {
+    const invalid: unknown[] = [
+      undefined,
+      null,
+      "不是对象",
+      42,
+      [],
+      { todos: "不是数组" },
+      { todos: null },
+      { todos: [1] },
+      { todos: ["待办"] },
+      { todos: [{ text: "没有 id", status: "pending" }] },
+      { todos: [{ id: "", text: "id 为空", status: "pending" }] },
+      { todos: [{ id: "1", status: "pending" }] },
+      { todos: [{ id: "1", text: "", status: "pending" }] },
+      { todos: [{ id: "1", text: "缺 status" }] },
+      { todos: [{ id: "1", text: "状态不在集合里", status: "running" }] },
+      { todos: [{ id: "1", text: "reason 类型不对", status: "failed", reason: 7 }] },
+    ];
+    for (const details of invalid) {
+      expect(() => resolveToolDetail("todo", details)).not.toThrow();
+      expect(resolveToolDetail("todo", details)).toBeNull();
+    }
+  });
+
+  it("参数兜底同样过校验：参数不合法也不给半份清单", () => {
+    expect(resolveToolDetail("todo", undefined, false, { todos: [{ id: "1" }] })).toBeNull();
+    expect(resolveToolDetail("todo", undefined, false, {})).toBeNull();
+    expect(resolveToolDetail("todo", undefined, false, "不是对象")).toBeNull();
+    expect(resolveToolDetail("todo", undefined)).toBeNull();
+  });
+
+  it("错误态优先：失败时即使有清单也不给 todo 详情", () => {
+    expect(resolveToolDetail("todo", { todos: TODOS }, true, { todos: TODOS })).toBeNull();
+  });
+
+  it("grep / glob 保持通用面板（结果本身就是文本）", () => {
+    expect(resolveToolDetail("grep", { pattern: "foo" })).toBeNull();
+    expect(resolveToolDetail("glob", undefined, false, { pattern: "**/*.ts" })).toBeNull();
   });
 });
 

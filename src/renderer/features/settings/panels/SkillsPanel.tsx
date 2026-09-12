@@ -64,6 +64,22 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
 
   return (
     <div className="space-y-6">
+      <SettingsSection
+        title={t("settings.skillsInjection")}
+        description={t("settings.skillsInjectionDesc")}
+      >
+        <SettingsField
+          label={t("settings.skillsEnabled")}
+          control={
+            <Switch
+              size="sm"
+              checked={settings.skillsEnabled}
+              onCheckedChange={(checked) => void update({ skillsEnabled: checked })}
+            />
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection title={t("settings.skillDirs")} description={t("settings.skillDirsDesc")}>
         {settings.skillDirs.length === 0 ? (
           <p className="text-[13px] text-foreground/45">{t("common.empty")}</p>

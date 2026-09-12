@@ -7,7 +7,8 @@ import { ThreadToolbar } from "./ThreadToolbar";
 /**
  * 对话区入口：ThreadToolbar + Thread 的组合。
  * 运行时由 App.tsx 的 OintRuntimeProvider 提供，本组件只消费 runtime，不重复包 provider。
- * Composer 由 Thread 的 ViewportFooter 渲染（与 assistant-ui 的 Thread 一致），这里不再单独挂。
+ * Composer 由 Thread 的 ViewportFooter 渲染（与 assistant-ui 的 Thread 一致）；待办条挂在
+ * Composer 内部、贴着输入框顶部（挂载点见 Composer.tsx），所以这里不挂它。
  * 审批卡数据从 chat-store 读取，决定写回 store（resolveApproval）。
  */
 export function ChatView() {

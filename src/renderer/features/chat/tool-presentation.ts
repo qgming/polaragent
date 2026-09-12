@@ -7,6 +7,7 @@
  */
 
 import type { DiffLine } from "@/renderer/components/assistant-ui/elements/code-diff";
+import type { TodoItem } from "@/renderer/components/assistant-ui/elements/todo-list";
 import { parsePatch } from "@/renderer/components/ui/diff-viewer";
 
 /** chip 里主参数的展示上限：完整请求在展开面板里，这里只做客串 */
@@ -56,10 +57,11 @@ function shortenCommand(value: string): string {
 }
 
 /**
- * 主参数：命令取 command，其余取文件路径；都没有时退到第一个字符串参数。
+ * 主参数：命令取 command，文件路径取 path，清单取 todo 的进度；都没有时退到第一个字符串参数。
  *
  * 截断策略由**命中的参数键**决定，不靠调用方传工具名：bash 的参数是 command，
  * read/write/edit 是 path，两者在参数结构上就分得开；漏传工具名也不会截错。
+ * todo 的主参数是清单数组（没有字符串可截），改给「已完成/总数」当进度。
  */
 export function toolChip(args: unknown): string {
   if (!isRecord(args)) return "";
@@ -70,6 +72,13 @@ export function toolChip(args: unknown): string {
   for (const key of ["path", "file"]) {
     const value = args[key];
     if (typeof value === "string" && value !== "") return shortenPath(value);
+  }
+
+  // todo 的清单：进度比条目文本更适合做客串；空清单不占位，与「没有字符串参数」同一个结果
+  const todos = args.todos;
+  if (Array.isArray(todos) && todos.length > 0) {
+    const done = todos.filter((item) => isRecord(item) && item.status === "done").length;
+    return `${done}/${todos.length}`;
   }
 
   // 兜底：未登记的工具只知道有个字符串参数，按路径规则处理更保守
@@ -144,8 +153,74 @@ export function toEditDiff(patch: string): EditDiff | null {
   };
 }
 
+/** TodoList 只认这四种状态；details 从主进程过来是 unknown，必须逐项校验 */
+const TODO_STATUSES = new Set<string>(["pending", "active", "done", "failed"]);
+
+function isTodoStatus(value: unknown): value is TodoItem["status"] {
+  return typeof value === "string" && TODO_STATUSES.has(value);
+}
+
+/** todo 的清单数据：与 TodoList 的入参同形（prop 叫 items，details 里叫 todos） */
+export interface TodoDetailData {
+  items: TodoItem[];
+  revision?: number;
+}
+
+/**
+ * 逐项校验 `{ todos, revision }`，形状不对返回 null，且绝不抛异常
+ * （工具卡在渲染期抛错会带塌整条消息）。
+ *
+ * 任一项不合法就整体放弃，而不是只丢掉那一项：TodoList 自己会按 items 算
+ * 「已完成/总数」，少一项会让这个比例与真实进度对不上。
+ *
+ * `allowMissingId` 只对工具参数放开：todo 的 schema 里新条目的 id 是可选的
+ * （缺了由主进程自动编号），流式期的参数因此常常还没有 id；缺了就按位置补一个
+ * 临时 key 给 TodoList 当 key 用，等 details 到了再换成真正的 id。
+ */
+function parseTodoState(value: unknown, allowMissingId = false): TodoDetailData | null {
+  if (!isRecord(value)) return null;
+  const todos = value.todos;
+  if (!Array.isArray(todos)) return null;
+
+  const items: TodoItem[] = [];
+  for (const [index, raw] of todos.entries()) {
+    if (!isRecord(raw)) return null;
+    const { id, text, status, reason } = raw;
+    if (typeof text !== "string" || text === "") return null;
+    if (!isTodoStatus(status)) return null;
+    if (reason !== undefined && typeof reason !== "string") return null;
+
+    let key: string;
+    if (typeof id === "string" && id !== "") key = id;
+    else if (id === undefined && allowMissingId) key = `todo-${index}`;
+    else return null;
+
+    items.push(
+      reason === undefined ? { id: key, text, status } : { id: key, text, status, reason },
+    );
+  }
+
+  // revision 只影响标题右侧的「1/3 · rev N」文案：缺了或类型不对都不值得放弃整份清单
+  const { revision } = value;
+  if (typeof revision !== "number" || !Number.isFinite(revision)) return { items };
+  return { items, revision };
+}
+
+/** details（主进程产出的成品）→ TodoList 的入参；id 必填 */
+export function parseTodoDetail(value: unknown): TodoDetailData | null {
+  return parseTodoState(value);
+}
+
+/** 工具参数 → TodoList 的入参；schema 里新条目的 id 可选，缺了就补临时 key */
+export function parseTodoArgs(value: unknown): TodoDetailData | null {
+  return parseTodoState(value, true);
+}
+
 /** 展开面板里用什么渲染结果 */
-export type ToolDetail = { kind: "diff"; diff: EditDiff } | { kind: "terminal" };
+export type ToolDetail =
+  | { kind: "diff"; diff: EditDiff }
+  | { kind: "terminal" }
+  | { kind: "todo"; items: TodoItem[]; revision?: number };
 
 /**
  * 选展开面板的渲染方式，并把要用的数据一并解析好。
@@ -154,15 +229,23 @@ export type ToolDetail = { kind: "diff"; diff: EditDiff } | { kind: "terminal" }
  * - edit 要有能解析出内容的 patch 才算数；解析不出来就当没有详情，让它落回内置的文本面板，
  *   而不是给一个空块。
  * - bash 的输出本身就是内容，直接给终端渲染。
+ * - todo 有清单就给 TodoList：优先 details；流式期 details 还没到，退回工具参数里的清单。
+ * - grep / glob 的输出本身就是纯文本，交给内置的 Request/Result 面板。
  * - 其余（read / write / 未知工具）没有更贴的组件，保持内置面板。
  */
 export function resolveToolDetail(
   toolName: string,
   details: unknown,
   isError?: boolean,
+  args?: unknown,
 ): ToolDetail | null {
   if (isError === true) return null;
   if (toolName === "bash") return { kind: "terminal" };
+  // details 要等结果回来才有（message-converter 把它映射到 artifact）；工具参数在调用抵达时就有了
+  if (toolName === "todo") {
+    const todo = parseTodoDetail(details) ?? parseTodoArgs(args);
+    return todo === null ? null : { kind: "todo", ...todo };
+  }
   if (toolName !== "edit") return null;
 
   const patch = detailsPatch(details);

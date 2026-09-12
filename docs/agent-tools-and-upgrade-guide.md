@@ -422,6 +422,8 @@ dsh（`mcp-client`）、opencode、codex 都支持。pi 无内置，需要：
 > 本节由源码复核产生，修正前六部分中与 `pi-agent-core@0.85.1` 实际行为不符之处。
 > 复核范围：`src/main/pisdk/`、`src/main/ipc/`、`src/main/security/`、`src/renderer/`、
 > `node_modules/@earendil-works/pi-agent-core/dist/`。
+>
+> ⚠️ 涉及本仓库代码的**行号以复核时点为准**；后续改动已使部分行号偏移，请以符号名检索为准。
 
 ### 7.1 必须修正的技术前提（否则会导致返工）
 
@@ -444,22 +446,34 @@ dsh（`mcp-client`）、opencode、codex 都支持。pi 无内置，需要：
 ### 7.3 已存在但文档未提的资产
 
 - **`path-guard` 已存在且已接入**：`src/main/security/path-guard.ts` 导出 `normalizePath` / `isInsidePath` / `validatePathAccess`，由 `src/main/pisdk/exec-env.ts:137` 真实调用。新增文件类工具应复用它，不要另写一套。
-- **死组件坟场**：`src/renderer/components/assistant-ui/elements/` 下有 20 个零引用文件——`todo-list`、`subagent-list`、`agent-plan`、`agent-status`、`context-breakdown`、`conversation-search`、`cost-meter`、`draft-restore`、`error-state`、`file-tree`、`message-actions`、`message-branches`、`message-queue`、`message-timing`、`permission-grant`、`prompt-library`、`reviewable-diff`、`stopped-run`、`composer.tsx`（整套 slash 菜单）、`tool-group.aui.tsx`。
-  → **"技能未接通"不是孤立缺陷，而是同一模式的第 N 个实例：UI 先建、内核后接、然后断线。** P0 的正确目标不只是修好技能这一条线，还要建立"接不上就不合"的检查，否则 P1/P2 新增的工具会继续堆出第二个坟场。
+- **死组件坟场（已处置）**：`src/renderer/components/assistant-ui/elements/` 曾有 20 个零引用文件，现已收敛——
+  `message-queue` / `message-branches` 已删除（功能已有内联实现 / 特性被有意移除）；
+  `conversation-search` / `edit-message` / `settings-panel` / `thread.aui` / `tool-group.aui` /
+  `follow-up-suggestions.aui` 已移到 `docs/ref/unwired-elements/`（附 registry 重装命令）；
+  `todo-list` 已接线。其余 18 个写入 `scripts/unwired-allowlist.json` 并逐条注明原因，
+  由 `npm run check:unwired` 守住：**新出现死代码、或 allowlist 条目失效，都会让它退出码 1**。
+  → 结论仍然成立：「技能未接通」不是孤立缺陷，而是「UI 先建、内核后接、然后断线」这一模式的实例；
+  真正的修复不是补一次接线，而是让断线**可见**。
 - **`compaction` 实际值**：`runtime.ts:879` 为 `{ enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 }`（内核默认是 16384 / 20000）。
 
-### 7.4 与产品定位的冲突（需先决策）
+### 7.4 与产品定位的冲突（已决策）
 
-`README.md:25-28` 明确写着「不自研工具与中间层，把 pisdk 的能力**原样呈现**」、「Agent 可见工具**固定**为 pisdk 原生四件套」。
+原 `README.md` 写着「不自研工具与中间层，把 pisdk 的能力**原样呈现**」、「Agent 可见工具**固定**为 pisdk 原生四件套」。
 本指南第三、四部分把"工具面最窄"当缺点，P1/P2 全是自研工具——这实质上是要求推翻该定位。
-建议的折中：**不推翻，改为补充**——定位表述调整为「内核原生四件套 + 少量只读增强」。`grep`/`glob`/`todo` 这类纯只读、不引入新权力的工具符合"原样呈现"的精神；持久终端、代码执行、插件树操作等则明显越界。
+
+**决策：不推翻，改为补充。** README 已改为「把 pisdk 的能力原样呈现，只在其上补少量只读工具」，
+工具面表述为「内核原生四件套 + 自建只读增强」。判据是**是否引入新的权限面**：
+`grep`/`glob`/`todo` 纯只读（或只记状态）、不触碰工作区文件，符合"原样呈现"的精神；
+持久终端、任意代码执行、插件树操作则会引入新权限面，明确不做。
 
 ### 7.5 工程现状（影响排期）
 
-- **测试是 node 环境且只收 `src/**/*.test.ts`**（`vitest.config.ts:10-14`）→ **React 组件无法测试**，新增工具的 UI 部分只能靠 `scripts/e2e-smoke.mjs` 覆盖。
-- `src/main/ipc/skills.ts` 目前**零测试**。
-- `package.json` **没有 `engines` 字段**，「Node 20+」只写在 README 里，构建产物中无人强制。
-- 复核时工作区有 34 个已修改文件与若干未跟踪路径（`docs/`、projects 特性整条链、`kernel-deps`、`ipc/handler.ts`），且刚完成 PolarAgent → Oint 改名——**建议先收成一个 commit 再改 pisdk**，否则后续问题难以二分。
+- **vitest 现在是两个 project**：`node`（收 `*.test.ts`）与 `ui`（jsdom + `*.test.tsx`），
+  组件已可测试——「UI 断了没有任何测试变红」这个根因已经堵上。
+- `src/main/ipc/skills.ts` 与 `src/main/ipc/prompts.ts` 均已补测试。
+- `package.json` 已有 `engines`（`node >=20`、`npm >=10`）。
+- `npm run check:unwired` 已具备 CI 门禁语义（退出码 + allowlist），但仓库当前**没有测试
+  workflow**——`.github/` 里只有一个发布 workflow，已随旧 changelog 一并移除。
 
 ---
 

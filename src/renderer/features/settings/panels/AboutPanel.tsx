@@ -23,11 +23,11 @@ export function AboutPanel() {
       <SettingsSection>
         <SettingsField
           label={t("settings.aboutName")}
-          control={<span className="text-[13.5px]">{info.name}</span>}
+          control={<span className="text-[13.5px]">{info.name ?? ""}</span>}
         />
         <SettingsField
           label={t("settings.aboutVersion")}
-          control={<span className={typePackage}>{info.version}</span>}
+          control={<span className={typePackage}>{info.version ?? ""}</span>}
         />
         {/* 内核：pisdk 的两个 pi 包，名称与版本逐行排（版本读不到时留空，不编造） */}
         <SettingsField

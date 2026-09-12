@@ -48,6 +48,7 @@ import { Composer } from "./Composer";
 import { MessageRail } from "./MessageRail";
 import { isMessageSequenceSynced } from "./message-seq";
 import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
+import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
  * 这条助手消息是不是所在运行段的最后一条。
@@ -489,6 +490,8 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
   const messages = useAuiState((s) => s.thread.messages);
   const viewportRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // 流式输出只在「用户本来就在底部」时跟随；上滑一下即停，到底或点按钮稍候恢复
+  useStickToBottom(viewportRef);
 
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const searchJump = useUiStore((s) => s.searchJump);
@@ -609,8 +612,12 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
     >
       <ThreadPrimitive.Viewport
         ref={viewportRef}
-        // turnAnchor="bottom"（库默认）：内容是经典聊天行为 ——
-        // 贴底时跟随新内容、用户往上滚就自动松开跟随、滚回底部再恢复。
+        // 关掉库自带的自动滚动，改由 useStickToBottom 接管：它的「向下滚但没到底」那一支是
+        // 空分支，会在用户稍微往下滑时把跟随重新打开 —— 手感上就是滚动被抢。
+        // 其余三个「何时滚到底」的开关（首帧 / 切会话 / 新回合）保持库默认。
+        autoScroll={false}
+        // turnAnchor="bottom"（库默认）保持不动：配合上面的 autoScroll={false} 之后它只参与
+        // 锚点计算，不再自己滚动 —— 贴底、松开、恢复全部由 useStickToBottom 决定。
         // 之前用的是 turnAnchor="top"（把用户消息钉在顶部）：它会在回合开始时平滑滚到顶锚，
         // 并在同一次运行冒出第二条助手消息时拆掉顶部占位块，scrollHeight 塌陷导致浏览器钳制
         // scrollTop —— 流式期间看着就是「滚动位置被抢」。自由滚动优先，故改回默认。

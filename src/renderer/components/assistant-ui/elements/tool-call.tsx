@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   Collapsible,
@@ -24,6 +24,12 @@ export interface ToolCallProps {
    * 用于把结果交给更贴的组件（终端块、diff 等）——那些组件自带外观，所以不再套外层灰底框。
    */
   detail?: ReactNode;
+  /**
+   * 调用失败：整行转红、收尾标记换成红叉。
+   * 必须由调用方显式传入 —— 这个组件从 part 上拿不到失败信息（aui 的 part status 只表达
+   * 「跑没跑完」，「有没有报错」在本仓是 isError 这个独立字段）。
+   */
+  isError?: boolean;
   className?: string;
 }
 
@@ -37,6 +43,7 @@ export function ToolCall({
   open,
   onOpenChange,
   detail,
+  isError = false,
   className,
 }: ToolCallProps) {
   // 纵向间距交给父容器的 gap（与正文段落、思考块同为 12px），块自身不带到外边距
@@ -47,7 +54,13 @@ export function ToolCall({
       onOpenChange={onOpenChange}
       className={cn("w-full", className)}
     >
-      <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-2 rounded-md py-0 text-[13.5px] transition-colors outline-none">
+      <CollapsibleTrigger
+        className={cn(
+          "group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-2 rounded-md py-0 text-[13.5px] transition-colors outline-none",
+          isError &&
+            "text-red-600/85 hover:text-red-600 dark:text-red-400/85 dark:hover:text-red-400",
+        )}
+      >
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" />
         <SwapLabel active={running ? 0 : 1} className="text-start">
           <ShimmerLabel active={running} className="relative inline-block leading-none">
@@ -64,9 +77,12 @@ export function ToolCall({
           {query}
         </span>
         <span className="ms-auto flex w-4 items-center justify-end">
-          {!running && (
-            <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 text-emerald-500 duration-200" />
-          )}
+          {!running &&
+            (isError ? (
+              <XIcon className="fade-in zoom-in-90 animate-in size-3.5 text-red-600 duration-200 dark:text-red-400" />
+            ) : (
+              <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 text-emerald-500 duration-200" />
+            ))}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>

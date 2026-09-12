@@ -31,6 +31,10 @@ export const enUS = {
   chat: {
     send: "Send",
     stop: "Stop",
+    // Independent todo panel (the tool card in the transcript is the other place it shows)
+    todos: "Todos",
+    todosEmpty: "No todos yet",
+    todosPanelToggle: "Expand or collapse the todo list",
     inputPlaceholder: "Type a message. Enter to send, Shift+Enter for a new line",
     newChat: "New chat",
     welcome: "What would you like to do today?",
@@ -184,14 +188,30 @@ export const enUS = {
       "SKILL.md files are loaded recursively; .pi/skills under the session directory is always scanned",
     addSkillDir: "Add directory",
     skillsList: "Discovered skills",
+    // The slash menu does not exist yet (elements/composer.tsx is still unwired) — do not promise it here
     skillsListDesc:
-      "Disabled skills stay out of the system prompt but remain callable from the slash menu",
+      "Disabled skills stay out of the system prompt; the files remain on disk and can be re-enabled anytime",
     skillsEmpty: "No skills discovered yet",
     skillsEmptyHint: "Place a SKILL.md inside a skill directory to register one",
     skillDisabled: "Disabled",
     skillEnabled: "Enabled",
     skillSourceGlobal: "Global",
     skillSourceProject: "Project",
+    skillsInjection: "Skill injection",
+    skillsInjectionDesc:
+      "When off, skills and prompt templates stay out of the model context; files remain on disk and tools keep working",
+    skillsEnabled: "Enable skills and prompt templates",
+    promptTemplates: "Prompt templates",
+    promptTemplatesDesc:
+      "Reusable prompt snippets (.md). Loaded templates can be invoked explicitly; an in-chat shortcut is not available yet",
+    promptTemplateDirs: "Template directories",
+    promptTemplateDirsDesc:
+      "Reads direct .md children; prompts/ in the data directory and .pi/prompts in the session directory are always scanned",
+    addPromptDir: "Add directory",
+    promptTemplatesList: "Discovered templates",
+    promptTemplatesEmpty: "No templates discovered yet",
+    promptTemplatesEmptyHint: "Drop a .md with name and description into a template directory",
+    openPromptDir: "Open directory",
     fetchFailed: "Fetch failed",
     agentsMd: "AGENTS.md",
     agentsMdDesc:
@@ -234,6 +254,12 @@ export const enUS = {
     editActive: "Editing",
     bash: "Ran",
     bashActive: "Running",
+    grep: "Searched",
+    grepActive: "Searching",
+    glob: "Matched",
+    globActive: "Matching",
+    todo: "Updated",
+    todoActive: "Updating",
     call: "Called",
     callActive: "Calling",
     groupCount: "{{count}} tools",

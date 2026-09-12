@@ -1,30 +1,16 @@
 // 技能扫描通道：把全局技能目录 + 会话工作目录下的 .pi/skills 汇总给设置面板。
-// 技能内容的加载与注入由 pisdk 在运行时完成，这里只做「发现 + 展示」。
+// 注意：这里只做「发现 + 展示」。技能内容的加载与注入应由 pisdk 运行时负责，但该接线尚未完成
+// ——src/main/pisdk 下目前没有任何技能相关代码，本文件的 loadSkills 结果只喂给设置面板的技能
+// 列表，不会进入模型上下文。将来接线 pisdk 运行时时要复用 resources.ts 的 resolveSkillDirs，
+// 保证面板显示与实际注入同源。
 
 import { BACKGROUND_CONTEXT, loadSkills } from "@earendil-works/pi-agent-core";
 import { ipcMain } from "electron";
-import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
+import { resolveSkillDirs } from "@/main/pisdk/resources";
 import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
 import type { SkillInfo } from "@/shared/contracts/skills";
-
-/** 汇总技能目录：设置里的目录 + 数据目录 skills + 会话工作目录下的 .pi/skills */
-async function resolveSkillDirs(
-  workingDir?: string,
-): Promise<Array<{ path: string; source: SkillInfo["source"] }>> {
-  const settings = await loadSettings();
-  const dirs: Array<{ path: string; source: SkillInfo["source"] }> = [];
-  for (const dir of settings.skillDirs) {
-    if (typeof dir === "string" && dir.trim() !== "") dirs.push({ path: dir, source: "global" });
-  }
-  // 数据目录下的 skills 作为全局默认位置，始终参与扫描
-  dirs.push({ path: `${dataDir()}/skills`, source: "global" });
-  if (workingDir !== undefined && workingDir !== "") {
-    dirs.push({ path: `${workingDir}/.pi/skills`, source: "project" });
-  }
-  return dirs;
-}
 
 export function registerSkillsIpc(): void {
   ipcMain.handle(
@@ -32,7 +18,8 @@ export function registerSkillsIpc(): void {
     async (_event, request: { workingDir?: string } | undefined): Promise<SkillInfo[]> => {
       const settings = await loadSettings();
       const disabled = new Set(settings.disabledSkillNames);
-      const dirs = await resolveSkillDirs(request?.workingDir);
+      // 目录来源与顺序统一由 resources.ts 解析：设置里的目录 → 数据目录 → 项目目录
+      const dirs = resolveSkillDirs(settings, request?.workingDir);
       // 逐个目录扫描：单个目录失败不影响其余目录
       const results = await Promise.all(
         dirs.map(async (dir) => {

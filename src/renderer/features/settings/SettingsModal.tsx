@@ -1,4 +1,4 @@
-import { Database, FileText, Info, Server, Settings2, Sparkles } from "lucide-react";
+import { Database, FileText, Info, Server, Settings2, Sparkles, SquareSlash } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { typeSection } from "@/renderer/components/assistant-ui/type";
@@ -16,6 +16,7 @@ import { AboutPanel } from "./panels/AboutPanel";
 import { DataPanel } from "./panels/DataPanel";
 import { GeneralPanel } from "./panels/GeneralPanel";
 import { PersonalizationPanel } from "./panels/PersonalizationPanel";
+import { PromptsPanel } from "./panels/PromptsPanel";
 import { ServicesPanel } from "./panels/ServicesPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { SettingsPanelTitle } from "./settings-shared";
@@ -29,6 +30,7 @@ const SECTIONS: readonly {
   { id: "general", labelKey: "settings.general", Icon: Settings2 },
   { id: "services", labelKey: "settings.services", Icon: Server },
   { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
+  { id: "promptTemplates", labelKey: "settings.promptTemplates", Icon: SquareSlash },
   { id: "personalization", labelKey: "settings.personalization", Icon: FileText },
   { id: "data", labelKey: "settings.data", Icon: Database },
   { id: "about", labelKey: "settings.about", Icon: Info },
@@ -52,6 +54,8 @@ function renderPanel(section: SettingsSection) {
       return <ServicesPanel />;
     case "skills":
       return <SkillsPanel />;
+    case "promptTemplates":
+      return <PromptsPanel />;
     case "personalization":
       return <PersonalizationPanel />;
     case "data":

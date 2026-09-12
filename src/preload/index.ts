@@ -56,6 +56,9 @@ const api = {
   skills: {
     list: (workingDir) => ipcRenderer.invoke(IPC.skills.list, { workingDir }),
   },
+  prompts: {
+    list: (workingDir) => ipcRenderer.invoke(IPC.prompts.list, { workingDir }),
+  },
   permissions: {
     listRules: () => ipcRenderer.invoke(IPC.permissions.listRules),
     addRule: (rule) => ipcRenderer.invoke(IPC.permissions.addRule, rule),

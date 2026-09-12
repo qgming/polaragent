@@ -21,12 +21,12 @@ export interface PermissionRuleStore {
 }
 
 // 风险常量表写死：只读工具放行，写类工具一律审批，未知工具按高风险兜底
-const LOW_RISK_TOOLS = new Set(["read"]);
+const LOW_RISK_TOOLS = new Set(["read", "grep", "glob", "todo"]);
 const HIGH_RISK_TOOLS = new Set(["write", "edit"]);
 
 /**
  * 风险评估：
- * - read → low；
+ * - read / grep / glob / todo → low（纯只读，或只记录状态、不触碰工作区文件）；
  * - write / edit → high；
  * - bash → 交给 command-guard 黑名单判定，命中即 high；
  * - 未知工具 → high（安全侧默认）。
