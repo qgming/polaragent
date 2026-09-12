@@ -1,4 +1,13 @@
-import { Database, FileText, Info, Server, Settings2, Sparkles, SquareSlash } from "lucide-react";
+import {
+  Database,
+  FileText,
+  Info,
+  Plug,
+  Server,
+  Settings2,
+  Sparkles,
+  SquareSlash,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { typeSection } from "@/renderer/components/assistant-ui/type";
@@ -15,6 +24,7 @@ import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
 import { AboutPanel } from "./panels/AboutPanel";
 import { DataPanel } from "./panels/DataPanel";
 import { GeneralPanel } from "./panels/GeneralPanel";
+import { McpPanel } from "./panels/McpPanel";
 import { PersonalizationPanel } from "./panels/PersonalizationPanel";
 import { PromptsPanel } from "./panels/PromptsPanel";
 import { ServicesPanel } from "./panels/ServicesPanel";
@@ -29,6 +39,7 @@ const SECTIONS: readonly {
 }[] = [
   { id: "general", labelKey: "settings.general", Icon: Settings2 },
   { id: "services", labelKey: "settings.services", Icon: Server },
+  { id: "mcp", labelKey: "settings.mcp", Icon: Plug },
   { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
   { id: "promptTemplates", labelKey: "settings.promptTemplates", Icon: SquareSlash },
   { id: "personalization", labelKey: "settings.personalization", Icon: FileText },
@@ -52,6 +63,8 @@ function renderPanel(section: SettingsSection) {
       return <GeneralPanel />;
     case "services":
       return <ServicesPanel />;
+    case "mcp":
+      return <McpPanel />;
     case "skills":
       return <SkillsPanel />;
     case "promptTemplates":

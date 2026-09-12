@@ -16,6 +16,7 @@ import {
 } from "@/renderer/components/ui/dialog";
 import { Textarea } from "@/renderer/components/ui/textarea";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
+import { isMcpToolName } from "@/shared/contracts/mcp";
 
 interface ApprovalSectionProps {
   requests: ApprovalRequest[];
@@ -52,6 +53,10 @@ export function ApprovalSection({ requests, onResolve }: ApprovalSectionProps) {
           const state: ApprovalState = reviewing ? "running" : "request";
           const risk = t(request.risk === "high" ? "approval.riskHigh" : "approval.riskLow");
           const source = request.source === "ai" ? ` · ${t("approval.sourceAi")}` : "";
+          // MCP 工具的「始终允许」写的是 server 级规则，文案要说清覆盖面
+          const alwaysAllowLabel = isMcpToolName(request.toolName)
+            ? t("approval.alwaysAllowServer")
+            : t("approval.alwaysAllow");
 
           return (
             <motion.div
@@ -70,7 +75,7 @@ export function ApprovalSection({ requests, onResolve }: ApprovalSectionProps) {
                 reason={request.reason}
                 labels={{
                   allowOnce: t("approval.allowOnce"),
-                  alwaysAllow: t("approval.alwaysAllow"),
+                  alwaysAllow: alwaysAllowLabel,
                   deny: t("approval.deny"),
                   running: t("approval.aiReviewing"),
                 }}

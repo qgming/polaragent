@@ -27,6 +27,11 @@ describe("assessToolRisk", () => {
     expect(assessToolRisk("unknown_tool", {})).toBe("high");
     expect(assessToolRisk("bash", {})).toBe("low");
   });
+
+  it("MCP 外部工具一律高风险（名字与行为都由 server 决定）", () => {
+    expect(assessToolRisk("mcp__mcp-a__read_file", { path: "a.ts" })).toBe("high");
+    expect(assessToolRisk("mcp__mcp-a__anything", {})).toBe("high");
+  });
 });
 
 describe("matchesPermissionRule", () => {
@@ -42,6 +47,29 @@ describe("matchesPermissionRule", () => {
     expect(matchesPermissionRule(scoped, "bash", '{"command":"git status"}')).toBe(true);
     expect(matchesPermissionRule(scoped, "bash", '{"command":"rm -rf /"}')).toBe(false);
     expect(matchesPermissionRule(scoped, "write", '{"path":"git"}')).toBe(false);
+  });
+
+  it("以 * 结尾的规则前缀匹配：mcp__<server>__* 覆盖该 server 的全部工具", () => {
+    const serverRule: PermissionRule = { toolName: "mcp__mcp-a__*", createdAt: 1 };
+    expect(matchesPermissionRule(serverRule, "mcp__mcp-a__read_file", "{}")).toBe(true);
+    expect(matchesPermissionRule(serverRule, "mcp__mcp-a__write_file", "{}")).toBe(true);
+    // 不能越界到别的 server，也不能匹配内置工具
+    expect(matchesPermissionRule(serverRule, "mcp__mcp-b__read_file", "{}")).toBe(false);
+    expect(matchesPermissionRule(serverRule, "read", "{}")).toBe(false);
+  });
+
+  it("前缀规则同样受 pattern 约束；空前缀（单独的 *）不匹配任何工具", () => {
+    const scopedRule: PermissionRule = {
+      toolName: "mcp__mcp-a__*",
+      pattern: "safe",
+      createdAt: 1,
+    };
+    expect(matchesPermissionRule(scopedRule, "mcp__mcp-a__read", '{"q":"safe"}')).toBe(true);
+    expect(matchesPermissionRule(scopedRule, "mcp__mcp-a__read", '{"q":"unsafe"}')).toBe(true);
+    expect(matchesPermissionRule(scopedRule, "mcp__mcp-a__read", '{"q":"other"}')).toBe(false);
+
+    const wildcardOnly: PermissionRule = { toolName: "*", createdAt: 1 };
+    expect(matchesPermissionRule(wildcardOnly, "read", "{}")).toBe(false);
   });
 });
 

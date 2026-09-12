@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "./mcp";
 import type {
   DensityMode,
   LanguageCode,
@@ -59,4 +60,10 @@ export interface Settings {
   skillsEnabled: boolean;
   /** 用户自定义的提示模板目录（*.md，只读直接子级）；数据目录的 prompts 与会话目录的 .pi/prompts 始终参与扫描 */
   promptTemplateDirs: string[];
+
+  /**
+   * MCP server 列表（外部工具来源）。连接状态不在这里 —— 它属于运行时的
+   * McpServers，只在内存里，见 src/main/pisdk/mcp-servers.ts。
+   */
+  mcpServers: McpServerConfig[];
 }

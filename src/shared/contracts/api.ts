@@ -2,6 +2,7 @@ import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
 import type { ModelRef, WireFormat } from "./common";
+import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
@@ -96,6 +97,14 @@ export interface OintApi {
   dialog: {
     /** 打开系统目录选择框；取消返回 null */
     pickDirectory(defaultPath?: string): Promise<string | null>;
+  };
+  mcp: {
+    /** 读取 MCP server 配置与连接状态（状态来自主进程的连接池） */
+    list(): Promise<McpServerView[]>;
+    /** 按当前设置重新连接（连上该连的、断开该断的），返回最新状态 */
+    reload(): Promise<McpServerView[]>;
+    /** 用草稿配置试连一次：不写设置、不影响已有连接 */
+    probe(config: McpServerConfig): Promise<McpProbeResult>;
   };
   services: {
     /** 从 OpenAI 兼容端点拉取可用模型 id 列表 */

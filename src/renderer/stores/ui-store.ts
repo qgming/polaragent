@@ -4,6 +4,7 @@ import { create } from "zustand";
 export type SettingsSection =
   | "general"
   | "services"
+  | "mcp"
   | "skills"
   | "promptTemplates"
   | "personalization"
@@ -17,6 +18,7 @@ export type SettingsSection =
 export const SETTINGS_SECTIONS = [
   "general",
   "services",
+  "mcp",
   "skills",
   "promptTemplates",
   "personalization",

@@ -20,6 +20,7 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     skillDirs: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    mcpServers: [],
     disabledSkillNames: [],
   };
 }

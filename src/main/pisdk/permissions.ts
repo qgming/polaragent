@@ -3,8 +3,16 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assessCommand } from "@/main/security/command-guard";
+import { isMcpToolName } from "@/shared/contracts/mcp";
 
-/** always_allow 规则：工具名 + 可选参数片段（缺省表示该工具全部放行） */
+/**
+ * always_allow 规则：工具名 + 可选参数片段（缺省表示该工具全部放行）。
+ *
+ * toolName 以 `*` 结尾时按**前缀**匹配（`mcp__<server>__*` = 该 server 的全部工具）。
+ * 这是 MCP 的前置要求：外部工具名由 server 决定、数量不可预知，逐工具写规则等于
+ * 每次调用都要点一次审批卡（见 docs/agent-tools-and-upgrade-guide.md 的 P2-3）。
+ * 内置工具名不含 `*`，因此行为与扩展前完全一致。
+ */
 export interface PermissionRule {
   toolName: string;
   /** 命中条件为 argsText.includes(pattern)；缺省表示不做参数限定 */
@@ -29,11 +37,16 @@ const HIGH_RISK_TOOLS = new Set(["write", "edit"]);
  * - read / grep / glob / todo → low（纯只读，或只记录状态、不触碰工作区文件）；
  * - write / edit → high；
  * - bash → 交给 command-guard 黑名单判定，命中即 high；
+ * - MCP 外部工具（mcp__<server>__<tool>）→ 一律 high。名字与行为都由外部 server 决定，
+ *   这里无法逐个体检；放行只能靠 mcp__<server>__* 前缀规则（用户点「始终允许」时写入）
+ *   或 permissionMode 的 full / ai_review。只读提示（readOnlyHint）是 server 的自我声明，
+ *   不构成安全依据，故不用它降级。
  * - 未知工具 → high（安全侧默认）。
  */
 export function assessToolRisk(toolName: string, args: Record<string, unknown>): "low" | "high" {
   if (LOW_RISK_TOOLS.has(toolName)) return "low";
   if (HIGH_RISK_TOOLS.has(toolName)) return "high";
+  if (isMcpToolName(toolName)) return "high";
   if (toolName === "bash") {
     const command = typeof args.command === "string" ? args.command : "";
     return assessCommand(command).risk === "high" ? "high" : "low";
@@ -41,13 +54,22 @@ export function assessToolRisk(toolName: string, args: Record<string, unknown>):
   return "high";
 }
 
-/** 单条规则匹配：工具名相等，且（无 pattern 或 argsText 包含 pattern） */
+/**
+ * 单条规则匹配：工具名命中（相等，或以 `*` 结尾时按前缀）且（无 pattern 或 argsText 包含它）。
+ */
 export function matchesPermissionRule(
   rule: PermissionRule,
   toolName: string,
   argsText: string,
 ): boolean {
-  if (rule.toolName !== toolName) return false;
+  const name = rule.toolName;
+  if (name.endsWith("*")) {
+    // 前缀规则：mcp__<server>__* 覆盖该 server 的全部工具（不含 serverId 本身）
+    const prefix = name.slice(0, -1);
+    if (prefix === "" || !toolName.startsWith(prefix)) return false;
+  } else if (name !== toolName) {
+    return false;
+  }
   const pattern = rule.pattern;
   if (pattern === undefined || pattern === "") return true;
   return argsText.includes(pattern);

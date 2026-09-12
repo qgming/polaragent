@@ -78,6 +78,11 @@ const api = {
   dialog: {
     pickDirectory: (defaultPath) => ipcRenderer.invoke(IPC.dialog.pickDirectory, { defaultPath }),
   },
+  mcp: {
+    list: () => ipcRenderer.invoke(IPC.mcp.list),
+    reload: () => ipcRenderer.invoke(IPC.mcp.reload),
+    probe: (config) => ipcRenderer.invoke(IPC.mcp.probe, config),
+  },
   services: {
     fetchModels: (request) => ipcRenderer.invoke(IPC.services.fetchModels, request),
   },

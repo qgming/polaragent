@@ -3,6 +3,7 @@ import { registerAppIpc } from "./app";
 import { registerApprovalsIpc } from "./approvals";
 import { registerChatIpc } from "./chat";
 import { registerDialogIpc } from "./dialog";
+import { registerMcpIpc } from "./mcp";
 import { registerModelsCatalogIpc } from "./models-catalog";
 import { registerPermissionsIpc } from "./permissions";
 import { registerProjectsIpc } from "./projects";
@@ -28,5 +29,6 @@ export function registerIpcHandlers(): void {
   registerAgentsIpc();
   registerDialogIpc();
   registerServicesIpc();
+  registerMcpIpc();
   registerModelsCatalogIpc();
 }

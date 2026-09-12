@@ -1,7 +1,7 @@
 {
   "agent-plan.tsx": "P2-2 计划模式配套 UI，尚未排期",
   "subagent-list.tsx": "P2-3 子代理配套 UI，尚未排期",
-  "permission-grant.tsx": "P2-3 MCP「按 server 批量授权」的 UI，规则模型尚未设计",
+  "permission-grant.tsx": "P2-3 MCP「按 server 批量授权」已由设置里的 MCP 分栏承担（写 mcp__<server>__* 规则）；本组件仍未接线",
   "prompt-library.tsx": "提示模板的对话内可搜索面板；斜杠菜单已接线，这个面板仍未排期",
   "message-timing.aui.tsx": "runtime 未提供 timing 元数据，接上也是恒空",
   "message-timing.tsx": "runtime 未提供 timing 元数据，接上也是恒空",

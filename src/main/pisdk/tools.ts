@@ -73,8 +73,16 @@ function prepareBash(execution: BashExecution, toolContext: ExecutionToolContext
   execution.cwd = toolContext.env.cwd;
 }
 
-/** 构建本应用暴露给 Agent 的完整工具集 */
-export function buildTools(): AgentHarnessTool<AppToolContext>[] {
+/**
+ * 构建本应用暴露给 Agent 的完整工具集。
+ *
+ * extraTools 是运行时才知道名字的工具（当前只有 MCP：mcp__<server>__<tool>），
+ * 由调用方从 pisdk/mcp-servers.ts 取当前快照后传进来 —— 本文件保持「静态装配」的角色，
+ * 不反向依赖连接管理器（会话创建与工具热替换都走这一个入口）。
+ */
+export function buildTools(
+  extraTools: AgentHarnessTool<AppToolContext>[] = [],
+): AgentHarnessTool<AppToolContext>[] {
   return [
     { ...createBashTool<AppToolContext>({ prepare: prepareBash }), description: BASH_DESCRIPTION },
     { ...createReadTool<AppToolContext>(), description: READ_DESCRIPTION },
@@ -83,5 +91,6 @@ export function buildTools(): AgentHarnessTool<AppToolContext>[] {
     createGrepTool<AppToolContext>(),
     createGlobTool<AppToolContext>(),
     createTodoTool(),
+    ...extraTools,
   ];
 }

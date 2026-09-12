@@ -35,6 +35,7 @@ import type {
   QueuedMessage,
 } from "@/shared/contracts/chat";
 import type { ModelRef } from "@/shared/contracts/common";
+import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
 import type {
   ChatMessageUsage,
   ChatPart,
@@ -47,6 +48,7 @@ import type { Settings } from "@/shared/contracts/settings";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
+import type { McpToolSource } from "./mcp-servers";
 import {
   assessToolRisk,
   getSharedPermissionRuleStore,
@@ -70,6 +72,13 @@ export interface ChatRuntimeDeps {
   sessionTitles?: SessionTitleGenerator;
   /** 会话工作目录解析；默认取索引 cwd，其次 settings.defaultWorkingDir */
   resolveWorkingDir: (sessionId: string) => Promise<string>;
+  /**
+   * MCP 工具来源；未注入时（测试等场景）只装配内置工具。
+   *
+   * 连接管理在 pisdk/mcp-servers.ts，这里只取快照 + 订阅变化：
+   * 新增/断开的 server 会让下一轮就拿到新的工具数组。
+   */
+  mcp?: McpToolSource;
 }
 
 /**
@@ -189,6 +198,13 @@ interface SessionRuntime {
   unsubscribers: Array<() => void>;
   /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
   titleAttempted?: boolean;
+  /**
+   * MCP 工具集合在本轮运行期间变过（连上/断开/工具列表变化）。
+   *
+   * 运行中不动工具集：`harness.setTools` 会影响正在进行的这一轮，
+   * 于是先记下，等 run_end 再一次性应用（下一轮就带新工具）。
+   */
+  mcpToolsStale?: boolean;
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -861,6 +877,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     void touchSession(runtime);
     // 一轮问答结束：会话还没名字时，用这轮内容生成标题
     void maybeTitleSession(runtime, event.status);
+    // 本轮跑动期间 MCP 工具集合变过：现在这一轮结束了，可以安全换工具（下一轮生效）
+    if (runtime.mcpToolsStale === true && deps.mcp !== undefined) {
+      void applyMcpTools(runtime, deps.mcp);
+    }
   }
 
   function handleUsage(
@@ -994,6 +1014,21 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
   }
 
+/**
+ * 把当前 MCP 工具数组写回 harness（内核的 setTools 支持热替换工具集）。
+ *
+ * 只在没有运行中进行时调用：会话句柄、lane、上下文都不变，换的只是工具表，
+ * 于是「新连上的 server 的工具」下一轮就能用。
+ */
+async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promise<void> {
+  runtime.mcpToolsStale = false;
+  try {
+    await runtime.harness.setTools(buildTools(mcp.tools()), BACKGROUND_CONTEXT);
+  } catch (error) {
+    console.warn(`刷新 MCP 工具失败：${toErrorText(error)}`);
+  }
+}
+
   /** 权限门：根据审批模式与风险评估决定放行、审批或阻断 */
   async function gateTool(
     runtime: SessionRuntime,
@@ -1045,9 +1080,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return { block: { reason: "用户拒绝了该操作" } };
     }
     if (decision === "always_allow") {
-      const pattern = deriveRulePattern(toolName, args);
+      // MCP 工具名由 server 决定、数量不可预知：逐工具放行等于每次调用都弹卡，
+      // 所以「始终允许」在 MCP 上写的是 server 级前缀规则（mcp__<server>__*）
+      const mcp = parseMcpToolName(toolName);
+      const ruleToolName = mcp === null ? toolName : mcpServerRuleName(mcp.serverId);
+      const pattern = mcp === null ? deriveRulePattern(toolName, args) : undefined;
       await runtime.rules.add({
-        toolName,
+        toolName: ruleToolName,
         ...(pattern === undefined ? {} : { pattern }),
         createdAt: Date.now(),
       });
@@ -1089,7 +1128,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         models,
         model,
         systemPrompt: await buildSystemPrompt(settings, cwd, loaded.skillsSection),
-        tools: buildTools(),
+        // 内置工具 + 当前已就绪的 MCP 工具（MCP 服务未就绪时就是空数组）
+        tools: buildTools(deps.mcp?.tools() ?? []),
         toolContext: {
           env,
           todo,
@@ -1154,6 +1194,21 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         }
       }),
     );
+
+    // MCP 工具集合变化（server 连上/断开/工具列表变了）时刷新本会话的工具数组。
+    // 运行中不打断当前这一轮：只打标记，等 run_end 再应用。
+    if (deps.mcp !== undefined) {
+      const mcp = deps.mcp;
+      runtime.unsubscribers.push(
+        mcp.subscribe(() => {
+          if (runtime.running) {
+            runtime.mcpToolsStale = true;
+            return;
+          }
+          void applyMcpTools(runtime, mcp);
+        }),
+      );
+    }
 
     // 遗留操作：上一次进程在运行中被关掉（退出 / 崩溃 / 开发期热重载）时，pi 会把「当前操作 id」
     // 留在会话里，下次 attach 原样读回 —— 这条 lane 就天生「有活跃操作」，之后任何

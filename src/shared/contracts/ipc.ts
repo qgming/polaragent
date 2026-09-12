@@ -1,6 +1,7 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ModelRef, WireFormat } from "./common";
+import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
@@ -76,6 +77,11 @@ export const IPC = {
   },
   dialog: {
     pickDirectory: "dialog:pick-directory",
+  },
+  mcp: {
+    list: "mcp:list",
+    reload: "mcp:reload",
+    probe: "mcp:probe",
   },
   services: {
     fetchModels: "services:fetch-models",
@@ -165,6 +171,9 @@ export interface IpcInvokeContract {
     request: { defaultPath?: string } | undefined;
     response: string | null;
   };
+  [IPC.mcp.list]: { request: undefined; response: McpServerView[] };
+  [IPC.mcp.reload]: { request: undefined; response: McpServerView[] };
+  [IPC.mcp.probe]: { request: McpServerConfig; response: McpProbeResult };
   [IPC.services.fetchModels]: {
     request: { baseUrl: string; apiKey: string; wireFormat: WireFormat };
     response: { ok: true; modelIds: string[] } | { ok: false; reason: string };

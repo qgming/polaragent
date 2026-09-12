@@ -101,6 +101,7 @@ function seedStores(options: {
       disabledSkillNames: [],
       skillsEnabled: true,
       promptTemplateDirs: [],
+      mcpServers: [],
     },
     loaded: true,
   });

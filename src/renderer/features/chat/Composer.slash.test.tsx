@@ -147,13 +147,13 @@ describe("Composer 的斜杠菜单", () => {
     seedStores();
   });
 
-  it("敲 / 打开菜单：技能与提示模板分两栏，各带名称与描述", async () => {
+  it("敲 / 打开菜单：技能与魔法提示分两栏，各带名称与描述", async () => {
     render(<Harness onSend={() => {}} />);
     await type("/");
 
     expect(await screen.findByRole("listbox", { name: "切换斜杠命令" })).toBeTruthy();
     expect(screen.getByText("技能")).toBeTruthy();
-    expect(screen.getByText("提示模板")).toBeTruthy();
+    expect(screen.getByText("魔法提示")).toBeTruthy();
     expect(screen.getByText("/review")).toBeTruthy();
     expect(screen.getByText("看一遍改动")).toBeTruthy();
     expect(screen.getByText("/translate")).toBeTruthy();

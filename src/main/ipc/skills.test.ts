@@ -59,6 +59,7 @@ const BASE_SETTINGS: Settings = {
   skillDirs: ["/custom/skills"],
   skillsEnabled: true,
   promptTemplateDirs: [],
+  mcpServers: [],
   disabledSkillNames: [],
 };
 

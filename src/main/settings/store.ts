@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
 import { ALL_THINKING_LEVELS, type ThinkingLevel } from "@/shared/contracts/common";
+import { isValidMcpServerId, type McpServerConfig } from "@/shared/contracts/mcp";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 
 /** safeStorage 的最小接口，便于在测试中注入假实现 */
@@ -39,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledSkillNames: [],
   skillsEnabled: true,
   promptTemplateDirs: [],
+  mcpServers: [],
 };
 
 export interface SettingsStoreOptions {
@@ -54,7 +56,14 @@ export interface SettingsStore {
 }
 
 function cloneDefaults(): Settings {
-  return { ...DEFAULT_SETTINGS, services: [], skillDirs: [], disabledSkillNames: [] };
+  return {
+    ...DEFAULT_SETTINGS,
+    services: [],
+    skillDirs: [],
+    disabledSkillNames: [],
+    promptTemplateDirs: [],
+    mcpServers: [],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,6 +114,8 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
     promptTemplateDirs: Array.isArray(raw.promptTemplateDirs)
       ? raw.promptTemplateDirs.filter((dir) => typeof dir === "string")
       : base.promptTemplateDirs,
+    // MCP server 列表：逐条归一（命令/参数/环境变量可能是任意 JSON），非法条目直接丢掉
+    mcpServers: normalizeMcpServers(raw.mcpServers),
   };
 }
 
@@ -135,6 +146,47 @@ function normalizeServices(raw: unknown, crypto: Crypto | null, warn: Warn): Mod
     models: normalizeModelEntries(item.models),
     apiKey: decodeApiKey(item.apiKey, crypto, warn),
   }));
+}
+
+/** 字符串键值表归一：只留「键非空且值确实是字符串」的项，顺序保持文件里的原样 */
+function normalizeStringRecord(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const record: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "" && typeof item === "string") record[key] = item;
+  }
+  return record;
+}
+
+/**
+ * MCP server 归一化。
+ *
+ * 丢掉 id 非法的条目而不是修正它：id 是限定名 `mcp__<id>__<tool>` 的解析依据，
+ * 一个坏 id 会让权限门的「按 server 批量授权」静默失效 —— 这类数据宁可不存在。
+ * transport 只认 stdio / http，其余回落到 stdio（本地子进程是 MCP 的主用法）。
+ */
+function normalizeMcpServers(raw: unknown): McpServerConfig[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(isRecord)
+    .map((item): McpServerConfig => {
+      const id = asString(item.id);
+      return {
+        id,
+        name: asString(item.name),
+        // 缺省视为启用：用户写下的配置默认就该生效，关闭是明确动作
+        enabled: typeof item.enabled === "boolean" ? item.enabled : true,
+        transport: item.transport === "http" ? "http" : "stdio",
+        command: asString(item.command),
+        args: Array.isArray(item.args) ? item.args.filter((arg) => typeof arg === "string") : [],
+        env: normalizeStringRecord(item.env),
+        cwd: asString(item.cwd),
+        url: asString(item.url),
+        headers: normalizeStringRecord(item.headers),
+        createdAt: typeof item.createdAt === "number" ? item.createdAt : Date.now(),
+      };
+    })
+    .filter((server) => isValidMcpServerId(server.id));
 }
 
 /** 只接受有限正数；其余（字符串、NaN、0、负数）视为未设置 */

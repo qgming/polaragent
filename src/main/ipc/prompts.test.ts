@@ -60,6 +60,7 @@ const BASE_SETTINGS: Settings = {
   skillsEnabled: true,
   disabledSkillNames: [],
   promptTemplateDirs: ["/custom/prompts"],
+  mcpServers: [],
 };
 
 function settingsWith(patch: Partial<Settings>): Settings {

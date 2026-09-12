@@ -21,6 +21,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     skillDirs: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    mcpServers: [],
     disabledSkillNames: [],
     ...overrides,
   };

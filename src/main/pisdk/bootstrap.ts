@@ -2,6 +2,7 @@ import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
+import { getMcpServers } from "./mcp-servers";
 import { createChatRuntime } from "./runtime";
 import { getSessionStore } from "./session-store";
 import { createSessionTitleGenerator } from "./title-generator";
@@ -39,6 +40,8 @@ export function bootstrapPisdk(options: {
   const aiApprover = createAiApprover({ getSettings: loadSettings });
   // 首轮问答结束后用同一模型给会话命名
   const sessionTitles = createSessionTitleGenerator({ getSettings: loadSettings });
+  // MCP 连接池：与设置面板共用同一实例（见 ipc/mcp.ts），否则面板状态与运行时工具会对不上
+  const mcpServers = getMcpServers();
 
   approvalService = createApprovalService({ getSettings: loadSettings, emit, aiApprover });
   chatRuntime = createChatRuntime({
@@ -48,6 +51,13 @@ export function bootstrapPisdk(options: {
     approvals: approvalService,
     sessionTitles,
     resolveWorkingDir,
+    mcp: mcpServers,
+  });
+
+  // 启动后异步连接已启用的 MCP server：单个 server 失败只记日志，不阻断启动。
+  // 这里刻意不 await —— 握手要等子进程起来，不该让窗口等到 MCP 就绪才显示。
+  void mcpServers.reload().catch((error: unknown) => {
+    console.warn(`连接 MCP server 失败：${String(error)}`);
   });
 
   let disposed = false;
@@ -60,6 +70,14 @@ export function bootstrapPisdk(options: {
       });
     } catch (error) {
       console.warn(`关闭聊天运行时失败：${String(error)}`);
+    }
+    try {
+      // 退出前收掉 MCP 子进程，避免残留进程占着端口/文件句柄
+      void Promise.resolve(mcpServers.dispose()).catch((error: unknown) => {
+        console.warn(`关闭 MCP 连接失败：${String(error)}`);
+      });
+    } catch (error) {
+      console.warn(`关闭 MCP 连接失败：${String(error)}`);
     }
     chatRuntime = null;
     approvalService = null;

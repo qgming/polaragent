@@ -135,7 +135,7 @@ prompt 模板加载、会话检索服务（`search/` 是服务接口，不是工
 | 技能 | ⚠️未接入 | ✅ | ✅ | ⚙️ |
 | LSP | ❌ | ✅ | ✅ | ❌ |
 | 网页搜索/抓取 | ❌ | ✅ | ✅ | ⚙️ |
-| MCP | ❌ | ✅ | ✅ | ✅ |
+| MCP | ✅ 仅工具面 | ✅ | ✅ | ✅ |
 | 向用户提问 | ❌ | ✅ | ✅ | ✅ |
 | 上下文余量查询 | ❌ | ⚙️ | ⚙️ | ✅ |
 | 会话历史检索(工具) | ❌ | ✅ | ⚙️ | ❌ |
@@ -377,6 +377,35 @@ dsh（`mcp-client`）、opencode、codex 都支持。pi 无内置，需要：
 **每一次工具调用都会弹审批卡**，接完实际不可用。接 MCP 之前必须先设计"按 server 批量授权"
 的规则模型（现有"始终允许"规则库按工具名精确匹配，需扩展到按 `mcp__<server>__` 前缀匹配），
 否则这个功能做出来也没法用。
+
+**状态：已实现（本次落地）**。实现分层与关键取舍：
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 契约 | `src/shared/contracts/mcp.ts` | 配置/状态/工具清单类型 + 命名约定（`qualifyMcpToolName` / `parseMcpToolName` / `mcpServerRuleName`） |
+| 报文 | `src/main/mcp/jsonrpc.ts` | JSON-RPC 2.0 消息形状 + NDJSON / SSE 分帧（纯函数） |
+| 传输 | `src/main/mcp/transport.ts` | stdio（spawn + NDJSON）与 streamable-http（POST + JSON/SSE 应答） |
+| 会话 | `src/main/mcp/client.ts` | initialize / tools/list（分页）/ tools/call，超时与断开收敛；server 反向请求回 `-32601` |
+| 连接池 | `src/main/pisdk/mcp-servers.ts` | 按设置对账、状态机、向运行时提供同步工具快照 + 变化订阅 |
+| 工具 | `src/main/pisdk/tools/mcp.ts` | schema 归一（`Type.Unsafe`）+ 结果截断（2000 行 / 50KB）+ 失败文本化 |
+| 权限 | `src/main/pisdk/permissions.ts` | MCP 工具一律 `high`；「始终允许」写 `mcp__<server>__*` 前缀规则 |
+| 出口 | `src/main/ipc/mcp.ts` | `mcp:list` / `mcp:reload` / `mcp:probe` |
+| 界面 | `src/renderer/features/settings/panels/McpPanel.tsx` | 设置里独立的 MCP 分栏：增删改、启用、试连、工具清单、按 server 信任 |
+
+关键决策：
+1. **前置阻塞已解决**（原文档第 376-379 行的问题）：规则库的 `toolName` 支持尾随 `*` 前缀匹配，
+   `gateTool` 里对 MCP 工具把「始终允许」写成 server 级规则 `mcp__<serverId>__*`，
+   审批卡文案也随之为「始终允许（本服务器）」。面板另有「信任该服务器的全部工具」开关写同一条规则。
+2. **工具热替换**：`buildTools(extraTools)` 保持静态装配，会话创建时取 `mcpServers.tools()` 快照；
+   运行中集合变化只打 `mcpToolsStale`，在 `run_end` 后用内核 `harness.setTools` 一次性应用（不打断当前轮）。
+3. **只接 tools 能力面**：resources / prompts / sampling / roots 不接，避免把 MCP 的全部能力面搬进来。
+4. **一次最多 64 个 MCP 工具**（`MAX_MCP_TOOLS`），超出只截断并记日志——所有工具每轮都进请求体。
+
+已知边界（后续可做）：
+- `env` / `headers` 明文落在 `~/.oint/settings.json`（与 `permission-rules.json` 同档），未走 apiKey 的 safeStorage 加密；
+- 工具执行拿不到 abort signal（内核签名如此），长任务只能靠 120 秒超时；
+- http 传输不订阅 server 主动推送（长连 SSE）与断线续传；
+- 外部工具名不保证落在 provider 的字符集/长度限制内，接入「名字很怪」的 server 前需实测。
 
 ---
 
