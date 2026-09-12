@@ -63,11 +63,12 @@ export function OintRuntimeProvider({
    * 会话列表适配器：把 chat-store 的 sessions 接到官方的 thread-list primitives。
    * threads 的顺序即渲染顺序，store 已按 updatedAt 降序维护，这里不再排序。
    *
-   * 两点取舍（都是接受的功能回退）：
-   * · 外部存储适配器的数据没有 lastMessageAt，官方 useThreadListGroups 因此拿不到日期，
-   *   列表退化成平铺（原实现按今天/昨天/更早分组）。
-   * · 官方 thread list 只为「主线程」保留 runtime，非当前会话读不到运行状态，
-   *   因此运行中指示只在当前会话上有效（原实现每个会话各自显示）。
+   * 侧栏的「置顶 / 项目 / 最近」分组不在这里切：分组要用到项目列表与会话的绑定目录，
+   * 由 thread-list 部件直接读 chat-store 与 projects-store 计算（见 buildSidebarSections）——
+   * 走商店的订阅比把数据塞进 custom 再读回来更直接，也保证置顶后立刻重新分组。
+   *
+   * 一处取舍：官方 thread list 只为「主线程」保留 runtime，非当前会话读不到运行状态，
+   * 因此运行中指示只在当前会话上有效（原实现每个会话各自显示）。
    *
    * 已归档会话仍放进 threads（官方列表不渲染 archivedThreads，放进去会彻底找不到），
    * 归档项在菜单里以同一个 Archive 入口切换，行为与原实现一致。

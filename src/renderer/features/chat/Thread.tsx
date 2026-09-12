@@ -609,7 +609,11 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
     >
       <ThreadPrimitive.Viewport
         ref={viewportRef}
-        turnAnchor="top"
+        // turnAnchor="bottom"（库默认）：内容是经典聊天行为 ——
+        // 贴底时跟随新内容、用户往上滚就自动松开跟随、滚回底部再恢复。
+        // 之前用的是 turnAnchor="top"（把用户消息钉在顶部）：它会在回合开始时平滑滚到顶锚，
+        // 并在同一次运行冒出第二条助手消息时拆掉顶部占位块，scrollHeight 塌陷导致浏览器钳制
+        // scrollTop —— 流式期间看着就是「滚动位置被抢」。自由滚动优先，故改回默认。
         data-slot="aui_thread-viewport"
         className="app-scrollbar relative min-h-0 flex-1 overflow-y-auto"
       >

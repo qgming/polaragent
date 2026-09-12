@@ -3,6 +3,7 @@ import type { ApprovalDecision } from "./approval";
 import type { WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
+import type { Project } from "./project";
 import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
@@ -33,7 +34,13 @@ export const IPC = {
     delete: "sessions:delete",
     archive: "sessions:archive",
     fork: "sessions:fork",
+    pin: "sessions:pin",
     loadMessages: "sessions:load-messages",
+  },
+  projects: {
+    list: "projects:list",
+    add: "projects:add",
+    remove: "projects:remove",
   },
   chat: {
     send: "chat:send",
@@ -92,11 +99,15 @@ export interface IpcInvokeContract {
   [IPC.sessions.rename]: { request: { id: string; title: string }; response: undefined };
   [IPC.sessions.delete]: { request: { id: string }; response: undefined };
   [IPC.sessions.archive]: { request: { id: string; archived: boolean }; response: undefined };
+  [IPC.sessions.pin]: { request: { id: string; pinned: boolean }; response: undefined };
   [IPC.sessions.fork]: { request: { id: string; entryId: string }; response: SessionSummary };
   [IPC.sessions.loadMessages]: {
     request: { id: string; options?: LoadSessionMessagesOptions };
     response: SessionMessagesPage;
   };
+  [IPC.projects.list]: { request: undefined; response: Project[] };
+  [IPC.projects.add]: { request: { path: string }; response: Project };
+  [IPC.projects.remove]: { request: { id: string }; response: undefined };
   [IPC.chat.send]: {
     request: {
       sessionId: string;

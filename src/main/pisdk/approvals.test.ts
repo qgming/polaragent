@@ -1,7 +1,7 @@
 // approvals 单测：挂起/唤醒、事件发射、历史、取消与去重；AI 审批用假实现，不发网络请求。
 import { describe, expect, it } from "vitest";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
-import type { ChatEvent } from "@/shared/contracts/chat";
+import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
 import type { AiApprover } from "./ai-approver";
 import { type ApprovalService, createApprovalService } from "./approvals";
@@ -36,7 +36,10 @@ function makeInput(toolCallId = "t1") {
 
 interface Harness {
   service: ApprovalService;
+  /** 已展开的事件（断言用） */
   events: ChatEvent[];
+  /** 原始信封：用来断言事件归属的会话 id */
+  envelopes: ChatEventEnvelope[];
 }
 
 function createHarness(options?: {
@@ -45,15 +48,19 @@ function createHarness(options?: {
   settingsError?: boolean;
 }): Harness {
   const events: ChatEvent[] = [];
+  const envelopes: ChatEventEnvelope[] = [];
   const service = createApprovalService({
     getSettings: async () => {
       if (options?.settingsError) throw new Error("设置读取失败");
       return makeSettings(options?.settings);
     },
-    emit: (event) => events.push(event),
+    emit: (payload) => {
+      envelopes.push(payload);
+      events.push(payload.event);
+    },
     ...(options?.aiApprover === undefined ? {} : { aiApprover: options.aiApprover }),
   });
-  return { service, events };
+  return { service, events, envelopes };
 }
 
 function requestedRequest(events: ChatEvent[]): ApprovalRequest {
@@ -236,5 +243,18 @@ describe("createApprovalService", () => {
     expect(requestedRequest(events).source).toBe("user");
     service.respond(service.pending("s1")[0]?.id ?? "", "deny");
     await expect(promise).resolves.toBe("deny");
+  });
+
+  it("事件带上请求所属的会话 id（后台会话的审批也落到它自己头上）", async () => {
+    const { service, envelopes } = createHarness();
+    const promise = service.request(makeInput("t-bg"));
+    await flush();
+    expect(envelopes[0]?.sessionId).toBe("s1");
+    expect(envelopes[0]?.event.type).toBe("approval-requested");
+
+    service.respond(service.pending("s1")[0]?.id ?? "", "deny");
+    await expect(promise).resolves.toBe("deny");
+    expect(envelopes.at(-1)?.sessionId).toBe("s1");
+    expect(envelopes.at(-1)?.event.type).toBe("approval-resolved");
   });
 });

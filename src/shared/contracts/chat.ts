@@ -40,3 +40,16 @@ export type ChatEvent =
   | { type: "compaction-started" }
   | { type: "compaction-ended"; summaryPreview: string }
   | { type: "run-ended"; runId: string; reason: string };
+
+/**
+ * 主进程 → 渲染进程的推送信封：事件 + 它属于哪个会话。
+ *
+ * 为什么归属要由主进程给出：主进程里每个会话各有独立的 harness / lane，可以同时在跑；
+ * 渲染层不能再拿「当前打开的会话」去猜一条事件属于谁 —— 用户切走之后，后台会话的
+ * 流式内容会被记到别的会话头上，侧栏的「运行中」也会跟着错。
+ */
+export interface ChatEventEnvelope {
+  /** 事件所属会话 id */
+  sessionId: string;
+  event: ChatEvent;
+}

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OintApi } from "@/shared/contracts/api";
-import type { ChatEvent } from "@/shared/contracts/chat";
+import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
 
 // 渲染进程唯一入口：只暴露白名单方法，不透传 ipcRenderer 原始能力
@@ -29,6 +29,7 @@ const api = {
     create: (options) => ipcRenderer.invoke(IPC.sessions.create, options),
     rename: (id, title) => ipcRenderer.invoke(IPC.sessions.rename, { id, title }),
     setArchived: (id, archived) => ipcRenderer.invoke(IPC.sessions.archive, { id, archived }),
+    setPinned: (id, pinned) => ipcRenderer.invoke(IPC.sessions.pin, { id, pinned }),
     remove: (id) => ipcRenderer.invoke(IPC.sessions.delete, { id }),
     fork: (id, entryId) => ipcRenderer.invoke(IPC.sessions.fork, { id, entryId }),
     loadMessages: (id, options) => ipcRenderer.invoke(IPC.sessions.loadMessages, { id, options }),
@@ -41,7 +42,9 @@ const api = {
     compact: (sessionId, instructions) =>
       ipcRenderer.invoke(IPC.chat.compact, { sessionId, instructions }),
     onEvent: (callback) => {
-      const listener = (_event: Electron.IpcRendererEvent, event: ChatEvent) => callback(event);
+      // 透传信封（事件 + 所属会话 id）：归属由主进程给出，渲染层不再靠「当前会话」猜
+      const listener = (_event: Electron.IpcRendererEvent, payload: ChatEventEnvelope) =>
+        callback(payload);
       ipcRenderer.on(IPC.chat.event, listener);
       return () => ipcRenderer.removeListener(IPC.chat.event, listener);
     },
@@ -62,6 +65,11 @@ const api = {
   agents: {
     read: () => ipcRenderer.invoke(IPC.agents.read),
     write: (content) => ipcRenderer.invoke(IPC.agents.write, { content }),
+  },
+  projects: {
+    list: () => ipcRenderer.invoke(IPC.projects.list),
+    add: (path) => ipcRenderer.invoke(IPC.projects.add, { path }),
+    remove: (id) => ipcRenderer.invoke(IPC.projects.remove, { id }),
   },
   dialog: {
     pickDirectory: (defaultPath) => ipcRenderer.invoke(IPC.dialog.pickDirectory, { defaultPath }),

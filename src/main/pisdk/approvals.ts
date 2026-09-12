@@ -6,13 +6,14 @@ import type {
   ApprovalRecord,
   ApprovalRequest,
 } from "@/shared/contracts/approval";
-import type { ChatEvent } from "@/shared/contracts/chat";
+import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
 import type { AiApprover, AiApproverResult } from "./ai-approver";
 
 export interface ApprovalServiceDeps {
   getSettings: () => Promise<Settings>;
-  emit: (event: ChatEvent) => void;
+  /** 发往渲染进程的事件；带会话 id（审批也要能落到后台会话上） */
+  emit: (payload: ChatEventEnvelope) => void;
   /** AI 审批器（「帮我审批」模式用）；未注入时该模式退化为用户审批卡 */
   aiApprover?: AiApprover;
 }
@@ -55,9 +56,9 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
   const pendingByToolCall = new Map<string, string>();
   const records: ApprovalRecord[] = [];
 
-  function emitSafe(event: ChatEvent): void {
+  function emitSafe(sessionId: string, event: ChatEvent): void {
     try {
-      deps.emit(event);
+      deps.emit({ sessionId, event });
     } catch (error) {
       console.warn(`发送审批事件失败：${String(error)}`);
     }
@@ -97,7 +98,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     pendingById.delete(id);
     if (pendingByToolCall.get(entry.toolCallId) === id) pendingByToolCall.delete(entry.toolCallId);
     record(entry, decision, decidedBy, note);
-    emitSafe({ type: "approval-resolved", id, decision });
+    emitSafe(entry.request.sessionId, { type: "approval-resolved", id, decision });
     entry.resolve(decision);
     return true;
   }
@@ -132,7 +133,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     if (!pendingById.has(entry.request.id)) return;
     entry.request.aiReviewed = true;
     entry.request.reason = reason;
-    emitSafe({ type: "approval-reviewed", id: entry.request.id, reason });
+    emitSafe(entry.request.sessionId, { type: "approval-reviewed", id: entry.request.id, reason });
   }
 
   async function request(input: {
@@ -183,7 +184,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     };
     pendingById.set(request.id, entry);
     pendingByToolCall.set(input.toolCallId, request.id);
-    emitSafe({ type: "approval-requested", request });
+    emitSafe(request.sessionId, { type: "approval-requested", request });
     if (aiApprover) void runAiApproval(entry, aiApprover);
     return promise;
   }

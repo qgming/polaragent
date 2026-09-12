@@ -50,6 +50,10 @@ export interface SessionStore {
   /** 当前标题（null = 还没有名字，自动命名据此判断是否该生成） */
   readTitle(id: string): Promise<string | null>;
   setArchived(id: string, archived: boolean): Promise<void>;
+  /** 置顶/取消置顶：只写索引，不动 pi 元数据 */
+  setPinned(id: string, pinned: boolean): Promise<void>;
+  /** 会话绑定的工作目录（索引 cwd）；未绑定返回 null */
+  readCwd(id: string): Promise<string | null>;
   /** 物理删除 sqlite 文件并清索引 */
   remove(id: string): Promise<void>;
   /** 在指定条目处创建分支会话（scope:"branch", position:"at"） */
@@ -86,6 +90,7 @@ function toSummary(meta: SessionMetadata, entry?: SessionIndexEntry): SessionSum
     cwd: meta.cwd ?? entry?.cwd ?? "",
     ...(meta.parentSessionId === undefined ? {} : { parentSessionId: meta.parentSessionId }),
     archived: entry?.archived ?? false,
+    pinned: entry?.pinned ?? false,
     messageCount: entry?.messageCount ?? 0,
   };
 }
@@ -205,8 +210,18 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     return title === "" ? null : title;
   }
 
+  async function readCwd(id: string): Promise<string | null> {
+    // 只 trim 用于判空，返回原值——路径本身的首尾空白不真正剪掉
+    const cwd = (await index.read())[id]?.cwd ?? "";
+    return cwd.trim() === "" ? null : cwd;
+  }
+
   async function setArchived(id: string, archived: boolean): Promise<void> {
     await updateIndex(id, { archived });
+  }
+
+  async function setPinned(id: string, pinned: boolean): Promise<void> {
+    await updateIndex(id, { pinned });
   }
 
   async function remove(id: string): Promise<void> {
@@ -358,6 +373,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     rename,
     readTitle,
     setArchived,
+    setPinned,
+    readCwd,
     remove,
     fork,
     loadMessages,

@@ -8,6 +8,8 @@ import path from "node:path";
 export interface SessionIndexEntry {
   title?: string;
   archived?: boolean;
+  /** 置顶是应用层状态，pi 元数据里没有 */
+  pinned?: boolean;
   updatedAt?: number;
   messageCount?: number;
   cwd?: string;

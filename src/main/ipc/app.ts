@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, ipcMain, shell } from "electron";
+import { readKernelDependencies } from "@/main/app/kernel-deps";
 import { dataDir } from "@/main/app/paths";
 import type { AppInfo } from "@/shared/contracts/app";
 import { IPC } from "@/shared/contracts/ipc";
@@ -7,10 +8,10 @@ import { IPC } from "@/shared/contracts/ipc";
 export function registerAppIpc(): void {
   ipcMain.handle(
     IPC.app.getInfo,
-    (): AppInfo => ({
+    async (): Promise<AppInfo> => ({
       name: app.getName(),
       version: app.getVersion(),
-      platform: process.platform,
+      kernel: await readKernelDependencies(app.getAppPath()),
       dataDir: dataDir(),
     }),
   );

@@ -55,7 +55,8 @@ export function SettingsField({
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
-        <label htmlFor={htmlFor} className="text-[13.5px] leading-5">
+        {/* 标签不折行：中文可以逐字断行，窄窗口下「内核」会被拆成两行（说明文字仍可折行） */}
+        <label htmlFor={htmlFor} className="text-[13.5px] leading-5 whitespace-nowrap">
           {label}
         </label>
         {description ? <p className="mt-0.5 text-xs text-foreground/45">{description}</p> : null}

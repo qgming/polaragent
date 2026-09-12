@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/shared/contracts/session";
-import { planRewrite, useChatStore } from "./chat-store";
+import { mergeLoadedPage, planRewrite, useChatStore } from "./chat-store";
 
 function msg(id: string, role: ChatMessage["role"], parentId?: string | null): ChatMessage {
   return {
@@ -76,6 +76,7 @@ describe("planRewrite", () => {
             updatedAt: 2,
             cwd: "",
             archived: false,
+            pinned: false,
             messageCount: 0,
           },
           {
@@ -85,6 +86,7 @@ describe("planRewrite", () => {
             updatedAt: 1,
             cwd: "",
             archived: false,
+            pinned: false,
             messageCount: 0,
           },
         ],
@@ -114,5 +116,87 @@ describe("planRewrite", () => {
       ).not.toThrow();
       expect(useChatStore.getState().sessions.map((item) => item.id)).toEqual(["s1", "s2"]);
     });
+  });
+
+  describe("运行状态按会话独立", () => {
+    it("后台会话运行中时不影响当前会话，跑完各自清零", () => {
+      useChatStore.setState({
+        sessions: [
+          {
+            id: "s1",
+            title: "前台",
+            createdAt: 1,
+            updatedAt: 2,
+            cwd: "",
+            archived: false,
+            pinned: false,
+            messageCount: 0,
+          },
+          {
+            id: "s2",
+            title: "后台",
+            createdAt: 1,
+            updatedAt: 1,
+            cwd: "",
+            archived: false,
+            pinned: false,
+            messageCount: 0,
+          },
+        ],
+        activeSessionId: "s1",
+        runningBySession: {},
+        queueBySession: {},
+      });
+
+      const store = useChatStore.getState();
+      store.applyEvent("s2", { type: "run-started", runId: "r2" });
+      expect(useChatStore.getState().runningBySession.s2).toBe(true);
+      expect(useChatStore.getState().runningBySession.s1).toBeUndefined();
+
+      // 后台跑完：只清它自己；顺带触发的列表刷新在测试环境里没有 IPC，异常要被吞掉
+      expect(() =>
+        store.applyEvent("s2", { type: "run-ended", runId: "r2", reason: "completed" }),
+      ).not.toThrow();
+      expect(useChatStore.getState().runningBySession.s2).toBe(false);
+      expect(useChatStore.getState().activeSessionId).toBe("s1");
+    });
+  });
+});
+
+describe("mergeLoadedPage", () => {
+  const msg = (id: string, entryId?: string): ChatMessage => ({
+    id,
+    role: "assistant",
+    createdAt: 1,
+    parts: [{ type: "text", text: id }],
+    status: "complete",
+    ...(entryId === undefined ? {} : { entryId }),
+  });
+
+  it("没有事件累积时原样返回磁盘历史", () => {
+    const page = [msg("m1"), msg("m2")];
+    expect(mergeLoadedPage(page, [])).toEqual(page);
+  });
+
+  it("事件累积里同 id 的消息被历史那版取代", () => {
+    const merged = mergeLoadedPage([msg("m1")], [msg("m1")]);
+    expect(merged.map((item) => item.id)).toEqual(["m1"]);
+  });
+
+  it("id 不同但 entryId 相同的消息不重复（两边的 id 不一定一致）", () => {
+    const merged = mergeLoadedPage([msg("from-disk", "e1")], [msg("from-event", "e1")]);
+    expect(merged).toEqual([msg("from-disk", "e1")]);
+  });
+
+  it("还在流式（没有 entryId）的消息接在历史后面，不会被丢掉", () => {
+    const streaming: ChatMessage = {
+      id: "live",
+      role: "assistant",
+      createdAt: 2,
+      parts: [{ type: "text", text: "写了一半" }],
+      status: "streaming",
+    };
+    const merged = mergeLoadedPage([msg("m1")], [streaming]);
+    expect(merged.map((item) => item.id)).toEqual(["m1", "live"]);
   });
 });

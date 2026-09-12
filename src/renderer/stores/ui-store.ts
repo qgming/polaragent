@@ -1,7 +1,13 @@
 import { create } from "zustand";
 
 /** 设置弹窗内的分栏 */
-export type SettingsSection = "general" | "services" | "skills" | "personalization" | "about";
+export type SettingsSection =
+  | "general"
+  | "services"
+  | "skills"
+  | "personalization"
+  | "data"
+  | "about";
 
 /**
  * 设置分类的规范顺序：左栏导航与搜索里的「设置」结果都按它渲染。
@@ -12,6 +18,7 @@ export const SETTINGS_SECTIONS = [
   "services",
   "skills",
   "personalization",
+  "data",
   "about",
 ] as const satisfies readonly SettingsSection[];
 /**

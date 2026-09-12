@@ -1,9 +1,10 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
-import type { ChatEvent, ChatSendOptions } from "./chat";
+import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
 import type { WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
+import type { Project } from "./project";
 import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
@@ -31,9 +32,18 @@ export interface OintApi {
     create(options?: { cwd?: string; title?: string }): Promise<SessionSummary>;
     rename(id: string, title: string): Promise<void>;
     setArchived(id: string, archived: boolean): Promise<void>;
+    /** 置顶/取消置顶 */
+    setPinned(id: string, pinned: boolean): Promise<void>;
     remove(id: string): Promise<void>;
     fork(id: string, entryId: string): Promise<SessionSummary>;
     loadMessages(id: string, options?: LoadSessionMessagesOptions): Promise<SessionMessagesPage>;
+  };
+  projects: {
+    list(): Promise<Project[]>;
+    /** 绑定一个文件夹；该路径已绑定时返回已有项目（不重复添加） */
+    add(path: string): Promise<Project>;
+    /** 解绑项目：只删项目本身，会话与其工作目录都不动 */
+    remove(id: string): Promise<void>;
   };
   chat: {
     send(
@@ -47,8 +57,8 @@ export interface OintApi {
     stop(sessionId: string): Promise<void>;
     queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
     compact(sessionId: string, instructions?: string): Promise<void>;
-    /** 订阅主进程推送的聊天事件，返回取消订阅函数 */
-    onEvent(callback: (event: ChatEvent) => void): () => void;
+    /** 订阅主进程推送的聊天事件（含所属会话 id），返回取消订阅函数 */
+    onEvent(callback: (payload: ChatEventEnvelope) => void): () => void;
   };
   approvals: {
     respond(id: string, decision: ApprovalDecision, note?: string): Promise<void>;

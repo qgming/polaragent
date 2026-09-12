@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ChatEvent } from "@/shared/contracts";
+import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts";
 import { dispatchEvent } from "./event-bridge";
 
 /** ChatEvent 全部 11 种事件各构造一个样本 */
@@ -31,18 +31,11 @@ const sampleEvents: ChatEvent[] = [
   { type: "session-titled", sessionId: "s1", title: "修复登录超时" },
 ];
 
-/** 自带会话 id 的事件不受「当前会话」影响 */
-const selfScopedEvent: ChatEvent = {
-  type: "session-titled",
-  sessionId: "s9",
-  title: "来自后台的命名",
-};
-
 describe("dispatchEvent", () => {
-  it("把各种事件类型原样转发给 onEvent（绑定当前会话 id）", () => {
+  it("按信封里的会话 id 原样转发事件", () => {
     const onEvent = vi.fn();
     for (const event of sampleEvents) {
-      dispatchEvent(() => "s1", onEvent, event);
+      dispatchEvent(onEvent, { sessionId: "s1", event });
     }
     expect(onEvent).toHaveBeenCalledTimes(sampleEvents.length);
     for (const [index, event] of sampleEvents.entries()) {
@@ -50,22 +43,21 @@ describe("dispatchEvent", () => {
     }
   });
 
-  it("无活动会话时跳过转发", () => {
+  // 这一条正是「切走的会话还在跑」的关键：归属来自主进程的信封，与当前打开的是谁无关
+  it("后台会话的事件落在它自己的会话上", () => {
     const onEvent = vi.fn();
-    dispatchEvent(() => null, onEvent, { type: "run-started", runId: "r1" });
-    expect(onEvent).not.toHaveBeenCalled();
+    const envelope: ChatEventEnvelope = {
+      sessionId: "s-bg",
+      event: { type: "run-started", runId: "r1" },
+    };
+    dispatchEvent(onEvent, envelope);
+    expect(onEvent).toHaveBeenCalledWith("s-bg", envelope.event);
   });
 
   it("未知事件类型不抛错", () => {
     const onEvent = vi.fn();
     const unknown = { type: "unknown-event", payload: 1 } as unknown as ChatEvent;
-    expect(() => dispatchEvent(() => "s1", onEvent, unknown)).not.toThrow();
+    expect(() => dispatchEvent(onEvent, { sessionId: "s1", event: unknown })).not.toThrow();
     expect(onEvent).toHaveBeenCalledWith("s1", unknown);
-  });
-
-  it("自带会话 id 的事件在无活动会话时也转发", () => {
-    const onEvent = vi.fn();
-    dispatchEvent(() => null, onEvent, selfScopedEvent);
-    expect(onEvent).toHaveBeenCalledWith("s9", selfScopedEvent);
   });
 });

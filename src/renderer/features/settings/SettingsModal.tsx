@@ -1,4 +1,4 @@
-import { FileText, Info, Server, Settings2, Sparkles } from "lucide-react";
+import { Database, FileText, Info, Server, Settings2, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { typeSection } from "@/renderer/components/assistant-ui/type";
@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/renderer/components/
 import { cn } from "@/renderer/lib/utils";
 import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
 import { AboutPanel } from "./panels/AboutPanel";
+import { DataPanel } from "./panels/DataPanel";
 import { GeneralPanel } from "./panels/GeneralPanel";
 import { PersonalizationPanel } from "./panels/PersonalizationPanel";
 import { ServicesPanel } from "./panels/ServicesPanel";
@@ -29,6 +30,7 @@ const SECTIONS: readonly {
   { id: "services", labelKey: "settings.services", Icon: Server },
   { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
   { id: "personalization", labelKey: "settings.personalization", Icon: FileText },
+  { id: "data", labelKey: "settings.data", Icon: Database },
   { id: "about", labelKey: "settings.about", Icon: Info },
 ];
 
@@ -52,6 +54,8 @@ function renderPanel(section: SettingsSection) {
       return <SkillsPanel />;
     case "personalization":
       return <PersonalizationPanel />;
+    case "data":
+      return <DataPanel />;
     case "about":
       return <AboutPanel />;
   }

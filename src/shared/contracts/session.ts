@@ -6,6 +6,8 @@ export interface SessionSummary {
   cwd: string;
   parentSessionId?: string;
   archived: boolean;
+  /** 置顶：置顶的会话只出现在侧栏「置顶」分组，不再出现在项目/最近分组 */
+  pinned: boolean;
   messageCount: number;
 }
 

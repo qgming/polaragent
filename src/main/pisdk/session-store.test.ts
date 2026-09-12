@@ -198,4 +198,31 @@ describe("session-store", () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it("setPinned 写索引并能从 list 读回", async () => {
+    const target = await store.create({ title: "置顶目标" });
+    const other = await store.create({ title: "不受影响" });
+    expect(target.pinned).toBe(false);
+    expect((await store.list()).find((item) => item.id === target.id)?.pinned).toBe(false);
+
+    await store.setPinned(target.id, true);
+    const pinned = await store.list();
+    expect(pinned.find((item) => item.id === target.id)?.pinned).toBe(true);
+    expect(pinned.find((item) => item.id === other.id)?.pinned).toBe(false);
+
+    await store.setPinned(target.id, false);
+    expect((await store.list()).find((item) => item.id === target.id)?.pinned).toBe(false);
+  });
+
+  it("readCwd 区分未绑定与已绑定", async () => {
+    const unbound = await store.create();
+    await expect(store.readCwd(unbound.id)).resolves.toBeNull();
+
+    const bound = await store.create({ cwd: "D:\\work\\demo" });
+    await expect(store.readCwd(bound.id)).resolves.toBe("D:\\work\\demo");
+
+    // 纯空白视为未绑定，避免把空格当工作目录用
+    const blank = await store.create({ cwd: "   " });
+    await expect(store.readCwd(blank.id)).resolves.toBeNull();
+  });
 });

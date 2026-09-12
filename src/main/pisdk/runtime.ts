@@ -16,7 +16,12 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Usage } from "@earendil-works/pi-ai";
 import { dataDir } from "@/main/app/paths";
-import type { ChatEvent, ChatSendOptions, QueuedMessage } from "@/shared/contracts/chat";
+import type {
+  ChatEvent,
+  ChatEventEnvelope,
+  ChatSendOptions,
+  QueuedMessage,
+} from "@/shared/contracts/chat";
 import type {
   ChatMessageUsage,
   ChatPart,
@@ -41,7 +46,8 @@ export interface ChatRuntimeDeps {
   getSettings: () => Promise<Settings>;
   sessionStore: SessionStore;
   /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离） */
-  emit: (event: ChatEvent) => void;
+  /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离）；带会话 id，见 ChatEventEnvelope */
+  emit: (payload: ChatEventEnvelope) => void;
   approvals: ApprovalService;
   /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
   sessionTitles?: SessionTitleGenerator;
@@ -163,6 +169,39 @@ function toErrorText(error: unknown): string {
     return JSON.stringify(error) ?? String(error);
   } catch {
     return String(error);
+  }
+}
+
+/** 我们只用一条 lane：pi 侧固定叫 main */
+const LANE_NAME = "main";
+
+/**
+ * pi 的 LaneBusy：这条 lane 里已经压着一个活跃操作，新的 prompt / compact / navigate 都会被拒收。
+ * 它是带 tag 的错误对象（不是 Error 子类），所以按 `_tag` 而不是 instanceof 识别。
+ */
+export function isLaneBusy(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === "LaneBusy"
+  );
+}
+
+/**
+ * 收敛 lane 里遗留的操作，返回是否成功。
+ *
+ * abort 是 pi 自己的收敛路径：不请求模型，只把该操作写成 aborted 终态、把 lane 的
+ * currentOperationId 清空，已落盘的消息不受影响 —— 正适合清「上一次进程没收尾留下的」操作。
+ * 没有活跃操作时 abort 会返回 NoActiveOperation，此时返回 false 让调用方决定怎么处理。
+ * （导出是为了让单测能直接盖住这条判断，主进程内部不该有别处调用。）
+ */
+export async function abortStaleOperation(lane: AgentLane, sessionId: string): Promise<boolean> {
+  try {
+    const result = await lane.abort(BACKGROUND_CONTEXT);
+    if (result.ok) return true;
+    console.warn(`清理会话 ${sessionId} 的遗留操作失败：${toErrorText(result.error)}`);
+    return false;
+  } catch (error) {
+    console.warn(`清理会话 ${sessionId} 的遗留操作异常：${toErrorText(error)}`);
+    return false;
   }
 }
 
@@ -315,9 +354,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   const runtimes = new Map<string, SessionRuntime>();
   const creations = new Map<string, Promise<SessionRuntime>>();
 
-  function emitSafe(event: ChatEvent): void {
+  function emitSafe(sessionId: string, event: ChatEvent): void {
     try {
-      deps.emit(event);
+      deps.emit({ sessionId, event });
     } catch (error) {
       console.warn(`发送聊天事件失败：${toErrorText(error)}`);
     }
@@ -339,8 +378,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     );
   }
 
-  function upsertPart(stream: AssistantStream, partIndex: number, part: ChatPart): void {
-    emitSafe({ type: "part-upsert", messageId: stream.messageId, partIndex, part });
+  function upsertPart(
+    runtime: SessionRuntime,
+    stream: AssistantStream,
+    partIndex: number,
+    part: ChatPart,
+  ): void {
+    emitSafe(runtime.sessionId, {
+      type: "part-upsert",
+      messageId: stream.messageId,
+      partIndex,
+      part,
+    });
   }
 
   /** 取或创建文本 / 推理 part，保证 contentIndex 与 parts 下标一一对应 */
@@ -403,7 +452,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.lastAssistantMessageId = messageId;
       // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
       runtime.pendingEntries.push({ messageId, role: "assistant" });
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-added",
         message: {
           id: messageId,
@@ -422,7 +471,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const messageId = reuseId ?? randomUUID();
       // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
       runtime.pendingEntries.push({ messageId, role: "user" });
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-added",
         message: {
           id: messageId,
@@ -452,7 +501,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const textPart = part as TextPart;
       if (update.type === "text_delta") textPart.text += update.delta;
       else if (update.type === "text_end") textPart.text = update.content;
-      upsertPart(stream, index, textPart);
+      upsertPart(runtime, stream, index, textPart);
       return;
     }
 
@@ -466,7 +515,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const reasoningPart = part as ReasoningPart;
       if (update.type === "thinking_delta") reasoningPart.text += update.delta;
       else if (update.type === "thinking_end") reasoningPart.text = update.content;
-      upsertPart(stream, index, reasoningPart);
+      upsertPart(runtime, stream, index, reasoningPart);
       return;
     }
 
@@ -480,7 +529,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         partIndex: index,
         part,
       });
-      upsertPart(stream, index, part);
+      upsertPart(runtime, stream, index, part);
       return;
     }
 
@@ -495,7 +544,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         partIndex: index,
         part,
       });
-      upsertPart(stream, index, part);
+      upsertPart(runtime, stream, index, part);
     }
     // start / done / error 等类型不需要额外动作
   }
@@ -508,7 +557,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const stream = runtime.stream;
     if (message.role !== "assistant" || !stream) return;
     const failed = message.stopReason === "error";
-    emitSafe({
+    emitSafe(runtime.sessionId, {
       type: "message-updated",
       messageId: stream.messageId,
       patch: {
@@ -530,7 +579,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       ref.part.toolName = event.toolName;
       ref.part.args = event.args;
       ref.part.argsText = safeStringify(event.args);
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "part-upsert",
         messageId: ref.messageId,
         partIndex: ref.partIndex,
@@ -556,7 +605,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       partIndex: index,
       part,
     });
-    emitSafe({ type: "part-upsert", messageId: stream.messageId, partIndex: index, part });
+    emitSafe(runtime.sessionId, {
+      type: "part-upsert",
+      messageId: stream.messageId,
+      partIndex: index,
+      part,
+    });
   }
 
   function handleToolEnd(
@@ -566,7 +620,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const ref = runtime.toolParts.get(event.toolCallId);
     if (!ref) return;
     applyToolEnd(ref.part, event.result, event.isError);
-    emitSafe({
+    emitSafe(runtime.sessionId, {
       type: "part-upsert",
       messageId: ref.messageId,
       partIndex: ref.partIndex,
@@ -581,7 +635,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const stream = runtime.stream;
     if (stream) {
       const failed = event.status === "failed";
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-updated",
         messageId: stream.messageId,
         patch: {
@@ -592,7 +646,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.lastAssistantMessageId = stream.messageId;
       runtime.stream = undefined;
     } else if (event.status === "failed" && runtime.lastAssistantMessageId) {
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-updated",
         messageId: runtime.lastAssistantMessageId,
         patch: { status: "error", error: event.error.message },
@@ -601,8 +655,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.running = false;
     runtime.runEnded = true;
     runtime.queue = [];
-    emitSafe({ type: "queue-updated", items: [] });
-    emitSafe({ type: "run-ended", runId: runtime.runId ?? event.runId, reason: event.status });
+    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
+    emitSafe(runtime.sessionId, {
+      type: "run-ended",
+      runId: runtime.runId ?? event.runId,
+      reason: event.status,
+    });
     void touchSession(runtime);
     // 一轮问答结束：会话还没名字时，用这轮内容生成标题
     void maybeTitleSession(runtime, event.status);
@@ -614,7 +672,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): void {
     const messageId = runtime.stream?.messageId ?? runtime.lastAssistantMessageId;
     if (!messageId) return;
-    emitSafe({
+    emitSafe(runtime.sessionId, {
       type: "message-updated",
       messageId,
       patch: { usage: mapUsage(event.row.usage) },
@@ -633,7 +691,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return [{ id: item.entryId, text: agentMessageText(item.message), mode: item.kind }];
     });
     runtime.queue = items;
-    emitSafe({ type: "queue-updated", items });
+    emitSafe(runtime.sessionId, { type: "queue-updated", items });
   }
 
   /** 压缩摘要预览：取不到时返回空串，不阻塞事件流 */
@@ -690,7 +748,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
       });
       if (title === null) return;
-      emitSafe({ type: "session-titled", sessionId: runtime.sessionId, title });
+      emitSafe(runtime.sessionId, { type: "session-titled", sessionId: runtime.sessionId, title });
     } catch (error) {
       console.warn(`会话自动命名失败，保留默认名称：${toErrorText(error)}`);
     }
@@ -709,7 +767,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): void {
     const paired = pairEntryWithMessage(runtime.pendingEntries, event.entry);
     if (paired === null) return;
-    emitSafe({
+    emitSafe(runtime.sessionId, {
       type: "message-updated",
       messageId: paired.messageId,
       patch: paired.patch,
@@ -726,11 +784,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
     subscribe(runtime, "usage", (event) => handleUsage(runtime, event));
     subscribe(runtime, "queue_update", (event) => handleQueueUpdate(runtime, event));
-    subscribe(runtime, "compaction_start", () => emitSafe({ type: "compaction-started" }));
+    subscribe(runtime, "compaction_start", () =>
+      emitSafe(runtime.sessionId, { type: "compaction-started" }),
+    );
     subscribe(runtime, "compaction_end", async (event) => {
       const preview =
         event.status === "completed" ? await compactionPreview(runtime, event.entryId) : "";
-      emitSafe({ type: "compaction-ended", summaryPreview: preview });
+      emitSafe(runtime.sessionId, { type: "compaction-ended", summaryPreview: preview });
     });
   }
 
@@ -753,7 +813,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const ref = runtime.toolParts.get(toolCallId);
     if (ref) {
       ref.part.status = "pending-approval";
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "part-upsert",
         messageId: ref.messageId,
         partIndex: ref.partIndex,
@@ -773,7 +833,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (decision === "deny") {
       if (ref) {
         ref.part.status = "denied";
-        emitSafe({
+        emitSafe(runtime.sessionId, {
           type: "part-upsert",
           messageId: ref.messageId,
           partIndex: ref.partIndex,
@@ -820,10 +880,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       },
       BACKGROUND_CONTEXT,
     );
-    if (created.open.length > 0) {
-      console.warn(`会话 ${sessionId} 存在 ${created.open.length} 个未完成操作，已跳过自动恢复`);
-    }
-    const lane = await created.harness.lane("main", BACKGROUND_CONTEXT);
+    const lane = await created.harness.lane(LANE_NAME, BACKGROUND_CONTEXT);
 
     const runtime: SessionRuntime = {
       sessionId,
@@ -851,6 +908,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         }
       }),
     );
+
+    // 遗留操作：上一次进程在运行中被关掉（退出 / 崩溃 / 开发期热重载）时，pi 会把「当前操作 id」
+    // 留在会话里，下次 attach 原样读回 —— 这条 lane 就天生「有活跃操作」，之后任何
+    // prompt / compact 都会被 LaneBusy 拒收。这里在装配阶段先收敛掉。
+    if (created.open.some((operation) => operation.lane === LANE_NAME)) {
+      await abortStaleOperation(lane, sessionId);
+    }
     registerEvents(runtime);
     return runtime;
   }
@@ -879,7 +943,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const text = toErrorText(cause);
     const stream = runtime.stream;
     if (stream) {
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-updated",
         messageId: stream.messageId,
         patch: { status: "error", error: text },
@@ -887,7 +951,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.lastAssistantMessageId = stream.messageId;
       runtime.stream = undefined;
     } else {
-      emitSafe({
+      emitSafe(runtime.sessionId, {
         type: "message-added",
         message: {
           id: randomUUID(),
@@ -899,7 +963,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
       });
     }
-    emitSafe({ type: "run-ended", runId, reason: "failed" });
+    emitSafe(runtime.sessionId, { type: "run-ended", runId, reason: "failed" });
   }
 
   async function send(
@@ -924,7 +988,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.pendingUserMessageId = messageId;
     const runId = randomUUID();
     runtime.runId = runId;
-    emitSafe({ type: "run-started", runId });
+    emitSafe(runtime.sessionId, { type: "run-started", runId });
     try {
       const rewound = options?.rewindToEntryId;
       if (rewound !== undefined) {
@@ -949,7 +1013,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
        * `InvalidMessage{reason:"empty"}`（"Acceptance must append at least one message"）拒收。
        * 所以 `text` 一律原样传下去。
        */
-      const result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
+      let result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
+      if (
+        !result.ok &&
+        isLaneBusy(result.error) &&
+        (await abortStaleOperation(runtime.lane, runtime.sessionId))
+      ) {
+        // lane 里还压着没收尾的操作（例如上次 stop 的 abort 没收敛）：清掉再重试一次，
+        // 让用户看到真实结果而不是 `Lane "main" already has an active operation`。
+        // prompt 被拒时不会追加消息，所以重试不会写出重复的用户消息。
+        result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
+      }
       if (!result.ok) emitRunFailure(runtime, runId, result.error);
     } catch (error) {
       emitRunFailure(runtime, runId, error);
@@ -959,7 +1033,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.runId = undefined;
       runtime.queue = [];
       runtime.pendingUserMessageId = undefined;
-      emitSafe({ type: "queue-updated", items: [] });
+      emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     }
   }
 
@@ -968,7 +1042,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (!runtime) return;
     deps.approvals.cancelSession(sessionId);
     runtime.queue = [];
-    emitSafe({ type: "queue-updated", items: [] });
+    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     try {
       const result = await runtime.lane.abort(BACKGROUND_CONTEXT);
       if (!result.ok) runtime.running = false;
@@ -987,7 +1061,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
     const item: QueuedMessage = { id: randomUUID(), text, mode };
     runtime.queue = [...runtime.queue, item];
-    emitSafe({ type: "queue-updated", items: [...runtime.queue] });
+    emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
     try {
       const result =
         mode === "steer"
@@ -996,10 +1070,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       if (!result.ok) throw new Error(`消息入队失败：${toErrorText(result.error)}`);
       // 已交给 lane：移除本地占位项，真实队列由 queue_update 事件同步
       runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
-      emitSafe({ type: "queue-updated", items: [...runtime.queue] });
+      emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
     } catch (error) {
       runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
-      emitSafe({ type: "queue-updated", items: [...runtime.queue] });
+      emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
       throw error;
     }
   }
@@ -1024,13 +1098,19 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtimes.delete(sessionId);
     deps.approvals.cancelSession(sessionId);
     runtime.queue = [];
-    emitSafe({ type: "queue-updated", items: [] });
+    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     for (const unsubscribe of runtime.unsubscribers) {
       try {
         unsubscribe();
       } catch (error) {
         console.warn(`取消事件订阅失败 ${sessionId}：${toErrorText(error)}`);
       }
+    }
+
+    // 运行中直接关掉（退出/释放）会把「活跃操作」留在会话里，下次打开就是 LaneBusy；
+    // 先尽力收敛一次，失败也不阻塞关闭流程 —— 这里已经不再需要这次运行的结果了
+    if (runtime.running) {
+      await abortStaleOperation(runtime.lane, runtime.sessionId);
     }
     try {
       await runtime.harness.close(BACKGROUND_CONTEXT);

@@ -37,18 +37,23 @@ const PANEL_HALF = 62;
 /**
  * 一格的预览文本：优先正文，其次工具名，最后推理。
  * 助手消息常常整条都是工具调用（没有正文），退回工具名比空着更有信息量。
+ *
+ * 入参是这一格的**全部成员**：一次回复可能落成好几条相邻的助手消息，流式时正文写在前面那条、
+ * 新内容还在后面那条生成，只看第一条会在流式途中读出空白。拼接后由面板高度与 aria-label 截断。
  */
-function railPreview(message: ThreadMessage): string {
+function railPreview(members: readonly ThreadMessage[]): string {
   const texts: string[] = [];
   const tools: string[] = [];
   let reasoning = "";
-  for (const part of message.content) {
-    if (part.type === "text") {
-      if (part.text.trim() !== "") texts.push(part.text.trim());
-    } else if (part.type === "tool-call") {
-      tools.push(part.toolName);
-    } else if (part.type === "reasoning" && reasoning === "") {
-      reasoning = part.text.trim();
+  for (const message of members) {
+    for (const part of message.content) {
+      if (part.type === "text") {
+        if (part.text.trim() !== "") texts.push(part.text.trim());
+      } else if (part.type === "tool-call") {
+        tools.push(part.toolName);
+      } else if (part.type === "reasoning" && reasoning === "") {
+        reasoning = part.text.trim();
+      }
     }
   }
   if (texts.length > 0) return texts.join("\n");
@@ -58,64 +63,100 @@ function railPreview(message: ThreadMessage): string {
 
 interface RailTick {
   key: string;
-  /** 这一格跳到哪条消息 */
+  /** 这一格跳到哪条消息。有多个成员时取**第一条**：一次回复从它的开头读起 */
   targetId: string;
-  /** 这一格对应的消息；null = 「更早的消息」那一格（聚合，没有单条消息） */
+  /** 这一格对应的消息（多成员时是第一条）；null = 「更早的消息」那一格（聚合，没有单条消息） */
   message: ThreadMessage | null;
-  /** 聚合格里没被逐格画出来的消息条数 */
+  /** 这一格的成员：一次回复的全部相邻助手消息，或单独一条用户消息；聚合格为空 */
+  members: readonly ThreadMessage[];
+  /** members 的 id 投影。高亮查找走它（见下面 matchedIndex）：流式时视口最下面那条可能是组内任意一位 */
+  memberIds: readonly string[];
+  /** 聚合格里没被逐格画出来的**格数**（不是消息条数：一次回复只算一格） */
   hiddenCount: number;
   /** 这一格的基准线长 */
   base: number;
 }
 
 /**
- * 刻度条的数据：最近 MAX_TICKS 条消息，一条一格。
+ * 把消息切成「格」：相邻的助手消息属于**同一次运行**，合成一格；用户消息各自一格。
+ *
+ * 依据是 pi 每遇到一次 message_start 就新开一条助手消息（工具调用之后必然如此），
+ * 所以「某条用户消息之后、下一条用户消息之前的全部助手消息」正好就是一次完整回复；
+ * Thread 里运行段的起止（IsRunStart / IsRunEnd）用的也是同一个口径。
+ * 纯函数：只看 role 的相邻关系，不碰 store，也不看 DOM。
+ */
+function groupRuns(messages: readonly ThreadMessage[]): ThreadMessage[][] {
+  const groups: ThreadMessage[][] = [];
+  for (const message of messages) {
+    const last = groups.at(-1);
+    // 相邻助手 = 同一次运行，并进上一格；用户消息（或列表开头）永远另起一格
+    if (last !== undefined && message.role === "assistant" && last[0]?.role === "assistant") {
+      last.push(message);
+    } else {
+      groups.push([message]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * 刻度条的数据：最近 MAX_TICKS **格**，一格 = 一次完整的 AI 回复或一条用户消息。
  *
  * 超出上限时最上面多出一格「更早的消息」，代表没有逐格画出来的那些（点它跳到已加载的最早一条，
- * 继续往上滚还会自动翻页，见 Thread 里的哨兵）。取**最近**的若干条而不是最早的，
+ * 继续往上滚还会自动翻页，见 Thread 里的哨兵）。取**最近**的若干格而不是最早的，
  * 因为这条轨道服务的是「刚说过的话在哪」，越近越常回看。
+ * 折叠的单位是**格**：一次回复里的相邻助手消息不会各占一格，也就一起被折掉。
  *
  * 纯函数、不碰 i18n：文案在渲染时按当前语言解析，切换语言才会跟着换。
  */
 function buildTicks(messages: readonly ThreadMessage[]): RailTick[] {
-  const overflow = messages.length > MAX_TICKS;
-  const shown = overflow ? messages.slice(-(MAX_TICKS - 1)) : messages;
+  const groups = groupRuns(messages);
+  const overflow = groups.length > MAX_TICKS;
+  const shown = overflow ? groups.slice(-(MAX_TICKS - 1)) : groups;
   const ticks: RailTick[] = [];
 
-  const first = messages[0];
+  const first = groups[0]?.[0];
   if (overflow && first !== undefined) {
     ticks.push({
       key: "earlier",
       targetId: first.id,
       message: null,
-      hiddenCount: messages.length - shown.length,
+      members: [],
+      memberIds: [],
+      hiddenCount: groups.length - shown.length,
       base: BASE_WIDTH.earlier,
     });
   }
 
-  for (const message of shown) {
+  for (const group of shown) {
+    const head = group[0];
+    if (head === undefined) continue;
     ticks.push({
-      key: message.id,
-      targetId: message.id,
-      message,
+      key: head.id,
+      // 跳到这次回复的**开头**那条：跳转 / 搜索落点 / 高亮都按消息 id 走，新粒度不用改别处
+      targetId: head.id,
+      message: head,
+      members: group,
+      memberIds: group.map((message) => message.id),
       hiddenCount: 0,
-      base: message.role === "user" ? BASE_WIDTH.user : BASE_WIDTH.assistant,
+      base: head.role === "user" ? BASE_WIDTH.user : BASE_WIDTH.assistant,
     });
   }
   return ticks;
 }
 
 /**
- * 消息地图：对话区**左缘**的一条刻度轨道，一条消息一格。
+ * 消息地图：对话区**左缘**的一条刻度轨道，一次完整的 AI 回复一格（相邻的助手消息合成一格，
+ * 见 groupRuns），用户消息各自一格。
  *
  * · 左侧让开 8px（gap-2），与侧栏分界线之间留出同样的呼吸；整体在界面高度上垂直居中；
  *   线长 2px、槽位 10px（上下各 4px），相邻两条线之间因此也正好 8px —— 与左边距同值；
  * · hover / 键盘聚焦某格 → 线长按 150% / 140% / 130% / 120% / 110% 向两侧衰减，
- *   颜色同时加深，并在该格右侧弹出这条消息的预览（角色 + 内容摘要）；
- * · 点击 → 跳到那条消息。跳转复用搜索模态窗那条通道（ui-store 的 jumpToMessage）：
+ *   颜色同时加深，并在该格右侧弹出这一格的预览（角色 + 内容摘要）；预览取格内全部成员，
+ *   所以流式进行中的一格显示的是「已有正文 + 正在流的内容」；点击 → 跳到这一格开头的消息。
  *   定位（滚到视口中央、尊重 prefers-reduced-motion）与左侧竖条标记都在 Thread 里统一处理，
  *   这里不另写一份滚动逻辑，也顺带让「跳到了哪条」有个持续可见的落点；
- * · 页面上能看到的最下面那一条加深加长，滚动时用 rAF 节流重算。
+ * · 页面上能看到的最下面那条所属的格加深加长，滚动时用 rAF 节流重算。
  *
  * 每格的 hit 区等于它的槽位（10px：线 2px + 上下各 4px），刻度条整体是一块连续的命中区，
  * 格与格之间没有死区（30 格满档也只有 300px 高）。消息不足两条时不渲染 ——
@@ -247,7 +288,9 @@ export function MessageRail({
     updateActiveRef.current();
   }, [railSignature]);
 
-  if (messages.length < 2) return null;
+  // 按格数判断而不是消息条数：一次回复现在只占一格，两条相邻助手消息其实只有一格，
+  // 若按消息数判断会画出孤零零一格（连不成地图）
+  if (ticks.length < 2) return null;
 
   /** 预览面板的标题：消息的角色，或「更早的消息」 */
   const tickTitle = (tick: RailTick) =>
@@ -257,22 +300,29 @@ export function MessageRail({
         ? t("chat.messageMapUser")
         : t("chat.messageMapAssistant");
 
-  /** 预览面板的正文：聚合格给出条数，其余取消息摘要 */
+  /**
+   * 预览面板的正文：聚合格给出格数，其余把这一格全部成员的摘要拼起来。
+   * 进行中但还没产出内容的格会得到空串，调用处回落到「没有文字内容」文案，不会画成空白条。
+   */
   const tickPreview = (tick: RailTick) =>
     tick.message === null
       ? t("chat.messageMapEarlierCount", { count: tick.hiddenCount })
-      : railPreview(tick.message);
+      : railPreview(tick.members);
 
   /**
    * 亮的是哪一格。
    *
-   * activeId 有可能落在刻度窗口之外：消息超过 30 条时轨道只画最近 30 格，
+   * 比对的是 memberIds 而不是 targetId：activeId 是**消息 id**（视口里最下面那条），
+   * 而一格装着一次回复里的好几条相邻助手消息 —— 流式时新的助手消息会不停往后开，
+   * 只要还落在这一格内，高亮就留在原地，不会一格一格往下跳。
+   *
+   * activeId 也有可能落在刻度窗口之外：格子超过 30 时轨道只画最近 30 格，
    * 此时「底部可见的那条」可能是更早的消息，找不到对应刻度。
    * 这种情况点亮最上面那一格 —— 它就是「更早的消息」，正是那些消息所在的位置。
    * （早先的实现会退回首条消息，视觉上就变成「永远亮着最顶那格」。）
    */
   const matchedIndex =
-    activeId === null ? -1 : ticks.findIndex((tick) => tick.targetId === activeId);
+    activeId === null ? -1 : ticks.findIndex((tick) => tick.memberIds.includes(activeId));
   const activeTickIndex = activeId === null ? -1 : matchedIndex === -1 ? 0 : matchedIndex;
 
   /**

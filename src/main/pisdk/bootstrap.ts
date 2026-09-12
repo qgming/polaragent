@@ -1,5 +1,5 @@
 import { loadSettings } from "@/main/settings/store";
-import type { ChatEvent } from "@/shared/contracts/chat";
+import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
 import { createChatRuntime } from "./runtime";
@@ -18,14 +18,21 @@ export function getApprovalService(): ApprovalService | null {
   return approvalService;
 }
 
-/** 解析默认工作目录：优先设置项，未配置时回退进程当前目录 */
-async function resolveWorkingDir(): Promise<string> {
+/**
+ * 解析会话工作目录：优先该会话绑定的目录（索引 cwd），其次设置里的默认工作目录，
+ * 最后回退进程当前目录——保证「在项目里新建的会话」跑在该项目目录下。
+ */
+async function resolveWorkingDir(sessionId: string): Promise<string> {
+  const bound = await getSessionStore().readCwd(sessionId);
+  if (bound !== null) return bound;
   const settings = await loadSettings();
   return settings.defaultWorkingDir ?? process.cwd();
 }
 
 /** 装配 pisdk 各服务并接线到窗口事件；返回幂等清理函数 */
-export function bootstrapPisdk(options: { emit: (event: ChatEvent) => void }): () => void {
+export function bootstrapPisdk(options: {
+  emit: (payload: ChatEventEnvelope) => void;
+}): () => void {
   const { emit } = options;
   const sessionStore = getSessionStore();
   // 「帮我审批」模式下由该审批器给出结论（模型取默认路由模型）；其余模式一律等用户确认

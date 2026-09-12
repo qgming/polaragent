@@ -5,11 +5,13 @@ import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { createApprovalService } from "./approvals";
 import {
+  abortStaleOperation,
   applyToolEnd,
   buildSystemPrompt,
   createChatRuntime,
   deriveRulePattern,
   getChatRuntime,
+  isLaneBusy,
   type PendingEntry,
   pairEntryWithMessage,
 } from "./runtime";
@@ -220,5 +222,63 @@ describe("getChatRuntime", () => {
 
     await runtime.dispose();
     expect(() => getChatRuntime()).toThrow("聊天运行时尚未初始化");
+  });
+});
+
+/**
+ * 遗留活跃操作：上一次进程在运行中被关掉后，lane 里会留着「当前操作 id」，
+ * 之后任何 prompt 都会被 pi 以 LaneBusy 拒收 —— 这里只覆盖我们自己的判断与收敛动作，
+ * 真 lane 需要模型与存储，留给端到端验收。
+ */
+describe("遗留操作清理", () => {
+  /** 只用到 abort 的假 lane */
+  function fakeLane(outcome: { ok: true } | { ok: false; error: unknown } | Error) {
+    let calls = 0;
+    const lane = {
+      abort: async () => {
+        calls += 1;
+        if (outcome instanceof Error) throw outcome;
+        return outcome.ok ? { ok: true, value: {} } : { ok: false, error: outcome.error };
+      },
+    };
+    return {
+      lane: lane as unknown as Parameters<typeof abortStaleOperation>[0],
+      calls: () => calls,
+    };
+  }
+
+  it("abort 收敛成功即视为清理完成", async () => {
+    const { lane, calls } = fakeLane({ ok: true });
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(true);
+    expect(calls()).toBe(1);
+  });
+
+  it("没有活跃操作（abort 返回错误）时不视为清理完成", async () => {
+    const { lane } = fakeLane({
+      ok: false,
+      error: { _tag: "NoActiveOperation", message: "no active operation" },
+    });
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
+  });
+
+  it("abort 抛异常时吞掉异常并返回 false（关闭流程不该被它带崩）", async () => {
+    const { lane } = fakeLane(new Error("存储写入失败"));
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
+  });
+});
+
+describe("isLaneBusy", () => {
+  it("按 _tag 识别 pi 的 LaneBusy", () => {
+    expect(
+      isLaneBusy({ _tag: "LaneBusy", message: 'Lane "main" already has an active operation' }),
+    ).toBe(true);
+  });
+
+  it("其它错误与非法值都不误判", () => {
+    // 注意：LaneBusy 是带 tag 的普通对象，不是 Error 子类 —— 文案里出现 LaneBusy 的 Error 不算
+    expect(isLaneBusy(new Error('Lane "main" already has an active operation'))).toBe(false);
+    expect(isLaneBusy({ _tag: "InvalidMessage" })).toBe(false);
+    expect(isLaneBusy(null)).toBe(false);
+    expect(isLaneBusy("LaneBusy")).toBe(false);
   });
 });

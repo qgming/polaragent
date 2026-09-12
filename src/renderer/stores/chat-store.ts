@@ -17,6 +17,11 @@ interface ChatState {
   activeSessionId: string | null;
   /** 各会话的消息列表（时间升序） */
   messagesBySession: Record<string, ChatMessage[]>;
+  /**
+   * 已经从磁盘拉过首页的会话。不能用「messagesBySession 里有没有数组」当加载标记：
+   * 后台会话的事件会先建出数组（只有流式的那几条），此时仍缺磁盘上的历史。
+   */
+  loadedSessions: Record<string, true>;
   /** 各会话的向上翻页游标 */
   pageCursorBySession: Record<string, number | undefined>;
   /** 各会话是否还有更早消息 */
@@ -35,9 +40,12 @@ interface ChatState {
   loadSessions(): Promise<void>;
   setActiveSession(id: string | null): Promise<void>;
   loadMessages(id: string, opts?: { before?: boolean }): Promise<void>;
-  createSession(): Promise<void>;
+  /** 新建会话；带 cwd 时该会话归属到对应项目（也决定它的工作目录） */
+  createSession(options?: { cwd?: string }): Promise<void>;
   renameSession(id: string, title: string): Promise<void>;
   archiveSession(id: string, archived: boolean): Promise<void>;
+  /** 置顶/取消置顶：置顶的会话在侧栏「置顶」分组里 */
+  pinSession(id: string, pinned: boolean): Promise<void>;
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
   send(text: string, images?: { data: string; mimeType: string }[]): Promise<void>;
@@ -80,6 +88,33 @@ function updateMessage(
       [sessionId]: list.map((m) => (m.id === messageId ? patch(m) : m)),
     },
   };
+}
+
+/**
+ * 首页消息与「事件已经累积出来的尾部」合并。
+ *
+ * 后台会话在用户打开它之前就已经通过事件累积了一段消息（只有流式期间那几条），
+ * 打开时要把它接在磁盘历史后面 —— 直接替换会把正在流式的回复弄丢，
+ * 而原样拼起来又可能同一条消息出现两次（磁盘那版带 entryId，事件那版带主进程
+ * 回填的 entryId，两边 id 不一定相同），所以按 id 与 entryId 双向去重。
+ */
+export function mergeLoadedPage(
+  page: readonly ChatMessage[],
+  accumulated: readonly ChatMessage[],
+): ChatMessage[] {
+  if (accumulated.length === 0) return [...page];
+  const knownIds = new Set(page.map((message) => message.id));
+  const knownEntries = new Set(
+    page
+      .map((message) => message.entryId)
+      .filter((entryId): entryId is string => typeof entryId === "string"),
+  );
+  const tail = accumulated.filter(
+    (message) =>
+      !knownIds.has(message.id) &&
+      (message.entryId === undefined || !knownEntries.has(message.entryId)),
+  );
+  return [...page, ...tail];
 }
 
 /**
@@ -169,6 +204,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   sessions: [],
   activeSessionId: null,
   messagesBySession: {},
+  loadedSessions: {},
   pageCursorBySession: {},
   hasMoreBySession: {},
   loadingOlderBySession: {},
@@ -191,8 +227,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   async setActiveSession(id) {
     set({ activeSessionId: id });
-    // 首次激活的会话才需要拉消息；已加载过的直接复用
-    if (id && get().messagesBySession[id] === undefined) {
+    // 首次激活的会话才需要拉消息；已经拉过的直接复用内存里的（含事件累积的流式内容）
+    if (id && get().loadedSessions[id] !== true) {
       await get().loadMessages(id);
     }
   },
@@ -216,10 +252,13 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       const cursor = page.nextCursor;
       set((state) => {
         const existing = state.messagesBySession[id] ?? [];
-        // 首页整体替换；向上翻页时更早的消息前插
-        const messages = before ? [...page.messages, ...existing] : page.messages;
+        // 首页：磁盘历史 + 事件累积的尾部（见 mergeLoadedPage）；向上翻页时更早的消息前插
+        const messages = before
+          ? [...page.messages, ...existing]
+          : mergeLoadedPage(page.messages, existing);
         return {
           messagesBySession: { ...state.messagesBySession, [id]: messages },
+          loadedSessions: before ? state.loadedSessions : { ...state.loadedSessions, [id]: true },
           pageCursorBySession: { ...state.pageCursorBySession, [id]: cursor },
           hasMoreBySession: { ...state.hasMoreBySession, [id]: cursor !== undefined },
         };
@@ -233,8 +272,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
   },
 
-  async createSession() {
-    const session = await window.oint.sessions.create();
+  async createSession(options) {
+    const session = await window.oint.sessions.create(options);
     set((state) => ({ sessions: [session, ...state.sessions] }));
     await get().setActiveSession(session.id);
   },
@@ -251,6 +290,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     if (archived && get().activeSessionId === id) {
       await get().setActiveSession(null);
     }
+  },
+
+  async pinSession(id, pinned) {
+    await window.oint.sessions.setPinned(id, pinned);
+    // 就地改一个布尔字段，不必整表重拉：重拉会顺带刷新顺序与时间，置顶不该改动它们
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, pinned } : session,
+      ),
+    }));
   },
 
   async removeSession(id) {
@@ -444,6 +493,15 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           runningBySession: { ...state.runningBySession, [sessionId]: false },
           queueBySession: { ...state.queueBySession, [sessionId]: [] },
         }));
+        // 后台会话跑完了：主进程已经刷新了它的 updatedAt，拉一次列表让侧栏顺序跟上。
+        // 当前会话不拉 —— 用户正看着的列表不该在眼前重排（它下次交互时自然会被刷新）。
+        if (sessionId !== get().activeSessionId) {
+          void get()
+            .loadSessions()
+            .catch((error: unknown) => {
+              console.warn(`刷新会话列表失败：${String(error)}`);
+            });
+        }
         break;
       default:
         // 未知事件类型：忽略，向前兼容

@@ -1,34 +1,21 @@
-import { useChatStore } from "@/renderer/stores/chat-store";
-import type { ChatEvent } from "@/shared/contracts";
+import type { ChatEventEnvelope } from "@/shared/contracts";
 
 /**
- * 事件自带的会话 id：目前只有命名事件带（会话切换后仍要能更新列表标题）。
- * 其余事件归属「当前会话」，由 getSessionId 推断。
- */
-function ownSessionId(event: ChatEvent): string | null {
-  return event.type === "session-titled" ? event.sessionId : null;
-}
-
-/**
- * 单事件分发：会话 id 通过 getSessionId 注入（事件本身不带会话 id），
+ * 单事件分发：归属由主进程给出的信封决定（事件流里可能同时在跑多个会话），
  * 抽成纯函数便于单测，测试不依赖 window。
  */
 export function dispatchEvent(
-  getSessionId: () => string | null,
-  onEvent: (sessionId: string, event: ChatEvent) => void,
-  event: ChatEvent,
+  onEvent: (sessionId: string, event: ChatEventEnvelope["event"]) => void,
+  payload: ChatEventEnvelope,
 ): void {
-  const sessionId = ownSessionId(event) ?? getSessionId();
-  if (!sessionId) return;
-  onEvent(sessionId, event);
+  onEvent(payload.sessionId, payload.event);
 }
 
-/** 订阅主进程聊天事件并转发给 store；返回取消订阅函数 */
+/** 订阅主进程推送的聊天事件并把「会话 id + 事件」转发给 store；返回取消订阅函数 */
 export function startEventBridge(
-  onEvent: (sessionId: string, event: ChatEvent) => void,
-  getSessionId: () => string | null = () => useChatStore.getState().activeSessionId,
+  onEvent: (sessionId: string, event: ChatEventEnvelope["event"]) => void,
 ): () => void {
-  return window.oint.chat.onEvent((event) => dispatchEvent(getSessionId, onEvent, event));
+  return window.oint.chat.onEvent((payload) => dispatchEvent(onEvent, payload));
 }
 
 /** 订阅窗口最大化状态变化；返回取消订阅函数 */

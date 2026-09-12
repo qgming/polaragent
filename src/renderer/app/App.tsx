@@ -6,6 +6,7 @@ import { SettingsModal } from "@/renderer/features/settings";
 import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
 import { OintRuntimeProvider } from "@/renderer/runtime/OintRuntimeProvider";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { useProjectsStore } from "@/renderer/stores/projects-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { MainShell } from "./MainShell";
 import { SidebarShell } from "./SidebarShell";
@@ -16,7 +17,7 @@ export function App() {
   useGlobalShortcuts();
 
   useEffect(() => {
-    // 启动加载：设置（含主题应用与系统主题监听）+ 会话列表；IPC 失败不影响界面骨架
+    // 启动加载：设置（含主题应用与系统主题监听）+ 会话列表 + 项目列表；IPC 失败不影响界面骨架
     void useSettingsStore
       .getState()
       .init()
@@ -24,6 +25,11 @@ export function App() {
     void useChatStore
       .getState()
       .loadSessions()
+      .catch(() => {});
+    // 项目列表决定侧栏「项目」分组的内容，与会话列表一起在启动时拉一次
+    void useProjectsStore
+      .getState()
+      .load()
       .catch(() => {});
   }, []);
 
