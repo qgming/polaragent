@@ -73,7 +73,7 @@ export function ToolTimeline({
       onOpenChange={onOpenChange}
       className={cn("w-full", className)}
     >
-      <CollapsibleTrigger className="group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-1.5 rounded-md py-0 text-[13.5px] transition-colors outline-none">
+      <CollapsibleTrigger className="group/trigger text-ink-3 hover:text-foreground flex items-center gap-1.5 rounded-md py-0 text-[13.5px] transition-colors outline-none">
         <ChevronRightIcon className="size-3.5 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/trigger:rotate-90 group-data-panel-open/trigger:rotate-90 motion-reduce:transition-none" />
         <SwapLabel active={streaming ? 0 : 1} className="text-start tabular-nums">
           <ShimmerLabel active={streaming} className="relative inline-block leading-none">
@@ -94,15 +94,15 @@ export function ToolTimeline({
             const key = `${index}-${step.chip}`;
 
             const row = (
-              <div className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-foreground/55 flex min-w-0 items-center gap-2 text-[13.5px] duration-300">
-                <Icon className="text-foreground/35 size-3.5 shrink-0" />
+              <div className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-ink-3 flex min-w-0 items-center gap-2 text-[13.5px] duration-300">
+                <Icon className="text-ink-4 size-3.5 shrink-0" />
                 <ShimmerLabel
                   active={active}
                   className="relative inline-block shrink-0 leading-none whitespace-nowrap"
                 >
                   {step.verb}
                 </ShimmerLabel>
-                <span className="bg-foreground/[0.06] text-foreground/70 min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-[11px]">
+                <span className="bg-foreground/[0.06] text-ink-2 min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-[11px]">
                   {step.chip}
                 </span>
                 {stepDetail !== undefined && (
@@ -136,7 +136,7 @@ export function ToolTimeline({
               {stats.map((stat) => (
                 <span
                   key={stat.file}
-                  className="bg-foreground/[0.06] text-foreground/70 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px]"
+                  className="bg-foreground/[0.06] text-ink-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[11px]"
                 >
                   <span>{stat.file}</span>
                   {stat.added !== undefined && (

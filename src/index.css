@@ -73,6 +73,11 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  /* 墨色三档：正文以下的三个层级。消费侧一律用 text-ink-2 / 3 / 4，
+     不要再写 text-foreground/NN —— 透明度叠在接近白的底上会把对比度压到 2~3:1（读不清）。 */
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -120,7 +125,16 @@
   --secondary: oklch(0.965 0.004 var(--tint));
   --secondary-foreground: oklch(0.28 0.008 var(--tint));
   --muted: oklch(0.965 0.004 var(--tint));
-  --muted-foreground: oklch(0.5 0.008 var(--tint));
+  /* muted-foreground：组件库既有的「弱文本」档。抬到 0.46 是为了在 accent/muted（0.955~0.965）上也有 6:1 上下 */
+  --muted-foreground: oklch(0.46 0.008 var(--tint));
+  /*
+    墨色三档（亮色）：比正文 0.24 浅，但每一档对**最亮的底**（accent 0.955）仍达标 ——
+    ink-2 8.1:1 / ink-3 6.3:1 / ink-4 4.8:1（WCAG AA 小字要求 4.5:1）。对 card 更高。
+    数值由 scratch/contrast.mjs 实算得到，改之前先跑一遍那个脚本。
+  */
+  --ink-2: oklch(0.4 0.008 var(--tint));
+  --ink-3: oklch(0.46 0.008 var(--tint));
+  --ink-4: oklch(0.52 0.008 var(--tint));
   --accent: oklch(0.955 0.005 var(--tint));
   --accent-foreground: oklch(0.24 0.008 var(--tint));
   --destructive: oklch(0.55 0.2 27);
@@ -200,7 +214,16 @@
   --secondary: oklch(0.26 0.005 var(--tint));
   --secondary-foreground: oklch(0.92 0.004 var(--tint));
   --muted: oklch(0.26 0.005 var(--tint));
-  --muted-foreground: oklch(0.66 0.006 var(--tint));
+  /* 暗色档：比亮色浅一档语义相同。抬到 0.78 是因为 0.66 在最亮的底（accent 0.28）上只有 4.7:1 */
+  --muted-foreground: oklch(0.78 0.006 var(--tint));
+  /*
+    墨色三档（暗色）：越浅越弱，但最弱一档对**最亮的底**（accent 0.28）仍有 5.5:1 ——
+    ink-2 9.5:1 / ink-3 7.3:1 / ink-4 5.5:1。暗色下「更浅 = 更清楚」，
+    与亮色「更深 = 更清楚」互为镜像（见 :root 的同名注释）。
+  */
+  --ink-2: oklch(0.86 0.006 var(--tint));
+  --ink-3: oklch(0.78 0.006 var(--tint));
+  --ink-4: oklch(0.7 0.006 var(--tint));
   --accent: oklch(0.28 0.005 var(--tint));
   --accent-foreground: oklch(0.94 0.004 var(--tint));
   --destructive: oklch(0.62 0.19 25);

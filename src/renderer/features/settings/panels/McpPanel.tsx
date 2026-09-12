@@ -23,7 +23,12 @@ import { Switch } from "@/renderer/components/ui/switch";
 import { Textarea } from "@/renderer/components/ui/textarea";
 import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { McpConnectionStatus, McpProbeResult, McpServerConfig, McpServerView } from "@/shared/contracts/mcp";
+import type {
+  McpConnectionStatus,
+  McpProbeResult,
+  McpServerConfig,
+  McpServerView,
+} from "@/shared/contracts/mcp";
 import { mcpServerLabel, mcpServerRuleName } from "@/shared/contracts/mcp";
 import type { PermissionRuleView } from "@/shared/contracts/permissions";
 import type { Settings } from "@/shared/contracts/settings";
@@ -36,9 +41,9 @@ import {
 } from "../mcp-entry";
 import {
   PanelLoading,
-  secondaryButton,
   SettingsField,
   SettingsSection,
+  secondaryButton,
   settingsInput,
   settingsTextarea,
 } from "../settings-shared";
@@ -54,10 +59,6 @@ const STATUS_LABEL_KEYS: Record<McpConnectionStatus, string> = {
   error: "settings.mcpStatusError",
 };
 
-function statusLabelKey(status: McpConnectionStatus): string {
-  return STATUS_LABEL_KEYS[status] ?? "settings.mcpStatusIdle";
-}
-
 /** 字段块：眉题 + 控件 + 说明，编辑器内复用（与 ServicesPanel 的 FieldBlock 同形） */
 function FieldBlock({
   label,
@@ -72,7 +73,7 @@ function FieldBlock({
     <div className="space-y-1.5">
       <div className={typePackage}>{label}</div>
       {children}
-      {hint ? <p className="text-xs text-foreground/45">{hint}</p> : null}
+      {hint ? <p className="text-xs text-ink-3">{hint}</p> : null}
     </div>
   );
 }
@@ -119,7 +120,9 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
     >
       <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>{draft.name.trim() === "" ? t("settings.mcpAddServer") : t("settings.mcpEditServer")}</DialogTitle>
+          <DialogTitle>
+            {draft.name.trim() === "" ? t("settings.mcpAddServer") : t("settings.mcpEditServer")}
+          </DialogTitle>
           <DialogDescription>{t("settings.mcpEditorDesc")}</DialogDescription>
         </DialogHeader>
 
@@ -227,12 +230,7 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
 
           {/* 试连结果：成功给 server 名 + 工具数，失败给原因（含 stderr 尾巴） */}
           {probe.result !== undefined ? (
-            <p
-              className={cn(
-                "text-[13px]",
-                probe.result.ok ? "text-foreground/60" : "text-destructive",
-              )}
-            >
+            <p className={cn("text-[13px]", probe.result.ok ? "text-ink-3" : "text-destructive")}>
               {probe.result.ok
                 ? t("settings.mcpTestOk", {
                     name: probe.result.serverName === "" ? draft.id : probe.result.serverName,
@@ -329,9 +327,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
     setRemoving(null);
     await update({ mcpServers: settings.mcpServers.filter((item) => item.id !== config.id) });
     // 顺带清掉该 server 的批量授权规则：server 都删了，放行规则只会留成悬空条目
-    await window.oint.permissions
-      .removeRule(mcpServerRuleName(config.id))
-      .catch(() => undefined);
+    await window.oint.permissions.removeRule(mcpServerRuleName(config.id)).catch(() => undefined);
     await reload();
   };
 
@@ -391,11 +387,9 @@ function McpPanelBody({ settings }: { settings: Settings }) {
             <Skeleton className="h-16 w-full rounded-xl" />
           </div>
         ) : views.length === 0 ? (
-          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-foreground/45">
+          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
             {t("settings.mcpEmpty")}
-            <span className="mt-1 block text-xs text-foreground/40">
-              {t("settings.mcpEmptyHint")}
-            </span>
+            <span className="mt-1 block text-xs text-ink-4">{t("settings.mcpEmptyHint")}</span>
           </p>
         ) : (
           <div className="space-y-2">
@@ -409,14 +403,11 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                       <div className="flex flex-wrap items-center gap-2">
                         {config.transport === "stdio" ? (
                           <SquareTerminal
-                            className="size-3.5 shrink-0 text-foreground/40"
+                            className="size-3.5 shrink-0 text-ink-4"
                             aria-hidden="true"
                           />
                         ) : (
-                          <Globe
-                            className="size-3.5 shrink-0 text-foreground/40"
-                            aria-hidden="true"
-                          />
+                          <Globe className="size-3.5 shrink-0 text-ink-4" aria-hidden="true" />
                         )}
                         <span className="truncate text-[13.5px] font-medium">
                           {mcpServerLabel(config)}
@@ -426,7 +417,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                           className={cn(
                             mono,
                             "border-border/60 px-1.5",
-                            state.status === "error" ? "text-destructive" : "text-foreground/50",
+                            state.status === "error" ? "text-destructive" : "text-ink-3",
                           )}
                         >
                           {t(STATUS_LABEL_KEYS[state.status])}
@@ -434,14 +425,14 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                         {config.enabled ? null : (
                           <Badge
                             variant="outline"
-                            className={cn(mono, "border-border/60 px-1.5 text-foreground/40")}
+                            className={cn(mono, "border-border/60 px-1.5 text-ink-4")}
                           >
                             {t("settings.mcpDisabled")}
                           </Badge>
                         )}
                       </div>
                       <p
-                        className={cn(mono, "mt-1 truncate text-foreground/40")}
+                        className={cn(mono, "mt-1 truncate text-ink-4")}
                         title={config.transport === "stdio" ? config.command : config.url}
                       >
                         {config.transport === "stdio" ? config.command : config.url}
@@ -475,7 +466,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                   {/* 工具清单：直接给名字，模型看到的限定名就是它前面加的 mcp__<id>__ */}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     {tools.length === 0 ? (
-                      <span className="text-xs text-foreground/40">{t("settings.mcpNoTools")}</span>
+                      <span className="text-xs text-ink-4">{t("settings.mcpNoTools")}</span>
                     ) : (
                       <>
                         {tools.slice(0, TOOL_PREVIEW).map((tool) => (
@@ -484,20 +475,20 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                             className={cn(
                               fieldInteractive,
                               mono,
-                              "rounded-[8px] px-1.5 py-0.5 text-foreground/60",
+                              "rounded-[8px] px-1.5 py-0.5 text-ink-3",
                             )}
                             title={tool.qualifiedName}
                           >
                             {tool.name}
                             {tool.readOnly === true ? (
-                              <span className="ml-1 text-foreground/35">
+                              <span className="ml-1 text-ink-4">
                                 {t("settings.mcpToolReadOnly")}
                               </span>
                             ) : null}
                           </span>
                         ))}
                         {hidden > 0 ? (
-                          <span className={cn(mono, "text-foreground/40")}>
+                          <span className={cn(mono, "text-ink-4")}>
                             {t("settings.mcpToolsMore", { rest: hidden })}
                           </span>
                         ) : null}
@@ -542,7 +533,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
       </SettingsSection>
 
       <SettingsSection title={t("settings.mcpNotice")}>
-        <p className="text-[13px] text-foreground/45">{t("settings.mcpNoticeDesc")}</p>
+        <p className="text-[13px] text-ink-3">{t("settings.mcpNoticeDesc")}</p>
       </SettingsSection>
 
       {editor === null ? null : (

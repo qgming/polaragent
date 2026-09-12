@@ -49,10 +49,10 @@ export function SubagentList({
               {done ? (
                 <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 shrink-0 text-emerald-500 duration-200" />
               ) : (
-                <Loader2Icon className="text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+                <Loader2Icon className="text-ink-4 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
               )}
               <span className="flex-1 truncate text-[13.5px]">{agent.name}</span>
-              <span className={cn(mono, "text-foreground/35")}>{agent.model}</span>
+              <span className={cn(mono, "text-ink-4")}>{agent.model}</span>
             </div>
             <span
               role="progressbar"
@@ -81,9 +81,9 @@ export function SubagentList({
           )}
         >
           <div className="flex items-center gap-2">
-            <Loader2Icon className="text-foreground/35 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+            <Loader2Icon className="text-ink-4 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             <span className="flex-1 truncate text-[13.5px]">{summaryAgent.name}</span>
-            <span className={cn(mono, "text-foreground/35")}>{summaryAgent.model}</span>
+            <span className={cn(mono, "text-ink-4")}>{summaryAgent.model}</span>
           </div>
           <span
             role="progressbar"

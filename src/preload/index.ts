@@ -54,6 +54,14 @@ const api = {
     respond: (id, decision, note) =>
       ipcRenderer.invoke(IPC.approvals.respond, { id, decision, note }),
   },
+  interaction: {
+    respond: (id, reply) => ipcRenderer.invoke(IPC.interaction.respond, { id, reply }),
+    pending: (sessionId) => ipcRenderer.invoke(IPC.interaction.pending, { sessionId }),
+  },
+  jobs: {
+    list: (sessionId) => ipcRenderer.invoke(IPC.jobs.list, { sessionId }),
+    kill: (sessionId, id) => ipcRenderer.invoke(IPC.jobs.kill, { sessionId, id }),
+  },
   skills: {
     list: (workingDir) => ipcRenderer.invoke(IPC.skills.list, { workingDir }),
   },

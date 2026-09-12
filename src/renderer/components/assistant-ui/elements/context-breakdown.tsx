@@ -38,7 +38,7 @@ export function ContextBreakdown({
           className={cn(
             mono,
             "tabular-nums",
-            pressure > 0.85 ? "text-amber-600 dark:text-amber-400" : "text-foreground/35",
+            pressure > 0.85 ? "text-amber-600 dark:text-amber-400" : "text-ink-4",
           )}
         >
           {fmt(used)} / {fmt(limit)}
@@ -72,18 +72,16 @@ export function ContextBreakdown({
         {segments.map((segment) => (
           <div key={segment.label} className="flex items-center gap-2">
             <span aria-hidden className={cn("size-2 shrink-0 rounded-full", segment.tint)} />
-            <span className="text-foreground/70 min-w-0 flex-1 truncate text-[13px]">
-              {segment.label}
-            </span>
-            <span className={cn(mono, "text-foreground/35 shrink-0 tabular-nums")}>
+            <span className="text-ink-2 min-w-0 flex-1 truncate text-[13px]">{segment.label}</span>
+            <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>
               {fmt(segment.tokens)}
             </span>
           </div>
         ))}
         <div className="flex items-center gap-2">
           <span aria-hidden className="bg-foreground/[0.08] size-2 shrink-0 rounded-full" />
-          <span className="text-foreground/35 min-w-0 flex-1 truncate text-[13px]">Headroom</span>
-          <span className={cn(mono, "text-foreground/25 shrink-0 tabular-nums")}>
+          <span className="text-ink-4 min-w-0 flex-1 truncate text-[13px]">Headroom</span>
+          <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>
             {fmt(Math.max(0, limit - used))}
           </span>
         </div>

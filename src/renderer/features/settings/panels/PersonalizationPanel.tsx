@@ -65,7 +65,7 @@ export function PersonalizationPanel() {
     <div className="space-y-3">
       <div>
         <h3 className={typeEyebrow}>{t("settings.agentsMd")}</h3>
-        <p className="mt-1 text-xs text-foreground/45">{t("settings.agentsMdDesc")}</p>
+        <p className="mt-1 text-xs text-ink-3">{t("settings.agentsMdDesc")}</p>
       </div>
       <Textarea
         value={content}
@@ -79,10 +79,10 @@ export function PersonalizationPanel() {
         className={cn(settingsTextarea, "min-h-[300px] resize-y")}
       />
       <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-xs text-foreground/45">
+        <span className="flex items-center gap-1.5 text-xs text-ink-3">
           {saved ? (
             <>
-              <Check className="size-3.5 text-foreground/70" aria-hidden="true" />
+              <Check className="size-3.5 text-ink-2" aria-hidden="true" />
               {t("settings.agentsMdSaved")}
             </>
           ) : saveFailed ? (

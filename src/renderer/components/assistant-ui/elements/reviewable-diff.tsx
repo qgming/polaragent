@@ -46,7 +46,7 @@ export function ReviewableDiff({
     >
       <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <span className="font-mono text-xs">{filename}</span>
-        <span className={cn(mono, "text-foreground/35 tabular-nums")}>
+        <span className={cn(mono, "text-ink-4 tabular-nums")}>
           {kept} of {hunks.length} kept
         </span>
       </div>
@@ -61,7 +61,7 @@ export function ReviewableDiff({
             )}
           >
             <div className="flex items-center gap-2 px-4 py-1.5">
-              <span className={cn(mono, "text-foreground/30")}>{hunk.range}</span>
+              <span className={cn(mono, "text-ink-4")}>{hunk.range}</span>
               <span className="ms-auto flex items-center gap-1">
                 {hunk.decision === "pending" ? (
                   <>
@@ -69,7 +69,7 @@ export function ReviewableDiff({
                       type="button"
                       aria-label={`Discard hunk ${hunk.range}`}
                       onClick={() => onDiscard?.(hunk.id)}
-                      className="text-foreground/45 hover:bg-foreground/[0.06] hover:text-foreground/90 flex h-6 items-center gap-1 rounded-full px-2 text-[11px] font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+                      className="text-ink-3 hover:bg-foreground/[0.06] hover:text-foreground flex h-6 items-center gap-1 rounded-full px-2 text-[11px] font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
                     >
                       <XIcon className="size-3" />
                       Discard
@@ -91,7 +91,7 @@ export function ReviewableDiff({
                       "fade-in animate-in duration-300",
                       hunk.decision === "kept"
                         ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-foreground/35",
+                        : "text-ink-4",
                     )}
                   >
                     {hunk.decision}
@@ -106,7 +106,7 @@ export function ReviewableDiff({
                     key={`${hunk.id}-${i}`}
                     className={cn(
                       "flex px-4 py-0.5 leading-relaxed whitespace-pre",
-                      line.kind === "context" && "text-foreground/40",
+                      line.kind === "context" && "text-ink-4",
                       line.kind === "added" &&
                         "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
                       line.kind === "removed" && "bg-red-500/10 text-red-700 dark:text-red-300",
@@ -123,7 +123,7 @@ export function ReviewableDiff({
       </div>
 
       <div className="border-foreground/[0.06] flex items-center justify-between border-t px-4 py-2.5">
-        <span className={cn(mono, "text-foreground/35")}>
+        <span className={cn(mono, "text-ink-4")}>
           {pending > 0 ? `${pending} left to review` : "All reviewed"}
         </span>
         <button

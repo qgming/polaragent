@@ -34,7 +34,7 @@ export function SettingsSection({
   return (
     <section className="border-border/60 border-t pt-5 first:border-t-0 first:pt-0">
       {title ? <h3 className={typeEyebrow}>{title}</h3> : null}
-      {description ? <p className="mt-1 text-xs text-foreground/45">{description}</p> : null}
+      {description ? <p className="mt-1 text-xs text-ink-3">{description}</p> : null}
       <div className="mt-3 space-y-3.5">{children}</div>
     </section>
   );
@@ -59,7 +59,7 @@ export function SettingsField({
         <label htmlFor={htmlFor} className="text-[13.5px] leading-5 whitespace-nowrap">
           {label}
         </label>
-        {description ? <p className="mt-0.5 text-xs text-foreground/45">{description}</p> : null}
+        {description ? <p className="mt-0.5 text-xs text-ink-3">{description}</p> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">{control}</div>
     </div>
@@ -109,9 +109,7 @@ export function Segmented<T extends string>({
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap outline-none",
               "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
-              selected
-                ? "bg-background text-foreground/90"
-                : "text-foreground/45 hover:text-foreground/70",
+              selected ? "bg-background text-foreground" : "text-ink-3 hover:text-ink-2",
             )}
           >
             {option.label}
@@ -141,7 +139,7 @@ const selectTrigger = cn(
   field,
   "h-8 w-fit rounded-[10px] border-0 px-2.5 py-0 text-[13px]",
   "hover:bg-foreground/[0.07] dark:hover:bg-foreground/[0.09]",
-  "data-[placeholder]:text-foreground/40",
+  "data-[placeholder]:text-ink-4",
   "focus-visible:ring-1 focus-visible:ring-foreground/20",
 );
 
@@ -184,5 +182,5 @@ export function SettingsSelect({
 /** 面板加载态：设置尚未读取完成时的占位 */
 export function PanelLoading() {
   const { t } = useTranslation();
-  return <p className="text-[13px] text-foreground/45">{t("common.loading")}</p>;
+  return <p className="text-[13px] text-ink-3">{t("common.loading")}</p>;
 }

@@ -43,7 +43,9 @@ import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
+import type { AskReply, AskRequest } from "@/shared/contracts/interaction";
 import { ApprovalSection } from "./ApprovalSection";
+import { AskSection } from "./AskSection";
 import { Composer } from "./Composer";
 import { MessageRail } from "./MessageRail";
 import { isMessageSequenceSynced } from "./message-seq";
@@ -478,14 +480,18 @@ interface ThreadViewProps {
   /** 待审批项（来自并行车道的 chat-store）；渲染在消息流尾部 */
   approvals?: ApprovalRequest[];
   onResolve?: (id: string, decision: ApprovalDecision, note?: string) => void;
+  /** 待作答的提问（同样来自 chat-store）；与审批卡同区渲染 */
+  asks?: AskRequest[];
+  onRespond?: (id: string, reply: AskReply) => void;
 }
 
 /**
  * 对话线程：按 assistant-ui Thread 的结构组合 primitives 与 Elements 组件。
  * 布局与 thread.aui.tsx 一致，差异只有三处（都是为了保住本应用既有的行为）：
- * 逐条渲染消息以便插入跨天分隔与搜索定位、审批卡接在消息流尾部、Composer 用本应用的控制台版本。
+ * 逐条渲染消息以便插入跨天分隔与搜索定位、审批卡与提问卡接在消息流尾部、
+ * Composer 用本应用的控制台版本。
  */
-export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
+export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: ThreadViewProps) {
   const { t } = useTranslation();
   const messages = useAuiState((s) => s.thread.messages);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -638,7 +644,7 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
           <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
           {loadingOlder && (
             <div
-              className={cn("pb-1 text-center", mono, "text-foreground/35")}
+              className={cn("pb-1 text-center", mono, "text-ink-4")}
               role="status"
               aria-live="polite"
             >
@@ -697,7 +703,7 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
                 <div className="flex flex-1 items-center justify-center py-24">
                   <EmptyState>
                     <EmptyStateGreeting>{t("chat.welcome")}</EmptyStateGreeting>
-                    <p className="text-center text-sm leading-relaxed text-foreground/62">
+                    <p className="text-center text-sm leading-relaxed text-ink-3">
                       {t("chat.welcomeSubtitle")}
                     </p>
                   </EmptyState>
@@ -706,8 +712,9 @@ export function ThreadView({ approvals = [], onResolve }: ThreadViewProps) {
             )}
           </div>
 
-          {/* 审批卡接在消息流尾部，与 Composer 之前 */}
+          {/* 审批卡与提问卡接在消息流尾部、Composer 之前（同区：先审批，后提问） */}
           <ApprovalSection requests={approvals} onResolve={onResolve} />
+          <AskSection requests={asks} onRespond={onRespond} />
 
           {/*
             脚注带是**透明**的：消息会从 Composer 身下滚过，衬在它四周，

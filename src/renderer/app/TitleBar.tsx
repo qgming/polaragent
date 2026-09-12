@@ -3,12 +3,13 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { live, ShimmerLabel } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { Button } from "@/renderer/components/ui/button";
+import { SessionPanel } from "@/renderer/features/session/SessionPanel";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 
 /**
- * 内容区顶栏：侧栏展开按钮 + 会话标题 + 运行状态 + 窗口控制。
+ * 内容区顶栏：侧栏展开按钮 + 会话标题 + 运行状态 + 会话面板 + 窗口控制。
  *
  * 它只横跨内容区 —— 侧栏占满整窗高度、自带一条同高的顶行（品牌与搜索/收起在 SidebarShell），
  * 所以品牌标记不在这里。两行等高（44px）且共用同一条下边框，视觉上连成贯穿整窗的一线。
@@ -17,6 +18,7 @@ import { useUiStore } from "@/renderer/stores/ui-store";
  * 侧栏展开按钮只在侧栏关闭时出现（关闭 = 完全隐藏，见 SidebarShell），
  * 占据标题左侧；侧栏展开时这里不留占位，标题紧贴左边距。
  * 整条是窗口拖拽区（data-electron-drag-region 的规则见 index.css，button 已统一 no-drag）。
+ * 会话面板（环境 / 任务 / 作业 / 产物 / 参考）在右侧、窗口控制的左边；没有活动会话时它不渲染。
  */
 export function TitleBar() {
   const { t } = useTranslation();
@@ -71,8 +73,9 @@ export function TitleBar() {
         </span>
       )}
 
-      {/* 右侧：窗口控制；主题切换在侧栏底部 */}
+      {/* 右侧：会话面板 + 窗口控制；主题切换在侧栏底部 */}
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        <SessionPanel />
         <Button
           type="button"
           variant="ghost"

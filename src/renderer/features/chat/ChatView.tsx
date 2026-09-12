@@ -1,5 +1,6 @@
 import { useChatStore } from "@/renderer/stores/chat-store";
 import type { ApprovalDecision } from "@/shared/contracts/approval";
+import type { AskReply } from "@/shared/contracts/interaction";
 import { EditMessageDialog } from "./EditMessageDialog";
 import { ThreadView } from "./Thread";
 import { ThreadToolbar } from "./ThreadToolbar";
@@ -15,6 +16,8 @@ export function ChatView() {
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const pendingApprovals = useChatStore((s) => s.pendingApprovals);
   const resolveApproval = useChatStore((s) => s.resolveApproval);
+  const pendingAsks = useChatStore((s) => s.pendingAsks);
+  const respondAsk = useChatStore((s) => s.respondAsk);
 
   /**
    * 只显示当前会话的审批卡：主进程里每个会话各有一条独立 lane，可以同时在跑 ——
@@ -24,14 +27,26 @@ export function ChatView() {
    */
   const sessionApprovals = pendingApprovals.filter((item) => item.sessionId === activeSessionId);
 
+  /** 提问卡同理：只显示当前会话的未决提问（后台会话的问题不弹到别的会话里） */
+  const sessionAsks = pendingAsks.filter((item) => item.sessionId === activeSessionId);
+
   const handleResolve = (id: string, decision: ApprovalDecision, note?: string) => {
     void resolveApproval(id, decision, note);
+  };
+
+  const handleRespond = (id: string, reply: AskReply) => {
+    void respondAsk(id, reply);
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ThreadToolbar />
-      <ThreadView approvals={sessionApprovals} onResolve={handleResolve} />
+      <ThreadView
+        approvals={sessionApprovals}
+        onResolve={handleResolve}
+        asks={sessionAsks}
+        onRespond={handleRespond}
+      />
       {/* 编辑模态挂在这里：它是对话区的功能，且不该跟着消息滚动 */}
       <EditMessageDialog />
     </div>

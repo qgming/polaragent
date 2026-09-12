@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assessCommand } from "@/main/security/command-guard";
 import { isMcpToolName } from "@/shared/contracts/mcp";
+import { BACKGROUND_JOB_TOOL_NAMES } from "./tools/jobs";
 
 /**
  * always_allow 规则：工具名 + 可选参数片段（缺省表示该工具全部放行）。
@@ -28,15 +29,32 @@ export interface PermissionRuleStore {
   matches(toolName: string, argsText: string): Promise<boolean>;
 }
 
-// 风险常量表写死：只读工具放行，写类工具一律审批，未知工具按高风险兜底
-const LOW_RISK_TOOLS = new Set(["read", "grep", "glob", "todo"]);
+// 风险常量表写死：只读工具放行，写类工具一律审批，未知工具按高风险兜底。
+// ask_user 也在低风险里：它只是弹一张提问卡、不触碰工作区，归入高风险会让每次提问
+// 都先弹一张「批准提问」的审批卡 —— 用户得连点两次才能回答一个问题。
+// job_output / job_list / job_kill 同理：它们只读**自己会话**的作业状态，或杀掉自己起的进程
+// （作业本来就活不过会话结束），归入高风险会让模型每次看日志都要用户点一次批准卡。
+// bash_background 不在这里 —— 它与 bash 同级，交给 command-guard 判定。
+const LOW_RISK_TOOLS = new Set([
+  "read",
+  "grep",
+  "glob",
+  "todo",
+  "ask_user",
+  BACKGROUND_JOB_TOOL_NAMES.output,
+  BACKGROUND_JOB_TOOL_NAMES.list,
+  BACKGROUND_JOB_TOOL_NAMES.kill,
+]);
 const HIGH_RISK_TOOLS = new Set(["write", "edit"]);
+/** 会用 shell 跑命令的工具：风险由命令内容决定，与 bash 同一套判定 */
+const SHELL_TOOLS = new Set(["bash", BACKGROUND_JOB_TOOL_NAMES.bashBackground]);
 
 /**
  * 风险评估：
- * - read / grep / glob / todo → low（纯只读，或只记录状态、不触碰工作区文件）；
+ * - read / grep / glob / todo / ask_user / job_output / job_list / job_kill → low
+ *   （只读、只记录状态、纯 UI 交互，或只操作本会话的作业，都不触碰工作区文件）；
  * - write / edit → high；
- * - bash → 交给 command-guard 黑名单判定，命中即 high；
+ * - bash / bash_background → 交给 command-guard 黑名单判定，命中即 high；
  * - MCP 外部工具（mcp__<server>__<tool>）→ 一律 high。名字与行为都由外部 server 决定，
  *   这里无法逐个体检；放行只能靠 mcp__<server>__* 前缀规则（用户点「始终允许」时写入）
  *   或 permissionMode 的 full / ai_review。只读提示（readOnlyHint）是 server 的自我声明，
@@ -47,7 +65,7 @@ export function assessToolRisk(toolName: string, args: Record<string, unknown>):
   if (LOW_RISK_TOOLS.has(toolName)) return "low";
   if (HIGH_RISK_TOOLS.has(toolName)) return "high";
   if (isMcpToolName(toolName)) return "high";
-  if (toolName === "bash") {
+  if (SHELL_TOOLS.has(toolName)) {
     const command = typeof args.command === "string" ? args.command : "";
     return assessCommand(command).risk === "high" ? "high" : "low";
   }

@@ -28,15 +28,15 @@ export function DraftRestore({
       )}
       {...props}
     >
-      <PencilLineIcon className="text-foreground/30 size-3.5 shrink-0" />
+      <PencilLineIcon className="text-ink-4 size-3.5 shrink-0" />
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-foreground/70 truncate text-[13px]">{draft}</span>
-        <span className={cn(mono, "text-foreground/30")}>unsent draft · {savedAt}</span>
+        <span className="text-ink-2 truncate text-[13px]">{draft}</span>
+        <span className={cn(mono, "text-ink-4")}>unsent draft · {savedAt}</span>
       </div>
       <button
         type="button"
         onClick={onRestore}
-        className="text-foreground/70 hover:bg-foreground/[0.06] hover:text-foreground/95 shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+        className="text-ink-2 hover:bg-foreground/[0.06] hover:text-foreground shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
       >
         Restore
       </button>

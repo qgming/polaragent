@@ -2,6 +2,8 @@ import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
 import type { ModelRef, WireFormat } from "./common";
+import type { AskReply, AskRequest } from "./interaction";
+import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
@@ -75,6 +77,18 @@ export interface OintApi {
   };
   approvals: {
     respond(id: string, decision: ApprovalDecision, note?: string): Promise<void>;
+  };
+  interaction: {
+    /** 回填一次提问的答案；未知 id 或已处理时主进程只记日志，不打断渲染层 */
+    respond(id: string, reply: AskReply): Promise<void>;
+    /** 未决提问列表（会话切换时恢复卡片）；sessionId 缺省返回全部 */
+    pending(sessionId?: string): Promise<AskRequest[]>;
+  };
+  jobs: {
+    /** 该会话的后台作业（会话切换时恢复面板用） */
+    list(sessionId: string): Promise<JobInfo[]>;
+    /** 杀掉一个后台作业（界面上「停止」按钮用） */
+    kill(sessionId: string, id: string): Promise<JobInfo>;
   };
   skills: {
     /** 扫描全局与会话工作目录的技能；workingDir 缺省用默认工作目录 */

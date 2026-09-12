@@ -54,12 +54,9 @@ export function AgentStatus({
         {label}
       </span>
       {elapsed !== undefined && state !== "done" && (
-        <span className={cn(mono, "text-foreground/30 tabular-nums")}>{elapsed}</span>
+        <span className={cn(mono, "text-ink-4 tabular-nums")}>{elapsed}</span>
       )}
-      <span
-        aria-hidden
-        className="text-foreground/45 flex size-6 items-center justify-center rounded-full"
-      >
+      <span aria-hidden className="text-ink-3 flex size-6 items-center justify-center rounded-full">
         {state === "done" ? <RotateCcwIcon className="size-3" /> : <PauseIcon className="size-3" />}
       </span>
     </div>

@@ -66,7 +66,7 @@ export function SlashCommandMenu({
         夹一个提示文本进去，读屏可能压根不念它。
       */}
       {matches.length === 0 ? (
-        <span className="text-foreground/30 block px-2.5 py-4 text-center text-xs break-words">
+        <span className="text-ink-4 block px-2.5 py-4 text-center text-xs break-words">
           {t("chat.slashEmpty")}
         </span>
       ) : (

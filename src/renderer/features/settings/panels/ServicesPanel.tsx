@@ -98,7 +98,7 @@ function FieldBlock({
     <div className="space-y-1.5">
       <span className={typeEyebrow}>{label}</span>
       {children}
-      {hint ? <p className="text-[11px] text-foreground/40">{hint}</p> : null}
+      {hint ? <p className="text-[11px] text-ink-4">{hint}</p> : null}
     </div>
   );
 }
@@ -453,10 +453,10 @@ function ServiceEditor({
                       {t("settings.maxTokensExceedsContext")}
                     </p>
                   ) : (
-                    <p className="text-[11px] text-foreground/40">{t("settings.maxTokensHint")}</p>
+                    <p className="text-[11px] text-ink-4">{t("settings.maxTokensHint")}</p>
                   )}
                   <div className="flex flex-wrap items-center gap-4">
-                    <span className="flex items-center gap-1.5 text-xs text-foreground/45">
+                    <span className="flex items-center gap-1.5 text-xs text-ink-3">
                       <Switch
                         size="sm"
                         aria-label={t("settings.reasoning")}
@@ -465,7 +465,7 @@ function ServiceEditor({
                       />
                       {t("settings.reasoning")}
                     </span>
-                    <span className="flex items-center gap-1.5 text-xs text-foreground/45">
+                    <span className="flex items-center gap-1.5 text-xs text-ink-3">
                       <Switch
                         size="sm"
                         aria-label={t("settings.inputImage")}
@@ -481,13 +481,11 @@ function ServiceEditor({
                   */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-foreground/45">
-                        {t("settings.thinkingLevels")}
-                      </span>
+                      <span className="text-xs text-ink-3">{t("settings.thinkingLevels")}</span>
                       {canRestore ? (
                         <button
                           type="button"
-                          className="text-[11px] text-foreground/40 underline underline-offset-2 hover:text-foreground/70"
+                          className="text-[11px] text-ink-4 underline underline-offset-2 hover:text-ink-2"
                           onClick={() =>
                             patchModel(index, {
                               acceptsImages: undefined,
@@ -518,8 +516,8 @@ function ServiceEditor({
                               selectable && active
                                 ? "bg-background text-foreground"
                                 : selectable
-                                  ? "text-foreground/40 hover:bg-background/60"
-                                  : "text-foreground/40",
+                                  ? "text-ink-4 hover:bg-background/60"
+                                  : "text-ink-4",
                             )}
                             onClick={() => {
                               // 至少留一档：全不勾等于「没有可选档位」，chip 会空成一片
@@ -542,7 +540,7 @@ function ServiceEditor({
                     <p
                       className={cn(
                         "text-[11px]",
-                        note.tone === "error" ? "text-destructive" : "text-foreground/40",
+                        note.tone === "error" ? "text-destructive" : "text-ink-4",
                       )}
                     >
                       {note.text}
@@ -556,7 +554,7 @@ function ServiceEditor({
               <p
                 className={cn(
                   "text-xs",
-                  fetch.status === "error" ? "text-destructive" : "text-foreground/45",
+                  fetch.status === "error" ? "text-destructive" : "text-ink-3",
                 )}
               >
                 {fetch.status === "loading" ? t("common.loading") : fetch.message}
@@ -660,9 +658,7 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
     <div className="space-y-6">
       {/* 分类名已由模态的大标题给出（「模型服务」），这里只留一句范围说明与动作，不重复标题 */}
       <div className="flex items-start justify-between gap-3">
-        <p className="min-w-0 flex-1 text-xs text-foreground/45">
-          {t("settings.modelServicesDesc")}
-        </p>
+        <p className="min-w-0 flex-1 text-xs text-ink-3">{t("settings.modelServicesDesc")}</p>
         <Button type="button" size="sm" onClick={() => setDraft(toDraft())}>
           <Plus className="size-4" />
           {t("settings.addService")}
@@ -672,7 +668,7 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
       {settings.services.length === 0 ? (
         <div className="rounded-xl border border-border/60 p-6 text-center">
           <p className="text-[13.5px] font-medium">{t("settings.noServices")}</p>
-          <p className="mt-1 text-xs text-foreground/45">{t("settings.noServicesHint")}</p>
+          <p className="mt-1 text-xs text-ink-3">{t("settings.noServicesHint")}</p>
           <Button type="button" size="sm" className="mt-3" onClick={() => setDraft(toDraft())}>
             <Plus className="size-4" />
             {t("settings.addService")}
@@ -690,18 +686,15 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
                   <span className="truncate text-[13.5px] font-medium">{service.name}</span>
                   <Badge
                     variant="outline"
-                    className={cn(mono, "border-border/60 px-1.5 text-foreground/50")}
+                    className={cn(mono, "border-border/60 px-1.5 text-ink-3")}
                   >
                     {service.wireFormat === "openai-completions" ? "completions" : "responses"}
                   </Badge>
                 </div>
-                <p
-                  className={cn(typePackage, "mt-1 truncate text-foreground/40")}
-                  title={service.baseUrl}
-                >
+                <p className={cn(typePackage, "mt-1 truncate text-ink-4")} title={service.baseUrl}>
                   {service.baseUrl}
                 </p>
-                <p className="mt-0.5 text-xs text-foreground/45">
+                <p className="mt-0.5 text-xs text-ink-3">
                   {t("settings.models")} · {service.models.length}
                 </p>
               </div>

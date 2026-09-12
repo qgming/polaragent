@@ -69,7 +69,7 @@ export function PromptLibrary({
       {...props}
     >
       <div className={cn(field, "flex items-center gap-2 rounded-xl px-2.5 py-1.5")}>
-        <BookmarkIcon className="text-foreground/30 size-3.5 shrink-0" />
+        <BookmarkIcon className="text-ink-4 size-3.5 shrink-0" />
         <input
           value={query}
           onChange={(event) => onQueryChange?.(event.target.value)}
@@ -81,7 +81,7 @@ export function PromptLibrary({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={selected ? optionId(selected.id) : undefined}
-          className="text-foreground/85 placeholder:text-foreground/30 min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+          className="text-foreground placeholder:text-ink-4 min-w-0 flex-1 bg-transparent text-[13px] outline-none"
         />
       </div>
 
@@ -104,7 +104,7 @@ export function PromptLibrary({
           >
             <span className="min-w-0 flex-1 truncate text-[13px]">{prompt.name}</span>
             {prompt.variables.length > 0 && (
-              <span className={cn(mono, "text-foreground/25 shrink-0")}>
+              <span className={cn(mono, "text-ink-4 shrink-0")}>
                 {prompt.variables.length} vars
               </span>
             )}
@@ -112,7 +112,7 @@ export function PromptLibrary({
         ))}
       </div>
       {matches.length === 0 && (
-        <span className="text-foreground/30 block px-2 py-3 text-center text-xs break-words">
+        <span className="text-ink-4 block px-2 py-3 text-center text-xs break-words">
           Nothing matches “{query}”
         </span>
       )}
@@ -124,13 +124,13 @@ export function PromptLibrary({
             "fade-in animate-in flex flex-col gap-2 rounded-xl p-2.5 duration-200",
           )}
         >
-          <p className="text-foreground/65 text-xs leading-relaxed break-words">{selected.body}</p>
+          <p className="text-ink-2 text-xs leading-relaxed break-words">{selected.body}</p>
           {selected.variables.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {selected.variables.map((variable) => (
                 <span
                   key={variable}
-                  className={cn(mono, "bg-background/70 text-foreground/50 rounded px-1.5 py-0.5")}
+                  className={cn(mono, "bg-background/70 text-ink-3 rounded px-1.5 py-0.5")}
                 >
                   {`{${variable}}`}
                 </span>

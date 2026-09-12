@@ -31,7 +31,7 @@ export function DaySeparatorRow({
       {...props}
     >
       <span className="bg-foreground/[0.08] h-px flex-1" />
-      <span className={cn(mono, "text-foreground/30")}>{label}</span>
+      <span className={cn(mono, "text-ink-4")}>{label}</span>
       <span className="bg-foreground/[0.08] h-px flex-1" />
     </div>
   );
@@ -70,7 +70,7 @@ export function DaySeparator({
                   "max-w-[80%] text-[13.5px] leading-relaxed break-words",
                   message.role === "user"
                     ? "bg-foreground/[0.05] rounded-2xl px-3.5 py-2"
-                    : "text-foreground/75",
+                    : "text-ink-2",
                 )}
               >
                 {message.text}
@@ -78,7 +78,7 @@ export function DaySeparator({
               <span
                 className={cn(
                   mono,
-                  "text-foreground/0 group-hover:text-foreground/30 shrink-0 tabular-nums transition-colors",
+                  "text-ink-4 group-hover:text-ink-4 shrink-0 tabular-nums transition-colors",
                 )}
               >
                 {message.time}

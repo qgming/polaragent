@@ -56,14 +56,14 @@ export function FileTree({
           >
             {node.kind === "folder" ? (
               <>
-                <ChevronDownIcon className="text-foreground/25 size-3 shrink-0" />
-                <FolderIcon className="text-foreground/35 size-3.5 shrink-0" />
-                <span className="text-foreground/60 min-w-0 flex-1 truncate">{node.name}</span>
+                <ChevronDownIcon className="text-ink-4 size-3 shrink-0" />
+                <FolderIcon className="text-ink-4 size-3.5 shrink-0" />
+                <span className="text-ink-3 min-w-0 flex-1 truncate">{node.name}</span>
               </>
             ) : (
               <>
-                <FileIcon className="text-foreground/30 ms-3 size-3.5 shrink-0" />
-                <span className="text-foreground/85 min-w-0 flex-1 truncate">{node.name}</span>
+                <FileIcon className="text-ink-4 ms-3 size-3.5 shrink-0" />
+                <span className="text-foreground min-w-0 flex-1 truncate">{node.name}</span>
                 <span className={cn(mono, "shrink-0 tabular-nums")}>
                   {node.additions ? (
                     <span className="text-emerald-600 dark:text-emerald-400">

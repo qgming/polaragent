@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   AgentHarness,
+  type AgentHarnessTool,
   type AgentLane,
   type AgentMessage,
   type AgentToolResult,
@@ -35,6 +36,7 @@ import type {
   QueuedMessage,
 } from "@/shared/contracts/chat";
 import type { ModelRef } from "@/shared/contracts/common";
+import type { JobInfo } from "@/shared/contracts/job";
 import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
 import type {
   ChatMessageUsage,
@@ -48,6 +50,8 @@ import type { Settings } from "@/shared/contracts/settings";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
+import { createInteractionService, type InteractionService } from "./interactions";
+import { createJobService, type JobService } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
 import {
   assessToolRisk,
@@ -59,15 +63,31 @@ import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
 import type { SessionStore } from "./session-store";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { buildTools, TOOL_NAMES } from "./tools";
+import { createAskTool } from "./tools/ask";
+import { createJobTools, JOB_OUTPUT_TOOL_NAME } from "./tools/jobs";
 import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
 export interface ChatRuntimeDeps {
   getSettings: () => Promise<Settings>;
   sessionStore: SessionStore;
-  /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离） */
   /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离）；带会话 id，见 ChatEventEnvelope */
   emit: (payload: ChatEventEnvelope) => void;
   approvals: ApprovalService;
+  /**
+   * 提问服务（ask_user 用的那个）。
+   *
+   * 由 bootstrap 创建后注入 —— IPC 层也要拿同一个实例回填答案；未注入时（单测等场景）
+   * 这里就地建一个，保证内置的 ask_user 工具始终有服务可用。
+   */
+  interactions?: InteractionService;
+  /**
+   * 后台作业服务（bash_background / job_output / job_list / job_kill 用的那个）。
+   *
+   * 与提问服务同源：由 bootstrap 创建后注入（IPC 层的 jobs:list / jobs:kill 要用同一份），
+   * 未注入时就地建一份。**不要在 bootstrap 与这里各建一份** —— 两边各自持有一张作业表，
+   * 渲染层看到的与工具操作的就会对不上。
+   */
+  jobs?: JobService;
   /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
   sessionTitles?: SessionTitleGenerator;
   /** 会话工作目录解析；默认取索引 cwd，其次 settings.defaultWorkingDir */
@@ -80,6 +100,17 @@ export interface ChatRuntimeDeps {
    */
   mcp?: McpToolSource;
 }
+
+/**
+ * 每个会话连续被作业退出唤醒的上限。
+ *
+ * 没有它就会出现自激：「作业结束 → 唤醒模型 → 模型又起一个作业 → 又结束 → 再唤醒」，
+ * 用户看到的是永远停不下来的运行。到上限后只发 job-changed 事件，模型下一次被用户
+ * 叫起来时仍能从 job_list / job_output 看到结果 —— 信息不丢，只是不再自动开口。
+ *
+ * 计数在**用户自己发消息**时清零（见 send 的 internal 参数）。
+ */
+const MAX_JOB_WAKES = 3;
 
 /**
  * 当前 lane 的 tip（条目 id，可能为 null 表示空会话）。
@@ -111,6 +142,19 @@ export interface ChatRuntime {
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(sessionId: string, instructions?: string): Promise<void>;
   isRunning(sessionId: string): boolean;
+  /**
+   * 列出该会话的后台作业。
+   *
+   * 渲染层切会话就要刷新一次作业面板，所以这里**不创建会话运行时**：只是看一眼列表面孔，
+   * 不该顺带打开存储、附着 harness。作业表由作业服务独立持有，没有作业时就是空数组。
+   */
+  listJobs(sessionId: string): JobInfo[];
+  /**
+   * 杀掉某个后台作业（界面上「停止」按钮用）；返回杀后快照。
+   *
+   * 会话 fence 由作业服务校验：作业不存在、或不属于该会话，一律抛错（中文文案，可直接展示）。
+   */
+  killJob(sessionId: string, id: string): Promise<JobInfo>;
   /**
    * 切换会话使用的模型（null = 跟随设置里的默认模型）。
    *
@@ -205,6 +249,8 @@ interface SessionRuntime {
    * 于是先记下，等 run_end 再一次性应用（下一轮就带新工具）。
    */
   mcpToolsStale?: boolean;
+  /** 本会话已被作业退出唤醒几次（上限 MAX_JOB_WAKES）；用户自己发消息时清零 */
+  jobWakes: number;
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -562,10 +608,14 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
     console.warn(`恢复待办清单失败，按空清单继续：${toErrorText(error)}`);
   }
 }
-
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   const runtimes = new Map<string, SessionRuntime>();
   const creations = new Map<string, Promise<SessionRuntime>>();
+  // 提问服务：与 approvals 一样是「跨会话共用、按会话结算」的服务；bootstrap 注入的那份
+  // 同时被 IPC 层持有（渲染层回填答案走它），未注入时就地建一份给单测用
+  const interactions = deps.interactions ?? createInteractionService({ emit: deps.emit });
+  // 作业服务与提问服务一样跨会话共用一份：作业退出时交给 notifyJobExit 决定「注入还是唤醒」
+  const jobs = deps.jobs ?? createJobService({ emit: deps.emit, onExited: notifyJobExit });
 
   function emitSafe(sessionId: string, event: ChatEvent): void {
     try {
@@ -1014,20 +1064,30 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
   }
 
-/**
- * 把当前 MCP 工具数组写回 harness（内核的 setTools 支持热替换工具集）。
- *
- * 只在没有运行中进行时调用：会话句柄、lane、上下文都不变，换的只是工具表，
- * 于是「新连上的 server 的工具」下一轮就能用。
- */
-async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promise<void> {
-  runtime.mcpToolsStale = false;
-  try {
-    await runtime.harness.setTools(buildTools(mcp.tools()), BACKGROUND_CONTEXT);
-  } catch (error) {
-    console.warn(`刷新 MCP 工具失败：${toErrorText(error)}`);
+  /**
+   * 把当前 MCP 工具数组写回 harness（内核的 setTools 支持热替换工具集）。
+   *
+   * 只在没有运行中进行时调用：会话句柄、lane、上下文都不变，换的只是工具表，
+   * 于是「新连上的 server 的工具」下一轮就能用。
+   *
+   * 工具表是**整表替换**：这里必须把会话的 ask 工具一并重建传进去，
+   * 否则 MCP 刷新一次，ask_user 就会凭空消失（见 tools.ts 的 buildTools 注释）。
+   */
+  async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promise<void> {
+    runtime.mcpToolsStale = false;
+    try {
+      await runtime.harness.setTools(
+        buildTools(
+          mcp.tools(),
+          createAskTool({ sessionId: runtime.sessionId, interactions }),
+          jobToolsFor(runtime.sessionId),
+        ),
+        BACKGROUND_CONTEXT,
+      );
+    } catch (error) {
+      console.warn(`刷新 MCP 工具失败：${toErrorText(error)}`);
+    }
   }
-}
 
   /** 权限门：根据审批模式与风险评估决定放行、审批或阻断 */
   async function gateTool(
@@ -1129,7 +1189,11 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
         model,
         systemPrompt: await buildSystemPrompt(settings, cwd, loaded.skillsSection),
         // 内置工具 + 当前已就绪的 MCP 工具（MCP 服务未就绪时就是空数组）
-        tools: buildTools(deps.mcp?.tools() ?? []),
+        tools: buildTools(
+          deps.mcp?.tools() ?? [],
+          createAskTool({ sessionId, interactions }),
+          jobToolsFor(sessionId),
+        ),
         toolContext: {
           env,
           todo,
@@ -1181,6 +1245,7 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
       toolParts: new Map(),
       queue: [],
       unsubscribers: [],
+      jobWakes: 0,
     };
 
     runtime.unsubscribers.push(
@@ -1346,14 +1411,16 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
     images?: ImageContent[],
     messageId?: string,
     options?: ChatSendOptions,
+    internal?: { jobWake?: boolean },
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
+    // 用户自己发起的消息清零作业唤醒预算；作业通知走 jobWake，不算用户发言（见 notifyJobExit）
+    if (internal?.jobWake !== true) runtime.jobWakes = 0;
     // 运行中再 send 等价于 followUp 排队
     if (runtime.running) {
       await queue(sessionId, text, "followUp");
       return;
     }
-
     // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
     const settings = await deps.getSettings();
@@ -1415,6 +1482,61 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
       runtime.pendingUserMessageId = undefined;
       emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     }
+  }
+  /**
+   * 作业退出通知：自包含、简短，带命令、状态、退出码与**尾部若干行输出**。
+   *
+   * 通知不消耗 job_output 的 drain 游标（peekTail 只读缓冲），所以模型按提示再调一次
+   * job_output 仍能读到那些行 —— 否则「需要更多输出就调用 job_output」会变成一句空话。
+   */
+  function jobExitNotice(job: JobInfo): string {
+    const code = job.exitCode === undefined ? "" : `，退出码 ${job.exitCode}`;
+    const tail = jobs.peekTail(job.id).replace(/\s+$/, "");
+    const head =
+      `后台作业 ${job.id} 已结束（状态 ${job.status}${code}）：${job.command}\n` +
+      `工作目录：${job.cwd}`;
+    const body = tail === "" ? "（没有捕获到输出）" : `尾部输出：\n${tail}`;
+    return `${head}\n${body}\n需要更多输出就调用 ${JOB_OUTPUT_TOOL_NAME} {"id":"${job.id}"}。`;
+  }
+
+  /**
+   * 作业退出后的唤醒决策（**本特性的关键**，别省）：
+   * - 该会话正在运行 → 用 steer 把通知插进当前轮次，**不计**唤醒次数（这次唤醒本来就要发生）；
+   * - 空闲 → 用 send 起一轮新运行，但要过唤醒预算：连续唤醒超过 MAX_JOB_WAKES 就只留事件，
+   *   不再自动开口，避免「作业结束 → 唤醒 → 模型又起作业」的自激；
+   * - cancelSession / dispose 清理导致的退出由服务侧拦下（不会调到这里的回调），这里不必再判。
+   */
+  function notifyJobExit(job: JobInfo): void {
+    const runtime = runtimes.get(job.sessionId);
+    // 会话已经关掉（或还没建起来）时没有可通知的对象
+    if (!runtime || jobs.isSuppressed(job.sessionId)) return;
+    const text = jobExitNotice(job);
+    if (runtime.running) {
+      void queue(runtime.sessionId, text, "steer").catch((error: unknown) => {
+        console.warn(`注入作业结束通知失败 ${job.id}：${toErrorText(error)}`);
+      });
+      return;
+    }
+    if (runtime.jobWakes >= MAX_JOB_WAKES) {
+      // 到预算了：不发消息，只留下已经发过的 job-changed 事件；用户下次说话时模型再看 job_list
+      return;
+    }
+    runtime.jobWakes += 1;
+    void send(runtime.sessionId, text, undefined, undefined, undefined, { jobWake: true }).catch(
+      (error: unknown) => {
+        console.warn(`发送作业结束通知失败 ${job.id}：${toErrorText(error)}`);
+      },
+    );
+  }
+
+  /**
+   * 组装该会话的四个作业工具。
+   *
+   * **两处 buildTools 调用都必须带上**（会话创建 + MCP 热替换）：工具表是整表替换，
+   * 漏一处就会出现「MCP 一刷新，作业工具凭空消失」。
+   */
+  function jobToolsFor(sessionId: string): AgentHarnessTool<ExecutionToolContext>[] {
+    return createJobTools({ sessionId, jobs }) as AgentHarnessTool<ExecutionToolContext>[];
   }
 
   /** lane 上是否压着没收尾的操作（压缩、导航等不经过 running 标记） */
@@ -1483,6 +1605,7 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
     const runtime = runtimes.get(sessionId);
     if (!runtime) return;
     deps.approvals.cancelSession(sessionId);
+    interactions.cancelSession(sessionId);
     runtime.queue = [];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     try {
@@ -1534,11 +1657,29 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
     return runtimes.get(sessionId)?.running ?? false;
   }
 
+  /**
+   * 列出该会话的后台作业。
+   *
+   * 刻意**不走 ensureRuntime**：渲染层切会话就要刷一次作业面板，为了列个表去建整套会话运行时
+   * （打开存储、附着 harness、注册事件）代价太大，也带来「只是看了一眼就有了运行时」的副作用。
+   * 作业表由 JobService 独立持有，因此这里不需要会话运行时也能给出正确结果（没有就是空数组）。
+   */
+  function listJobs(sessionId: string): JobInfo[] {
+    return jobs.list(sessionId);
+  }
+
+  /** 杀掉一个后台作业；存在性与会话归属由作业服务校验，找不到时它抛的就是中文错误 */
+  async function killJob(sessionId: string, id: string): Promise<JobInfo> {
+    return jobs.kill(sessionId, id);
+  }
+
   async function closeSession(sessionId: string): Promise<void> {
     const runtime = runtimes.get(sessionId);
     if (!runtime) return;
     runtimes.delete(sessionId);
     deps.approvals.cancelSession(sessionId);
+    interactions.cancelSession(sessionId);
+    jobs.cancelSession(sessionId);
     runtime.queue = [];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     for (const unsubscribe of runtime.unsubscribers) {
@@ -1575,6 +1716,8 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
         console.warn(`释放会话运行时失败 ${sessionId}：${toErrorText(error)}`);
       }
     }
+    // 兜底：作业是系统资源，会话循环覆盖不到的（理论上不该有）也在这里一并收掉
+    await jobs.dispose();
     if (defaultRuntime === api) defaultRuntime = null;
   }
   const api: ChatRuntime = {
@@ -1583,6 +1726,8 @@ async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promi
     queue,
     compact,
     isRunning,
+    listJobs,
+    killJob,
     setModel,
     closeSession,
     dispose,

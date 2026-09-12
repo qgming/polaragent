@@ -2,21 +2,30 @@ import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
+import { createInteractionService } from "./interactions";
 import { getMcpServers } from "./mcp-servers";
 import { createChatRuntime } from "./runtime";
 import { getSessionStore } from "./session-store";
 import { createSessionTitleGenerator } from "./title-generator";
 
 type ApprovalService = ReturnType<typeof createApprovalService>;
+type InteractionService = ReturnType<typeof createInteractionService>;
 type ChatRuntime = ReturnType<typeof createChatRuntime>;
 
 // 模块级持有器：IPC 处理器在 invoke 时取用，bootstrap 之前为 null
 let approvalService: ApprovalService | null = null;
+// 提问服务与审批一样跨会话共用：IPC 层回填答案必须打到运行时持有的那一份上
+let interactionService: InteractionService | null = null;
 let chatRuntime: ChatRuntime | null = null;
 
 /** 供 IPC 层读取当前审批服务；服务未就绪时返回 null */
 export function getApprovalService(): ApprovalService | null {
   return approvalService;
+}
+
+/** 供 IPC 层读取当前提问服务；服务未就绪时返回 null */
+export function getInteractionService(): InteractionService | null {
+  return interactionService;
 }
 
 /**
@@ -44,11 +53,14 @@ export function bootstrapPisdk(options: {
   const mcpServers = getMcpServers();
 
   approvalService = createApprovalService({ getSettings: loadSettings, emit, aiApprover });
+  // 提问服务同样只建一份：运行时用它发起 ask_user，IPC 层用它回填答案（见 ipc/interactions.ts）
+  interactionService = createInteractionService({ emit });
   chatRuntime = createChatRuntime({
     getSettings: loadSettings,
     sessionStore,
     emit,
     approvals: approvalService,
+    interactions: interactionService,
     sessionTitles,
     resolveWorkingDir,
     mcp: mcpServers,
@@ -81,5 +93,6 @@ export function bootstrapPisdk(options: {
     }
     chatRuntime = null;
     approvalService = null;
+    interactionService = null;
   };
 }

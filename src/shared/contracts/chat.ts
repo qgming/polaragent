@@ -1,4 +1,6 @@
 import type { ApprovalDecision, ApprovalRequest } from "./approval";
+import type { AskOutcome, AskRequest } from "./interaction";
+import type { JobInfo } from "./job";
 import type { ChatMessage, ChatPart } from "./session";
 
 /** 待发送队列项：steer 立即插入当前轮次，followUp 在当前轮结束后发送 */
@@ -30,6 +32,9 @@ export type ChatEvent =
   | { type: "queue-updated"; items: QueuedMessage[] }
   | { type: "approval-requested"; request: ApprovalRequest }
   | { type: "approval-resolved"; id: string; decision: ApprovalDecision }
+  /** 模型在关键分叉点上提问：渲染层把提问卡挂到消息流尾部，等用户作答 */
+  | { type: "ask-requested"; request: AskRequest }
+  | { type: "ask-resolved"; id: string; outcome: AskOutcome }
   /** 会话被 AI 自动命名（或改标题）：渲染层据此就地替换侧栏里的默认名 */
   | { type: "session-titled"; sessionId: string; title: string }
   /**
@@ -37,6 +42,13 @@ export type ChatEvent =
    * 渲染层据此把审批卡从「审批中」切回可操作态，并显示 AI 给的理由。
    */
   | { type: "approval-reviewed"; id: string; reason: string }
+  /**
+   * 后台作业新建 / 状态变更 / 退出：渲染层据此维护作业列表
+   * （服务见 main/pisdk/jobs.ts；退出时的模型通知见 runtime.ts 的作业唤醒预算）。
+   */
+  | { type: "job-changed"; job: JobInfo }
+  /** 作业被淘汰，或随会话关闭 / 进程退出被清理：渲染层把它从列表里删掉 */
+  | { type: "job-removed"; id: string }
   | { type: "compaction-started" }
   | { type: "compaction-ended"; summaryPreview: string }
   | { type: "run-ended"; runId: string; reason: string };

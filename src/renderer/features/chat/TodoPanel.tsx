@@ -1,16 +1,10 @@
-import { useAuiState } from "@assistant-ui/react";
-import { ChevronDown, ListTodoIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ListChecksIcon } from "lucide-react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { collapsePanel, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { type TodoItem, TodoList } from "@/renderer/components/assistant-ui/elements/todo-list";
-import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/renderer/components/ui/collapsible";
-import { cn } from "@/renderer/lib/utils";
+import { SectionEmpty, SessionSection } from "@/renderer/features/session/session-section";
+import { useActiveSessionMessages } from "@/renderer/features/session/use-active-messages";
+import type { ChatMessage } from "@/shared/contracts/session";
 import { resolveToolDetail } from "./tool-presentation";
 
 /**
@@ -48,8 +42,9 @@ export interface TodoSnapshot {
  * 解析一律交给 resolveToolDetail（不另写一份）：它已经约定好「优先 details，解析不出来就退到
  * 工具参数」以及逐项校验，面板与对话流里的工具卡因此共用同一个真相 ——
  * 包括「details 坏了但参数是完整清单时照样显示得出来」这条看似宽松的口径。
- * 最后那次调用（失败、或两边都拿不到可解析的清单）给不出快照时返回 null，面板据此整块隐藏；
+ * 最后那次调用（失败、或两边都拿不到可解析的清单）给不出快照时返回 null；
  * 更早那份在这里不能兜底：它是被替换掉的那一份，显示出来只会和模型看到的对不上。
+ * 会话面板那边据此显示空态文案（不再像原来那样整块不渲染，因为区块本身要一直在）。
  */
 export function latestTodo(messages: readonly TodoPanelMessage[]): TodoSnapshot | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -75,6 +70,30 @@ export function latestTodo(messages: readonly TodoPanelMessage[]): TodoSnapshot 
 }
 
 /**
+ * store 的 ChatMessage.parts → latestTodo 认的消息形状。
+ *
+ * 两处只差一个槽位名：工具结果在消息里叫 `details`（见 contracts/session.ts），
+ * 经 runtime 的 message-converter 映射后才叫 `artifact`（ToolParts 读的就是那份）。
+ * 会话面板直接读 store（见 use-active-messages），所以在这里做这一次映射 ——
+ * 解析仍然只有 resolveToolDetail 一条路，面板不另算一份清单。
+ */
+export function toTodoPanelMessages(messages: readonly ChatMessage[]): TodoPanelMessage[] {
+  return messages.map((message) => ({
+    parts: message.parts.map((part) =>
+      part.type === "tool-call"
+        ? {
+            type: part.type,
+            toolName: part.toolName,
+            args: part.args,
+            artifact: part.details,
+            isError: part.isError,
+          }
+        : { type: part.type },
+    ),
+  }));
+}
+
+/**
  * 这份清单是不是已经收尾了：至少有一条、且每一条都是 done。
  *
  * 为什么空清单不算收尾：`todos: []` 是合法的「清空」调用（内核提示词也把它当作一种收尾写法），
@@ -89,77 +108,48 @@ export function isTodoFinished(
   return snapshot.items.length > 0 && snapshot.items.every((item) => item.status === "done");
 }
 
-/** 展开后的内容区上限：清单一长就内部滚动，不把输入区顶上去 */
-const PANEL_CONTENT = "max-h-[min(16rem,36vh)]";
-
 /**
- * 待办清单条：贴在**输入组件顶部**，与它共用一个面（composer 自己的圆角盒 + 边框 + 阴影），
- * 所以这里自带负外边距去顶到那个盒子的内边缘 —— 它只在 Composer 的 AttachmentDropzone
- * 里使用（挂载点见 Composer.tsx），不铺自己的底色，铺了就成两块而不是一体。
+ * 「任务清单」区块（原 TodoPanel，从 composer 上沿迁到会话面板）。
  *
- * 收起时只占一行：标题在左、进度在右；展开时下面接清单本体。
- * 清单本体复用 TodoList（Elements 的既定外观），并关掉它自带的标题行 ——
- * 否则会出现「待办清单」和 TodoList 自己的标题两个标题。
+ * 取数改成直接读 store 的当前会话消息（useActiveSessionMessages）：
+ * 面板挂在 TitleBar 上，读 store 就不依赖 aui 线程状态的转发；这条链和事件写入
+ * （part-upsert → messagesBySession）是同一个数组，因此重启回读、切回旧会话、
+ * 会话切换都能立刻重算出同一份清单，徽标也跟着变。
  *
- * 数据全部来自消息流（见 latestTodo），因此重启后回读历史、或切回一个旧会话，
- * 都会重新算出同一份清单；没有 todo 调用时不占位。
+ * 与原来那条的区别只有两处，都是容器带来的：
+ *   · 区块**始终渲染**（没有 todo 调用时给空态文案，而不是整块消失）
+ *   · 进度从行尾文字改成右侧徽标；全部完成时徽标转绿，区块不消失 ——
+ *     用户此刻正看着它，让它原地消失比留一个「已完成」的记号更让人迷惑
  */
 export function TodoPanel() {
   const { t } = useTranslation();
-  // 默认展开：这条存在的意义就是「不用点开就能看到」；收起留给确实想清空这块空间的用户
-  const [open, setOpen] = useState(true);
-  /**
-   * 消息从 aui 的线程状态读（与 Thread.tsx 取 messages 同源）：它由 OintRuntimeProvider 的
-   * useExternalStoreRuntime 驱动，而 store 的消息来自主进程的历史回读与事件流 ——
-   * 换句话说这条链在应用重启后依然成立，面板不是靠「刚发生过什么」立起来的。
-   * 选择器返回的是 store 里的数组本身（引用稳定），不会每次 store 更新都触发重渲染。
-   */
-  const messages = useAuiState((s) => s.thread.messages);
-  const todo = useMemo(() => latestTodo(messages), [messages]);
-  // 进度放在收起行的右端（清单自带的标题行已关掉，避免两个标题）
-  const done = todo === null ? 0 : todo.items.filter((item) => item.status === "done").length;
+  const messages = useActiveSessionMessages();
+  const todo = useMemo(() => latestTodo(toTodoPanelMessages(messages)), [messages]);
 
-  // 整块不渲染的两种情况：压根没有待办调用（空壳白占一行、没有信息量），以及清单已经
-  // 全部做完 —— 「做完」正是最该把输入框上方的空间腾出来的时候
-  if (todo === null || isTodoFinished(todo)) return null;
+  const done = todo === null ? 0 : todo.items.filter((item) => item.status === "done").length;
+  const total = todo?.items.length ?? 0;
+  const finished = isTodoFinished(todo);
 
   return (
-    <div
-      data-slot="todo-panel"
-      // 抵消 AttachmentDropzone 的 p-2.5，贴着 composer 的圆角内边缘；上圆角与外壳口径一致
-      className="-mx-2.5 -mt-2.5 rounded-t-[24px] border-b border-border/50"
+    <SessionSection
+      slot="todo-panel"
+      icon={ListChecksIcon}
+      title={t("sessionPanel.tasks")}
+      toggleLabel={t("sessionPanel.tasksToggle")}
+      count={total === 0 ? undefined : `${done}/${total}`}
+      countSlot="todo-count"
+      countTone={finished ? "done" : "neutral"}
+      // 有清单就是这次会话的正文：浮层一打开就展开；用户手动收过之后不再自动弹开
+      autoOpen={total > 0}
     >
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger
-          // 可见文本是「待办清单」，展开态由 aria-expanded 表达；这里补一句动作说明
-          aria-label={t("chat.todosPanelToggle")}
-          className={cn(
-            "flex w-full items-center gap-1.5 rounded-t-[24px] px-2.5 py-1.5 text-start outline-none transition-colors",
-            "hover:bg-foreground/[0.03] focus-visible:ring-1 focus-visible:ring-foreground/20",
-            typeEyebrow,
-          )}
-        >
-          <ListTodoIcon className="size-3.5 shrink-0" aria-hidden="true" />
-          <span className="me-auto truncate">{t("chat.todos")}</span>
-          <span className={cn(mono, "shrink-0 text-foreground/35 tabular-nums")}>
-            {todo.revision === undefined
-              ? `${done}/${todo.items.length}`
-              : `${done}/${todo.items.length} · rev ${todo.revision}`}
-          </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
-              open && "rotate-180",
-            )}
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-          <div className={cn(PANEL_CONTENT, "app-scrollbar overflow-y-auto px-2.5 pt-1 pb-2")}>
-            <TodoList items={todo.items} revision={todo.revision} showHeader={false} />
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+      {total === 0 ? (
+        <SectionEmpty>{t("sessionPanel.tasksEmpty")}</SectionEmpty>
+      ) : (
+        /* 清单一长就内部滚动，不把浮层整体撑高（与原来那条同口径） */
+        <div className="app-scrollbar max-h-[min(16rem,36vh)] overflow-y-auto px-2.5 pt-1 pb-2">
+          <TodoList items={todo?.items ?? []} showHeader={false} />
+        </div>
+      )}
+    </SessionSection>
   );
 }

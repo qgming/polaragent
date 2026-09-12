@@ -32,10 +32,8 @@ export function CostMeter({
     >
       <div className="flex items-baseline gap-2">
         <span className="text-2xl font-medium tracking-tight tabular-nums">{runCost}</span>
-        <span className={cn(mono, "text-foreground/30")}>this run</span>
-        <span className={cn(mono, "text-foreground/35 ms-auto tabular-nums")}>
-          {sessionCost} session
-        </span>
+        <span className={cn(mono, "text-ink-4")}>this run</span>
+        <span className={cn(mono, "text-ink-4 ms-auto tabular-nums")}>{sessionCost} session</span>
       </div>
 
       <div className="bg-foreground/[0.06] flex h-1.5 w-full overflow-hidden rounded-full">
@@ -67,16 +65,12 @@ export function CostMeter({
       <div className="flex flex-col gap-1.5">
         {lines.map((line) => (
           <div key={line.model} className="flex items-baseline gap-2">
-            <span className="text-foreground/75 min-w-0 flex-1 truncate text-[13px]">
-              {line.model}
-            </span>
-            <span className={cn(mono, "text-foreground/25 shrink-0 tabular-nums")}>
+            <span className="text-ink-2 min-w-0 flex-1 truncate text-[13px]">{line.model}</span>
+            <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>
               {(line.inputTokens / 1000).toFixed(1)}k in · {(line.outputTokens / 1000).toFixed(1)}k
               out
             </span>
-            <span className={cn(mono, "text-foreground/55 shrink-0 tabular-nums")}>
-              {line.cost}
-            </span>
+            <span className={cn(mono, "text-ink-3 shrink-0 tabular-nums")}>{line.cost}</span>
           </div>
         ))}
       </div>

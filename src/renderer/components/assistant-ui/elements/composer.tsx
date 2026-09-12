@@ -189,15 +189,11 @@ export function ComposerCommandItem({
       aria-selected={active}
       {...props}
     >
-      <command.icon className="text-foreground/35 size-3.5 shrink-0" />
+      <command.icon className="text-ink-4 size-3.5 shrink-0" />
       <span className="font-medium">/{command.name}</span>
-      <span className="text-foreground/45 flex-1 truncate text-start text-xs">
-        {command.description}
-      </span>
+      <span className="text-ink-3 flex-1 truncate text-start text-xs">{command.description}</span>
       {active && (
-        <kbd className="bg-foreground/[0.06] text-foreground/45 rounded px-1 font-mono text-[10px]">
-          ↵
-        </kbd>
+        <kbd className="bg-foreground/[0.06] text-ink-3 rounded px-1 font-mono text-[10px]">↵</kbd>
       )}
     </ComposerMenuItem>
   );
@@ -213,11 +209,11 @@ export function ComposerPersonItem({
 }) {
   return (
     <ComposerMenuItem active={active} {...props}>
-      <span className="bg-foreground/[0.06] text-foreground/45 flex size-5 shrink-0 items-center justify-center rounded-full text-[9px] font-medium">
+      <span className="bg-foreground/[0.06] text-ink-3 flex size-5 shrink-0 items-center justify-center rounded-full text-[9px] font-medium">
         {person.name[0]}
       </span>
       <span className="flex-1 truncate text-start">{person.name}</span>
-      <span className={cn(mono, "text-foreground/35")}>{person.role}</span>
+      <span className={cn(mono, "text-ink-4")}>{person.role}</span>
     </ComposerMenuItem>
   );
 }
@@ -253,7 +249,7 @@ export function ComposerAttachmentChip({
       )}
       {...props}
     >
-      <span className="bg-background text-foreground/45 flex size-8 shrink-0 items-center justify-center rounded-[10px] dark:bg-white/10">
+      <span className="bg-background text-ink-3 flex size-8 shrink-0 items-center justify-center rounded-[10px] dark:bg-white/10">
         <Icon className="size-4" />
       </span>
       <span className="flex flex-col">
@@ -261,9 +257,7 @@ export function ComposerAttachmentChip({
         <span
           className={cn(
             "text-[11px]",
-            attachment.state === "error"
-              ? "text-red-600/80 dark:text-red-400/80"
-              : "text-foreground/40",
+            attachment.state === "error" ? "text-red-600/80 dark:text-red-400/80" : "text-ink-4",
           )}
         >
           {attachment.meta}
@@ -271,7 +265,7 @@ export function ComposerAttachmentChip({
       </span>
       <span className="ms-1 flex w-5 items-center justify-end">
         {attachment.state === "uploading" ? (
-          <Loader2Icon className="text-foreground/35 size-3.5 animate-spin motion-reduce:animate-none" />
+          <Loader2Icon className="text-ink-4 size-3.5 animate-spin motion-reduce:animate-none" />
         ) : attachment.state === "done" && onRemove ? (
           <button
             type="button"
@@ -312,7 +306,7 @@ export function ComposerInput({
         onSubmit?.();
       }}
       className={cn(
-        "placeholder:text-foreground/35 min-h-11 w-full bg-transparent px-3 text-[15px] caret-blue-500 outline-none dark:caret-blue-400",
+        "placeholder:text-ink-4 min-h-11 w-full bg-transparent px-3 text-[15px] caret-blue-500 outline-none dark:caret-blue-400",
         className,
       )}
       {...props}
@@ -355,13 +349,11 @@ export function ComposerVoice({
         ))}
       </div>
       {recording ? (
-        <span className={cn(mono, "text-foreground/40 tabular-nums")}>
+        <span className={cn(mono, "text-ink-4 tabular-nums")}>
           0:{String(seconds).padStart(2, "0")}
         </span>
       ) : (
-        <ShimmerLabel className="text-foreground/55 relative text-[13px]">
-          Transcribing
-        </ShimmerLabel>
+        <ShimmerLabel className="text-ink-3 relative text-[13px]">Transcribing</ShimmerLabel>
       )}
     </div>
   );
@@ -424,7 +416,7 @@ export function ComposerModelTrigger({
       aria-expanded={open}
       data-slot="composer-model-trigger"
       className={cn(
-        "text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 dark:hover:bg-foreground/[0.09] flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] transition-colors",
+        "text-ink-3 hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-foreground/[0.09] flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] transition-colors",
         className,
       )}
       {...props}
@@ -446,7 +438,7 @@ export function ComposerModelItem({
   return (
     <ComposerMenuItem active={selected} {...props}>
       <span className="flex-1 text-start">{entry.name}</span>
-      <span className={cn(mono, "text-foreground/35 tabular-nums")}>{entry.meta}</span>
+      <span className={cn(mono, "text-ink-4 tabular-nums")}>{entry.meta}</span>
       <span className="flex w-4 justify-end">
         {selected && <CheckIcon className="fade-in zoom-in-90 animate-in size-3.5 duration-200" />}
       </span>
@@ -487,7 +479,7 @@ export function ComposerContext({
             className={cn(
               mono,
               "tabular-nums",
-              warn ? "text-red-500 dark:text-red-400" : "text-foreground/35",
+              warn ? "text-red-500 dark:text-red-400" : "text-ink-4",
             )}
           >
             {Math.round(fraction * 100)}%
@@ -507,20 +499,17 @@ export function ComposerContext({
         </div>
         <div className="flex flex-col gap-2">
           {segments.map((segment) => (
-            <div
-              key={segment.label}
-              className="text-foreground/55 flex items-center gap-2.5 text-[13px]"
-            >
+            <div key={segment.label} className="text-ink-3 flex items-center gap-2.5 text-[13px]">
               <span aria-hidden className={cn("size-1.5 rounded-full", segment.className)} />
               <span className="flex-1">{segment.label}</span>
-              <span className={cn(mono, "text-foreground/40 tabular-nums")}>{segment.value}k</span>
+              <span className={cn(mono, "text-ink-4 tabular-nums")}>{segment.value}k</span>
             </div>
           ))}
         </div>
         <div className="bg-foreground/[0.06] h-px" />
-        <div className="text-foreground/55 flex items-center justify-between text-[13px]">
+        <div className="text-ink-3 flex items-center justify-between text-[13px]">
           <span>Total</span>
-          <span className={cn(mono, "text-foreground/40 tabular-nums")}>
+          <span className={cn(mono, "text-ink-4 tabular-nums")}>
             {used}k / {usage.total}k
           </span>
         </div>
@@ -597,7 +586,7 @@ export function ComposerSend({
         "grid size-8 place-items-center rounded-full",
         streaming || !idle
           ? inkButton
-          : "bg-foreground/[0.06] text-foreground/30 dark:bg-foreground/[0.09] transition-colors",
+          : "bg-foreground/[0.06] text-ink-4 dark:bg-foreground/[0.09] transition-colors",
         className,
       )}
       {...props}

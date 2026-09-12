@@ -132,7 +132,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
                 onBlur={commitChatFontSize}
                 className="h-1 w-32 cursor-pointer accent-foreground focus-visible:ring-1 focus-visible:ring-foreground/20 focus-visible:outline-none"
               />
-              <span className={cn(typePackage, "w-10 shrink-0 text-right text-foreground/40")}>
+              <span className={cn(typePackage, "w-10 shrink-0 text-right text-ink-4")}>
                 {chatFontSize}px
               </span>
             </div>

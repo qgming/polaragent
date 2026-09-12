@@ -221,7 +221,7 @@ function ToolFallbackArgs({
       className={cn("aui-tool-fallback-args", className)}
       {...props}
     >
-      <pre className="aui-tool-fallback-args-value bg-muted/50 text-foreground/90 rounded-md p-2.5 text-xs whitespace-pre-wrap">
+      <pre className="aui-tool-fallback-args-value bg-muted/50 text-foreground rounded-md p-2.5 text-xs whitespace-pre-wrap">
         {argsText}
       </pre>
     </div>
@@ -263,7 +263,7 @@ function ToolFallbackResult({
       <p className="aui-tool-fallback-result-header text-muted-foreground text-xs font-medium">
         Result:
       </p>
-      <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground/90 mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
+      <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
         {formatUnknownValue(result, 2)}
       </pre>
     </div>

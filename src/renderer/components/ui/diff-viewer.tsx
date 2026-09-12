@@ -286,7 +286,7 @@ function DiffViewerHeader({
           <>
             <span className="text-muted-foreground/60">{oldName}</span>
             <span className="text-muted-foreground/50">{" → "}</span>
-            <span className="text-foreground/80">{newName}</span>
+            <span className="text-ink-2">{newName}</span>
           </>
         ) : (
           displayName

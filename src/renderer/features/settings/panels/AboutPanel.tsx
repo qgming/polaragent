@@ -39,13 +39,13 @@ export function AboutPanel() {
               {info.kernel.map((dependency) => (
                 <span key={dependency.name} className="flex items-baseline gap-2">
                   <span
-                    className={cn(typePackage, "max-w-[200px] truncate text-foreground/70")}
+                    className={cn(typePackage, "max-w-[200px] truncate text-ink-2")}
                     title={dependency.name}
                   >
                     {dependency.name}
                   </span>
                   {dependency.version ? (
-                    <span className={cn(typePackage, "shrink-0 text-foreground/40")}>
+                    <span className={cn(typePackage, "shrink-0 text-ink-4")}>
                       {dependency.version}
                     </span>
                   ) : null}
@@ -56,7 +56,7 @@ export function AboutPanel() {
         />
       </SettingsSection>
 
-      <p className="border-border/60 border-t pt-4 text-xs text-foreground/40">MIT License</p>
+      <p className="border-border/60 border-t pt-4 text-xs text-ink-4">MIT License</p>
     </div>
   );
 }

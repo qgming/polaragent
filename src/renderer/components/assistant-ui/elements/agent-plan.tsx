@@ -28,7 +28,7 @@ export function AgentPlan({
     >
       <div className="flex items-center justify-between">
         <span className="text-[13.5px] font-medium">Plan</span>
-        <span className={cn(mono, "text-foreground/35 tabular-nums")}>
+        <span className={cn(mono, "text-ink-4 tabular-nums")}>
           {completed} of {total}
         </span>
       </div>
@@ -46,18 +46,18 @@ export function AgentPlan({
             <li key={step} className="flex items-center gap-2.5 text-[13.5px]">
               <span className="flex size-4 shrink-0 items-center justify-center">
                 {done ? (
-                  <CheckIcon className="text-foreground/35 size-3.5" />
+                  <CheckIcon className="text-ink-4 size-3.5" />
                 ) : active ? (
-                  <Loader2Icon className="text-foreground/90 size-3.5 animate-spin motion-reduce:animate-none" />
+                  <Loader2Icon className="text-foreground size-3.5 animate-spin motion-reduce:animate-none" />
                 ) : (
                   <span aria-hidden className="bg-foreground/15 size-1.5 rounded-full" />
                 )}
               </span>
               <span
                 className={cn(
-                  done && "text-foreground/40",
-                  active && "text-foreground/90",
-                  !done && !active && "text-foreground/35",
+                  done && "text-ink-4",
+                  active && "text-foreground",
+                  !done && !active && "text-ink-4",
                 )}
               >
                 {step}

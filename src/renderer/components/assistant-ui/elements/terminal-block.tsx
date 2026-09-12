@@ -42,7 +42,7 @@ export function TerminalBlock({
           // 命令常比面板宽：单行省略，不换行也不把右侧的 exit 挤出边界（根是 overflow-hidden）
           className={cn(
             "min-w-0 truncate",
-            ink ? "text-background/90 dark:text-foreground/90" : "text-foreground/90",
+            ink ? "text-background/90 dark:text-foreground" : "text-foreground",
           )}
           title={command}
         >
@@ -51,12 +51,7 @@ export function TerminalBlock({
         {done ? (
           <div className="flex shrink-0 items-center gap-1">
             <CheckIcon className="size-3 text-emerald-500" />
-            <span
-              className={cn(
-                mono,
-                ink ? "text-background/40 dark:text-foreground/40" : "text-foreground/40",
-              )}
-            >
+            <span className={cn(mono, ink ? "text-background/40 dark:text-ink-4" : "text-ink-4")}>
               exit 0
             </span>
           </div>
@@ -64,7 +59,7 @@ export function TerminalBlock({
           <Loader2Icon
             className={cn(
               "size-3 shrink-0 animate-spin motion-reduce:animate-none",
-              ink ? "text-background/35 dark:text-foreground/35" : "text-foreground/35",
+              ink ? "text-background/35 dark:text-ink-4" : "text-ink-4",
             )}
           />
         )}
@@ -72,7 +67,7 @@ export function TerminalBlock({
       <div
         className={cn(
           "flex min-h-[8.5rem] flex-col gap-1 px-4 pt-1 pb-3.5",
-          ink ? "text-background/55 dark:text-foreground/50" : "text-foreground/50",
+          ink ? "text-background/55 dark:text-ink-3" : "text-ink-3",
         )}
       >
         {take(lines, visibleCount).map((line, i) => {
@@ -83,8 +78,7 @@ export function TerminalBlock({
               className={cn(
                 // 长输出行按面板宽度换行，不横向溢出（根是 overflow-hidden，溢出等于被裁）
                 "fade-in animate-in fill-mode-both break-words whitespace-pre-wrap duration-300",
-                isLast &&
-                  (ink ? "text-background/90 dark:text-foreground/90" : "text-foreground/90"),
+                isLast && (ink ? "text-background/90 dark:text-foreground" : "text-foreground"),
               )}
             >
               {line}

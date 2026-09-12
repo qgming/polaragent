@@ -1,4 +1,4 @@
-﻿import type { Attachment } from "@assistant-ui/react";
+import type { Attachment } from "@assistant-ui/react";
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react";
 import {
   ArrowUp,
@@ -60,7 +60,6 @@ import {
   type SlashCommand,
   slashQuery,
 } from "./slash-commands";
-import { TodoPanel } from "./TodoPanel";
 import { type ResolvedThinking, resolveThinking, thinkingLabelKey } from "./thinking";
 import { useActiveWorkingDir, useSlashCommands } from "./use-slash-commands";
 
@@ -133,7 +132,7 @@ function PickerItem({
       <span className="flex min-w-0 flex-1 items-center gap-2.5">{children}</span>
       <span className="flex w-4 shrink-0 justify-end">
         {selected && (
-          <Check className="fade-in zoom-in-90 animate-in size-3.5 text-foreground/70 duration-200" />
+          <Check className="fade-in zoom-in-90 animate-in size-3.5 text-ink-2 duration-200" />
         )}
       </span>
     </button>
@@ -166,7 +165,7 @@ function AttachmentThumb({ attachment }: { attachment: Attachment }) {
         {attachment.type === "image" && url !== null ? (
           <img src={url} alt={attachment.name} className="size-full object-cover" />
         ) : (
-          <FileText className="size-5 text-foreground/40" />
+          <FileText className="size-5 text-ink-4" />
         )}
       </div>
       <TooltipIconButton
@@ -315,13 +314,13 @@ function ModelChip({
           <Bot className="size-3.5 opacity-70" />
           <span className={cn(typePackage, "max-w-32 truncate")}>{label}</span>
           {/* 本会话单独指定过模型时留个记号：此时它不再跟着设置里的默认模型走 */}
-          {bound !== null && <span className="text-foreground/40">·</span>}
+          {bound !== null && <span className="text-ink-4">·</span>}
           <ChevronDown className="size-3 opacity-60" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className={cn(menuPanel, "w-80")}>
         {options.length === 0 ? (
-          <p className="px-2.5 py-2 text-[13.5px] text-foreground/45">{t("settings.noServices")}</p>
+          <p className="px-2.5 py-2 text-[13.5px] text-ink-3">{t("settings.noServices")}</p>
         ) : (
           <div className="app-scrollbar max-h-64 overflow-y-auto">
             {groupModels(options).map((group) => (
@@ -348,7 +347,7 @@ function ModelChip({
                       </span>
                       {/* 未填显示名时行内只剩同一个 id，重复一遍没有信息量 */}
                       {option.model.name ? (
-                        <span className={cn(typePackage, "shrink-0 text-foreground/40")}>
+                        <span className={cn(typePackage, "shrink-0 text-ink-4")}>
                           {option.model.id}
                         </span>
                       ) : null}
@@ -394,7 +393,7 @@ function ThinkingChip({ resolved }: { resolved: ResolvedThinking }) {
           <Brain className="size-3.5 opacity-70" />
           <span>{t(thinkingLabelKey(level))}</span>
           {/* 被就近调整过时在 chip 上留个记号，点开有说明 */}
-          {clamped && <span className="text-foreground/40">·</span>}
+          {clamped && <span className="text-ink-4">·</span>}
           <ChevronDown className="size-3 opacity-60" />
         </button>
       </PopoverTrigger>
@@ -426,7 +425,7 @@ function ThinkingChip({ resolved }: { resolved: ResolvedThinking }) {
           })}
         </div>
         {clamped && (
-          <p className="text-foreground/45 pt-2 text-[11px] leading-relaxed">
+          <p className="text-ink-3 pt-2 text-[11px] leading-relaxed">
             {t("chat.thinkingClamped", {
               wanted: t(thinkingLabelKey(resolved.wanted)),
               used: t(thinkingLabelKey(level)),
@@ -468,13 +467,9 @@ function QueuePanel({ items }: { items: QueuedMessage[] }) {
               <span className={cn(typeEyebrow, "w-3 shrink-0 text-end tabular-nums")}>
                 {index + 1}.
               </span>
-              <span className="min-w-0 flex-1 truncate text-[13.5px] text-foreground/60">
-                {item.text}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink-3">{item.text}</span>
               {item.mode === "steer" && (
-                <span
-                  className={cn(field, mono, "shrink-0 rounded px-1.5 py-px text-foreground/70")}
-                >
+                <span className={cn(field, mono, "shrink-0 rounded px-1.5 py-px text-ink-2")}>
                   {t("chat.steer")}
                 </span>
               )}
@@ -720,11 +715,8 @@ export function Composer() {
             "data-[dragging=true]:outline-1 data-[dragging=true]:-outline-offset-1 data-[dragging=true]:outline-dashed data-[dragging=true]:outline-blue-500/40",
           )}
         >
-          {/*
-            待办条贴在输入框顶部、复用 composer 自己的面（圆角 + 边框 + --composer-shadow），
-            所以它不需要自己的容器；没有待办时它整块不渲染。
-          */}
-          <TodoPanel />
+          {/* 待办与后台作业已迁到顶栏的会话面板（见 app/TitleBar 的 SessionPanel）：
+              输入框上方不再挂这两条，队列面板留在原位。 */}
           {queue.length > 0 && <QueuePanel items={queue} />}
           {/* Attachments 渲染的是片段，横向排布靠这层容器；空时不留出 gap */}
           <div className="flex flex-wrap gap-2 empty:hidden">
@@ -758,7 +750,7 @@ export function Composer() {
             }
             className={cn(
               "min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-relaxed outline-none",
-              "placeholder:text-foreground/35",
+              "placeholder:text-ink-4",
             )}
           />
           <div className="flex items-center justify-between gap-1.5">

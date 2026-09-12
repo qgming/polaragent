@@ -40,7 +40,7 @@ export function TodoList({
       {showHeader ? (
         <div className="flex items-baseline justify-between">
           <span className="text-[13.5px] font-medium">{title}</span>
-          <span className={cn(mono, "text-foreground/35 tabular-nums")}>
+          <span className={cn(mono, "text-ink-4 tabular-nums")}>
             {revision === undefined
               ? `${done}/${items.length}`
               : `${done}/${items.length} · rev ${revision}`}
@@ -56,7 +56,7 @@ export function TodoList({
             <span aria-hidden className="flex size-4 h-5 shrink-0 items-center justify-center">
               {item.status === "done" ? (
                 <span className="border-foreground/20 bg-foreground/[0.06] flex size-3.5 items-center justify-center rounded-[5px] border">
-                  <CheckIcon className="text-foreground/45 size-2.5" />
+                  <CheckIcon className="text-ink-3 size-2.5" />
                 </span>
               ) : item.status === "failed" ? (
                 <span className="flex size-3.5 items-center justify-center rounded-[5px] border border-red-600/25 bg-red-600/[0.08] dark:border-red-400/25 dark:bg-red-400/[0.08]">
@@ -72,16 +72,16 @@ export function TodoList({
             <div className="min-w-0 flex-1 leading-5 break-words">
               <span
                 className={cn(
-                  item.status === "done" && "text-foreground/35 line-through decoration-[1.5px]",
-                  item.status === "active" && "text-foreground/90",
-                  item.status === "pending" && "text-foreground/50",
+                  item.status === "done" && "text-ink-4 line-through decoration-[1.5px]",
+                  item.status === "active" && "text-foreground",
+                  item.status === "pending" && "text-ink-3",
                   item.status === "failed" && "text-red-600 dark:text-red-400",
                 )}
               >
                 {item.text}
               </span>
               {item.status === "failed" && item.reason ? (
-                <p className="text-foreground/45 text-xs leading-4 break-words">{item.reason}</p>
+                <p className="text-ink-3 text-xs leading-4 break-words">{item.reason}</p>
               ) : null}
             </div>
           </li>

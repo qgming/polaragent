@@ -40,7 +40,7 @@ function runTool(
       setMemo: () => undefined,
     } as unknown as Parameters<typeof tool.execute>[4],
     BACKGROUND_CONTEXT,
-  );
+  ) as Promise<AgentToolResult<McpToolDetails>>;
 }
 
 function textOf(result: AgentToolResult<McpToolDetails>): string {

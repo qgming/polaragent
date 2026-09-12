@@ -59,7 +59,7 @@ export function MessageActions({
         onClick={() => onReactionChange(reaction === "up" ? null : "up")}
         className={cn(
           buttonClassName,
-          reaction === "up" && "bg-foreground/[0.06] text-foreground/90 dark:bg-foreground/[0.09]",
+          reaction === "up" && "bg-foreground/[0.06] text-foreground dark:bg-foreground/[0.09]",
         )}
       >
         <ThumbsUpIcon className="size-3.5" />
@@ -71,8 +71,7 @@ export function MessageActions({
         onClick={() => onReactionChange(reaction === "down" ? null : "down")}
         className={cn(
           buttonClassName,
-          reaction === "down" &&
-            "bg-foreground/[0.06] text-foreground/90 dark:bg-foreground/[0.09]",
+          reaction === "down" && "bg-foreground/[0.06] text-foreground dark:bg-foreground/[0.09]",
         )}
       >
         <ThumbsDownIcon className="size-3.5" />

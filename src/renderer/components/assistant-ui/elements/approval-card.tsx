@@ -64,22 +64,22 @@ export function ApprovalCard({
       {...props}
     >
       <div className="flex items-center gap-3">
-        <span className="bg-foreground/[0.05] text-foreground/45 flex size-9 shrink-0 items-center justify-center rounded-xl">
+        <span className="bg-foreground/[0.05] text-ink-3 flex size-9 shrink-0 items-center justify-center rounded-xl">
           <TerminalIcon className="size-4" />
         </span>
         <div className="flex flex-col">
           <p className="text-[13.5px] font-medium">{title}</p>
-          <p className="text-foreground/45 text-xs">{subtitle}</p>
+          <p className="text-ink-3 text-xs">{subtitle}</p>
         </div>
       </div>
 
-      <div className={cn(field, "text-foreground/70 rounded-xl px-3.5 py-2.5 font-mono text-xs")}>
+      <div className={cn(field, "text-ink-2 rounded-xl px-3.5 py-2.5 font-mono text-xs")}>
         {command}
       </div>
 
       {/* 理由只在有结论时出现（AI 交回用户）；没有结论的普通请求不占位 */}
       {reason !== undefined && reason !== "" ? (
-        <p className="text-foreground/55 text-xs leading-relaxed">{reason}</p>
+        <p className="text-ink-3 text-xs leading-relaxed">{reason}</p>
       ) : null}
 
       <div className="flex h-8 items-center justify-end gap-2">
@@ -88,14 +88,14 @@ export function ApprovalCard({
             <button
               type="button"
               onClick={onDeny}
-              className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+              className="text-ink-3 hover:bg-foreground/[0.06] hover:text-foreground h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
               {labels?.deny ?? DEFAULT_LABELS.deny}
             </button>
             <button
               type="button"
               onClick={onAlwaysAllow}
-              className="text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground/90 h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+              className="text-ink-3 hover:bg-foreground/[0.06] hover:text-foreground h-8 rounded-full px-3.5 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
             >
               {labels?.alwaysAllow ?? DEFAULT_LABELS.alwaysAllow}
             </button>
@@ -113,16 +113,16 @@ export function ApprovalCard({
         ) : (
           <div
             key={state}
-            className="fade-in animate-in text-foreground/55 flex items-center gap-2 text-xs duration-300"
+            className="fade-in animate-in text-ink-3 flex items-center gap-2 text-xs duration-300"
           >
             {state === "running" ? (
               <>
-                <Loader2Icon className="text-foreground/45 size-3.5 animate-spin" />
+                <Loader2Icon className="text-ink-3 size-3.5 animate-spin" />
                 {labels?.running ?? DEFAULT_LABELS.running}
               </>
             ) : state === "denied" ? (
               <>
-                <XIcon className="text-foreground/45 size-3.5" />
+                <XIcon className="text-ink-3 size-3.5" />
                 Denied
               </>
             ) : (

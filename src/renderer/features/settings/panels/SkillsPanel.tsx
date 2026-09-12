@@ -82,7 +82,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
 
       <SettingsSection title={t("settings.skillDirs")} description={t("settings.skillDirsDesc")}>
         {settings.skillDirs.length === 0 ? (
-          <p className="text-[13px] text-foreground/45">{t("common.empty")}</p>
+          <p className="text-[13px] text-ink-3">{t("common.empty")}</p>
         ) : (
           <div className="space-y-1">
             {settings.skillDirs.map((dir) => (
@@ -93,7 +93,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
                   "flex items-center gap-2 rounded-[10px] px-2.5 py-1.5",
                 )}
               >
-                <FolderOpen className="size-3.5 shrink-0 text-foreground/40" aria-hidden="true" />
+                <FolderOpen className="size-3.5 shrink-0 text-ink-4" aria-hidden="true" />
                 <span className={cn(typePackage, "min-w-0 flex-1 truncate")} title={dir}>
                   {dir}
                 </span>
@@ -146,11 +146,9 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
             <Skeleton className="h-14 w-full rounded-xl" />
           </div>
         ) : skills.length === 0 ? (
-          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-foreground/45">
+          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
             {t("settings.skillsEmpty")}
-            <span className="mt-1 block text-xs text-foreground/40">
-              {t("settings.skillsEmptyHint")}
-            </span>
+            <span className="mt-1 block text-xs text-ink-4">{t("settings.skillsEmptyHint")}</span>
           </p>
         ) : (
           <div className="space-y-2">
@@ -167,20 +165,15 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
                       <span className="truncate text-[13.5px] font-medium">{skill.name}</span>
                       <Badge
                         variant="outline"
-                        className={cn(mono, "border-border/60 px-1.5 text-foreground/50")}
+                        className={cn(mono, "border-border/60 px-1.5 text-ink-3")}
                       >
                         {skill.source === "global"
                           ? t("settings.skillSourceGlobal")
                           : t("settings.skillSourceProject")}
                       </Badge>
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-foreground/45">
-                      {skill.description}
-                    </p>
-                    <p
-                      className={cn(mono, "mt-1 truncate text-foreground/40")}
-                      title={skill.filePath}
-                    >
+                    <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{skill.description}</p>
+                    <p className={cn(mono, "mt-1 truncate text-ink-4")} title={skill.filePath}>
                       {skill.filePath}
                     </p>
                   </div>

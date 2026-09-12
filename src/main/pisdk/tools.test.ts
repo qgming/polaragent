@@ -7,14 +7,18 @@ const NATIVE_TOOLS = ["bash", "read", "write", "edit"];
 const CUSTOM_TOOLS = ["grep", "glob", "todo"];
 
 describe("buildTools", () => {
-  it("返回内核四件套 + 三个自建只读工具的完整工具集", () => {
+  it("返回内核四件套 + 三个自建只读工具；ask_user 需调用方注入，默认不在其中", () => {
     const tools = buildTools();
 
     expect(tools).toHaveLength(NATIVE_TOOLS.length + CUSTOM_TOOLS.length);
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [...NATIVE_TOOLS, ...CUSTOM_TOOLS].sort(),
     );
-    expect(new Set(tools.map((tool) => tool.name))).toEqual(new Set(Object.values(TOOL_NAMES)));
+    // TOOL_NAMES 是权限层 / UI 的登记表：ask_user 按会话注入（见 runtime 的两处 buildTools），
+    // 所以默认工具集 = 登记表去掉 ask
+    expect(new Set(tools.map((tool) => tool.name))).toEqual(
+      new Set(Object.values(TOOL_NAMES).filter((name) => name !== TOOL_NAMES.ask)),
+    );
 
     for (const tool of tools) {
       expect(tool.description.length).toBeGreaterThan(0);

@@ -413,11 +413,11 @@ export function MessageRail({
             "border border-border/60 bg-popover text-popover-foreground shadow-[var(--composer-shadow)]",
           )}
         >
-          <p className={cn(mono, "text-foreground/35")}>{tickTitle(hoveredTick)}</p>
+          <p className={cn(mono, "text-ink-4")}>{tickTitle(hoveredTick)}</p>
           <p
             className={cn(
               "mt-1.5 max-h-28 overflow-hidden text-[13px] leading-relaxed",
-              "whitespace-pre-wrap text-foreground/80",
+              "whitespace-pre-wrap text-ink-2",
             )}
           >
             {tickPreview(hoveredTick) === "" ? t("chat.messageMapEmpty") : tickPreview(hoveredTick)}

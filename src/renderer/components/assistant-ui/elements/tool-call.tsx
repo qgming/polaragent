@@ -56,7 +56,7 @@ export function ToolCall({
     >
       <CollapsibleTrigger
         className={cn(
-          "group/trigger text-foreground/55 hover:text-foreground/90 flex items-center gap-2 rounded-md py-0 text-[13.5px] transition-colors outline-none",
+          "group/trigger text-ink-3 hover:text-foreground flex items-center gap-2 rounded-md py-0 text-[13.5px] transition-colors outline-none",
           isError &&
             "text-red-600/85 hover:text-red-600 dark:text-red-400/85 dark:hover:text-red-400",
         )}
@@ -71,7 +71,7 @@ export function ToolCall({
         <span
           className={cn(
             mono,
-            "bg-foreground/[0.06] text-foreground/70 min-w-0 truncate rounded-md px-1.5 py-0.5",
+            "bg-foreground/[0.06] text-ink-2 min-w-0 truncate rounded-md px-1.5 py-0.5",
           )}
         >
           {query}
@@ -101,13 +101,13 @@ export function ToolCall({
             )}
           >
             <div className="px-3.5 pt-2.5 pb-2">
-              <p className={cn(mono, "text-foreground/35 mb-1")}>Request</p>
-              <p className="text-foreground/55 font-mono">{request}</p>
+              <p className={cn(mono, "text-ink-4 mb-1")}>Request</p>
+              <p className="text-ink-3 font-mono">{request}</p>
             </div>
             <div className="bg-foreground/[0.06] mx-3.5 h-px" />
             <div className="px-3.5 pt-2 pb-2.5">
-              <p className={cn(mono, "text-foreground/35 mb-1")}>Result</p>
-              <p className="text-foreground/90">{result}</p>
+              <p className={cn(mono, "text-ink-4 mb-1")}>Result</p>
+              <p className="text-foreground">{result}</p>
             </div>
           </div>
         )}

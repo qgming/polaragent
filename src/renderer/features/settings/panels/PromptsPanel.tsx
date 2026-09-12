@@ -75,7 +75,7 @@ function PromptsPanelBody({ settings }: { settings: Settings }) {
         description={t("settings.promptTemplateDirsDesc")}
       >
         {settings.promptTemplateDirs.length === 0 ? (
-          <p className="text-[13px] text-foreground/45">{t("common.empty")}</p>
+          <p className="text-[13px] text-ink-3">{t("common.empty")}</p>
         ) : (
           <div className="space-y-1">
             {settings.promptTemplateDirs.map((dir) => (
@@ -86,7 +86,7 @@ function PromptsPanelBody({ settings }: { settings: Settings }) {
                   "flex items-center gap-2 rounded-[10px] px-2.5 py-1.5",
                 )}
               >
-                <FolderOpen className="size-3.5 shrink-0 text-foreground/40" aria-hidden="true" />
+                <FolderOpen className="size-3.5 shrink-0 text-ink-4" aria-hidden="true" />
                 <span className={cn(typePackage, "min-w-0 flex-1 truncate")} title={dir}>
                   {dir}
                 </span>
@@ -155,9 +155,9 @@ function PromptsPanelBody({ settings }: { settings: Settings }) {
             <Skeleton className="h-14 w-full rounded-xl" />
           </div>
         ) : templates.length === 0 ? (
-          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-foreground/45">
+          <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
             {t("settings.promptTemplatesEmpty")}
-            <span className="mt-1 block text-xs text-foreground/40">
+            <span className="mt-1 block text-xs text-ink-4">
               {t("settings.promptTemplatesEmptyHint")}
             </span>
           </p>
@@ -169,7 +169,7 @@ function PromptsPanelBody({ settings }: { settings: Settings }) {
                   <span className="truncate text-[13.5px] font-medium">{template.name}</span>
                   <Badge
                     variant="outline"
-                    className={cn(mono, "border-border/60 px-1.5 text-foreground/50")}
+                    className={cn(mono, "border-border/60 px-1.5 text-ink-3")}
                   >
                     {template.source === "global"
                       ? t("settings.skillSourceGlobal")
@@ -177,15 +177,13 @@ function PromptsPanelBody({ settings }: { settings: Settings }) {
                   </Badge>
                 </div>
                 {template.description === "" ? null : (
-                  <p className="mt-0.5 line-clamp-2 text-xs text-foreground/45">
-                    {template.description}
-                  </p>
+                  <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{template.description}</p>
                 )}
                 {/* 正文可能很长：只给固定行数的等宽预览并裁掉溢出，不把整段正文铺开 */}
-                <p className={cn(mono, "mt-1 line-clamp-4 whitespace-pre-wrap text-foreground/40")}>
+                <p className={cn(mono, "mt-1 line-clamp-4 whitespace-pre-wrap text-ink-4")}>
                   {template.content}
                 </p>
-                <p className={cn(mono, "mt-1 truncate text-foreground/35")} title={template.dir}>
+                <p className={cn(mono, "mt-1 truncate text-ink-4")} title={template.dir}>
                   {template.dir}
                 </p>
               </div>

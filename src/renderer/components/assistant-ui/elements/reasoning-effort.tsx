@@ -38,7 +38,7 @@ export function ReasoningEffort({
     >
       <div className="flex items-baseline justify-between">
         <span className="text-[13.5px] font-medium">Thinking</span>
-        <span className={cn(mono, "text-foreground/35 tabular-nums")}>
+        <span className={cn(mono, "text-ink-4 tabular-nums")}>
           {fmt(spent)} / {fmt(budget)}
         </span>
       </div>
@@ -54,9 +54,7 @@ export function ReasoningEffort({
               onClick={() => onSelect?.(level.key)}
               className={cn(
                 "flex-1 rounded-full py-1 text-xs font-medium transition-[background-color,color,scale] duration-150 active:scale-[0.97]",
-                active
-                  ? "bg-background text-foreground/90"
-                  : "text-foreground/45 hover:text-foreground/70",
+                active ? "bg-background text-foreground" : "text-ink-3 hover:text-ink-2",
               )}
             >
               {level.label}

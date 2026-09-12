@@ -1,6 +1,8 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ModelRef, WireFormat } from "./common";
+import type { AskReply, AskRequest } from "./interaction";
+import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
@@ -59,6 +61,14 @@ export const IPC = {
   },
   approvals: {
     respond: "approvals:respond",
+  },
+  interaction: {
+    respond: "interaction:respond",
+    pending: "interaction:pending",
+  },
+  jobs: {
+    list: "jobs:list",
+    kill: "jobs:kill",
   },
   skills: {
     list: "skills:list",
@@ -150,6 +160,22 @@ export interface IpcInvokeContract {
   [IPC.approvals.respond]: {
     request: { id: string; decision: ApprovalDecision; note?: string };
     response: undefined;
+  };
+  [IPC.interaction.respond]: {
+    request: { id: string; reply: AskReply };
+    response: undefined;
+  };
+  [IPC.interaction.pending]: {
+    request: { sessionId?: string } | undefined;
+    response: AskRequest[];
+  };
+  [IPC.jobs.list]: {
+    request: { sessionId: string };
+    response: JobInfo[];
+  };
+  [IPC.jobs.kill]: {
+    request: { sessionId: string; id: string };
+    response: JobInfo;
   };
   [IPC.skills.list]: {
     request: { workingDir?: string } | undefined;

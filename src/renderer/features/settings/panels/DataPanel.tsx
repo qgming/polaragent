@@ -103,7 +103,7 @@ function DataPanelBody({ settings }: { settings: Settings }) {
             <div className="flex items-center gap-2">
               {/* 路径是唯一信息来源：mono 截断展示，完整路径在 title 里 */}
               <span
-                className={cn(typePackage, "max-w-[240px] truncate text-foreground/40")}
+                className={cn(typePackage, "max-w-[240px] truncate text-ink-4")}
                 title={dataDir ?? undefined}
               >
                 {dataDir ?? "—"}
@@ -114,11 +114,7 @@ function DataPanelBody({ settings }: { settings: Settings }) {
                 className={cn(ghostButton, "size-7 shrink-0")}
                 onClick={() => void handleCopyDataDir()}
               >
-                {copied ? (
-                  <Check className="size-3.5 text-foreground/70" />
-                ) : (
-                  <Copy className="size-3.5" />
-                )}
+                {copied ? <Check className="size-3.5 text-ink-2" /> : <Copy className="size-3.5" />}
               </button>
               <OpenDirButton target={dataDir} label={t("settings.openDataDir")} />
             </div>
@@ -152,7 +148,7 @@ function DataPanelBody({ settings }: { settings: Settings }) {
         />
       </SettingsSection>
 
-      <p className="text-xs text-foreground/40">{t("settings.dataDirHint")}</p>
+      <p className="text-xs text-ink-4">{t("settings.dataDirHint")}</p>
     </div>
   );
 }

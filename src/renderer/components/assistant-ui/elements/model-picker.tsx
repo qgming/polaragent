@@ -35,7 +35,7 @@ export function ModelPicker({
     >
       {families.map((family) => (
         <div key={family} className="flex flex-col">
-          <span className={cn(mono, "text-foreground/30 px-2 pt-2 pb-1")}>{family}</span>
+          <span className={cn(mono, "text-ink-4 px-2 pt-2 pb-1")}>{family}</span>
           {models
             .filter((model) => model.family === family)
             .map((model) => {
@@ -53,7 +53,7 @@ export function ModelPicker({
                 >
                   <span className="flex size-3.5 shrink-0 items-center justify-center">
                     {selected && (
-                      <CheckIcon className="fade-in zoom-in-90 animate-in text-foreground/70 size-3.5 duration-200" />
+                      <CheckIcon className="fade-in zoom-in-90 animate-in text-ink-2 size-3.5 duration-200" />
                     )}
                   </span>
 
@@ -63,7 +63,7 @@ export function ModelPicker({
                       {model.capabilities.map((capability) => (
                         <span
                           key={capability}
-                          className={cn(field, mono, "text-foreground/45 rounded px-1 py-px")}
+                          className={cn(field, mono, "text-ink-3 rounded px-1 py-px")}
                         >
                           {capability}
                         </span>
@@ -72,12 +72,8 @@ export function ModelPicker({
                   </span>
 
                   <span className="flex shrink-0 flex-col items-end gap-1">
-                    <span className={cn(mono, "text-foreground/35 tabular-nums")}>
-                      {model.context}
-                    </span>
-                    <span className={cn(mono, "text-foreground/25 tabular-nums")}>
-                      {model.price}
-                    </span>
+                    <span className={cn(mono, "text-ink-4 tabular-nums")}>{model.context}</span>
+                    <span className={cn(mono, "text-ink-4 tabular-nums")}>{model.price}</span>
                   </span>
                 </button>
               );

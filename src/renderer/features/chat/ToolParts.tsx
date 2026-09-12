@@ -5,9 +5,14 @@ import { useAuiState } from "@assistant-ui/react";
 import {
   FileSearchIcon,
   FileTextIcon,
+  ListIcon,
   ListTodoIcon,
   type LucideIcon,
+  MessageCircleQuestion,
   PenLineIcon,
+  RocketIcon,
+  ScrollTextIcon,
+  SquareIcon,
   SquarePenIcon,
   TerminalIcon,
   TextSearchIcon,
@@ -45,6 +50,12 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   grep: TextSearchIcon,
   glob: FileSearchIcon,
   todo: ListTodoIcon,
+  ask_user: MessageCircleQuestion,
+  // 后台作业四件套：起进程 / 读输出 / 列清单 / 停掉
+  bash_background: RocketIcon,
+  job_output: ScrollTextIcon,
+  job_list: ListIcon,
+  job_kill: SquareIcon,
 };
 
 const DEFAULT_ICON = TerminalIcon;
@@ -58,6 +69,11 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   grep: { resting: "tools.grep", active: "tools.grepActive" },
   glob: { resting: "tools.glob", active: "tools.globActive" },
   todo: { resting: "tools.todo", active: "tools.todoActive" },
+  ask_user: { resting: "tools.askUser", active: "tools.askUserActive" },
+  bash_background: { resting: "tools.bashBackground", active: "tools.bashBackgroundActive" },
+  job_output: { resting: "tools.jobOutput", active: "tools.jobOutputActive" },
+  job_list: { resting: "tools.jobList", active: "tools.jobListActive" },
+  job_kill: { resting: "tools.jobKill", active: "tools.jobKillActive" },
 };
 
 const FALLBACK_LABELS = { resting: "tools.call", active: "tools.callActive" };

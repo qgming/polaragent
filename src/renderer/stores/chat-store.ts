@@ -2,8 +2,11 @@ import { create } from "zustand";
 import type {
   ApprovalDecision,
   ApprovalRequest,
+  AskReply,
+  AskRequest,
   ChatEvent,
   ChatMessage,
+  JobInfo,
   ModelRef,
   QueuedMessage,
   SessionSummary,
@@ -35,6 +38,10 @@ interface ChatState {
   /** 各会话的待发送队列 */
   queueBySession: Record<string, QueuedMessage[]>;
   pendingApprovals: ApprovalRequest[];
+  /** 各会话的未决提问（模型运行中途提出的问题，按事件到达顺序） */
+  pendingAsks: AskRequest[];
+  /** 各会话的后台作业（按启动先后升序，与主进程 job_list 的「最老在前」一致） */
+  jobsBySession: Record<string, JobInfo[]>;
   /** 各会话最近一次压缩摘要 */
   compactionNotices: Record<string, string>;
   loading: boolean;
@@ -66,6 +73,14 @@ interface ChatState {
   /** 核心 reducer：按事件类型更新状态，未知事件忽略不抛错 */
   applyEvent(sessionId: string, event: ChatEvent): void;
   resolveApproval(id: string, decision: ApprovalDecision, note?: string): Promise<void>;
+  /** 回答一次提问；卡片乐观移除，失败再放回（见实现） */
+  respondAsk(id: string, reply: AskReply): Promise<void>;
+  /** 补拉某会话的未决提问（会话切换 / 打开时恢复卡片） */
+  loadPendingAsks(id: string | null): Promise<void>;
+  /** 停止一个后台作业（面板上的「停止」按钮）；失败保留原状，见实现 */
+  killJob(id: string): Promise<void>;
+  /** 补拉某会话的后台作业（会话切换 / 打开时恢复面板） */
+  loadJobs(id: string | null): Promise<void>;
   setRunning(id: string, running: boolean): void;
 }
 
@@ -218,6 +233,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   runningBySession: {},
   queueBySession: {},
   pendingApprovals: [],
+  pendingAsks: [],
+  jobsBySession: {},
   compactionNotices: {},
   loading: false,
 
@@ -238,6 +255,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     if (id && get().loadedSessions[id] !== true) {
       await get().loadMessages(id);
     }
+    // 未决提问跟着会话走：切回来（或重开窗口）时要能从主进程的未决表把卡片补回来
+    await get().loadPendingAsks(id);
+    // 后台作业同理：事件只在「作业变动时就开着这个会话」时到过，切回来要补拉一次
+    await get().loadJobs(id);
   },
 
   async loadMessages(id, opts) {
@@ -499,6 +520,49 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           pendingApprovals: state.pendingApprovals.filter((a) => a.id !== event.id),
         }));
         break;
+      case "ask-requested":
+        // 同一次 ask_user 调用只登记一条：事件重放 / 与补拉撞上时同 id 只留一条
+        set((state) => {
+          const exists = state.pendingAsks.some((a) => a.id === event.request.id);
+          if (exists) return state;
+          return { pendingAsks: [...state.pendingAsks, event.request] };
+        });
+        break;
+      // 已结算（用户作答 / 超时未回应 / 运行被停）：卡片撤下，不留已决态
+      case "ask-resolved":
+        set((state) => ({
+          pendingAsks: state.pendingAsks.filter((a) => a.id !== event.id),
+        }));
+        break;
+      /**
+       * 后台作业新建 / 状态变更 / 退出：按 id 覆盖更新，只有新 id 才追加到尾部。
+       * 追加在尾部与主进程 job_list 的「最老在前」一致（id 全局自增，新作业必然最新）；
+       * 关键是**同一条作业只占一行** —— 状态变更、退出都走这个事件，插入逻辑写错就会越更新越多。
+       */
+      case "job-changed":
+        set((state) => {
+          const list = state.jobsBySession[sessionId] ?? [];
+          const index = list.findIndex((job) => job.id === event.job.id);
+          const next =
+            index >= 0
+              ? list.map((job, i) => (i === index ? event.job : job))
+              : [...list, event.job];
+          return { jobsBySession: { ...state.jobsBySession, [sessionId]: next } };
+        });
+        break;
+      // 被淘汰或随会话清理：整条从列表里撤掉
+      case "job-removed":
+        set((state) => {
+          const list = state.jobsBySession[sessionId];
+          if (list === undefined) return state;
+          return {
+            jobsBySession: {
+              ...state.jobsBySession,
+              [sessionId]: list.filter((job) => job.id !== event.id),
+            },
+          };
+        });
+        break;
       case "compaction-started":
         set((state) => ({ compactionNotices: { ...state.compactionNotices, [sessionId]: "" } }));
         break;
@@ -531,6 +595,109 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   async resolveApproval(id, decision, note) {
     await window.oint.approvals.respond(id, decision, note);
     set((state) => ({ pendingApprovals: state.pendingApprovals.filter((a) => a.id !== id) }));
+  },
+
+  /**
+   * 回答一次提问：先把请求移出列表（乐观），卡片立刻消失、不等 IPC 回来 ——
+   * 否则提交后卡片会一直杵在「提交中」。发送失败时把它放回（卡片重新出现），
+   * 并按本 store 里其它后台失败的处置走 console.warn。
+   */
+  async respondAsk(id, reply) {
+    const target = get().pendingAsks.find((item) => item.id === id);
+    set((state) => ({ pendingAsks: state.pendingAsks.filter((item) => item.id !== id) }));
+
+    try {
+      await window.oint.interaction.respond(id, reply);
+    } catch (error) {
+      console.warn(`提交回答失败：${String(error)}`);
+      if (target !== undefined) set((state) => ({ pendingAsks: [...state.pendingAsks, target] }));
+    }
+  },
+
+  /**
+   * 从主进程补拉某个会话的未决提问。
+   *
+   * 事件只覆盖「提问发生时就开着这个会话」的情形：切走再切回、或重开窗口之后，
+   * 卡片要靠这次补拉复原（主进程的未决表是权威）。失败不影响切换本身 ——
+   * 只是卡片暂时缺席，比切不过去轻。
+   */
+  async loadPendingAsks(id) {
+    if (id === null) return;
+    try {
+      // 拉取期间新到的事件条目要保留：与 ask-requested 抢跑时不能把刚出现的卡片抹掉
+      const startedAt = Date.now();
+      const requests = await window.oint.interaction.pending(id);
+      set((state) => {
+        // 该会话的旧条目整体换成拉回来的这份（主进程是未决表的权威），别的会话不动
+        const others = state.pendingAsks.filter((item) => item.sessionId !== id);
+        const restored = new Map(requests.map((item) => [item.id, item]));
+        for (const item of state.pendingAsks) {
+          if (item.sessionId === id && item.createdAt >= startedAt) restored.set(item.id, item);
+        }
+        return {
+          pendingAsks: [
+            ...others,
+            ...[...restored.values()].sort((a, b) => a.createdAt - b.createdAt),
+          ],
+        };
+      });
+    } catch (error) {
+      console.warn(`恢复未决提问失败：${String(error)}`);
+    }
+  },
+
+  /**
+   * 停止一个后台作业。
+   *
+   * 主进程 kill 之后返回**已经结算**的快照（status = killed），直接拿它覆盖列表里的那一条：
+   * 用户点完立刻看到「已停止」，不必等 close 事件回来。失败（作业已被清理、会话对不上）
+   * 时保留原状并按本 store 的惯例 console.warn —— 面板里那一条仍然是真的，只是这次没停掉。
+   */
+  async killJob(id) {
+    const sessionId = get().activeSessionId;
+    if (sessionId === null) return;
+    try {
+      const job = await window.oint.jobs.kill(sessionId, id);
+      set((state) => {
+        const list = state.jobsBySession[sessionId];
+        if (list === undefined) return state;
+        return {
+          jobsBySession: {
+            ...state.jobsBySession,
+            [sessionId]: list.map((item) => (item.id === job.id ? job : item)),
+          },
+        };
+      });
+    } catch (error) {
+      console.warn(`停止后台作业失败：${String(error)}`);
+    }
+  },
+
+  /**
+   * 从主进程补拉某个会话的后台作业。
+   *
+   * 与 loadPendingAsks 同一套路：事件只覆盖「作业变动时就开着这个会话」的情形，
+   * 切走再切回、或重开窗口之后，面板要靠这次补拉复原（主进程的作业表是权威）。
+   * 失败不影响切换本身 —— 面板暂时空着，比切不过去轻。
+   */
+  async loadJobs(id) {
+    if (id === null) return;
+    try {
+      // 拉取期间新到的事件条目要保留：与 job-changed 抢跑时不能把刚起的作业抹掉
+      const startedAt = Date.now();
+      const jobs = await window.oint.jobs.list(id);
+      set((state) => {
+        // Map 的插入顺序就是列表顺序：主进程那份在前（最老在前），拉取期间新到的接在后面 ——
+        // 新作业的 id 更大、开始得更晚，正好也是「最老在前」
+        const restored = new Map(jobs.map((job) => [job.id, job]));
+        for (const job of state.jobsBySession[id] ?? []) {
+          if (job.startedAt >= startedAt) restored.set(job.id, job);
+        }
+        return { jobsBySession: { ...state.jobsBySession, [id]: [...restored.values()] } };
+      });
+    } catch (error) {
+      console.warn(`恢复后台作业失败：${String(error)}`);
+    }
   },
 
   setRunning(id, running) {
