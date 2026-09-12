@@ -225,4 +225,36 @@ describe("session-store", () => {
     const blank = await store.create({ cwd: "   " });
     await expect(store.readCwd(blank.id)).resolves.toBeNull();
   });
+
+  it("readModel / setModel：会话级模型绑定能存能读，写 null 即清除", async () => {
+    const session = await store.create();
+    // 新建会话不绑定模型（跟随默认）
+    await expect(store.readModel(session.id)).resolves.toBeNull();
+    await expect(store.list()).resolves.toContainEqual(
+      expect.objectContaining({ id: session.id, model: null }),
+    );
+
+    const ref = { serviceId: "svc-a", modelId: "m1" };
+    await store.setModel(session.id, ref);
+    await expect(store.readModel(session.id)).resolves.toEqual(ref);
+    // summary 也要带上（渲染层靠它渲染 chip 与思考档位）
+    const bound = (await store.list()).find((item) => item.id === session.id);
+    expect(bound?.model).toEqual(ref);
+
+    // 清除绑定：必须能落盘成 null，否则重启后旧绑定又回来了
+    await store.setModel(session.id, null);
+    await expect(store.readModel(session.id)).resolves.toBeNull();
+    const cleared = (await store.list()).find((item) => item.id === session.id);
+    expect(cleared?.model).toBeNull();
+  });
+
+  it("索引里被手改坏的 model 视为未绑定（不抛错、也不返回半个引用）", async () => {
+    const session = await store.create();
+    const index = createSessionsIndex(baseDir);
+    // 缺 modelId / 类型不对 / 全是空白：都应该回落到 null
+    for (const broken of [{ serviceId: "svc-a" }, "svc-a/m1", { serviceId: " ", modelId: "m1" }]) {
+      await index.update(session.id, { model: broken as never });
+      await expect(store.readModel(session.id)).resolves.toBeNull();
+    }
+  });
 });

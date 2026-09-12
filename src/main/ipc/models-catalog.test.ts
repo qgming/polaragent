@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ModelCatalogEntry } from "@/shared/contracts/models";
+import type { KnownCapabilities } from "@/main/pisdk/known-models";
 
 // 纯函数测试不需要 Electron 运行时；mock 掉避免 import 真实 electron 失败
 vi.mock("electron", () => ({
@@ -8,10 +8,16 @@ vi.mock("electron", () => ({
   app: { getPath: vi.fn(() => "") },
 }));
 
-import { buildCatalogIndex, matchCatalogEntry, toCatalogEntry } from "./models-catalog";
+import {
+  buildCatalogIndex,
+  type CatalogBase,
+  matchCatalogEntry,
+  mergeCatalogEntry,
+  toCatalogEntry,
+} from "./models-catalog";
 
-/** 构造索引用的最小条目 */
-function entry(catalogId: string, name = catalogId): ModelCatalogEntry {
+/** 构造索引用的最小条目（models.dev 侧解析结果，能力项由合并补） */
+function entry(catalogId: string, name = catalogId): CatalogBase {
   return {
     catalogId,
     name,
@@ -62,13 +68,22 @@ describe("toCatalogEntry", () => {
     expect(parsed?.maxTokens).toBe(8192);
   });
 
-  it("input 只保留 text/image 并去重", () => {
+  it("input 保留全部已知模态并去重（不止 text/image）", () => {
     const parsed = toCatalogEntry({
       id: "acme/vision",
       name: "Vision",
-      modalities: { input: ["image", "audio", "image", "text"] },
+      modalities: { input: ["image", "audio", "image", "text", "video", "pdf"] },
     });
-    expect(parsed?.input).toEqual(["image", "text"]);
+    expect(parsed?.input).toEqual(["image", "audio", "text", "video", "pdf"]);
+  });
+
+  it("input 里的未知模态被滤掉（目录加新字段时不带进配置）", () => {
+    const parsed = toCatalogEntry({
+      id: "acme/x",
+      name: "X",
+      modalities: { input: ["text", "hologram"] },
+    });
+    expect(parsed?.input).toEqual(["text"]);
   });
 
   it("input 缺失或为空时兜底 text", () => {
@@ -166,5 +181,68 @@ describe("matchCatalogEntry", () => {
     expect(matchCatalogEntry(fuzzyIndex, "deepseek-v4-flash")?.catalogId).toBe(
       "z-provider/deepseek-v4-flash",
     );
+  });
+});
+
+describe("mergeCatalogEntry（两份目录合一）", () => {
+  const known = (over: Partial<KnownCapabilities> = {}): KnownCapabilities => ({
+    id: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    contextWindow: 200000,
+    maxTokens: 64000,
+    reasoning: true,
+    input: ["text", "image"],
+    thinkingLevels: ["minimal", "low", "medium", "high"],
+    hasThinkingMap: true,
+    ...over,
+  });
+
+  it("两份都有：名称/窗口取 models.dev，能力取 pi-ai", () => {
+    const base = { ...entry("anthropic/claude-opus-4-5", "Opus (models.dev)"), reasoning: false };
+    const merged = mergeCatalogEntry(base, known());
+    expect(merged).not.toBeNull();
+    expect(merged?.name).toBe("Opus (models.dev)");
+    expect(merged?.contextWindow).toBe(128000);
+    // 能力与 reasoning 以 pi-ai 为准
+    expect(merged?.reasoning).toBe(true);
+    expect(merged?.supportsImages).toBe(true);
+    expect(merged?.supportedThinking).toEqual(["minimal", "low", "medium", "high"]);
+    expect(merged?.thinkingSource).toBe("pi-ai");
+  });
+
+  it("只有 pi-ai：也能给出完整条目（models.dev 不可用时不至于报错）", () => {
+    const merged = mergeCatalogEntry(null, known());
+    expect(merged?.catalogId).toBe("claude-opus-4-5");
+    expect(merged?.name).toBe("Claude Opus 4.5");
+    expect(merged?.contextWindow).toBe(200000);
+    expect(merged?.maxTokens).toBe(64000);
+    expect(merged?.supportsImages).toBe(true);
+  });
+
+  it("只有 models.dev：档位按 reasoning 推断，并如实标明来源不是目录", () => {
+    const reasoning = mergeCatalogEntry({ ...entry("acme/r"), reasoning: true }, null);
+    expect(reasoning?.supportedThinking).toEqual(["off", "minimal", "low", "medium", "high"]);
+    expect(reasoning?.thinkingSource).toBe("reasoning");
+
+    const plain = mergeCatalogEntry({ ...entry("acme/p"), reasoning: false }, null);
+    expect(plain?.supportedThinking).toEqual(["off"]);
+  });
+
+  it("pi-ai 命中但没有档位表：来源标成推断而不是目录", () => {
+    const merged = mergeCatalogEntry(null, known({ hasThinkingMap: false }));
+    expect(merged?.thinkingSource).toBe("reasoning");
+  });
+
+  it("图片能力按 pi-ai 的 input 判定，models.dev 说了不算", () => {
+    // models.dev 列了 image，但 pi-ai 说只有 text → 以 pi-ai 为准
+    const merged = mergeCatalogEntry(
+      { ...entry("acme/x"), input: ["text", "image"] },
+      known({ input: ["text"] }),
+    );
+    expect(merged?.supportsImages).toBe(false);
+  });
+
+  it("两份都没有 → null（调用方据此区分未收录与目录不可用）", () => {
+    expect(mergeCatalogEntry(null, null)).toBeNull();
   });
 });

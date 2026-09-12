@@ -1,6 +1,7 @@
 import type {
   DensityMode,
   LanguageCode,
+  ModelRef,
   PermissionMode,
   ThemeMode,
   ThinkingLevel,
@@ -13,7 +14,21 @@ export interface ModelEntry {
   contextWindow?: number;
   maxTokens?: number;
   reasoning?: boolean;
-  input?: ("text" | "image")[];
+  /**
+   * 是否支持图片输入。
+   *
+   * 只留这一个布尔、不再存模态列表：pi-ai 的 `Model.input` 也只认 text / image 两种，
+   * 而 models.dev 那边的 pdf / audio / video 目前没有任何消费方 —— 存下来只会是一份
+   * 会与开关不一致的副本。缺省（undefined）表示「跟随目录结果」。
+   */
+  acceptsImages?: boolean;
+  /**
+   * 支持的思考档位（含 "off"）。缺省（undefined）表示「跟随目录结果 / 模型默认」。
+   *
+   * 权威来源是 pi-ai 目录里每个模型的 `thinkingLevelMap`（`null` = 该档不支持）。
+   * 用户可以在设置里改，改完就以此为准。
+   */
+  thinkingLevels?: ThinkingLevel[];
 }
 
 export interface ModelServiceConfig {
@@ -33,7 +48,8 @@ export interface Settings {
   chatFontSize: number;
   defaultWorkingDir: string | null;
   services: ModelServiceConfig[];
-  defaultModel: { serviceId: string; modelId: string } | null;
+  /** 新会话默认使用的模型；单个会话可在输入框的模型 chip 里覆盖（会话级选择优先） */
+  defaultModel: ModelRef | null;
   thinkingLevel: ThinkingLevel;
   /** 审批模式：default 高风险弹卡 / ai_review 交 AI 审批 / full 全部放行；由 Composer 的权限 chip 切换 */
   permissionMode: PermissionMode;

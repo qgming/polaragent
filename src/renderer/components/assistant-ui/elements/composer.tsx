@@ -182,7 +182,13 @@ export function ComposerCommandItem({
   active: boolean;
 }) {
   return (
-    <ComposerMenuItem active={active} {...props}>
+    <ComposerMenuItem
+      active={active}
+      // listbox 语义：菜单用 aria-activedescendant 指行，行必须能被指到（id 由调用方给）
+      role="option"
+      aria-selected={active}
+      {...props}
+    >
       <command.icon className="text-foreground/35 size-3.5 shrink-0" />
       <span className="font-medium">/{command.name}</span>
       <span className="text-foreground/45 flex-1 truncate text-start text-xs">

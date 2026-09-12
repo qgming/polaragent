@@ -1,11 +1,16 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
-import type { WireFormat } from "./common";
+import type { ModelRef, WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
 import type { PromptTemplateInfo } from "./prompts";
-import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
+import type {
+  LoadSessionMessagesOptions,
+  SessionMessagesPage,
+  SessionSummary,
+  SetSessionModelResult,
+} from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
 
@@ -37,6 +42,7 @@ export const IPC = {
     fork: "sessions:fork",
     pin: "sessions:pin",
     loadMessages: "sessions:load-messages",
+    setModel: "sessions:set-model",
   },
   projects: {
     list: "projects:list",
@@ -104,6 +110,10 @@ export interface IpcInvokeContract {
   [IPC.sessions.delete]: { request: { id: string }; response: undefined };
   [IPC.sessions.archive]: { request: { id: string; archived: boolean }; response: undefined };
   [IPC.sessions.pin]: { request: { id: string; pinned: boolean }; response: undefined };
+  [IPC.sessions.setModel]: {
+    request: { id: string; model: ModelRef | null };
+    response: SetSessionModelResult;
+  };
   [IPC.sessions.fork]: { request: { id: string; entryId: string }; response: SessionSummary };
   [IPC.sessions.loadMessages]: {
     request: { id: string; options?: LoadSessionMessagesOptions };

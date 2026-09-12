@@ -1,3 +1,5 @@
+import type { ModelRef } from "./common";
+
 export interface SessionSummary {
   id: string;
   title: string | null;
@@ -9,7 +11,23 @@ export interface SessionSummary {
   /** 置顶：置顶的会话只出现在侧栏「置顶」分组，不再出现在项目/最近分组 */
   pinned: boolean;
   messageCount: number;
+  /**
+   * 该会话自己指定的模型；null = 跟随设置里的默认模型。
+   *
+   * 与 cwd 同一个模式：会话级选择优先，没有就回落到全局默认。持久化在会话索引里，
+   * 所以重启后仍然生效。
+   */
+  model: ModelRef | null;
 }
+
+/** 切换会话模型失败的原因：界面据此给出具体说明，而不是笼统的「失败」 */
+export type SessionModelFailure =
+  /** 正在运行：中途换模型会让同一段对话里的工具调用/思考历史跨供应商，先停下再换 */
+  | "running"
+  /** 目标模型在当前设置里不存在（服务被删、模型被删，或压根没配） */
+  | "no-model";
+
+export type SetSessionModelResult = { ok: true } | { ok: false; reason: SessionModelFailure };
 
 export interface TextPart {
   type: "text";

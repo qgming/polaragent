@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  isTodoFinished,
   latestTodo,
   type TodoPanelMessage,
   type TodoPanelPart,
@@ -168,5 +169,50 @@ describe("latestTodo", () => {
       ),
     ]);
     expect(todo).toEqual({ items: [{ id: "1", text: "写面板", status: "done" }] });
+  });
+});
+
+describe("isTodoFinished（面板据此收起）", () => {
+  it("每条都 done 才算收尾", () => {
+    expect(isTodoFinished({ items: [{ id: "1", text: "a", status: "done" }] })).toBe(true);
+    expect(
+      isTodoFinished({
+        items: [
+          { id: "1", text: "a", status: "done" },
+          { id: "2", text: "b", status: "done" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("还剩 pending / active 就不算", () => {
+    expect(
+      isTodoFinished({
+        items: [
+          { id: "1", text: "a", status: "done" },
+          { id: "2", text: "b", status: "active" },
+        ],
+      }),
+    ).toBe(false);
+    expect(isTodoFinished({ items: [{ id: "1", text: "a", status: "pending" }] })).toBe(false);
+  });
+
+  it("failed 不算收尾：那一步崩了，面板要留着让人看见", () => {
+    expect(
+      isTodoFinished({
+        items: [
+          { id: "1", text: "a", status: "done" },
+          { id: "2", text: "b", status: "failed", reason: "测试没过" },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("空清单不算收尾：todos: [] 是「清空」而不是「做完」", () => {
+    expect(isTodoFinished({ items: [] })).toBe(false);
+  });
+
+  it("null 不算收尾（没有清单时面板另有别的理由不渲染）", () => {
+    expect(isTodoFinished(null)).toBe(false);
   });
 });

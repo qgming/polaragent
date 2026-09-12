@@ -78,6 +78,7 @@ describe("planRewrite", () => {
             archived: false,
             pinned: false,
             messageCount: 0,
+            model: null,
           },
           {
             id: "s2",
@@ -88,6 +89,7 @@ describe("planRewrite", () => {
             archived: false,
             pinned: false,
             messageCount: 0,
+            model: null,
           },
         ],
       });
@@ -131,6 +133,7 @@ describe("planRewrite", () => {
             archived: false,
             pinned: false,
             messageCount: 0,
+            model: null,
           },
           {
             id: "s2",
@@ -141,6 +144,7 @@ describe("planRewrite", () => {
             archived: false,
             pinned: false,
             messageCount: 0,
+            model: null,
           },
         ],
         activeSessionId: "s1",

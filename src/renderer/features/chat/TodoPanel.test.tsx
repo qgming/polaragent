@@ -55,6 +55,15 @@ const SECOND_DETAIL = {
   revision: 4,
 };
 
+/** 收尾后的清单：内核提示词要求任务做完时发一份每项都 done 的表 */
+const DONE_DETAIL = {
+  todos: [
+    { id: "1", text: "读一遍现有实现", status: "done" },
+    { id: "2", text: "写面板", status: "done" },
+  ],
+  revision: 5,
+};
+
 // 数组常量放在模块层：runtime 会按引用比较 messages，每次渲染给新数组会把它推进循环
 const NO_TODO: ChatMessage[] = [
   {
@@ -67,6 +76,7 @@ const NO_TODO: ChatMessage[] = [
 ];
 const ONE_TODO: ChatMessage[] = [todoMessage("m1", FIRST_DETAIL)];
 const TWO_TODO: ChatMessage[] = [todoMessage("m1", FIRST_DETAIL), todoMessage("m2", SECOND_DETAIL)];
+const ALL_DONE: ChatMessage[] = [todoMessage("m1", FIRST_DETAIL), todoMessage("m2", DONE_DETAIL)];
 
 /** 挂在与应用一致的位置：runtime provider 之下（应用里实际由 Composer 渲染，这里单独挂以便断言） */
 function Harness({ messages }: { messages: ChatMessage[] }) {
@@ -103,6 +113,19 @@ describe("TodoPanel", () => {
     expect(await screen.findByText("跑测试")).toBeTruthy();
     expect(screen.getByText("0/1 · rev 4")).toBeTruthy();
     expect(screen.queryByText("写面板")).toBeNull();
+  });
+
+  it("清单全部做完后整块消失（不再占输入框上方的位置）", () => {
+    const { container } = render(<Harness messages={ALL_DONE} />);
+    expect(container.querySelector('[data-slot="todo-panel"]')).toBeNull();
+    expect(screen.queryByText("待办清单")).toBeNull();
+    expect(screen.queryByText("写面板")).toBeNull();
+  });
+
+  it("还剩未完成项时照常显示（消失只发生在真正收尾之后）", async () => {
+    render(<Harness messages={TWO_TODO} />);
+    expect(await screen.findByText("跑测试")).toBeTruthy();
+    expect(screen.getByText("0/1 · rev 4")).toBeTruthy();
   });
 
   it("默认展开，点标题行可收起", async () => {

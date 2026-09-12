@@ -1,12 +1,17 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
-import type { WireFormat } from "./common";
+import type { ModelRef, WireFormat } from "./common";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
 import type { PromptTemplateInfo } from "./prompts";
-import type { LoadSessionMessagesOptions, SessionMessagesPage, SessionSummary } from "./session";
+import type {
+  LoadSessionMessagesOptions,
+  SessionMessagesPage,
+  SessionSummary,
+  SetSessionModelResult,
+} from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
 
@@ -35,6 +40,12 @@ export interface OintApi {
     setArchived(id: string, archived: boolean): Promise<void>;
     /** 置顶/取消置顶 */
     setPinned(id: string, pinned: boolean): Promise<void>;
+    /**
+     * 切换该会话使用的模型（null = 跟随设置里的默认模型）。
+     *
+     * 立即生效：下一次发送就用新模型，会话上下文完整保留。运行中会被拒绝（reason: "running"）。
+     */
+    setModel(id: string, model: ModelRef | null): Promise<SetSessionModelResult>;
     remove(id: string): Promise<void>;
     fork(id: string, entryId: string): Promise<SessionSummary>;
     loadMessages(id: string, options?: LoadSessionMessagesOptions): Promise<SessionMessagesPage>;

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
+import { ALL_THINKING_LEVELS, type ThinkingLevel } from "@/shared/contracts/common";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 
 /** safeStorage 的最小接口，便于在测试中注入假实现 */
@@ -131,11 +132,60 @@ function normalizeServices(raw: unknown, crypto: Crypto | null, warn: Warn): Mod
     name: asString(item.name),
     baseUrl: asString(item.baseUrl),
     wireFormat: item.wireFormat === "openai-responses" ? "openai-responses" : "openai-completions",
-    models: Array.isArray(item.models) ? (item.models as ModelServiceConfig["models"]) : [],
+    models: normalizeModelEntries(item.models),
     apiKey: decodeApiKey(item.apiKey, crypto, warn),
   }));
 }
 
+/** 只接受有限正数；其余（字符串、NaN、0、负数）视为未设置 */
+function asOptionalPositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * 校验思考档位：只留本仓五档、去重、按强弱顺序排好；空数组视为「没有信息」（undefined）。
+ *
+ * 顺序必须归一：档位列表要参与「就近降级」的比较，留着用户在磁盘上写乱的顺序会让结果
+ * 依赖文件内容而不是规则。
+ */
+function normalizeThinkingLevels(value: unknown): ThinkingLevel[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const levels = ALL_THINKING_LEVELS.filter((level) => value.includes(level));
+  return levels.length > 0 ? [...levels] : undefined;
+}
+
+/**
+ * 模型条目归一化。除了剔除非法的数字/布尔，还负责一次**字段迁移**：
+ *
+ * 旧版本用 `input: ("text"|"image")[]` 存模态，现在只留一个 `acceptsImages` 布尔。
+ * 老设置文件里没有 acceptsImages 但有 input 时，按「列表里有没有 image」还原 ——
+ * 不迁移的话用户之前勾的图片支持会在升级后静默丢失（变成「跟随目录」）。
+ */
+function normalizeModelEntries(raw: unknown): ModelServiceConfig["models"] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isRecord).map((item) => {
+    const entry: ModelServiceConfig["models"][number] = { id: asString(item.id) };
+    const name = typeof item.name === "string" ? item.name : "";
+    if (name !== "") entry.name = name;
+    const contextWindow = asOptionalPositiveNumber(item.contextWindow);
+    if (contextWindow !== undefined) entry.contextWindow = contextWindow;
+    const maxTokens = asOptionalPositiveNumber(item.maxTokens);
+    if (maxTokens !== undefined) entry.maxTokens = maxTokens;
+    if (typeof item.reasoning === "boolean") entry.reasoning = item.reasoning;
+
+    const acceptsImages =
+      typeof item.acceptsImages === "boolean"
+        ? item.acceptsImages
+        : Array.isArray(item.input)
+          ? item.input.includes("image")
+          : undefined;
+    if (acceptsImages !== undefined) entry.acceptsImages = acceptsImages;
+
+    const thinkingLevels = normalizeThinkingLevels(item.thinkingLevels);
+    if (thinkingLevels !== undefined) entry.thinkingLevels = thinkingLevels;
+    return entry;
+  });
+}
 /** 解密 apiKey：字符串视为旧格式明文；加密对象在无密钥环时置空并告警 */
 function decodeApiKey(raw: unknown, crypto: Crypto | null, warn: Warn): string {
   if (typeof raw === "string") return raw;

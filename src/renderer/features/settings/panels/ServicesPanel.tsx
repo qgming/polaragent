@@ -1,7 +1,7 @@
 import { Eye, EyeOff, Pencil, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { field, ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
 import { Badge } from "@/renderer/components/ui/badge";
 import { Button } from "@/renderer/components/ui/button";
@@ -16,11 +16,13 @@ import {
 import { Input } from "@/renderer/components/ui/input";
 import { Switch } from "@/renderer/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
+import { supportedLevels, thinkingLabelKey } from "@/renderer/features/chat/thinking";
 import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { WireFormat } from "@/shared/contracts/common";
+import { ALL_THINKING_LEVELS, type WireFormat } from "@/shared/contracts/common";
 import type { ModelCatalogEntry } from "@/shared/contracts/models";
 import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
+import { catalogPatch, hasManualCapability } from "../model-entry";
 import {
   PanelLoading,
   SELECT_NONE,
@@ -173,32 +175,35 @@ function ServiceEditor({
     }, 1500);
   };
 
-  /** 用目录条目强制覆盖模型元数据 */
+  /** 用目录条目覆盖模型元数据与能力（补丁规则见 model-entry.ts，带单测） */
   const applyCatalogEntry = (key: string, entry: ModelCatalogEntry) => {
-    patchModelByKey(key, {
-      name: entry.name,
-      contextWindow: entry.contextWindow,
-      maxTokens: entry.maxTokens,
-      reasoning: entry.reasoning,
-      input: [...entry.input],
-    });
+    patchModelByKey(key, catalogPatch(entry));
   };
 
-  /** 模型 ID 失焦：仅在元数据三项全空时自动匹配，失败静默 */
+  /**
+   * 模型 ID 失焦：只在「用户什么都还没填」时自动匹配，失败静默。
+   *
+   * 判定含能力项（hasManualCapability）：用户手动开过图片开关或改过档位之后再失焦，
+   * 不能被目录结果覆盖掉。
+   */
   const handleIdBlur = async (key: string) => {
     const model = draftRef.current.models.find((item) => item.key === key);
     if (!model) return;
     const id = model.id.trim();
     if (id === "") return;
-    const untouched = !model.name?.trim() && model.contextWindow == null && model.maxTokens == null;
-    if (!untouched) return;
+    const untouched = (candidate: DraftModel): boolean =>
+      !candidate.name?.trim() &&
+      candidate.contextWindow == null &&
+      candidate.maxTokens == null &&
+      !hasManualCapability(candidate);
+    if (!untouched(model)) return;
     try {
       const result = await window.oint.models.lookup(id);
       if (!result.ok || result.match === null) return;
-      // 等待期间用户可能已开始填写，确认仍为空再回填
+      // 等待期间用户可能已开始填写，确认仍然干净再回填
       const latest = draftRef.current.models.find((item) => item.key === key);
       if (!latest || latest.id.trim() !== id) return;
-      if (latest.name?.trim() || latest.contextWindow != null || latest.maxTokens != null) return;
+      if (!untouched(latest)) return;
       applyCatalogEntry(key, result.match);
       showNote(key, t("settings.catalogMatched"), "ok", true);
     } catch {
@@ -350,13 +355,29 @@ function ServiceEditor({
             </div>
 
             {draft.models.map((model, index) => {
-              const imageEnabled = model.input?.includes("image") ?? false;
               // 与主进程装配保持一致：达到/超过上下文窗口视为误填，不会传递给服务端
               const exceedsContext =
                 model.maxTokens !== undefined &&
                 model.contextWindow !== undefined &&
                 model.maxTokens >= model.contextWindow;
               const note = matchNotes[model.key];
+              /**
+               * 图片支持：没配过（undefined）时按「不支持」显示 —— 这与 pi-ai 的缺省
+               * （只列 text）以及真实请求行为一致，不假装支持。
+               */
+              const imageEnabled = model.acceptsImages ?? false;
+              /**
+               * 思考档位：列出的与勾选的都必须与「内核真的会发什么」一致。
+               *
+               * supportedLevels 里 `reasoning !== true → 只有关闭`，所以即便配置里残留
+               * ["off","high"] 也只会显示「关闭」—— 与输入框 chip 的列表严格同源。
+               */
+              const levelOptions = supportedLevels(model);
+              const levelValue = (model.thinkingLevels ?? levelOptions).filter((level) =>
+                levelOptions.includes(level),
+              );
+              const canRestore =
+                model.acceptsImages !== undefined || model.thinkingLevels !== undefined;
               return (
                 <div
                   key={model.key}
@@ -449,16 +470,73 @@ function ServiceEditor({
                         size="sm"
                         aria-label={t("settings.inputImage")}
                         checked={imageEnabled}
-                        onCheckedChange={(checked) =>
-                          patchModel(index, {
-                            input: checked
-                              ? [...new Set([...(model.input ?? ["text"]), "image" as const])]
-                              : (model.input ?? []).filter((kind) => kind !== "image"),
-                          })
-                        }
+                        onCheckedChange={(checked) => patchModel(index, { acceptsImages: checked })}
                       />
                       {t("settings.inputImage")}
                     </span>
+                  </div>
+                  {/*
+                    思考档位多选：默认勾选「这个模型支持哪些」，用户可改。
+                    形状取自 elements/reasoning-effort 的分段控件（那里是单选，这里是多选）。
+                  */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-foreground/45">
+                        {t("settings.thinkingLevels")}
+                      </span>
+                      {canRestore ? (
+                        <button
+                          type="button"
+                          className="text-[11px] text-foreground/40 underline underline-offset-2 hover:text-foreground/70"
+                          onClick={() =>
+                            patchModel(index, {
+                              acceptsImages: undefined,
+                              thinkingLevels: undefined,
+                            })
+                          }
+                        >
+                          {t("settings.restoreCatalogValues")}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className={cn(field, "flex gap-0.5 rounded-full p-0.5")}>
+                      {ALL_THINKING_LEVELS.map((value) => {
+                        const active = levelValue.includes(value);
+                        // 模型实际用不上的档位（例如非推理模型的全部非 off 档）不给点：
+                        // 点了会被 chip 与主进程双双忽略，看起来像「点了没反应」
+                        const selectable = levelOptions.includes(value);
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={active}
+                            disabled={!selectable}
+                            className={cn(
+                              "flex-1 rounded-full py-1 text-center text-xs font-medium whitespace-nowrap outline-none",
+                              "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
+                              !selectable && "cursor-not-allowed opacity-30",
+                              selectable && active
+                                ? "bg-background text-foreground"
+                                : selectable
+                                  ? "text-foreground/40 hover:bg-background/60"
+                                  : "text-foreground/40",
+                            )}
+                            onClick={() => {
+                              // 至少留一档：全不勾等于「没有可选档位」，chip 会空成一片
+                              const next = active
+                                ? levelValue.filter((item) => item !== value)
+                                : ALL_THINKING_LEVELS.filter(
+                                    (item) => item === value || levelValue.includes(item),
+                                  );
+                              if (next.length === 0) return;
+                              patchModel(index, { thinkingLevels: [...next] });
+                            }}
+                          >
+                            {t(thinkingLabelKey(value))}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   {note ? (
                     <p

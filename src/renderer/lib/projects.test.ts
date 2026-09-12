@@ -17,6 +17,8 @@ function session(overrides: Partial<SessionSummary> & { id: string }): SessionSu
     pinned: false,
     messageCount: 0,
     ...overrides,
+    // 展开之后再兜一次：契约要求 model 必填，而 overrides 里没给时会是 undefined
+    model: overrides.model ?? null,
   };
 }
 

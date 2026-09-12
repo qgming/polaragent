@@ -1,6 +1,7 @@
 // providers 装配单测：只做纯装配断言，不发起任何网络请求。
+import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
+import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 import { buildProviders, resolveModel, toPiModels } from "./providers";
 
 /** 构造最小 Settings，避免引入 Electron 相关依赖 */
@@ -48,7 +49,7 @@ describe("toPiModels", () => {
           contextWindow: 200000,
           maxTokens: 4096,
           reasoning: true,
-          input: ["text", "image"],
+          acceptsImages: true,
         },
         { id: "m2", reasoning: false },
       ],
@@ -191,5 +192,81 @@ describe("resolveModel", () => {
     expect(resolveModel(settings, { serviceId: "missing", modelId: "m1" })).toBeUndefined();
     expect(resolveModel(settings, { serviceId: "svc-a", modelId: "missing" })).toBeUndefined();
     expect(resolveModel(settings, { serviceId: "svc-bad", modelId: "m1" })).toBeUndefined();
+  });
+});
+
+describe("思考档位 → thinkingLevelMap", () => {
+  const service = (entry: ModelEntry): ModelServiceConfig => ({
+    id: "svc",
+    name: "服务",
+    baseUrl: "https://api.test/v1",
+    apiKey: "",
+    wireFormat: "openai-completions",
+    models: [entry],
+  });
+
+  it("配过的档位写 undefined（用 provider 默认），没勾的写 null（明确不支持）", () => {
+    const [model] = toPiModels(service({ id: "m", thinkingLevels: ["off", "medium", "high"] }));
+    expect(model?.thinkingLevelMap).toEqual({
+      off: undefined,
+      minimal: null,
+      low: null,
+      medium: undefined,
+      high: undefined,
+    });
+  });
+
+  it("没配过（undefined）→ 不生成 map，让内核按 provider 默认处理", () => {
+    expect(toPiModels(service({ id: "m" }))[0]?.thinkingLevelMap).toBeUndefined();
+  });
+
+  it("空数组同样视为「没有信息」→ 不生成 map", () => {
+    expect(
+      toPiModels(service({ id: "m", thinkingLevels: [] }))[0]?.thinkingLevelMap,
+    ).toBeUndefined();
+  });
+
+  it("acceptsImages → pi-ai 的 input 列表", () => {
+    expect(toPiModels(service({ id: "m", acceptsImages: true }))[0]?.input).toEqual([
+      "text",
+      "image",
+    ]);
+    expect(toPiModels(service({ id: "m" }))[0]?.input).toEqual(["text"]);
+    expect(toPiModels(service({ id: "m", acceptsImages: false }))[0]?.input).toEqual(["text"]);
+  });
+});
+
+describe("档位真的会作用于请求（用内核自己的 clamp 验证）", () => {
+  const service = (entry: ModelEntry): ModelServiceConfig => ({
+    id: "svc",
+    name: "服务",
+    baseUrl: "https://api.test/v1",
+    apiKey: "",
+    wireFormat: "openai-completions",
+    models: [entry],
+  });
+
+  it("用户只勾了 off/medium → 要 high 时内核降到 medium（而不是照发 high）", () => {
+    const [model] = toPiModels(
+      service({ id: "m", reasoning: true, thinkingLevels: ["off", "medium"] }),
+    );
+    expect(model).toBeDefined();
+    // 内核请求阶段就是这么取档位的（openai-completions 的 streamSimple 里是同一个调用）
+    expect(clampThinkingLevel(model as Model<Api>, "high")).toBe("medium");
+    expect(clampThinkingLevel(model as Model<Api>, "medium")).toBe("medium");
+    expect(clampThinkingLevel(model as Model<Api>, "low")).toBe("medium");
+    expect(clampThinkingLevel(model as Model<Api>, "off")).toBe("off");
+  });
+
+  it("非推理模型：任何档位都被降成 off（不会把 reasoning 发给不支持的服务）", () => {
+    const [model] = toPiModels(service({ id: "m", reasoning: false, thinkingLevels: ["off"] }));
+    expect(clampThinkingLevel(model as Model<Api>, "high")).toBe("off");
+  });
+
+  it("没配档位表的推理模型：五档都照原样（交给 provider 默认）", () => {
+    const [model] = toPiModels(service({ id: "m", reasoning: true }));
+    expect(model?.thinkingLevelMap).toBeUndefined();
+    expect(clampThinkingLevel(model as Model<Api>, "high")).toBe("high");
+    expect(clampThinkingLevel(model as Model<Api>, "minimal")).toBe("minimal");
   });
 });

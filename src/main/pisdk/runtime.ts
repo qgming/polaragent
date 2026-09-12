@@ -19,7 +19,14 @@ import {
   type PromptTemplate,
   type Skill,
 } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Usage } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  clampThinkingLevel,
+  type ImageContent,
+  type Model,
+  type MutableModels,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import { dataDir } from "@/main/app/paths";
 import type {
   ChatEvent,
@@ -27,14 +34,17 @@ import type {
   ChatSendOptions,
   QueuedMessage,
 } from "@/shared/contracts/chat";
+import type { ModelRef } from "@/shared/contracts/common";
 import type {
   ChatMessageUsage,
   ChatPart,
   ReasoningPart,
+  SetSessionModelResult,
   TextPart,
   ToolCallPart,
 } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
+import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import {
@@ -92,6 +102,14 @@ export interface ChatRuntime {
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(sessionId: string, instructions?: string): Promise<void>;
   isRunning(sessionId: string): boolean;
+  /**
+   * 切换会话使用的模型（null = 跟随设置里的默认模型）。
+   *
+   * 热切换：直接把新模型写到 lane 的配置上（内核 `lane.setModel`），**不重建 harness、
+   * 不动会话句柄** —— 于是同一段对话的上下文完整保留，下一条消息就用新模型。
+   * 运行中拒绝（同一次运行里换模型会让工具调用/思考历史跨供应商）。
+   */
+  setModel(sessionId: string, model: ModelRef | null): Promise<SetSessionModelResult>;
   closeSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -120,10 +138,33 @@ interface ToolCallPartRef {
 
 interface SessionRuntime {
   sessionId: string;
+  /**
+   * 这个会话实际在用的模型引用（会话绑定优先，否则默认模型）。
+   *
+   * 与 `model` 一起维护：`model` 是给内核/思考档位 clamp 用的 pi-ai 对象，`modelRef` 是它的
+   * 来源坐标 —— 切模型时两者一起换，`applyModel` 也据此判断「是否真的变了」。
+   * null = 当前设置里一个可用模型都没有（此时发送会报「请先配置模型服务」）。
+   */
+  modelRef: ModelRef | null;
+  /**
+   * harness 创建时的模型注册表快照。
+   *
+   * 请求阶段只查这份快照（内核 `prepareGeneration` 用 lane.models.getModel），所以切换模型前
+   * 必须在这里先查一遍：设置里新加的服务/模型还没进这份注册表，写进去只会让下一次运行以
+   * `model_unavailable` 失败。
+   */
+  models: MutableModels;
   session: SessionHandle;
   harness: AgentHarness<ExecutionToolContext>;
   lane: AgentLane;
   env: ExecutionEnv;
+  /**
+   * 本会话真正在用的模型（会话绑定优先，之后随 `setModel` 热切换）。
+   *
+   * 留一份在这里是为了定思考档位时按**这个模型**的支持范围降级 —— 若改用「当前设置里的
+   * 默认模型」，用户切了模型就会出现「档位按 A 算、请求其实发给 B」。
+   */
+  model: Model<Api>;
   rules: PermissionRuleStore;
   running: boolean;
   /** 本次运行的本地 runId，保证 run-started 与 run-ended 对应 */
@@ -181,6 +222,34 @@ function toErrorText(error: unknown): string {
 
 /** 我们只用一条 lane：pi 侧固定叫 main */
 const LANE_NAME = "main";
+
+/**
+ * lane 配置里**实际**在用的模型引用；读不出来（模型已从注册表消失）返回 null。
+ *
+ * 为什么需要单独读它：内核在 lane 已有存储配置时完全忽略 harness 的 seed
+ * （harness.js 的 `stored.kind === "lane"` 分支），所以「我们期望用哪个」与「lane 里存的是哪个」
+ * 是两件事。只有拿**实际值**做基准，才能发现需要写回的情况 —— 否则「跟随默认」的会话在用户
+ * 改了默认模型之后会一直用旧模型，且没有任何地方会去纠正。
+ */
+export async function readLaneModelRef(lane: AgentLane): Promise<ModelRef | null> {
+  const model = await lane.getModel(BACKGROUND_CONTEXT);
+  if (!model) return null;
+  return { serviceId: String(model.provider), modelId: model.id };
+}
+
+/**
+ * 是否需要把模型写回 lane。
+ *
+ * 引用不一致、或 lane 里压根解析不出模型（存储的是已删除的服务）时都要写：
+ * 后一种情况若不写，之后每次运行都会以 `model_unavailable` 失败。
+ */
+export function needsModelWrite(laneRef: ModelRef | null, desired: ModelRef): boolean {
+  return (
+    laneRef === null ||
+    laneRef.serviceId !== desired.serviceId ||
+    laneRef.modelId !== desired.modelId
+  );
+}
 
 /**
  * pi 的 LaneBusy：这条 lane 里已经压着一个活跃操作，新的 prompt / compact / navigate 都会被拒收。
@@ -874,6 +943,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         onAttempt: () => {
           runtime.titleAttempted = true;
         },
+        // 命名用的是这个会话的对话，就该用这个会话的模型
+        // 命名用的是这个会话的对话，就该用这个会话的模型（null = 没配模型，交给生成器回落）
+        ...(runtime.modelRef === null ? {} : { modelRef: runtime.modelRef }),
       });
       if (title === null) return;
       emitSafe(runtime.sessionId, { type: "session-titled", sessionId: runtime.sessionId, title });
@@ -957,6 +1029,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       risk,
       // 交给 AI 预审：它需要工作目录来判断操作是否越出项目范围
       workingDir: runtime.env.cwd,
+      // 审批用「这个会话正在用的模型」：会话级绑定过模型时不该拿默认模型去审
+      ...(runtime.modelRef === null ? {} : { modelRef: runtime.modelRef }),
     });
     if (decision === "deny") {
       if (ref) {
@@ -1000,8 +1074,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     let laneRef: AgentLane | undefined;
 
     const { models } = buildProviders(settings);
-    const model = resolveModel(settings, settings.defaultModel);
-    if (!model || models.getProviders().length === 0) {
+    // 模型：会话自己绑定的优先，否则用设置里的默认模型。绑定失效（服务/模型被删）时
+    // resolveEffectiveModelRef 会自动回落默认，不至于让一个旧会话打不开。
+    const boundModel = await deps.sessionStore.readModel(sessionId);
+    const modelRef = resolveEffectiveModelRef(settings, boundModel);
+    const model = resolveModel(settings, modelRef);
+    if (!model || modelRef === null || models.getProviders().length === 0) {
       throw new Error("请先在设置中配置模型服务");
     }
 
@@ -1034,11 +1112,27 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 必须在返回 runtime 之前恢复：否则重启后的第一次 todo 调用会以空表为基准覆盖用户清单
     await restoreTodoState(lane, todo);
 
+    /**
+     * 用 **lane 实际恢复出来的模型**初始化 runtime 的模型视图，而不是「我们期望的那个值」。
+     *
+     * 这一步是必需的：内核在 lane 已有存储配置时完全忽略 seed（harness.js 的
+     * `stored.kind === "lane"` 分支），所以恢复出来的可能与我们刚解析的期望值不同 ——
+     * 例如「跟随默认」的会话在上次运行时存的是旧的默认模型，之后用户在设置里换了默认。
+     * 若这里写期望值，下面的 applyModel 会以为「已经一致」而永不写回，请求就一直发给旧模型；
+     * 同理，存储里留着已删除的服务时，模型对象解析不出来（undefined），也必须让它走写回路径。
+     */
+    const laneModel = await lane.getModel(BACKGROUND_CONTEXT);
+    const currentRef = await readLaneModelRef(lane);
+    const currentModel: Model<Api> = laneModel ?? model;
+
     const runtime: SessionRuntime = {
       sessionId,
       session: opened.session,
       harness: created.harness,
       lane,
+      model: currentModel,
+      modelRef: currentRef,
+      models,
       env,
       rules: getRuleStore(),
       running: false,
@@ -1067,6 +1161,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (created.open.some((operation) => operation.lane === LANE_NAME)) {
       await abortStaleOperation(lane, sessionId);
     }
+    // 让 lane 的模型与我们这边的判定对齐：内核在 lane 已有存储配置时忽略 seed，
+    // 所以「跟随默认」的会话换了默认模型、或存储里留着已删除的服务，都要在这里纠正
+    await applyModel(runtime, settings);
     registerEvents(runtime);
     return runtime;
   }
@@ -1118,6 +1215,76 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSafe(runtime.sessionId, { type: "run-ended", runId, reason: "failed" });
   }
 
+  /**
+   * 把「这个会话该用哪个模型」落到 lane 上（会话绑定优先，否则设置里的默认模型）。
+   *
+   * 为什么不能只靠 harness 的 seed：内核在 lane **已有存储配置**时直接恢复那份配置、完全忽略
+   * seed（harness.js 的 `stored.kind === "lane"` 分支）。也就是说 seed 只在会话第一次附着时
+   * 生效 —— 于是「跟随默认模型」在会话第二次打开后就不再跟着默认走了，用户改了默认模型也
+   * 不会传导到这些会话。所以每次发送前用我们这边的判定对齐一次。
+   *
+   * 已经一致时不写：setConfiguration 会往会话里落一条配置更新，没必要每条消息写一次。
+   */
+  async function applyModel(runtime: SessionRuntime, settings: Settings): Promise<void> {
+    const bound = await deps.sessionStore.readModel(runtime.sessionId);
+    const ref = resolveEffectiveModelRef(settings, bound);
+    // 一个可用模型都没有：保持现状，让发送阶段照常报错（这里不该吞掉「请先配置模型服务」）
+    if (ref === null) return;
+    const model = resolveModel(settings, ref);
+    if (!model) return;
+    // 请求阶段只查 runtime 创建时的注册表：里面没有的组合写进去必然运行失败，宁可不动
+    if (!runtime.models.getModel(ref.serviceId, ref.modelId)) {
+      console.warn(`模型 ${ref.serviceId}/${ref.modelId} 不在本会话的模型注册表里，跳过切换`);
+      return;
+    }
+
+    // 与 lane 里的**实际**配置比较（不是拿「我们上次写的那个」比）：重启后 lane 恢复出来的是
+    // 存储里的旧模型，只有以实际值为基准才能发现差异。规则见 needsModelWrite 的注释
+    if (!needsModelWrite(runtime.modelRef, ref)) {
+      // 引用没变，但 Model 对象可能因设置改动（窗口、能力开关）而更新：跟着换掉即可
+      runtime.model = model;
+      return;
+    }
+
+    try {
+      // 内核只记 {provider, modelId}，真正的模型对象由 harness 的 models 注册表解析
+      await runtime.lane.setModel(
+        { provider: ref.serviceId, modelId: ref.modelId },
+        BACKGROUND_CONTEXT,
+      );
+    } catch (error) {
+      console.warn(`应用会话模型失败（沿用当前值）：${toErrorText(error)}`);
+      return;
+    }
+    runtime.modelRef = ref;
+    runtime.model = model;
+  }
+
+  /**
+   * 把设置里的思考档位应用到 lane —— 每条消息前一次，改完设置下一条即生效。
+   *
+   * 为什么需要这一步：harness 创建时就把 thinkingLevel 定进了配置，之后内核每次请求都从
+   * 那份配置取值；不在发送前刷新，用户在设置里改的档位要等重启才起作用（而且 clamp 过的
+   * 结果写不回设置 —— 设置里的档位是「用户想要什么」，lane 上的是「这个模型实际能用什么」）。
+   *
+   * 就低不就地取档由内核 clampThinkingLevel 决定（优先往高找、再往低找），与请求阶段的
+   * clamp 完全同一套规则，不会出现「界面显示 A、请求发的是 B」。
+   *
+   * 失败只告警不中断：档位调不动不该让消息发不出去。
+   */
+  async function applyThinkingLevel(runtime: SessionRuntime, settings: Settings): Promise<void> {
+    try {
+      const desired = clampThinkingLevel(runtime.model, settings.thinkingLevel);
+      const current = await runtime.lane.getThinkingLevel(BACKGROUND_CONTEXT);
+      if (current === desired) return;
+      await runtime.lane.setThinkingLevel(desired, BACKGROUND_CONTEXT);
+    } catch (error) {
+      console.warn(
+        `应用思考档位失败（沿用当前值）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async function send(
     sessionId: string,
     text: string,
@@ -1131,6 +1298,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       await queue(sessionId, text, "followUp");
       return;
     }
+
+    // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
+    // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
+    const settings = await deps.getSettings();
+    await applyModel(runtime, settings);
+    await applyThinkingLevel(runtime, settings);
 
     runtime.running = true;
     runtime.runEnded = false;
@@ -1187,6 +1360,68 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.pendingUserMessageId = undefined;
       emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     }
+  }
+
+  /** lane 上是否压着没收尾的操作（压缩、导航等不经过 running 标记） */
+  async function hasActiveOperation(runtime: SessionRuntime): Promise<boolean> {
+    try {
+      const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
+      return info.current !== null;
+    } catch (error) {
+      // 读不出来按「没有」处理：宁可放行也不要因为一次读取失败把功能锁死
+      console.warn(`读取 lane 执行状态失败：${toErrorText(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 切换会话模型（热切换）。
+   *
+   * 只改 lane 的模型配置，不重建 harness、不动会话句柄 —— 上下文因此完整保留，
+   * 下一条消息就用新模型。这与「改全局默认模型」是两件事：那个只影响新会话。
+   *
+   * 这些情况不切换：
+   * - 会话正在运行（或 runtime 正在创建）→ running：同一次运行里换模型会让工具调用与
+   *   思考历史跨供应商，而「创建中」只落盘会让这一次发送仍用旧绑定；
+   * - lane 上压着压缩 / 导航 → running：那次操作与它启动时的配置绑定，中途改配置对不上；
+   * - 目标模型在设置里不存在，或不在本会话的模型注册表里 → no-model；
+   * - 会话还没建 runtime → 只落盘绑定，等第一次发送时按绑定建起来。
+   */
+  async function setModel(
+    sessionId: string,
+    model: ModelRef | null,
+  ): Promise<SetSessionModelResult> {
+    if (runtimes.get(sessionId)?.running === true || creations.has(sessionId)) {
+      return { ok: false, reason: "running" };
+    }
+
+    const settings = await deps.getSettings();
+    // 校验走与创建时同一套判定：null 表示「跟随默认」，于是解析到默认模型
+    const effective = resolveEffectiveModelRef(settings, model);
+    if (effective === null || !resolveModel(settings, effective)) {
+      return { ok: false, reason: "no-model" };
+    }
+
+    const runtime = runtimes.get(sessionId);
+    if (runtime) {
+      // 请求阶段只查 runtime 创建时的注册表快照：新加的服务/模型还没进去，切过去必然运行失败
+      if (!runtime.models.getModel(effective.serviceId, effective.modelId)) {
+        return { ok: false, reason: "no-model" };
+      }
+      if (await hasActiveOperation(runtime)) return { ok: false, reason: "running" };
+    }
+
+    // 落盘的是**用户的绑定选择**（null = 跟随默认），而不是上面解析出来的 effective ——
+    // 否则「跟随默认」会被固化成当时那个具体模型，以后改默认模型就跟不上了。
+    await deps.sessionStore.setModel(sessionId, model);
+
+    if (runtime) {
+      // 绑定已落盘，applyModel 会读到它（一条代码路径决定「用哪个模型」）
+      await applyModel(runtime, settings);
+      // 新模型支持的档位可能不同：立刻按它对齐一次，免得等到下一条消息才纠正
+      await applyThinkingLevel(runtime, settings);
+    }
+    return { ok: true };
   }
 
   async function stop(sessionId: string): Promise<void> {
@@ -1287,13 +1522,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
     if (defaultRuntime === api) defaultRuntime = null;
   }
-
   const api: ChatRuntime = {
     send,
     stop,
     queue,
     compact,
     isRunning,
+    setModel,
     closeSession,
     dispose,
   };

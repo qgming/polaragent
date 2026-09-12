@@ -2,15 +2,19 @@
 // 模型固定取默认路由模型（settings.defaultModel）；提示词是内置英文模板，没有用户自定义入口。
 
 import type { MutableModels } from "@earendil-works/pi-ai";
-import type { LanguageCode } from "@/shared/contracts/common";
+import type { LanguageCode, ModelRef } from "@/shared/contracts/common";
 import type { Settings } from "@/shared/contracts/settings";
 import { AI_APPROVAL_SYSTEM_PROMPT, buildAiApprovalPrompt } from "@/shared/prompts/ai-approval";
 import { buildProviders, resolveModel } from "./providers";
-
 export interface AiApproverInput {
   toolName: string;
   argsText: string;
   workingDir?: string;
+  /**
+   * 本会话实际使用的模型引用。缺省时才回落到设置里的默认模型 ——
+   * 审批该用「这个会话正在用的模型」，否则会话绑定过模型时会话跑 A、审批跑 B。
+   */
+  modelRef?: ModelRef;
 }
 
 export interface AiApproverResult {
@@ -145,7 +149,8 @@ export function createAiApprover(deps: {
     }
 
     const reasons = REASONS[settings.language];
-    const model = resolveModel(settings, settings.defaultModel);
+    // 优先用会话实际使用的模型；只有调用方没给时才回落到设置里的默认模型
+    const model = resolveModel(settings, input.modelRef ?? settings.defaultModel);
     // 安全侧默认拒绝：没有可用模型时不放行
     if (!model) return { allow: false, reason: reasons.noModel };
 

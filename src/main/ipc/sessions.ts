@@ -1,4 +1,6 @@
+import { getChatRuntime } from "@/main/pisdk/runtime";
 import { getSessionStore } from "@/main/pisdk/session-store";
+import type { ModelRef } from "@/shared/contracts/common";
 import { IPC } from "@/shared/contracts/ipc";
 import type { LoadSessionMessagesOptions } from "@/shared/contracts/session";
 import { handle } from "./handler";
@@ -23,6 +25,13 @@ export function registerSessionsIpc(): void {
   );
   handle(IPC.sessions.fork, "创建分支会话", (request: { id: string; entryId: string }) =>
     store.fork(request.id, request.entryId),
+  );
+  /**
+   * 切换会话模型：走聊天运行时（要热改 lane 配置），不归会话存储管。
+   * 运行时惰性获取 —— 注册早于 bootstrap 时不该在这里报未初始化。
+   */
+  handle(IPC.sessions.setModel, "切换会话模型", (request: { id: string; model: ModelRef | null }) =>
+    getChatRuntime().setModel(request.id, request.model),
   );
   handle(
     IPC.sessions.loadMessages,

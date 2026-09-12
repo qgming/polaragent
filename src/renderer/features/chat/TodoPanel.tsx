@@ -74,6 +74,21 @@ export function latestTodo(messages: readonly TodoPanelMessage[]): TodoSnapshot 
   return null;
 }
 
+/**
+ * 这份清单是不是已经收尾了：至少有一条、且每一条都是 done。
+ *
+ * 为什么空清单不算收尾：`todos: []` 是合法的「清空」调用（内核提示词也把它当作一种收尾写法），
+ * 但它没有「做完」的语义，当作收尾会把一次清空误判成任务完成。
+ *
+ * 为什么 failed 不算：failed 是终态却不是成功，留着面板让用户看见哪一步崩了，比让它消失有用。
+ */
+export function isTodoFinished(
+  snapshot: TodoSnapshot | null,
+): snapshot is { items: [TodoItem, ...TodoItem[]]; revision?: number } {
+  if (snapshot === null) return false;
+  return snapshot.items.length > 0 && snapshot.items.every((item) => item.status === "done");
+}
+
 /** 展开后的内容区上限：清单一长就内部滚动，不把输入区顶上去 */
 const PANEL_CONTENT = "max-h-[min(16rem,36vh)]";
 
@@ -104,8 +119,9 @@ export function TodoPanel() {
   // 进度放在收起行的右端（清单自带的标题行已关掉，避免两个标题）
   const done = todo === null ? 0 : todo.items.filter((item) => item.status === "done").length;
 
-  // 没有待办就整块不渲染：空壳会在输入框上白占一行，也没有信息量
-  if (todo === null) return null;
+  // 整块不渲染的两种情况：压根没有待办调用（空壳白占一行、没有信息量），以及清单已经
+  // 全部做完 —— 「做完」正是最该把输入框上方的空间腾出来的时候
+  if (todo === null || isTodoFinished(todo)) return null;
 
   return (
     <div

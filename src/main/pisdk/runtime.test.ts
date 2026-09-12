@@ -17,8 +17,10 @@ import {
   getChatRuntime,
   isLaneBusy,
   loadAgentResources,
+  needsModelWrite,
   type PendingEntry,
   pairEntryWithMessage,
+  readLaneModelRef,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
@@ -377,5 +379,50 @@ describe("isLaneBusy", () => {
     expect(isLaneBusy({ _tag: "InvalidMessage" })).toBe(false);
     expect(isLaneBusy(null)).toBe(false);
     expect(isLaneBusy("LaneBusy")).toBe(false);
+  });
+
+  describe("readLaneModelRef / needsModelWrite（模型是否要写回 lane）", () => {
+    it("lane 里解析得出模型时取出它的坐标", async () => {
+      const lane = {
+        getModel: async () => ({ id: "m2", provider: "svc-b" }),
+      } as unknown as Parameters<typeof readLaneModelRef>[0];
+      await expect(readLaneModelRef(lane)).resolves.toEqual({
+        serviceId: "svc-b",
+        modelId: "m2",
+      });
+    });
+
+    it("lane 里解析不出模型（存储的是已删除的服务）→ null", async () => {
+      const lane = {
+        getModel: async () => undefined,
+      } as unknown as Parameters<typeof readLaneModelRef>[0];
+      await expect(readLaneModelRef(lane)).resolves.toBeNull();
+    });
+
+    it("与期望一致时不写（避免每条消息都落一次配置更新）", () => {
+      expect(
+        needsModelWrite(
+          { serviceId: "svc-a", modelId: "m1" },
+          { serviceId: "svc-a", modelId: "m1" },
+        ),
+      ).toBe(false);
+    });
+
+    it("引用不同、或 lane 里读不出模型时必须写", () => {
+      expect(
+        needsModelWrite(
+          { serviceId: "svc-a", modelId: "m1" },
+          { serviceId: "svc-a", modelId: "m2" },
+        ),
+      ).toBe(true);
+      expect(
+        needsModelWrite(
+          { serviceId: "svc-a", modelId: "m1" },
+          { serviceId: "svc-b", modelId: "m1" },
+        ),
+      ).toBe(true);
+      // null = lane 里的模型已不可解析：不写的话之后每次运行都会 model_unavailable
+      expect(needsModelWrite(null, { serviceId: "svc-a", modelId: "m1" })).toBe(true);
+    });
   });
 });

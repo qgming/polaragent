@@ -1,9 +1,8 @@
 {
-  "composer.tsx": "已批准路线 P2-1（命令注册表 + 输入框 slash 触发）的前置 UI，尚未排期",
   "agent-plan.tsx": "P2-2 计划模式配套 UI，尚未排期",
   "subagent-list.tsx": "P2-3 子代理配套 UI，尚未排期",
   "permission-grant.tsx": "P2-3 MCP「按 server 批量授权」的 UI，规则模型尚未设计",
-  "prompt-library.tsx": "提示模板的对话内入口，依赖 slash 菜单",
+  "prompt-library.tsx": "提示模板的对话内可搜索面板；斜杠菜单已接线，这个面板仍未排期",
   "message-timing.aui.tsx": "runtime 未提供 timing 元数据，接上也是恒空",
   "message-timing.tsx": "runtime 未提供 timing 元数据，接上也是恒空",
   "cost-meter.tsx": "缺价格目录与用量聚合；自定义端点 cost 恒 0",

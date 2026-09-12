@@ -7,6 +7,7 @@ import type {
   ApprovalRequest,
 } from "@/shared/contracts/approval";
 import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
+import type { ModelRef } from "@/shared/contracts/common";
 import type { Settings } from "@/shared/contracts/settings";
 import type { AiApprover, AiApproverResult } from "./ai-approver";
 
@@ -28,6 +29,8 @@ export interface ApprovalService {
     risk: "low" | "high";
     /** 会话工作目录：AI 预审据此判断操作是否越出项目范围 */
     workingDir?: string;
+    /** 会话实际使用的模型：AI 预审用它，缺省时审批器回落默认模型 */
+    modelRef?: ModelRef;
   }): Promise<ApprovalDecision>;
   /** 渲染进程回传决定 */
   respond(id: string, decision: ApprovalDecision, note?: string): void;
@@ -114,6 +117,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
         toolName: entry.request.toolName,
         argsText: entry.request.argsText,
         ...(entry.workingDir === undefined ? {} : { workingDir: entry.workingDir }),
+        ...(entry.request.modelRef === undefined ? {} : { modelRef: entry.request.modelRef }),
       });
     } catch (error) {
       handBack(entry, `AI 审批失败：${String(error)}`);
@@ -143,6 +147,8 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     argsText: string;
     risk: "low" | "high";
     workingDir?: string;
+    /** 会话实际使用的模型；AI 预审据此选模型，缺省时审批器回落默认模型 */
+    modelRef?: ModelRef;
   }): Promise<ApprovalDecision> {
     const duplicate = findPending(input.toolCallId);
     if (duplicate) return duplicate.promise;
@@ -181,6 +187,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
       promise,
       resolve: resolvePromise,
       ...(input.workingDir === undefined ? {} : { workingDir: input.workingDir }),
+      ...(input.modelRef === undefined ? {} : { modelRef: input.modelRef }),
     };
     pendingById.set(request.id, entry);
     pendingByToolCall.set(input.toolCallId, request.id);

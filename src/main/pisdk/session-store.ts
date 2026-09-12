@@ -13,6 +13,7 @@ import {
   SqliteSessionRepo,
 } from "@earendil-works/pi-session-backend-sqlite-node";
 import { dataDir } from "@/main/app/paths";
+import type { ModelRef } from "@/shared/contracts/common";
 import type { ChatMessage, SessionSummary } from "@/shared/contracts/session";
 import { mapEntriesToMessages } from "./message-mapper";
 import { createSessionsIndex, type SessionIndexEntry } from "./sessions-index";
@@ -54,6 +55,10 @@ export interface SessionStore {
   setPinned(id: string, pinned: boolean): Promise<void>;
   /** 会话绑定的工作目录（索引 cwd）；未绑定返回 null */
   readCwd(id: string): Promise<string | null>;
+  /** 会话自己指定的模型；未绑定返回 null（调用方据此回落到默认模型） */
+  readModel(id: string): Promise<ModelRef | null>;
+  /** 写会话级模型绑定；null 表示清除绑定（回到「跟随默认」） */
+  setModel(id: string, model: ModelRef | null): Promise<void>;
   /** 物理删除 sqlite 文件并清索引 */
   remove(id: string): Promise<void>;
   /** 在指定条目处创建分支会话（scope:"branch", position:"at"） */
@@ -92,7 +97,18 @@ function toSummary(meta: SessionMetadata, entry?: SessionIndexEntry): SessionSum
     archived: entry?.archived ?? false,
     pinned: entry?.pinned ?? false,
     messageCount: entry?.messageCount ?? 0,
+    model: normalizeModelRef(entry?.model),
   };
+}
+
+/** 索引里的 model 是外部 JSON，可能被手改坏：只认完整的 {serviceId, modelId} 字符串对 */
+function normalizeModelRef(raw: unknown): ModelRef | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  const serviceId = typeof record.serviceId === "string" ? record.serviceId.trim() : "";
+  const modelId = typeof record.modelId === "string" ? record.modelId.trim() : "";
+  if (serviceId === "" || modelId === "") return null;
+  return { serviceId, modelId };
 }
 
 /** 创建会话存储；测试可注入临时目录与自定义 repo（如控制时钟） */
@@ -216,6 +232,18 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     return cwd.trim() === "" ? null : cwd;
   }
 
+  async function readModel(id: string): Promise<ModelRef | null> {
+    return normalizeModelRef((await index.read())[id]?.model);
+  }
+
+  /**
+   * 写会话级模型绑定。null 会作为显式值写进索引（覆盖旧的绑定）——
+   * 「取消绑定、回到跟随默认」必须能落盘，否则重启后旧的绑定又回来了。
+   */
+  async function setModel(id: string, model: ModelRef | null): Promise<void> {
+    await updateIndex(id, { model });
+  }
+
   async function setArchived(id: string, archived: boolean): Promise<void> {
     await updateIndex(id, { archived });
   }
@@ -307,6 +335,9 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
         ...(sourceTitle ? { title: `${sourceTitle} · 分支` } : {}),
         updatedAt: Date.now(),
         messageCount: stats.messageCount,
+        // 继承源会话的模型绑定：分支接着同一段（由那个模型产生的）上下文，
+        // 让它悄悄改用默认模型与「分支」的语义不符
+        model: (await index.read())[id]?.model ?? null,
       };
       await updateIndex(forked.metadata.id, entry);
       return toSummary(forked.metadata, entry);
@@ -375,6 +406,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     setArchived,
     setPinned,
     readCwd,
+    readModel,
+    setModel,
     remove,
     fork,
     loadMessages,

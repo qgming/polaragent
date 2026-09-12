@@ -7,11 +7,38 @@ import {
 } from "@assistant-ui/react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo } from "react";
+import { buildSlashCommands, expandSlashInput } from "@/renderer/features/chat/slash-commands";
+import { resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts";
 import { startEventBridge } from "./event-bridge";
 import { appendMessageToImages, appendMessageToText, toThreadMessage } from "./message-converter";
+
+/**
+ * 发送前把斜杠命令展开成真正发给模型的内容（提示模板 → 替换占位符后的正文）。
+ *
+ * 为什么落在这里而不是 Composer：库的发送主路径是 ComposerPrimitive.Send → 本 provider 的
+ * onNew，Composer 想拦它就得放弃 Send primitive 自己重写一遍发送；而 onNew 是**唯一的**
+ * 收口，两条发送路径（发送键、键盘回车）都会经过它。
+ *
+ * workingDir 与菜单取数时同源（见 resolveWorkingDir）—— 否则项目级模板会「菜单里看得见、
+ * 发送时认不出来」。只在文本真的以斜杠开头时才去问两个列表：绝大多数消息不付这次 IPC。
+ * 读不到清单就原样发送：宁可不展开，也不能吞掉用户输入。
+ */
+async function expandSlashMessage(text: string, workingDir: string | undefined): Promise<string> {
+  if (!text.startsWith("/")) return text;
+  try {
+    const [skills, templates] = await Promise.all([
+      window.oint.skills.list(workingDir),
+      window.oint.prompts.list(workingDir),
+    ]);
+    return expandSlashInput(text, buildSlashCommands(skills, templates));
+  } catch {
+    return text;
+  }
+}
 
 /** 稳定的空数组常量：zustand v5 基于 useSyncExternalStore，
  *  选择器每次返回新引用会被判定为快照变化，从而触发无限重渲染（React #185）。 */
@@ -33,6 +60,15 @@ export function OintRuntimeProvider({
   );
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
+  /**
+   * 当前会话的工作目录。只订阅 cwd 这一个值（不是整个 sessions 数组）：选择器返回字符串，
+   * zustand 的 Object.is 比较才稳，切会话不会连带重渲染整棵 runtime 树。
+   */
+  const sessionCwd = useChatStore(
+    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.cwd,
+  );
+  const defaultWorkingDir = useSettingsStore((state) => state.settings?.defaultWorkingDir);
+  const workingDir = resolveWorkingDir(sessionCwd, defaultWorkingDir);
 
   // 主进程事件 → store reducer（卸载时取消订阅）
   useEffect(() => {
@@ -41,11 +77,14 @@ export function OintRuntimeProvider({
     });
     return unsubscribe;
   }, []);
-  const onNew = useCallback(async (message: AppendMessage) => {
-    const text = appendMessageToText(message);
-    const images = appendMessageToImages(message);
-    await useChatStore.getState().send(text, images);
-  }, []);
+  const onNew = useCallback(
+    async (message: AppendMessage) => {
+      const text = await expandSlashMessage(appendMessageToText(message), workingDir);
+      const images = appendMessageToImages(message);
+      await useChatStore.getState().send(text, images);
+    },
+    [workingDir],
+  );
 
   const onCancel = useCallback(async () => {
     await useChatStore.getState().stop();

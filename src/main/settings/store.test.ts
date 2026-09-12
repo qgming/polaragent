@@ -198,3 +198,89 @@ describe("审批模式与语言", () => {
     expect(raw).not.toHaveProperty("aiTitlePrompt");
   });
 });
+
+describe("模型条目的校验与迁移", () => {
+  /** 写一份只含必要结构的设置文件，services 用给定的模型条目 */
+  async function loadWithModels(models: unknown[]): Promise<Settings> {
+    await writeRawSettings({
+      ...DEFAULT_SETTINGS,
+      services: [
+        {
+          id: "svc-1",
+          name: "服务",
+          baseUrl: "https://api.test/v1",
+          apiKey: "sk-plain",
+          wireFormat: "openai-completions",
+          models,
+        },
+      ],
+    });
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    return store.load();
+  }
+
+  it("旧版本的 input 列表迁移成 acceptsImages（升级不该悄悄丢掉用户的图片设置）", async () => {
+    const loaded = await loadWithModels([
+      { id: "with-image", input: ["text", "image"] },
+      { id: "text-only", input: ["text"] },
+    ]);
+    const models = loaded.services[0]?.models ?? [];
+    expect(models[0]?.acceptsImages).toBe(true);
+    expect(models[1]?.acceptsImages).toBe(false);
+    // 迁移后不再保留旧字段
+    expect(models[0]).not.toHaveProperty("input");
+  });
+
+  it("acceptsImages 优先于旧 input（两者同时存在且矛盾时）", async () => {
+    const loaded = await loadWithModels([
+      { id: "m", acceptsImages: false, input: ["text", "image"] },
+    ]);
+    expect(loaded.services[0]?.models[0]?.acceptsImages).toBe(false);
+  });
+
+  it("未配能力项时保持 undefined（表示「跟随目录」，而不是 false）", async () => {
+    const loaded = await loadWithModels([{ id: "m" }]);
+    const model = loaded.services[0]?.models[0];
+    expect(model?.acceptsImages).toBeUndefined();
+    expect(model?.thinkingLevels).toBeUndefined();
+    expect(model).not.toHaveProperty("input");
+  });
+
+  it("思考档位：滤掉未知值、去重、按强弱排序；空数组/非数组视为未配置", async () => {
+    const loaded = await loadWithModels([
+      { id: "a", thinkingLevels: ["high", "off", "high", "nonsense", "medium"] },
+      { id: "b", thinkingLevels: [] },
+      { id: "c", thinkingLevels: "high" },
+      { id: "d", thinkingLevels: ["nonsense"] },
+    ]);
+    const models = loaded.services[0]?.models ?? [];
+    expect(models[0]?.thinkingLevels).toEqual(["off", "medium", "high"]);
+    expect(models[1]?.thinkingLevels).toBeUndefined();
+    expect(models[2]?.thinkingLevels).toBeUndefined();
+    expect(models[3]?.thinkingLevels).toBeUndefined();
+  });
+
+  it("数字字段非法时丢弃（字符串、NaN、0、负数）", async () => {
+    const loaded = await loadWithModels([
+      { id: "m", contextWindow: "200000", maxTokens: Number.NaN },
+      { id: "n", contextWindow: -1, maxTokens: 0 },
+    ]);
+    const models = loaded.services[0]?.models ?? [];
+    expect(models[0]?.contextWindow).toBeUndefined();
+    expect(models[0]?.maxTokens).toBeUndefined();
+    expect(models[1]?.contextWindow).toBeUndefined();
+    expect(models[1]?.maxTokens).toBeUndefined();
+  });
+
+  it("存盘往返后未配置的字段不落盘（「恢复目录值」才生效）", async () => {
+    const loaded = await loadWithModels([{ id: "m", acceptsImages: true }]);
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save(loaded);
+    const raw = JSON.parse(await readFile(settingsFile, "utf8")) as {
+      services: { models: Record<string, unknown>[] }[];
+    };
+    const saved = raw.services[0]?.models[0];
+    expect(saved?.acceptsImages).toBe(true);
+    expect(saved).not.toHaveProperty("thinkingLevels");
+  });
+});

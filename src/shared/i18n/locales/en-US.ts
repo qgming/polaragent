@@ -72,10 +72,13 @@ export const enUS = {
     thinkingLevel: "Thinking level",
     loadingOlder: "Loading…",
     noMessages: "No messages yet — start the conversation",
+    modelSwitchRunning: "Cannot switch while running — stop this turn first",
+    modelUnavailable: "That model is unavailable (its service or entry may be gone)",
     slashHint: "Type / to invoke a skill or template",
     slashSkills: "Skills",
     slashTemplates: "Prompt templates",
     slashEmpty: "No matching skills or templates",
+    slashSwitch: "Switch slash command",
     steer: "Steer",
     queueEdit: "Edit",
     queueRemove: "Remove",
@@ -84,6 +87,7 @@ export const enUS = {
     thinkingLow: "Low",
     thinkingMedium: "Medium",
     thinkingHigh: "High",
+    thinkingClamped: "This model does not support {{wanted}}; sending at {{used}}",
   },
   sidebar: {
     today: "Today",
@@ -169,6 +173,8 @@ export const enUS = {
     maxTokensExceedsContext: "At or above the context window it will not be sent",
     reasoning: "Reasoning model",
     inputImage: "Supports image input",
+    thinkingLevels: "Supported thinking levels",
+    restoreCatalogValues: "Restore catalog values",
     fetchModels: "Fetch models",
     fetchModelsHint: "Read available models from the endpoint (not all endpoints support it)",
     fetchModelsEmpty: "No models returned; add them manually",
@@ -188,7 +194,7 @@ export const enUS = {
       "SKILL.md files are loaded recursively; .pi/skills under the session directory is always scanned",
     addSkillDir: "Add directory",
     skillsList: "Discovered skills",
-    // The slash menu does not exist yet (elements/composer.tsx is still unwired) — do not promise it here
+    // The slash menu is wired now: disabled skills stay out of the model's list but remain callable from it
     skillsListDesc:
       "Disabled skills stay out of the system prompt; the files remain on disk and can be re-enabled anytime",
     skillsEmpty: "No skills discovered yet",
@@ -203,7 +209,7 @@ export const enUS = {
     skillsEnabled: "Enable skills and prompt templates",
     promptTemplates: "Prompt templates",
     promptTemplatesDesc:
-      "Reusable prompt snippets (.md). Loaded templates can be invoked explicitly; an in-chat shortcut is not available yet",
+      "Reusable prompt snippets (.md). Type / in the composer to invoke one; the body expands into your message",
     promptTemplateDirs: "Template directories",
     promptTemplateDirsDesc:
       "Reads direct .md children; prompts/ in the data directory and .pi/prompts in the session directory are always scanned",

@@ -193,4 +193,62 @@ describe("createAiApprover", () => {
       reason: "No default model selected — denied",
     });
   });
+
+  it("给了会话模型就用它，而不是设置里的默认模型", async () => {
+    // 默认模型指向 svc-a/m1；会话绑定到同服务的 m2
+    const withSecond: Settings = configuredSettings({
+      services: [{ ...service, models: [{ id: "m1" }, { id: "m2" }] }],
+    });
+    let usedModelId = "";
+    const approver = createAiApprover({
+      getSettings: async () => withSecond,
+      buildModels: () =>
+        ({
+          completeSimple: async (model: { id: string }) => {
+            usedModelId = model.id;
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: '{"allow": true, "reason": "ok"}' }],
+              api: "openai-completions",
+              provider: "svc-a",
+              model: model.id,
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+        }) as unknown as MutableModels,
+    });
+
+    await expect(
+      approver({
+        toolName: "write",
+        argsText: "{}",
+        modelRef: { serviceId: "svc-a", modelId: "m2" },
+      }),
+    ).resolves.toEqual({ allow: true, reason: "ok" });
+    expect(usedModelId).toBe("m2");
+  });
+
+  it("会话模型已失效时安全拒绝，而不是悄悄换回默认模型", async () => {
+    // 安全相关的路径宁可拒绝：换了模型等于用户不知道是谁在审批
+    const approver = createAiApprover({
+      getSettings: async () => configuredSettings(),
+      buildModels: () => fakeModels({ text: '{"allow": true, "reason": "ok"}' }),
+    });
+    await expect(
+      approver({
+        toolName: "write",
+        argsText: "{}",
+        modelRef: { serviceId: "gone", modelId: "m9" },
+      }),
+    ).resolves.toEqual({ allow: false, reason: "未选择默认模型，已拒绝" });
+  });
 });

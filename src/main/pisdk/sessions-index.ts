@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ModelRef } from "@/shared/contracts/common";
 
 /**
  * 会话索引条目：补齐 pi 元数据缺失的应用层字段。
@@ -13,6 +14,8 @@ export interface SessionIndexEntry {
   updatedAt?: number;
   messageCount?: number;
   cwd?: string;
+  /** 该会话自己指定的模型；null = 跟随设置里的默认模型（写 null 即清除绑定） */
+  model?: ModelRef | null;
 }
 
 export interface SessionsIndex {

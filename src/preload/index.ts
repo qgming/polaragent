@@ -33,6 +33,7 @@ const api = {
     remove: (id) => ipcRenderer.invoke(IPC.sessions.delete, { id }),
     fork: (id, entryId) => ipcRenderer.invoke(IPC.sessions.fork, { id, entryId }),
     loadMessages: (id, options) => ipcRenderer.invoke(IPC.sessions.loadMessages, { id, options }),
+    setModel: (id, model) => ipcRenderer.invoke(IPC.sessions.setModel, { id, model }),
   },
   chat: {
     send: (sessionId, text, images, messageId, options) =>

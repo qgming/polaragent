@@ -14,6 +14,11 @@ export interface SessionTitleInput {
   userText: string;
   /** 助手对它的回复 */
   assistantText: string;
+  /**
+   * 本会话实际使用的模型引用；缺省时才回落到设置里的默认模型。
+   * 命名用的是哪次对话，就该用那次对话的模型。
+   */
+  modelRef?: ModelRef;
 }
 
 /** 生成器可选的副作用钩子：真的要去调模型前通知调用方 */
@@ -21,6 +26,9 @@ export interface SessionTitleHooks {
   /** 模型可用、即将发起补全时调用；调用方据此记下「本次进程已试过」 */
   onAttempt?: () => void;
 }
+
+import type { ModelRef } from "@/shared/contracts/common";
+import { resolveEffectiveModelRef } from "@/shared/model-ref";
 
 /** 返回 null 表示放弃本次命名（无模型、超时、输出不可用…），调用方保留原标题 */
 export type SessionTitleGenerator = (
@@ -172,6 +180,8 @@ export interface AutoTitleDeps {
   rename: (sessionId: string, title: string) => Promise<void>;
   /** 真正要调模型前的记账回调（素材不足时不调用，留给下一轮） */
   onAttempt?: () => void;
+  /** 会话实际使用的模型；透传给生成器，缺省时生成器回落默认模型 */
+  modelRef?: ModelRef;
 }
 
 /**
@@ -189,7 +199,10 @@ export async function autoTitleSession(
   const source = collectTitleSource(await deps.loadMessages(sessionId));
   if (!source) return null;
 
-  const title = await deps.generate(source, { onAttempt: deps.onAttempt });
+  const title = await deps.generate(
+    { ...source, ...(deps.modelRef === undefined ? {} : { modelRef: deps.modelRef }) },
+    { onAttempt: deps.onAttempt },
+  );
   if (title === null) return null;
   // 生成期间（最长 15s）用户可能手动改了名：这时不该覆盖
   if ((await deps.readTitle(sessionId)) !== null) return null;
@@ -218,7 +231,13 @@ export function createSessionTitleGenerator(deps: {
       return null;
     }
 
-    const model = resolveModel(settings, settings.defaultModel);
+    // 优先用会话实际使用的模型；只有调用方没给时才回落到设置里的默认模型
+    // 与 runtime 同源：给了会话模型也要按有效性回落，否则设置里删掉该模型后
+    // 会出现「聊天回落默认、命名静默跳过」这种不一致
+    const model = resolveModel(
+      settings,
+      resolveEffectiveModelRef(settings, input.modelRef ?? null),
+    );
     // 没有可用模型时不算「试过」：用户配好默认模型后，下一轮仍能补上标题
     if (!model) return null;
     hooks?.onAttempt?.();

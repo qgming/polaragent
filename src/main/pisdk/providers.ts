@@ -1,6 +1,13 @@
 // 模型服务装配：把 Settings.services 转换为 pi-ai 的 provider / model 对象。
 
-import type { Api, Model, MutableModels, Provider, ProviderStreams } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  Model,
+  MutableModels,
+  Provider,
+  ProviderStreams,
+  ThinkingLevelMap,
+} from "@earendil-works/pi-ai";
 import { createModels, createProvider } from "@earendil-works/pi-ai";
 import {
   stream as completionsStream,
@@ -10,7 +17,11 @@ import {
   stream as responsesStream,
   streamSimple as responsesStreamSimple,
 } from "@earendil-works/pi-ai/api/openai-responses";
-import type { WireFormat } from "@/shared/contracts/common";
+import {
+  ALL_THINKING_LEVELS,
+  type ThinkingLevel,
+  type WireFormat,
+} from "@/shared/contracts/common";
 import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 
 /** 模型条目缺省上下文窗口（tokens） */
@@ -49,11 +60,38 @@ function toPiModel(service: ModelServiceConfig, entry: ModelEntry): Model<Api> {
     provider: service.id,
     baseUrl: service.baseUrl,
     reasoning: entry.reasoning ?? false,
-    input: entry.input ?? ["text"],
+    input: entry.acceptsImages === true ? ["text", "image"] : ["text"],
+    thinkingLevelMap: toThinkingLevelMap(entry.thinkingLevels),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens: resolveMaxTokens(entry.maxTokens, contextWindow),
   };
+}
+
+/**
+ * 支持的档位 → pi-ai 的 `thinkingLevelMap`。
+ *
+ * 语义照内核：`null` = 该档位不支持，`undefined`（键缺席）= 用 provider 默认值。
+ * 于是「用户勾了哪几档」直接表达成「未勾的写 null」，内核自己的 clampThinkingLevel 就会
+ * 把请求收窄到这些档位 —— 思考等级因此真正进到请求参数里，而不只是提示词里的一句话。
+ *
+ * 两种情况不生成 map（返回 undefined）：
+ * - 没配过（undefined）：让内核按 provider 默认处理；
+ * - 空数组：等同「没有信息」，同样交给内核。
+ *
+ * 一处已知取舍：内核还有 xhigh / max 两档，而 ModelEntry 只存本仓五档。用户显式配过档位时，
+ * 这两档会因为不在 map 里而被内核视为不支持 —— 但本仓从不请求它们（settings.thinkingLevel
+ * 只有五档），所以不影响实际行为。
+ */
+function toThinkingLevelMap(
+  levels: readonly ThinkingLevel[] | undefined,
+): ThinkingLevelMap | undefined {
+  if (levels === undefined || levels.length === 0) return undefined;
+  const map: ThinkingLevelMap = {};
+  for (const level of ALL_THINKING_LEVELS) {
+    map[level] = levels.includes(level) ? undefined : null;
+  }
+  return map;
 }
 
 /**

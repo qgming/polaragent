@@ -4,8 +4,10 @@ import type {
   ApprovalRequest,
   ChatEvent,
   ChatMessage,
+  ModelRef,
   QueuedMessage,
   SessionSummary,
+  SetSessionModelResult,
 } from "@/shared/contracts";
 
 /** 单页加载的消息条数 */
@@ -46,6 +48,11 @@ interface ChatState {
   archiveSession(id: string, archived: boolean): Promise<void>;
   /** 置顶/取消置顶：置顶的会话在侧栏「置顶」分组里 */
   pinSession(id: string, pinned: boolean): Promise<void>;
+  /**
+   * 切换会话模型（null = 跟随设置里的默认模型）。运行时立即生效；
+   * 失败时返回原因（正在运行 / 目标模型不存在），界面据此说明。
+   */
+  setSessionModel(id: string, model: ModelRef | null): Promise<SetSessionModelResult>;
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
   send(text: string, images?: { data: string; mimeType: string }[]): Promise<void>;
@@ -300,6 +307,18 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         session.id === id ? { ...session, pinned } : session,
       ),
     }));
+  },
+
+  async setSessionModel(id, model) {
+    const result = await window.oint.sessions.setModel(id, model);
+    if (!result.ok) return result;
+    // 就地改字段：模型只影响这一个会话的显示与请求，重拉整表会顺带刷新排序，没必要
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, model } : session,
+      ),
+    }));
+    return result;
   },
 
   async removeSession(id) {

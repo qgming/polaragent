@@ -71,10 +71,13 @@ export const zhCN = {
     thinkingLevel: "思考等级",
     loadingOlder: "加载中…",
     noMessages: "还没有消息，开始对话吧",
+    modelSwitchRunning: "运行中不能切换模型，先停止本轮",
+    modelUnavailable: "该模型当前不可用（服务或模型可能已被删除）",
     slashHint: "输入 / 调用技能或模板",
     slashSkills: "技能",
     slashTemplates: "提示模板",
     slashEmpty: "没有匹配的技能或模板",
+    slashSwitch: "切换斜杠命令",
     steer: "插话",
     queueEdit: "编辑",
     queueRemove: "移除",
@@ -83,6 +86,7 @@ export const zhCN = {
     thinkingLow: "低",
     thinkingMedium: "中",
     thinkingHigh: "高",
+    thinkingClamped: "该模型不支持「{{wanted}}」，已按「{{used}}」发送",
   },
   sidebar: {
     today: "今天",
@@ -168,6 +172,8 @@ export const zhCN = {
     maxTokensExceedsContext: "达到或超过上下文窗口时将不会传递",
     reasoning: "推理模型",
     inputImage: "支持图片输入",
+    thinkingLevels: "支持的思考档位",
+    restoreCatalogValues: "恢复目录值",
     fetchModels: "拉取模型",
     fetchModelsHint: "从服务端点读取可用模型（部分端点不支持）",
     fetchModelsEmpty: "未拉取到模型，请手动添加",
@@ -186,7 +192,7 @@ export const zhCN = {
     skillDirsDesc: "从这些目录递归加载 SKILL.md；会话工作目录下的 .pi/skills 也会自动扫描",
     addSkillDir: "添加目录",
     skillsList: "已发现技能",
-    // 斜杠菜单尚未实现（elements/composer.tsx 那套还没接线），这里不要承诺它
+    // 斜杠菜单已接线：禁用的技能仍可从菜单手动调用（models 提示词里看不到它）
     skillsListDesc: "禁用后不再进入系统提示词，模型看不到它；文件仍在磁盘上，可随时重新启用",
     skillsEmpty: "还没有发现技能",
     skillsEmptyHint: "在技能目录中放置 SKILL.md 即可被识别",
@@ -199,7 +205,7 @@ export const zhCN = {
     skillsEnabled: "启用技能与提示模板",
     promptTemplates: "提示模板",
     promptTemplatesDesc:
-      "可复用的提示词片段（.md）。已加载的模板可被显式调用；对话内的快捷入口尚未提供",
+      "可复用的提示词片段（.md）。在输入框敲 / 可从斜杠菜单里调用，模板正文会展开成消息",
     promptTemplateDirs: "模板目录",
     promptTemplateDirsDesc:
       "读取目录下直接子级的 .md；数据目录的 prompts 与会话目录的 .pi/prompts 始终参与扫描",
