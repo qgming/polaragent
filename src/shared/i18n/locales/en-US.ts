@@ -28,6 +28,68 @@ export const enUS = {
     collapseSidebar: "Collapse sidebar",
     expandSidebar: "Expand sidebar",
   },
+  /*
+    Right panel (Review / Files / Side chat / Browser / Terminal).
+
+    The five view names are the five entries of the panel's first screen.
+  */
+  rightPanel: {
+    open: "Open right panel",
+    close: "Collapse right panel",
+    title: "Right panel",
+    /** "Back": from a panel to the five-entry chooser (panel stays open) */
+    back: "Back",
+    review: "Review",
+    files: "Files",
+    sideChat: "Side chat",
+    browser: "Browser",
+    terminal: "Terminal",
+    // Review
+    reviewEmpty: "No file changes in this session yet",
+    reviewEmptyHint: "Ask Oint to change something and the changes show up here.",
+    reviewSummary: "{{files}} files · +{{additions}} −{{deletions}}",
+    reviewAdded: "Added",
+    reviewModified: "Modified",
+    reviewNoPatch: "This change left no patch content",
+    reviewOpenFile: "Show in Files",
+    // Files
+    filesEmpty: "This directory is empty",
+    filesPickRoot: "Bind a working directory to the session first",
+    filesParent: "Go to parent",
+    filesRefresh: "Refresh",
+    filesTruncated: "Too many entries — showing the first {{count}}",
+    filesBinary: "Binary file — cannot preview",
+    filesTooLarge: "Large file — showing the first {{size}}",
+    filesLoadFailed: "Failed to load",
+    filesBack: "Back to list",
+    // Side chat
+    sideChatEmpty: "Ask a side question without interrupting the main thread",
+    sideChatHint:
+      "This conversation is separate from the main thread — good for checking facts, explaining, drafting.",
+    sideChatDisabled: "Side chat is still being prepared",
+    // Browser
+    browserPlaceholder: "Type a URL and press Enter",
+    browserBack: "Back",
+    browserForward: "Forward",
+    browserReload: "Reload",
+    browserOpenExternal: "Open in system browser",
+    browserEmpty: "No page open yet",
+    browserLoading: "Loading…",
+    browserFailed: "Page failed to load",
+    browserHint: "Built-in browser for looking things up; Oint does not drive it yet.",
+    // Terminal
+    terminalNew: "New terminal",
+    terminalClose: "Close terminal",
+    terminalRestart: "Restart",
+    terminalEmpty: "No terminals yet",
+    terminalEmptyHint: "Open a terminal and run commands right in this project.",
+    terminalExited: "Exited ({{code}})",
+    terminalExitedNoCode: "Exited",
+    terminalRunning: "Running",
+    terminalDropped: "Earliest output was dropped",
+    terminalLimit: "Terminal limit reached — close one first",
+    terminalUnavailable: "Terminal unavailable",
+  },
   chat: {
     send: "Send",
     stop: "Stop",

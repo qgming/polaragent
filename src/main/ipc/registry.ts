@@ -3,6 +3,7 @@ import { registerAppIpc } from "./app";
 import { registerApprovalsIpc } from "./approvals";
 import { registerChatIpc } from "./chat";
 import { registerDialogIpc } from "./dialog";
+import { registerFilesIpc } from "./files";
 import { registerInteractionsIpc } from "./interactions";
 import { registerJobsIpc } from "./jobs";
 import { registerMcpIpc } from "./mcp";
@@ -10,10 +11,12 @@ import { registerModelsCatalogIpc } from "./models-catalog";
 import { registerPermissionsIpc } from "./permissions";
 import { registerProjectsIpc } from "./projects";
 import { registerPromptsIpc } from "./prompts";
+import { registerReviewIpc } from "./review";
 import { registerServicesIpc } from "./services";
 import { registerSessionsIpc } from "./sessions";
 import { registerSettingsIpc } from "./settings";
 import { registerSkillsIpc } from "./skills";
+import { registerTerminalIpc } from "./terminal";
 import { registerWindowIpc } from "./window";
 
 /** 汇总注册全部 invoke 处理器，避免分散注册导致通道遗漏或重复 */
@@ -35,4 +38,7 @@ export function registerIpcHandlers(): void {
   registerServicesIpc();
   registerMcpIpc();
   registerModelsCatalogIpc();
+  registerFilesIpc();
+  registerReviewIpc();
+  registerTerminalIpc();
 }

@@ -2,6 +2,7 @@ import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
 import type { ModelRef, WireFormat } from "./common";
+import type { DirectoryListing, FileContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
@@ -9,6 +10,7 @@ import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
 import type { PromptTemplateInfo } from "./prompts";
+import type { ReviewSummary } from "./review";
 import type {
   LoadSessionMessagesOptions,
   SessionMessagesPage,
@@ -17,6 +19,7 @@ import type {
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
+import type { TerminalEvent, TerminalInfo, TerminalReplay } from "./terminal";
 
 /** preload 暴露给渲染进程的全部能力面；渲染进程除此外无特权通道 */
 export interface OintApi {
@@ -131,5 +134,39 @@ export interface OintApi {
   models: {
     /** 按模型 id 从 models.dev 元数据目录匹配（带本地缓存） */
     lookup(id: string): Promise<ModelLookupResult>;
+  };
+  /**
+   * 用户终端（真 PTY）。
+   *
+   * 与 jobs 分开：jobs 是模型的后台作业（无 stdin），这里是给人敲的交互式 shell。
+   * 输出走 onEvent 推送（带 seq，供按游标回放），replay 用于面板重新挂载时补齐。
+   */
+  terminal: {
+    /** 当前全部终端（面板挂载时拉一次） */
+    list(): Promise<TerminalInfo[]>;
+    /** 新建一个终端；cwd 由调用方给（会话工作目录） */
+    create(options: { cwd: string; cols?: number; rows?: number }): Promise<TerminalInfo>;
+    /** 按游标回放：fromSeq 之后的新增输出；面板重新挂载时用它补齐断档 */
+    replay(id: string, fromSeq: number): Promise<TerminalReplay>;
+    /** 写入按键（键盘输入、粘贴、Ctrl+C 的 \x03） */
+    write(id: string, data: string): Promise<void>;
+    /** 改尺寸（面板换行或拖宽窄时调用） */
+    resize(id: string, cols: number, rows: number): Promise<void>;
+    /** 关闭终端（连同进程树） */
+    close(id: string): Promise<void>;
+    /** 订阅终端事件（输出 / 元信息变化 / 移除），返回取消订阅函数 */
+    onEvent(callback: (event: TerminalEvent) => void): () => void;
+  };
+  /** 右侧面板「文件」：列目录与读文件，根固定为传入的 root */
+  files: {
+    /** 列一层目录；path 缺省用 root */
+    listDirectory(request: { root: string; path?: string }): Promise<DirectoryListing>;
+    /** 读一个文件（等宽预览用，超出上限会截断） */
+    readFile(request: { root: string; path: string }): Promise<FileContent>;
+  };
+  /** 右侧面板「审查」：本次会话改动过的文件与补丁 */
+  review: {
+    /** 从会话消息里的 write / edit 记录汇总改动 */
+    summary(sessionId: string): Promise<ReviewSummary>;
   };
 }

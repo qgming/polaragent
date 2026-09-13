@@ -185,10 +185,14 @@
   --density-gap: 16px;
   --density-gap-inner: 12px;
 
-  /* 布局：侧栏宽度与线程最大宽度。组件必须消费这些变量，不得再硬编码像素值。
-     侧栏只有「展开 / 完全隐藏」两态（隐藏 = 宽度 0，见 SidebarShell），没有窄轨道，
-     因此没有 collapsed 宽度令牌。 */
+  /* 布局：两侧栏宽度与线程最大宽度。组件必须消费这些变量，不得再硬编码像素值。
+     左栏只有「展开 / 完全隐藏」两态（隐藏 = 宽度 0，见 SidebarShell），没有窄轨道，
+     因此没有 collapsed 宽度令牌。右栏（RightSidebar）同一套口径。
+
+     右栏比左栏宽：它的内容是审查 diff、文件树、终端 —— 都是需要横向空间的东西，
+     240px 会给到只能看半行 diff 的宽度。 */
   --layout-sidebar-width: 240px;
+  --layout-right-sidebar-width: 380px;
   --layout-thread-max-width: 44rem;
 }
 

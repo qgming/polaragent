@@ -11,6 +11,18 @@ files:
   - dist-electron/**/*
   - package.json
 
+# asarUnpack：把 node-pty 的 native 文件拆到 .asar 之外。
+#
+# 原生模块（*.node）无法从 asar 归档里 dlopen；Windows 上 node-pty 还需要
+# conpty.dll 与 OpenConsole.exe 这两个随包的辅助可执行文件 —— 它们不是 .node，
+# electron-builder 的「自动识别原生模块」规则不会覆盖到，必须显式列出。
+#
+# 漏掉这条的症状：开发模式一切正常（直接读 node_modules），打包后终端报
+# 「PTY 运行库加载失败（终端不可用）」。
+asarUnpack:
+  - "**/node_modules/@lydell/node-pty*/**"
+  - "**/*.node"
+
 win:
   target:
     - target: nsis

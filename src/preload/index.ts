@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { OintApi } from "@/shared/contracts/api";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
+import type { TerminalEvent } from "@/shared/contracts/terminal";
 
 // 渲染进程唯一入口：只暴露白名单方法，不透传 ipcRenderer 原始能力
 const api = {
@@ -96,6 +97,28 @@ const api = {
   },
   models: {
     lookup: (id) => ipcRenderer.invoke(IPC.models.lookup, { id }),
+  },
+  terminal: {
+    list: () => ipcRenderer.invoke(IPC.terminal.list),
+    create: (options) => ipcRenderer.invoke(IPC.terminal.create, options),
+    replay: (id, fromSeq) => ipcRenderer.invoke(IPC.terminal.replay, { id, fromSeq }),
+    write: (id, data) => ipcRenderer.invoke(IPC.terminal.write, { id, data }),
+    resize: (id, cols, rows) => ipcRenderer.invoke(IPC.terminal.resize, { id, cols, rows }),
+    close: (id) => ipcRenderer.invoke(IPC.terminal.close, { id }),
+    onEvent: (callback) => {
+      // 与 chat.onEvent 同一套：透传事件本体，归属由事件自己的 id 字段给出
+      const listener = (_event: Electron.IpcRendererEvent, payload: TerminalEvent) =>
+        callback(payload);
+      ipcRenderer.on(IPC.terminal.event, listener);
+      return () => ipcRenderer.removeListener(IPC.terminal.event, listener);
+    },
+  },
+  files: {
+    listDirectory: (request) => ipcRenderer.invoke(IPC.files.listDirectory, request),
+    readFile: (request) => ipcRenderer.invoke(IPC.files.readFile, request),
+  },
+  review: {
+    summary: (sessionId) => ipcRenderer.invoke(IPC.review.summary, { sessionId }),
   },
 } satisfies OintApi;
 

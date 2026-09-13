@@ -1,6 +1,7 @@
 import { MotionConfig } from "motion/react";
 import { useEffect } from "react";
 import { TooltipProvider } from "@/renderer/components/ui/tooltip";
+import { RightSidebar } from "@/renderer/features/right-panel/RightSidebar";
 import { SearchModal } from "@/renderer/features/search";
 import { SettingsModal } from "@/renderer/features/settings";
 import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
@@ -43,10 +44,13 @@ export function App() {
           {/* 运行时包住侧栏与主区：侧栏的会话列表走官方 ThreadList primitives，需要 runtime 上下文 */}
           <OintRuntimeProvider>
             <SidebarShell />
+            {/* 中间列：顶栏 + 主区。右栏放在这一列之外，让它的高度贯通整窗
+                —— 右栏的顶行与左栏、内容区顶栏三者等高，三条横线才连成一致的一条。 */}
             <div className="flex min-w-0 flex-1 flex-col">
               <TitleBar />
               <MainShell />
             </div>
+            <RightSidebar />
           </OintRuntimeProvider>
         </div>
         {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}

@@ -305,6 +305,29 @@ export function killProcessTree(pid: number): void {
   }
 }
 
+/**
+ * pid 是否可用于杀进程树。
+ *
+ * 为什么必须判：node-pty 在 Windows 上的 conpty 代理把 innerPid 初始化为 0，
+ * 极端时序下（进程起不来、或代理还没连上就退出）pid 会以 0 暴露出来。
+ * 而 `taskkill /pid 0 /T /F` 在 Windows 上不是「什么都不做」——
+ * 它会把 PID 0/4 名下的整棵系统进程树列出来尝试终止（实测会去动 System 进程）。
+ * 所以「pid 为 0 就当没有 pid」，绝不能把它透传给 killProcessTree。
+ */
+function hasRealPid(pid: number): boolean {
+  return Number.isInteger(pid) && pid > 0;
+}
+
+/** 只在 pid 有效时杀进程树；无效 pid 静默跳过（调用方本就没有可清理的东西） */
+export function killProcessTreeSafe(pid: number): boolean {
+  if (!hasRealPid(pid)) {
+    console.warn(`跳过杀进程树：pid 无效（${pid}）`);
+    return false;
+  }
+  killProcessTree(pid);
+  return true;
+}
+
 /** 把毫秒等待夹到 [0, 上限]；非法值按 0 处理 */
 function clampWaitMs(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value < 0) return 0;

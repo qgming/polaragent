@@ -1,6 +1,7 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ModelRef, WireFormat } from "./common";
+import type { DirectoryListing, FileContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
@@ -8,6 +9,7 @@ import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
 import type { PromptTemplateInfo } from "./prompts";
+import type { ReviewSummary } from "./review";
 import type {
   LoadSessionMessagesOptions,
   SessionMessagesPage,
@@ -16,6 +18,7 @@ import type {
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
+import type { TerminalInfo, TerminalReplay } from "./terminal";
 
 /**
  * 冻结的 IPC 通道契约：值统一为 "域:动作"。
@@ -98,6 +101,23 @@ export const IPC = {
   },
   models: {
     lookup: "models:lookup",
+  },
+  terminal: {
+    list: "terminal:list",
+    create: "terminal:create",
+    replay: "terminal:replay",
+    write: "terminal:write",
+    resize: "terminal:resize",
+    close: "terminal:close",
+    /** 主进程 → 渲染进程的单向推送（与 chat:event 一样不属于 invoke 映射） */
+    event: "terminal:event",
+  },
+  files: {
+    listDirectory: "files:list-directory",
+    readFile: "files:read-file",
+  },
+  review: {
+    summary: "review:summary",
   },
 } as const;
 
@@ -205,4 +225,25 @@ export interface IpcInvokeContract {
     response: { ok: true; modelIds: string[] } | { ok: false; reason: string };
   };
   [IPC.models.lookup]: { request: { id: string }; response: ModelLookupResult };
+  [IPC.terminal.list]: { request: undefined; response: TerminalInfo[] };
+  [IPC.terminal.create]: {
+    request: { cwd: string; cols?: number; rows?: number };
+    response: TerminalInfo;
+  };
+  [IPC.terminal.replay]: {
+    request: { id: string; fromSeq: number };
+    response: TerminalReplay;
+  };
+  [IPC.terminal.write]: { request: { id: string; data: string }; response: undefined };
+  [IPC.terminal.resize]: {
+    request: { id: string; cols: number; rows: number };
+    response: undefined;
+  };
+  [IPC.terminal.close]: { request: { id: string }; response: undefined };
+  [IPC.files.listDirectory]: {
+    request: { path?: string; root: string };
+    response: DirectoryListing;
+  };
+  [IPC.files.readFile]: { request: { path: string; root: string }; response: FileContent };
+  [IPC.review.summary]: { request: { sessionId: string }; response: ReviewSummary };
 }

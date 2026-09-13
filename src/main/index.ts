@@ -4,6 +4,7 @@ import { ensureAppDirs } from "./app/paths";
 import { createMainWindow, getMainWindow } from "./app/window";
 import { registerIpcHandlers } from "./ipc/registry";
 import { bootstrapPisdk } from "./pisdk/bootstrap";
+import { disposeTerminalService } from "./terminal/service";
 
 // 单实例锁：SQLite 会话库与窗口状态都不允许并发写
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -45,8 +46,10 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// 退出前释放 pisdk；清理函数幂等，重复触发安全
+// 退出前释放 pisdk 与终端；清理函数幂等，重复触发安全。
+// 终端必须显式杀掉：PTY 的 shell（以及它前台挂着的子进程）不清理会留下孤儿进程占着端口。
 app.on("before-quit", () => {
+  disposeTerminalService();
   disposePisdk?.();
   disposePisdk = null;
 });

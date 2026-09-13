@@ -1,5 +1,20 @@
 import { create } from "zustand";
 
+/** 右侧面板的视图。null = 还没选过，面板显示选择列表 */
+export type RightPanelView = "review" | "files" | "sideChat" | "browser" | "terminal";
+
+/**
+ * 右侧面板五个视图的规范顺序，即面板内选择列表的顺序（与参考图一致）。
+ * 加一个视图时只有这一处要改，选择列表与快捷键提示都读它。
+ */
+export const RIGHT_PANEL_VIEWS = [
+  "review",
+  "files",
+  "sideChat",
+  "browser",
+  "terminal",
+] as const satisfies readonly RightPanelView[];
+
 /** 设置弹窗内的分栏 */
 export type SettingsSection =
   | "general"
@@ -53,6 +68,34 @@ interface UiState {
   /** 正在编辑的用户消息 id（null = 未编辑）；由 ChatView 渲染编辑模态 */
   editingMessageId: string | null;
 
+  /**
+   * 右侧面板是否展开。与左侧栏同一套「展开 / 完全隐藏」两态（没有窄轨道）。
+   * 收起**不清空** rightPanelView：面板是「藏起来」而不是「关掉」，
+   * 再次展开回到用户上次在看的内容（与左侧栏停在同一份会话列表上同理）。
+   */
+  rightPanelOpen: boolean;
+  /**
+   * 当前查看的视图；**null = 还没选**，此时面板显示五个视图的选择列表。
+   *
+   * 为什么允许 null：面板的第一屏就该是「选一个内容」。顶栏那颗按钮直接展开面板、
+   * 由面板自己列出五个入口，而不是再弹一个浮层菜单让人选第二次 ——
+   * 这样「打开侧边栏」与「选择内容」是同一屏上的连续动作（与参考图一致）。
+   */
+  rightPanelView: RightPanelView | null;
+
+  /**
+   * 展开 / 收起面板。
+   *
+   * **这是面板唯一的开合入口**（面板内部刻意没有收起按钮）：顶栏那颗开关
+   * 一直在屏幕上，而面板内的按钮只在展开时存在 —— 把动作放在始终可见的那一处，
+   * 同一个意图就不会有两个入口。
+   */
+  toggleRightPanel(): void;
+  /** 切到某个视图。**只切不关**：面板内的点击是「换个内容」，想收起用顶栏那颗开关 */
+  openRightPanel(view: RightPanelView): void;
+  /** 回到选择列表（面板保持展开）：这是「换一个内容」，与收起是两件事 */
+  showRightPanelChooser(): void;
+
   toggleSidebar(): void;
   openSearch(): void;
   closeSearch(): void;
@@ -81,9 +124,19 @@ export const useUiStore = create<UiState>()((set, get) => ({
   settingsOpen: false,
   settingsSection: "general",
   searchJump: null,
+  rightPanelOpen: false,
+  rightPanelView: null,
   pendingDeleteSessionId: null,
   resolveDeleteSession: null,
   editingMessageId: null,
+
+  toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
+
+  // 只切不关：面板内的点击是「换个内容」，用户要看的是新内容。
+  // 收起由顶栏那颗开关负责（它始终可见），这里不重复这个动作。
+  openRightPanel: (view) => set({ rightPanelOpen: true, rightPanelView: view }),
+
+  showRightPanelChooser: () => set({ rightPanelView: null }),
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   openSearch: () => set({ searchOpen: true }),

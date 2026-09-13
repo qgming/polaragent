@@ -27,6 +27,68 @@ export const zhCN = {
     collapseSidebar: "收起侧栏",
     expandSidebar: "展开侧栏",
   },
+  /*
+    右侧面板（审查 / 文件 / 侧边聊天 / 浏览器 / 终端）。
+
+    这五个名字就是面板第一屏上的五个入口；快捷键提示里只写字母（P / T），
+    Ctrl 与 ⌘ 的前缀由 RightPanelChooser 按平台渲染。
+  */
+  rightPanel: {
+    open: "打开右侧面板",
+    close: "收起右侧面板",
+    title: "右侧面板",
+    /** 「返回」：从某个面板回到五个入口的选择列表（面板保持展开） */
+    back: "返回",
+    review: "审查",
+    files: "文件",
+    sideChat: "侧边聊天",
+    browser: "浏览器",
+    terminal: "终端",
+    // 审查
+    reviewEmpty: "本次会话还没有文件改动",
+    reviewEmptyHint: "让 Oint 改点什么，改动会出现在这里。",
+    reviewSummary: "{{files}} 个文件 · +{{additions}} −{{deletions}}",
+    reviewAdded: "新建",
+    reviewModified: "修改",
+    reviewNoPatch: "这次改动没有留下补丁内容",
+    reviewOpenFile: "在文件面板中查看",
+    // 文件
+    filesEmpty: "这个目录是空的",
+    filesPickRoot: "先在会话里绑定一个工作目录",
+    filesParent: "返回上级",
+    filesRefresh: "刷新",
+    filesTruncated: "条目过多，只显示前 {{count}} 项",
+    filesBinary: "这是二进制文件，无法预览",
+    filesTooLarge: "文件较大，只显示前 {{size}}",
+    filesLoadFailed: "读取失败",
+    filesBack: "返回列表",
+    // 侧边聊天
+    sideChatEmpty: "问点边角问题，不打断主对话",
+    sideChatHint: "这里的对话独立于主线程，适合查证、解释、起草。",
+    sideChatDisabled: "侧边聊天还在准备中",
+    // 浏览器
+    browserPlaceholder: "输入网址，回车打开",
+    browserBack: "后退",
+    browserForward: "前进",
+    browserReload: "刷新",
+    browserOpenExternal: "用系统浏览器打开",
+    browserEmpty: "还没有打开页面",
+    browserLoading: "正在加载…",
+    browserFailed: "页面加载失败",
+    browserHint: "内置浏览器，供你查阅资料；Oint 暂时不会操作它。",
+    // 终端
+    terminalNew: "新建终端",
+    terminalClose: "关闭终端",
+    terminalRestart: "重新启动",
+    terminalEmpty: "还没有终端",
+    terminalEmptyHint: "开一个终端，直接在这个项目里跑命令。",
+    terminalExited: "已退出（{{code}}）",
+    terminalExitedNoCode: "已退出",
+    terminalRunning: "运行中",
+    terminalDropped: "最早的输出已被丢弃",
+    terminalLimit: "终端数量已达上限，请先关掉一个",
+    terminalUnavailable: "终端不可用",
+  },
   chat: {
     send: "发送",
     stop: "停止",
