@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, RotateCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, ExternalLink, Globe, RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { field } from "@/renderer/components/assistant-ui/elements/surfaces";
@@ -23,12 +23,21 @@ import { PanelEmpty } from "./panel-view";
  *      把页面状态整份丢掉，用户会看到「点个链接就白屏重载」。
  *      自己创建一次、之后只调 loadURL()，才是浏览器的行为。
  *
- * 范围：这一版只做「能看」。让模型操作页面（点击/输入/读 DOM）需要一整套会话与权限设计，
- * 属于后续工作。webview 元素本身有 executeJavaScript 能力，但这里**不暴露**任何自动化入口 ——
- * 没有需求就先把攻击面关掉。
+ * 与模型的关系：**页面可以由模型驱动**（打开网址、读页面、点击、输入、截图、看控制台）。
+ * 但驱动不从这里走 —— guest 的 WebContents 由主进程在 did-attach-webview 时接管，
+ * 之后的自动化全在那边完成（见 src/main/browser/service.ts 与 shared/contracts/browser.ts）。
+ * 这个文件只负责两件事，缺一不可：
+ *   1. **把 <webview> 元素建出来** —— 没有元素就没有 guest，自动化无从谈起；
+ *   2. 订阅 browser:event，把「模型正在操作页面」显示出来，并让地址栏跟上模型的导航。
+ *
+ * 为什么不让渲染层把 executeJavaScript 暴露给模型：那等于在 IPC 上开一个「任意页面代码
+ * 执行」入口，任何拿到渲染进程执行权的东西都能借它读任意已登录站点。主进程本来就持有
+ * guest，没有必要把这份能力再暴露一次。
  *
  * 地址栏按浏览器的习惯判定两种输入：像网址就当网址（缺 scheme 补 https），
  * 否则当搜索词。否则「输入 example.com 结果什么也没发生」这种困惑一定会发生。
+ * 注意这与**模型**走的那条路不同：browser_open 只接受 http/https，不接受搜索词 ——
+ * 模型该用搜索工具去找东西，而不是把一个词丢给地址栏。
  */
 
 /** 地址栏里「看起来像网址」的判定：有 scheme，或 host 部分含点且不含空格 */
@@ -66,7 +75,6 @@ interface WebviewElement extends HTMLElement {
   stop(): void;
   loadURL(url: string): Promise<void>;
 }
-
 /** webview 事件对象里我们用到的字段（自定义元素的事件不带 TS 类型） */
 interface WebviewEventDetail {
   url?: string;
@@ -75,12 +83,37 @@ interface WebviewEventDetail {
   isMainFrame?: boolean;
 }
 
+/**
+ * 订阅「模型正在操作页面」事件。
+ *
+ * 页面状态（地址栏、加载中、失败）**不从这里取**：那些由 webview 元素自己的
+ * did-navigate / did-start-loading 事件提供，而模型操作的正是同一个 guest，
+ * 所以两条路径看到的状态本就一致。再叠一份主进程状态只会多一个可能不同步的来源。
+ */
+function useAgentActivity(): string | null {
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    return window.oint.browser.onEvent((event) => {
+      if (event.type !== "agent") return;
+      setNote(event.active ? (event.note ?? "") : null);
+    });
+  }, []);
+
+  return note;
+}
+
 export function BrowserPanel(): React.JSX.Element {
   const { t } = useTranslation();
 
   /** 地址栏内容：用户编辑期间是草稿，导航完成后回写成实际 URL */
   const [address, setAddress] = useState("");
-  /** 当前已请求的 URL；空串 = 还没打开任何页面（显示空态而不是空白 webview） */
+  /**
+   * 当前**实际显示**的页面 URL；空串 = 还没有页面（显示空态而不是空白 webview）。
+   *
+   * 它只从 webview 的导航事件来（用户导航、页面内跳转、主进程替模型导航都会触发），
+   * **不反向驱动 src** —— 那正是「同一页被加载两遍」的来源，见 navigate 的说明。
+   */
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   /**
@@ -90,6 +123,8 @@ export function BrowserPanel(): React.JSX.Element {
   const [failed, setFailed] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  /** 模型正在操作页面时的说明文案；为 null 表示模型没在动它 */
+  const agentNote = useAgentActivity();
 
   /** webview 的宿主容器：元素自己创建后插进来 */
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -137,8 +172,12 @@ export function BrowserPanel(): React.JSX.Element {
       // 只跟随主框架导航：页面里的 iframe 也会发 did-navigate-in-page，
       // 拿它的 URL 覆盖地址栏会让地址栏在第三方页面上乱跳
       if (detail.url !== undefined && detail.isMainFrame !== false) {
-        setUrl(detail.url);
-        setAddress(detail.url);
+        // 引导用的 about:blank 不算页面：它只是把 guest 拉起来的手段。
+        // 收下它会让空态浮层消失、刷新按钮变亮，而那两件事在「还没导航」时都是错的。
+        if (detail.url !== "" && detail.url !== "about:blank") {
+          setUrl(detail.url);
+          setAddress(detail.url);
+        }
       }
       syncNavigation();
     };
@@ -161,6 +200,17 @@ export function BrowserPanel(): React.JSX.Element {
     element.addEventListener("did-fail-load", onFail);
 
     host.appendChild(element);
+    /*
+      引导：Electron 44 的 <webview> **只在第一次设置 src 时才创建 guest**。
+      实测（最小复现，窗口配置与本应用一致）：元素挂在 DOM 里而不给 src，
+      did-attach-webview 永远不触发、getWebContentsId() 抛「must be attached to the
+      DOM and the dom-ready event emitted」，而主进程的自动化服务拿不到 guest 就一路等到超时。
+
+      所以这里给一个 about:blank 把 guest 拉起来，之后主进程的 loadURL 与地址栏的
+      setAttribute 才有对象可操作。代价是多一次 about:blank「加载」——
+      它在 onNavigate 里被过滤掉，不算作「打开了页面」。
+    */
+    element.setAttribute("src", "about:blank");
     webviewRef.current = element;
 
     return () => {
@@ -176,38 +226,34 @@ export function BrowserPanel(): React.JSX.Element {
     // 一旦把 t 加回来，切语言就会重建整个 guest，页面的浏览状态会整份丢掉。
   }, []);
 
-  /*
-    把「当前该显示的 URL」同步给 webview。
-
-    **必须用 setAttribute("src", …)，不能用 loadURL()** —— 这是实测出来的硬约束：
-    webview 的 loadURL 要求 guest 已经 dom-ready，否则会**同步抛出**
-    「The WebView must be attached to the DOM and the dom-ready event emitted
-    before this method can be called.」。而首次导航时 guest 一定还没 ready，
-    所以那个异常会从 effect 里逃出去、把整棵 React 树带塌 ——
-    表现就是「输入网址点进入之后整个软件空白」。
-    setAttribute("src") 走的是元素属性那条路，任何时机都安全（实测首载与二次导航都通过）。
-
-    代价：它不像 loadURL 那样返回 Promise，所以失败只能靠 did-fail-load 事件上报 ——
-    那条路径本来就有（见上面 onFail），不重复处理。
-  */
-  useEffect(() => {
-    const element = webviewRef.current;
-    if (element === null) return;
-    if (url === "") return;
-    element.setAttribute("src", url);
-  }, [url]);
-
+  /**
+   * 导航到用户输入的地址。
+   *
+   * **导航只在这里发起**（写 src 属性）；页面自己产生的导航不再回写 url 去触发第二次加载。
+   * 这是踩过坑的地方：主进程替模型导航（loadURL）同样会让 did-navigate 触发，
+   * 如果那时把 URL 灌回 src，同一页会被加载两遍 —— 表现是页面自己刷新一下、滚动位置丢失。
+   *
+   * 首次引导不走这里：元素创建时已经设了 src="about:blank"（见上面创建元素的那个 effect），
+   * 那条路径负责把 guest 拉起来，地址栏只负责之后的事。
+   *
+   * 仍然**必须用 setAttribute("src", …)**：webview 的 loadURL 要求 guest 已经 dom-ready，
+   * 否则同步抛出（「The WebView must be attached to the DOM and the dom-ready event
+   * emitted before this method can be called.」），异常会从事件处理器里逃出去。
+   * src 属性那条路任何时机都安全。代价是没有 Promise，失败只能靠 did-fail-load 上报。
+   */
   const navigate = (input: string) => {
     const next = toUrl(input);
     if (next === "") return;
+    const element = webviewRef.current;
+    if (element === null) return;
     setFailed(false);
-    // 同一个 URL 再点一次回车（刷新语义）：effect 不会重跑，所以这里显式 reload
+    // 同一个 URL 再点一次回车（刷新语义）
     if (next === url) {
       setLoading(true);
-      webviewRef.current?.reload();
+      element.reload();
       return;
     }
-    setUrl(next);
+    element.setAttribute("src", next);
   };
 
   /**
@@ -315,6 +361,15 @@ export function BrowserPanel(): React.JSX.Element {
       {failed && (
         <p className="shrink-0 border-b border-border/60 px-3 py-1.5 text-[11.5px] text-destructive">
           {t("rightPanel.browserFailed")}
+        </p>
+      )}
+
+      {/* 模型正在操作页面：它会在你眼前滚动、点击、输入，说明白比让人困惑好。
+          用 text-live 与加载进度条同一套语义色（「正在发生」），不用 danger/warn。 */}
+      {agentNote !== null && (
+        <p className="flex shrink-0 items-center gap-1.5 border-b border-border/60 bg-live/5 px-3 py-1.5 text-[11.5px] text-live">
+          <Bot className="size-3.5 shrink-0" aria-hidden="true" />
+          {agentNote === "" ? t("rightPanel.browserAgentActive") : agentNote}
         </p>
       )}
 

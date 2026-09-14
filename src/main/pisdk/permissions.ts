@@ -3,6 +3,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assessCommand } from "@/main/security/command-guard";
+import { BROWSER_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/browser";
 import { isMcpToolName } from "@/shared/contracts/mcp";
 import { BACKGROUND_JOB_TOOL_NAMES } from "./tools/jobs";
 
@@ -35,12 +36,24 @@ export interface PermissionRuleStore {
 // job_output / job_list / job_kill 同理：它们只读**自己会话**的作业状态，或杀掉自己起的进程
 // （作业本来就活不过会话结束），归入高风险会让模型每次看日志都要用户点一次批准卡。
 // bash_background 不在这里 —— 它与 bash 同级，交给 command-guard 判定。
+//
+// 浏览器工具分两档，界线是「会不会改变用户眼前那个页面的状态」：
+//   · snapshot / console / network / screenshot / wait 只读页面或只是等 → low。
+//     它们是每次浏览器任务的第一步（先看一眼页面），要审批就会让「看一眼」也要点卡；
+//   · open / history / click / type / press / hover / select / dialog / evaluate
+//     会导航、改表单、按键、改弹窗策略、执行页面脚本 → 落进下面的 unknown 分支即 high。
+//     这几条正是「模型能不能替我在网站上点确认」的分界，不该默认放行；
+//     反复同意之后用户可以用「始终允许」把它记成规则。
+//
+// 这份名单不再在这里逐条写死：只读那一侧直接展开 shared/contracts/browser.ts 的
+// BROWSER_READ_ONLY_TOOL_NAMES（工具名常量与权限表只维护一份，避免加工具时漏改一处）。
 const LOW_RISK_TOOLS = new Set([
   "read",
   "grep",
   "glob",
   "todo",
   "ask_user",
+  ...BROWSER_READ_ONLY_TOOL_NAMES,
   BACKGROUND_JOB_TOOL_NAMES.output,
   BACKGROUND_JOB_TOOL_NAMES.list,
   BACKGROUND_JOB_TOOL_NAMES.kill,

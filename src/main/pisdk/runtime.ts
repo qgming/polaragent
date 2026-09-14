@@ -48,6 +48,7 @@ import type {
 } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
+import type { BrowserAutomation } from "../browser/types";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
@@ -88,6 +89,14 @@ export interface ChatRuntimeDeps {
    * 渲染层看到的与工具操作的就会对不上。
    */
   jobs?: JobService;
+  /**
+   * 内置浏览器自动化（browser_* 工具用的那个）。
+   *
+   * 同样是「由 bootstrap 注入、未注入就没有浏览器工具」：实现依赖 Electron 的
+   * WebContents，**在这里 import 它会把 electron 拖进 runtime 的单测**（node 环境），
+   * 所以只能走依赖注入。生产环境传主进程单例（browser/service.ts 的 getBrowserAutomation）。
+   */
+  browser?: BrowserAutomation;
   /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
   sessionTitles?: SessionTitleGenerator;
   /** 会话工作目录解析；默认取索引 cwd，其次 settings.defaultWorkingDir */
@@ -1081,6 +1090,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           mcp.tools(),
           createAskTool({ sessionId: runtime.sessionId, interactions }),
           jobToolsFor(runtime.sessionId),
+          deps.browser,
         ),
         BACKGROUND_CONTEXT,
       );
@@ -1187,12 +1197,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         session: opened.session,
         models,
         model,
-        systemPrompt: await buildSystemPrompt(settings, cwd, loaded.skillsSection),
-        // 内置工具 + 当前已就绪的 MCP 工具（MCP 服务未就绪时就是空数组）
         tools: buildTools(
           deps.mcp?.tools() ?? [],
           createAskTool({ sessionId, interactions }),
           jobToolsFor(sessionId),
+          deps.browser,
         ),
         toolContext: {
           env,

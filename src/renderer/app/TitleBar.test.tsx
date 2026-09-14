@@ -38,6 +38,12 @@ beforeEach(() => {
       close: () => Promise.resolve(),
       onMaximizedChange: () => () => {},
     },
+    // RightSidebar 在挂载时订阅浏览器的「模型要用浏览器」事件；
+    // onEvent 必须返回取消订阅函数，否则卸载时会 TypeError。
+    browser: {
+      status: () => Promise.resolve(null),
+      onEvent: () => () => {},
+    },
   });
   // 每个用例都从「收起」出发
   useUiStore.setState({ rightPanelOpen: false, rightPanelView: null });

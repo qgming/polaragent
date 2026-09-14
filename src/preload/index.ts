@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OintApi } from "@/shared/contracts/api";
+import type { BrowserEvent } from "@/shared/contracts/browser";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
 import type { TerminalEvent } from "@/shared/contracts/terminal";
@@ -119,6 +120,16 @@ const api = {
   },
   review: {
     summary: (sessionId) => ipcRenderer.invoke(IPC.review.summary, { sessionId }),
+  },
+  browser: {
+    status: () => ipcRenderer.invoke(IPC.browser.status),
+    onEvent: (callback) => {
+      // 与 chat.onEvent / terminal.onEvent 同一套：透传事件本体，归属由事件自己的字段给出
+      const listener = (_event: Electron.IpcRendererEvent, payload: BrowserEvent) =>
+        callback(payload);
+      ipcRenderer.on(IPC.browser.event, listener);
+      return () => ipcRenderer.removeListener(IPC.browser.event, listener);
+    },
   },
 } satisfies OintApi;
 

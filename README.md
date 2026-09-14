@@ -25,7 +25,8 @@
 Oint 是面向本地工作流的桌面 Agent 客户端：把 pisdk 的能力原样呈现，只在其上补少量只读工具。
 
 - **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 批量转发。
-- **工具**：内核原生四件套 `bash`/`read`/`write`/`edit` + 自建只读增强 `grep`/`glob`/`todo`；
+- **工具**：内核原生四件套 `bash`/`read`/`write`/`edit` + 自建 `grep`/`glob`/`todo` + **内置浏览器操作**
+  `browser_*`（打开网址、读页面、点击、输入、截图、看控制台）；
   刻意不做持久终端、任意代码执行这类会引入新权限面的工具。
 - **能力归属**：模型路由、流式请求、会话持久化、上下文压缩、分支 fork 全部由 pisdk 承担。
 - **本地优先**：会话、设置、AGENTS.md 与技能都在本机；模型请求只发往你配置的 OpenAI 兼容服务。
@@ -79,7 +80,8 @@ src/
 | 分区 | 内容 |
 | --- | --- |
 | 对话 | 流式回复、思考链折叠、工具调用分组、Markdown、停止/重试、图片附件、运行中排队与插话 |
-| 工具 | 内核原生 `bash`/`read`/`write`/`edit`（description 已覆盖，补「何时用/何时不要用」）+ 自建只读 `grep`/`glob`/`todo` |
+| 工具 | 内核原生 `bash`/`read`/`write`/`edit`（description 已覆盖，补「何时用/何时不要用」）+ 自建 `grep`/`glob`/`todo` + 浏览器十四件套 `browser_open`/`browser_history`/`browser_snapshot`/`browser_click`/`browser_type`/`browser_press`/`browser_hover`/`browser_select`/`browser_wait`/`browser_screenshot`/`browser_console`/`browser_network`/`browser_dialog`/`browser_evaluate` |
+| 内置浏览器 | 右侧面板的 `<webview>` 可供模型操作：导航、读页面（可见文本 + 带 ref 的可交互元素）、真实鼠标点击 / 悬停、按键与组合键、输入（**回读校验**，不再假报成功）、下拉选择、等待渲染落定、视口截图（图片进上下文）、控制台增量读取、网络请求记录、页面内求值。点击前会复核坐标上确实是目标元素，复核不过就报错而不是静默点空。JS 弹窗（alert / confirm / prompt）默认自动关闭，页面不会因无人应答而卡死。读类工具免审批，改页面 / 执行脚本走审批；**面板没开时模型会自己把它叫出来**（展开右侧栏并切到浏览器视图，然后等页面就绪） |
 | 待办 | `todo` 工具维护会话级清单（整表替换语义）；对话区上方另有**独立可折叠面板**，重启后由会话记录恢复 |
 | 会话 | 新建/切换/重命名/归档/删除、**侧栏「置顶 / 项目 / 最近」分组**（绑定文件夹即为项目，会话按其工作目录自动归组）、标题索引、分页加载历史、**从任意消息分支**、SQLite 持久化 |
 | 权限 | 三模式（默认权限 / 帮我审批 / 完全访问）、审批卡（允许一次 / 始终允许 / 拒绝并说明理由）、「始终允许」规则库 |
@@ -181,8 +183,9 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 | --- | --- |
 | `node scripts/probe-pisdk.mjs` | pisdk 装配探针（真实端点，验证 harness/工具/会话链路） |
 | `node scripts/e2e-smoke.mjs` | 端到端冒烟（CDP 驱动真实 Electron，覆盖流式对话、工具调用、审批、完全访问、重启恢复） |
+| `node scripts/probe-browser-guest.mjs` | 内置浏览器探针（CDP 驱动真实 Electron，验证 webview 的 guest 真的附着、导航可用且只加载一次） |
 
-两者都从环境变量读取凭据：
+前两者从环境变量读取凭据：
 
 ```bash
 OINT_PROBE_API_KEY=... node scripts/e2e-smoke.mjs

@@ -1,23 +1,53 @@
 import { describe, expect, it } from "vitest";
+import { BROWSER_TOOL_NAME_LIST } from "@/shared/contracts/browser";
+import type { BrowserAutomation } from "../browser/types";
 import { buildTools, TOOL_NAMES } from "./tools";
 
 /** 内核原生四件套：description 由 tools.ts 整体覆盖 */
 const NATIVE_TOOLS = ["bash", "read", "write", "edit"];
-/** 自建只读工具 */
+/** 自建工具（不含浏览器族，也不含按会话注入的 ask_user） */
 const CUSTOM_TOOLS = ["grep", "glob", "todo"];
 
+/**
+ * 浏览器工具的假实现：这个测试只关心**装配**（名字、数量、description 齐不齐），
+ * 不关心它们怎么操作页面 —— 那是 browser 服务的事，而它依赖 Electron。
+ * 用一个只会抛错的桩就够：装配正确时这些方法一次都不会被调用。
+ */
+function fakeAutomation(): BrowserAutomation {
+  const notImplemented = () => {
+    throw new Error("测试不应该真的调用浏览器");
+  };
+  return {
+    setAgentActive: () => undefined,
+    status: () => ({
+      open: false,
+      state: { url: "", title: "", loading: false, canGoBack: false, canGoForward: false },
+      agentActive: false,
+    }),
+    open: notImplemented,
+    history: notImplemented,
+    snapshot: notImplemented,
+    click: notImplemented,
+    type: notImplemented,
+    screenshot: notImplemented,
+    console: () => Promise.resolve([]),
+    evaluate: notImplemented,
+  } as unknown as BrowserAutomation;
+}
+
 describe("buildTools", () => {
-  it("返回内核四件套 + 三个自建只读工具；ask_user 需调用方注入，默认不在其中", () => {
+  it("默认返回内核四件套 + 三个自建工具：浏览器与 ask_user 都要调用方注入", () => {
     const tools = buildTools();
 
     expect(tools).toHaveLength(NATIVE_TOOLS.length + CUSTOM_TOOLS.length);
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [...NATIVE_TOOLS, ...CUSTOM_TOOLS].sort(),
     );
-    // TOOL_NAMES 是权限层 / UI 的登记表：ask_user 按会话注入（见 runtime 的两处 buildTools），
-    // 所以默认工具集 = 登记表去掉 ask
+    // TOOL_NAMES 是权限层 / UI 的登记表：ask_user 按会话注入、浏览器族按实现注入
+    //（见 runtime 的两处 buildTools），所以默认工具集 = 登记表去掉这两族。
+    const injectable = new Set<string>([TOOL_NAMES.ask, ...BROWSER_TOOL_NAME_LIST]);
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
-      new Set(Object.values(TOOL_NAMES).filter((name) => name !== TOOL_NAMES.ask)),
+      new Set(Object.values(TOOL_NAMES).filter((name) => !injectable.has(name))),
     );
 
     for (const tool of tools) {
@@ -27,6 +57,20 @@ describe("buildTools", () => {
       // label 是 AgentTool 的必填字段，UI 直接拿它显示
       expect(tool.label).toBeTruthy();
     }
+  });
+
+  it("传入浏览器实现时装配出全部浏览器工具，且 name 与 label 一致", () => {
+    const tools = buildTools([], undefined, [], fakeAutomation());
+    const names = tools.map((tool) => tool.name);
+
+    for (const name of BROWSER_TOOL_NAME_LIST) {
+      expect(names).toContain(name);
+      const tool = tools.find((candidate) => candidate.name === name);
+      expect(tool?.label).toBe(name);
+    }
+    expect(tools).toHaveLength(
+      NATIVE_TOOLS.length + CUSTOM_TOOLS.length + BROWSER_TOOL_NAME_LIST.length,
+    );
   });
 
   it("四个原生工具的 description 已覆盖为带场景指导的文案", () => {
@@ -47,6 +91,15 @@ describe("buildTools", () => {
       const tool = tools.find((candidate) => candidate.name === name);
       expect(tool, `缺少工具 ${name}`).toBeTruthy();
       expect(tool?.label).toBe(name);
+    }
+  });
+
+  it("浏览器工具的 description 写清了「什么时候用 / 不要用」（本仓库的既定标准）", () => {
+    const tools = buildTools([], undefined, [], fakeAutomation());
+    for (const name of BROWSER_TOOL_NAME_LIST) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      expect(tool?.description).toContain("When to use it");
+      expect(tool?.description).toContain("When NOT to use it");
     }
   });
 });

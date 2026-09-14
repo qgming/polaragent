@@ -1,6 +1,7 @@
 import { registerAgentsIpc } from "./agents";
 import { registerAppIpc } from "./app";
 import { registerApprovalsIpc } from "./approvals";
+import { registerBrowserIpc } from "./browser";
 import { registerChatIpc } from "./chat";
 import { registerDialogIpc } from "./dialog";
 import { registerFilesIpc } from "./files";
@@ -41,4 +42,5 @@ export function registerIpcHandlers(): void {
   registerFilesIpc();
   registerReviewIpc();
   registerTerminalIpc();
+  registerBrowserIpc();
 }

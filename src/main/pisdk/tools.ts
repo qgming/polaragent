@@ -4,7 +4,8 @@
 // - pi 内核原生四件套（bash/read/write/edit）：description 在本文件**整体覆盖**。内核自带的
 //   文案偏操作说明（返回什么、怎么截断），不讲「什么时候该用它」，而模型选错工具的首要原因
 //   就是缺少场景指导 —— 所以这里替换而不是追加。
-// - 自建工具（grep/glob/todo/ask_user）：见 ./tools/。ask_user 由调用方注入（见 buildTools）。
+// - 自建工具（grep/glob/todo/ask_user/browser）：见 ./tools/。ask_user 由调用方注入（见 buildTools），
+//   浏览器工具在 buildTools 内默认装配（它们只依赖主进程单例，不需要调用方传东西）。
 //
 // 刻意不做的：持久终端、任意代码执行、插件树操作 —— 它们会引入新的权限面，超出
 // 「把内核能力原样呈现 + 少量只读增强」的产品定位。
@@ -21,7 +22,10 @@ import {
   createWriteTool,
   type ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
+import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
+import type { BrowserAutomation } from "../browser/types";
 import { ASK_TOOL_NAME } from "./tools/ask";
+import { createBrowserTools } from "./tools/browser";
 import { createGlobTool, createGrepTool } from "./tools/search";
 import { createTodoTool, type TodoToolContext } from "./tools/todo";
 
@@ -45,8 +49,9 @@ export const TOOL_NAMES = {
   todo: "todo",
   /** 向用户提问；名字取自 tools/ask.ts，避免两处各写一份字面量 */
   ask: ASK_TOOL_NAME,
+  /** 浏览器工具；名字取自 shared/contracts/browser.ts（UI 图标表与权限层复用同一份） */
+  ...BROWSER_TOOL_NAMES,
 } as const;
-
 const BASH_DESCRIPTION =
   "在当前工作目录执行一条 shell 命令，返回合并后的 stdout 与 stderr；超长输出只保留末尾 2000 行 / 50KB。\n\n" +
   "什么时候用：跑测试与构建、装依赖、看 git 状态（git status / git diff / git log）、执行项目脚本。\n" +
@@ -79,13 +84,16 @@ function prepareBash(execution: BashExecution, toolContext: ExecutionToolContext
 /**
  * 构建本应用暴露给 Agent 的完整工具集。
  *
- * 三类「调用方才知道的东西」都从这里注入，本文件保持「静态装配」的角色，
+ * 「调用方才知道的东西」都从这里注入，本文件保持「静态装配」的角色，
  * 不反向依赖连接管理器或提问服务（会话创建与 MCP 热替换都走这一个入口）：
  * - extraTools：运行时才知道名字的工具（当前只有 MCP：mcp__<server>__<tool>），
  *   由调用方从 pisdk/mcp-servers.ts 取当前快照后传进来；
  * - askTool：ask_user 需要会话级的提问服务实例（见 tools/ask.ts），由 runtime 按会话创建；
  * - jobTools：四个后台作业工具（见 tools/jobs.ts），它们需要会话 id 与作业服务，
- *   同样由 runtime 按会话创建。
+ *   同样由 runtime 按会话创建；
+ * - browserAutomation：浏览器自动化实现（见 browser/types.ts）。生产环境传主进程单例，
+ *   测试传假实现；**不传就完全不装配浏览器工具** —— 于是单测里 buildTools() 的结果
+ *   与加这个参数之前完全一致。
  *
  * 注意 askTool 与 jobTools 都是**可选**的：不传就没有对应的工具。会话创建
  * （runtime 的 tools: ...）与 MCP 热替换（applyMcpTools 的 harness.setTools）两条路径
@@ -95,6 +103,7 @@ export function buildTools(
   extraTools: AgentHarnessTool<AppToolContext>[] = [],
   askTool?: AgentHarnessTool<AppToolContext>,
   jobTools: AgentHarnessTool<AppToolContext>[] = [],
+  browserAutomation?: BrowserAutomation,
 ): AgentHarnessTool<AppToolContext>[] {
   return [
     { ...createBashTool<AppToolContext>({ prepare: prepareBash }), description: BASH_DESCRIPTION },
@@ -104,9 +113,13 @@ export function buildTools(
     createGrepTool<AppToolContext>(),
     createGlobTool<AppToolContext>(),
     createTodoTool(),
+    // 浏览器工具：操作的是主进程持有的 guest，与本会话的工作目录无关（见 tools/browser.ts）
+    ...(browserAutomation === undefined
+      ? []
+      : (createBrowserTools(browserAutomation) as AgentHarnessTool<AppToolContext>[])),
     // 子代理（子 lane）上线时**不要**把这些工具注入子 lane：子代理不能自己卡住等用户
-    // （ask_user），也不该自己起后台进程（作业工具）—— 它要把结果写进最终回复，
-    // 由主 lane 统一提问与调度（见 tools/ask.ts 顶部注释）
+    // （ask_user），也不该自己起后台进程（作业工具），更不该操作用户正盯着的浏览器 ——
+    // 它要把结果写进最终回复，由主 lane 统一提问与调度（见 tools/ask.ts 顶部注释）
     ...(askTool === undefined ? [] : [askTool]),
     ...jobTools,
     ...extraTools,

@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 import { IPC } from "@/shared/contracts/ipc";
 import { ensureAppDirs } from "./app/paths";
 import { createMainWindow, getMainWindow } from "./app/window";
+import { disposeBrowser } from "./browser/service";
 import { registerIpcHandlers } from "./ipc/registry";
 import { bootstrapPisdk } from "./pisdk/bootstrap";
 import { disposeTerminalService } from "./terminal/service";
@@ -48,7 +49,9 @@ if (!gotSingleInstanceLock) {
 
 // 退出前释放 pisdk 与终端；清理函数幂等，重复触发安全。
 // 终端必须显式杀掉：PTY 的 shell（以及它前台挂着的子进程）不清理会留下孤儿进程占着端口。
+// 浏览器不需要额外清理：guest 进程随窗口一起销毁，disposeBrowser 只是不留悬挂引用。
 app.on("before-quit", () => {
+  disposeBrowser();
   disposeTerminalService();
   disposePisdk?.();
   disposePisdk = null;

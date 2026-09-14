@@ -1,5 +1,6 @@
 import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
+import { getBrowserAutomation } from "../browser/service";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
 import { createInteractionService } from "./interactions";
@@ -64,6 +65,9 @@ export function bootstrapPisdk(options: {
     sessionTitles,
     resolveWorkingDir,
     mcp: mcpServers,
+    // 内置浏览器自动化：与 IPC 域共用主进程单例，否则面板看到的与工具操作的会是两份状态。
+    // 传的是实现对象而不是让 runtime 自己 import —— runtime 要能在 node 单测里跑（见其 deps 说明）。
+    browser: getBrowserAutomation(),
   });
 
   // 启动后异步连接已启用的 MCP server：单个 server 失败只记日志，不阻断启动。

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { BrowserWindow } from "electron";
+import { attachBrowserGuest, recordBrowserPopup } from "@/main/browser/service";
 import { IPC } from "@/shared/contracts/ipc";
 
 let mainWindow: BrowserWindow | null = null;
@@ -19,15 +20,18 @@ function notifyMaximized(win: BrowserWindow): void {
  * 内置浏览器（<webview>）的安全策略。
  *
  * webviewTag 打开后，渲染层可以嵌入任意页面 —— 那是「浏览器」面板的功能，
- * 但也意味着 guest 的能力必须被收死。这里做两件事，缺一不可：
+ * 但也意味着 guest 的能力必须被收死。这里做三件事，缺一不可：
  *
  *   1. will-attach-webview：抹掉 guest 的 preload、关掉 nodeIntegration，
  *      强制 contextIsolation + sandbox。渲染层即使想给 webview 塞 preload 也塞不进来。
  *   2. did-attach-webview：把 guest 的 window.open / target="_blank" 全部拒掉 ——
  *      内置浏览器不该能自己弹新窗口（弹出来的是无人管理的裸窗口）。
+ *   3. 同一个回调里把 guest 交给浏览器自动化服务：模型操作页面（导航 / 点击 /
+ *      读 DOM / 截图）全靠那份 WebContents（见 main/browser/service.ts 的说明）。
  *
  * 刻意**不做**域名 allow-list：面板是给人用的通用浏览器，限制域名会让它失去意义。
  * 真正的边界是「guest 没有 Node 能力、不能弹窗、拿不到我们的 preload」。
+ * 注意 3 是**自动化**而非权限放宽：模型能读到的仅限于用户自己打开的页面。
  */
 function hardenWebviews(win: BrowserWindow): void {
   win.webContents.on("will-attach-webview", (_event, webPreferences) => {
@@ -38,10 +42,16 @@ function hardenWebviews(win: BrowserWindow): void {
   });
 
   win.webContents.on("did-attach-webview", (_event, contents) => {
-    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // 拒绝但不静默：页面上「用第三方账号登录」这类按钮走的正是 window.open，
+    // 被拒后页面什么都不显示，看起来和「点击没生效」一模一样。把 URL 记进控制台
+    // 缓冲（见 service.ts 的 recordBrowserPopup），模型读一次 console 就能分清。
+    contents.setWindowOpenHandler(({ url }) => {
+      recordBrowserPopup(url);
+      return { action: "deny" };
+    });
+    attachBrowserGuest(contents);
   });
 }
-
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,

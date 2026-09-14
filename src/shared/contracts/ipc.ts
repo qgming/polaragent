@@ -1,5 +1,6 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
+import type { BrowserStatus } from "./browser";
 import type { ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
@@ -118,6 +119,18 @@ export const IPC = {
   },
   review: {
     summary: "review:summary",
+  },
+  /**
+   * 内置浏览器：只有「读状态」一个 invoke 通道。
+   *
+   * 页面的驱动（导航 / 点击 / 读内容）**不经过渲染层**：guest 由主进程从
+   * did-attach-webview 拿到后直接操作（见 browser/service.ts）。渲染层的面板只需
+   * 把 <webview> 建出来，再用下面的 event 订阅「页面变了 / 模型在操作」。
+   */
+  browser: {
+    status: "browser:status",
+    /** 主进程 → 渲染进程的单向推送（同 terminal:event） */
+    event: "browser:event",
   },
 } as const;
 
@@ -246,4 +259,5 @@ export interface IpcInvokeContract {
   };
   [IPC.files.readFile]: { request: { path: string; root: string }; response: FileContent };
   [IPC.review.summary]: { request: { sessionId: string }; response: ReviewSummary };
+  [IPC.browser.status]: { request: undefined; response: BrowserStatus };
 }

@@ -1,5 +1,6 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
+import type { BrowserEvent, BrowserStatus } from "./browser";
 import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
 import type { ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent } from "./files";
@@ -168,5 +169,18 @@ export interface OintApi {
   review: {
     /** 从会话消息里的 write / edit 记录汇总改动 */
     summary(sessionId: string): Promise<ReviewSummary>;
+  };
+  /**
+   * 内置浏览器：读状态 + 订阅事件。
+   *
+   * **没有导航 / 点击之类的通道**，那是刻意的：页面由主进程直接驱动
+   * （见 main/browser/service.ts 顶部对攻击面的说明）。渲染层这一侧只负责
+   * 「把 webview 建出来」与「把状态显示给人看」。
+   */
+  browser: {
+    /** 当前状态：面板是否已挂载、页面在哪、模型是否正在操作 */
+    status(): Promise<BrowserStatus>;
+    /** 订阅浏览器事件（状态变化 / 打开面板请求 / 模型操作中），返回取消订阅函数 */
+    onEvent(callback: (event: BrowserEvent) => void): () => void;
   };
 }

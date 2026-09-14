@@ -1,4 +1,5 @@
 import { ArrowLeft, PanelRight } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { WindowControls } from "@/renderer/app/WindowControls";
 import { Button } from "@/renderer/components/ui/button";
@@ -31,6 +32,12 @@ import { TerminalPanel } from "./TerminalPanel";
  * 视图本体按 rightPanelView 挂载（切走就卸载）：五个面板各有互斥的重活
  *（文件树请求、webview 页面、xterm 实例），同时留着只会白占内存，
  * 而每个面板的重建成本都很低（终端有主进程的回放缓冲兜底，切回来能补齐输出）。
+ *
+ * 一个例外：**模型要用浏览器时，这里负责把右侧栏展开并切到「浏览器」**（见 useEffect）。
+ * guest 由 BrowserPanel 的 webview 元素创建，面板不挂载就没有可自动化的页面 ——
+ * 所以「模型想打开一个网址」这件事必须能自己把面板叫出来，否则模型每次都得先求你
+ * 手动打开面板，而人会觉得「这工具怎么连这个都要我动手」。
+ * 收起状态也照样展开：这是有意的（模型主动要用），且是幂等的，重复请求不会反复重渲染。
  */
 export function RightSidebar(): React.JSX.Element {
   const { t } = useTranslation();
@@ -40,6 +47,25 @@ export function RightSidebar(): React.JSX.Element {
 
   // 还没选视图时显示选择列表：这时头部没有具体图标，用面板自己的图标占位
   const meta = view === null ? null : RIGHT_PANEL_VIEW_META[view];
+
+  // 模型要用浏览器：把右侧栏展开并切到「浏览器」视图。
+  //
+  // **与第一版的行为差异**：原先只在面板已经展开时切视图，收起状态不动它。
+  // 现在模型可以自己把面板叫出来 —— 否则每次浏览器任务的第一个动作都是
+  // 「请你手动打开右侧面板」，而模型并没有别的办法完成用户的要求。
+  // 人的感受是「面板自己出现了」，这正是主流 agent 工具的行为。
+  //
+  // 主进程那一侧会**反复发这个请求**直到 guest 就绪（见 browser/service.ts 的
+  // requireGuest）：所以这里做成幂等 —— 已经是「展开 + 浏览器」时不再写 store，
+  // 避免每 50ms 触发一次重渲染。
+  useEffect(() => {
+    return window.oint.browser.onEvent((event) => {
+      if (event.type !== "open-request") return;
+      const ui = useUiStore.getState();
+      if (ui.rightPanelOpen && ui.rightPanelView === "browser") return;
+      ui.openRightPanel("browser");
+    });
+  }, []);
 
   return (
     <aside
@@ -112,7 +138,40 @@ export function RightSidebar(): React.JSX.Element {
  * 放在同一处会让主壳变成一个什么都懂的巨型函数。
  */
 function RightPanelViewHost({ view }: { view: RightPanelView }): React.JSX.Element {
-  // 动态 import 不做：五个面板都要立刻响应切换，懒加载只会让每次切换都闪一下骨架
+  // 浏览器面板一旦打开过就**常驻**：切到别的视图时用 CSS 隐藏，而不是卸载它。
+  //
+  // 为什么只有它特殊：<webview> 被卸载时 Electron 会把 guest 一起销毁 ——
+  // 页面、滚动位置、表单草稿全丢，而主进程的自动化服务会拿不到 guest、
+  // 一路等到超时（表现就是「模型想接着操作网页，却报浏览器不可用」）。
+  // 其余四个面板（审查 / 文件 / 侧聊 / 终端）重建成本低，切走即卸载是对的，保持原样。
+  //
+  // 隐藏用 display:none 而不是卸载、也不改尺寸：实测 guest 的视口尺寸不会因此归零
+  //（元素不参与布局时 guest 保留最后一次的 innerWidth/innerHeight），
+  // 所以隐藏期间依赖坐标的 click / type 依然能投递 —— 这条正是「后台自动化」的前提。
+  const [browserMounted, setBrowserMounted] = useState(view === "browser");
+  useEffect(() => {
+    if (view === "browser") setBrowserMounted(true);
+  }, [view]);
+
+  return (
+    <>
+      {browserMounted && (
+        <div className={view === "browser" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+          <BrowserPanel />
+        </div>
+      )}
+      {view !== "browser" && <TransientPanel view={view} />}
+    </>
+  );
+}
+
+/**
+ * 除浏览器外的四个面板：切走就卸载（重建成本低，同时留着只会白占内存）。
+ *
+ * 单独一个组件而不是在上一层的 return 里写 switch：那一层要同时表达
+ * 「浏览器常驻」与「其余瞬时」，两件事混在一个 switch 里读不出这个区别。
+ */
+function TransientPanel({ view }: { view: RightPanelView }): React.JSX.Element {
   switch (view) {
     case "review":
       return <ReviewPanel />;
@@ -120,9 +179,10 @@ function RightPanelViewHost({ view }: { view: RightPanelView }): React.JSX.Eleme
       return <FilesPanel />;
     case "sideChat":
       return <SideChatPanel />;
-    case "browser":
-      return <BrowserPanel />;
     case "terminal":
       return <TerminalPanel />;
+    case "browser":
+      // 浏览器面板由上一层常驻渲染，这里不重复挂载
+      return <></>;
   }
 }

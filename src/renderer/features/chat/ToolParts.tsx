@@ -3,19 +3,32 @@
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { useAuiState } from "@assistant-ui/react";
 import {
+  BellRingIcon,
+  CameraIcon,
+  CodeIcon,
   FileSearchIcon,
   FileTextIcon,
+  GlobeIcon,
+  HistoryIcon,
+  KeyboardIcon,
+  ListChecksIcon,
   ListIcon,
   ListTodoIcon,
   type LucideIcon,
   MessageCircleQuestion,
+  MousePointerClickIcon,
+  MousePointerIcon,
+  NetworkIcon,
   PenLineIcon,
   RocketIcon,
+  ScanEyeIcon,
   ScrollTextIcon,
   SquareIcon,
   SquarePenIcon,
   TerminalIcon,
+  TextCursorInputIcon,
   TextSearchIcon,
+  TimerIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -56,6 +69,21 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   job_output: ScrollTextIcon,
   job_list: ListIcon,
   job_kill: SquareIcon,
+  // 浏览器十四件套：打开 / 历史 / 读页面 / 点击 / 输入 / 截图 / 控制台 / 执行脚本 / 按键 / 悬停 / 下拉 / 等待 / 网络 / 弹窗策略
+  browser_open: GlobeIcon,
+  browser_history: HistoryIcon,
+  browser_snapshot: ScanEyeIcon,
+  browser_click: MousePointerClickIcon,
+  browser_type: TextCursorInputIcon,
+  browser_screenshot: CameraIcon,
+  browser_console: ScrollTextIcon,
+  browser_evaluate: CodeIcon,
+  browser_press: KeyboardIcon,
+  browser_hover: MousePointerIcon,
+  browser_select: ListChecksIcon,
+  browser_wait: TimerIcon,
+  browser_network: NetworkIcon,
+  browser_dialog: BellRingIcon,
 };
 
 const DEFAULT_ICON = TerminalIcon;
@@ -74,6 +102,24 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   job_output: { resting: "tools.jobOutput", active: "tools.jobOutputActive" },
   job_list: { resting: "tools.jobList", active: "tools.jobListActive" },
   job_kill: { resting: "tools.jobKill", active: "tools.jobKillActive" },
+  // 浏览器十四件套（词条见 locales 的 tools.browser*），后六项是按键 / 悬停 / 下拉 / 等待 / 网络 / 弹窗策略
+  browser_open: { resting: "tools.browserOpen", active: "tools.browserOpenActive" },
+  browser_history: { resting: "tools.browserHistory", active: "tools.browserHistoryActive" },
+  browser_snapshot: { resting: "tools.browserSnapshot", active: "tools.browserSnapshotActive" },
+  browser_click: { resting: "tools.browserClick", active: "tools.browserClickActive" },
+  browser_type: { resting: "tools.browserType", active: "tools.browserTypeActive" },
+  browser_screenshot: {
+    resting: "tools.browserScreenshot",
+    active: "tools.browserScreenshotActive",
+  },
+  browser_console: { resting: "tools.browserConsole", active: "tools.browserConsoleActive" },
+  browser_evaluate: { resting: "tools.browserEvaluate", active: "tools.browserEvaluateActive" },
+  browser_press: { resting: "tools.browserPress", active: "tools.browserPressActive" },
+  browser_hover: { resting: "tools.browserHover", active: "tools.browserHoverActive" },
+  browser_select: { resting: "tools.browserSelect", active: "tools.browserSelectActive" },
+  browser_wait: { resting: "tools.browserWait", active: "tools.browserWaitActive" },
+  browser_network: { resting: "tools.browserNetwork", active: "tools.browserNetworkActive" },
+  browser_dialog: { resting: "tools.browserDialog", active: "tools.browserDialogActive" },
 };
 
 const FALLBACK_LABELS = { resting: "tools.call", active: "tools.callActive" };
