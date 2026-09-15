@@ -23,7 +23,7 @@ const PERMISSION_KEYS: Record<PermissionMode, string> = {
  * 「环境信息」区块：这个会话跑在哪儿、用哪个模型、什么权限、是谁。
  *
  * 每一行都取与真正干活的那一处同源的判定：
- *   · 工作目录 —— useActiveWorkingDir（会话 cwd 优先，其次设置里的默认目录，见主进程 resolveWorkingDir）
+ *   · 工作目录 —— useActiveWorkingDir（就是会话绑定的 cwd，见主进程 resolveWorkingDir）
  *   · 模型 —— resolveEffectiveModelRef（与 Composer 的模型 chip、主进程发请求用的是同一个）
  *   · 权限 —— settings.permissionMode（就是主进程权限门读的那一个字段）
  *

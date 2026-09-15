@@ -1,9 +1,8 @@
 /**
  * 斜杠命令纯逻辑的测试（node project）。
  *
- * 这里同时承担一个「咬住内核口径」的职责：substituteSlashArgs / parseSlashArgs 是照抄
- * @earendil-works/pi-agent-core 的实现（见 slash-commands.ts 头注释），断言即抄自内核
- * dist/harness/prompt-templates.js 的行为。内核哪天改了语义，这里会先红。
+ * 关键口径：模板**没有参数** —— 命令名之后多敲的文字按普通正文接在模板后面，
+ * 正文里的 `$1` / `$ARGUMENTS` 只是普通字符，不做任何替换。
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,11 +14,9 @@ import {
   filterSlashCommands,
   insertSlashCommand,
   optionKey,
-  parseSlashArgs,
   parseSlashInvocation,
   type SlashCommand,
   slashQuery,
-  substituteSlashArgs,
 } from "./slash-commands";
 
 function skill(name: string, description = ""): SkillInfo {
@@ -27,13 +24,13 @@ function skill(name: string, description = ""): SkillInfo {
     name,
     description,
     filePath: `/skills/${name}/SKILL.md`,
-    source: "global",
+    source: "user",
     disabled: false,
   };
 }
 
 function template(name: string, content: string, description = ""): PromptTemplateInfo {
-  return { name, description, content, source: "global", dir: "/prompts" };
+  return { name, description, content, source: "user", dir: "/prompts" };
 }
 
 describe("buildSlashCommands", () => {
@@ -82,11 +79,11 @@ describe("slashQuery", () => {
     expect(slashQuery("/rev")).toBe("rev");
   });
 
-  it("补全后的一个尾随空格仍然算（用户正接着敲参数）", () => {
+  it("补全后的一个尾随空格仍然算（用户正接着往下写）", () => {
     expect(slashQuery("/review ")).toBe("review");
   });
 
-  it("名称中间出现空格就退出斜杠模式（参数已经开始）", () => {
+  it("名称中间出现空格就退出斜杠模式（后面已经是用户正文）", () => {
     expect(slashQuery("/review file.ts")).toBeNull();
     // 多敲的空格只是尾随空白，查询词没变，菜单不该闪一下关掉
     expect(slashQuery("/review  ")).toBe("review");
@@ -99,67 +96,22 @@ describe("slashQuery", () => {
   });
 });
 
-describe("parseSlashArgs（口径抄自内核 parseCommandArgs）", () => {
-  it("空格与 tab 分隔", () => {
-    expect(parseSlashArgs("a\tb c")).toEqual(["a", "b", "c"]);
-  });
-
-  it("单双引号成组", () => {
-    expect(parseSlashArgs("one \"two three\" 'four five'")).toEqual([
-      "one",
-      "two three",
-      "four five",
-    ]);
-  });
-
-  it("空引号串被丢弃", () => {
-    expect(parseSlashArgs('a "" b')).toEqual(["a", "b"]);
-  });
-
-  it("反斜杠是普通字符（内核不处理转义）", () => {
-    expect(parseSlashArgs("a\\ b")).toEqual(["a\\", "b"]);
-  });
-});
-
-describe("substituteSlashArgs（口径抄自内核 substituteArgs）", () => {
-  it("$1/$2 按位置替换，缺参补空串", () => {
-    expect(substituteSlashArgs("$1-$2-$3", ["a"])).toBe("a--");
-  });
-
-  it("$ARGUMENTS 与 $@ 都是全部参数空格连接", () => {
-    expect(substituteSlashArgs("[$ARGUMENTS]", ["a", "b"])).toBe("[a b]");
-    expect(substituteSlashArgs("[$@]", ["a", "b"])).toBe("[a b]");
-  });
-
-  it("切片占位符：取第 N 个起，以及从 N 起取 L 个", () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: 内核的占位符字面量，不是漏写的模板串
-    const sliceFrom = "${@:2}";
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: 内核的占位符字面量，不是漏写的模板串
-    const sliceRange = "${@:2:1}";
-    expect(substituteSlashArgs(sliceFrom, ["a", "b", "c"])).toBe("b c");
-    expect(substituteSlashArgs(sliceRange, ["a", "b", "c"])).toBe("b");
-  });
-
-  it("替换顺序固定：$1 先于 $@，因此 $1 的结果不会被 $@ 二次改写", () => {
-    expect(substituteSlashArgs("$1 $@", ["a", "b"])).toBe("a a b");
-  });
-});
-
 describe("parseSlashInvocation", () => {
   const commands = buildSlashCommands([], [template("review", "x"), template("review-deep", "y")]);
 
-  it("名字按最长匹配：/review-deep 不会被 /review 抢走", () => {
-    const hit = parseSlashInvocation("/review-deep a", commands);
+  it("名字按最长匹配：/review-deep 不会被 /review 抢走，名字之后是用户正文", () => {
+    const hit = parseSlashInvocation("/review-deep 看下 main.ts", commands);
     expect(hit?.command.name).toBe("review-deep");
-    expect(hit?.args).toEqual(["a"]);
+    expect(hit?.rest).toBe("看下 main.ts");
   });
 
-  it("无参数时 args 为空", () => {
-    expect(parseSlashInvocation("/review", commands)?.args).toEqual([]);
+  it("只敲命令名时 rest 为空", () => {
+    expect(parseSlashInvocation("/review", commands)?.rest).toBe("");
+    expect(parseSlashInvocation("/review   ", commands)?.rest).toBe("");
   });
 
-  it("参数支持引号成组", () => {
-    expect(parseSlashInvocation('/review "a b" c', commands)?.args).toEqual(["a b", "c"]);
+  it("命令名之后的文字原样保留（不拆词、不解释引号）", () => {
+    expect(parseSlashInvocation('/review "a b" c', commands)?.rest).toBe('"a b" c');
   });
 
   it("认不出命令返回 null（用户可能就是想发一条以斜杠开头的消息）", () => {
@@ -169,18 +121,18 @@ describe("parseSlashInvocation", () => {
   });
 
   it("大小写不敏感：菜单按前缀小写匹配，发送时也必须认（否则「菜单里选得到、发送时没反应」）", () => {
-    const mixed = buildSlashCommands([], [template("Translate", "T $1")]);
+    const mixed = buildSlashCommands([], [template("Translate", "T")]);
     const hit = parseSlashInvocation("/translate 中文", mixed);
     expect(hit?.command.name).toBe("Translate");
-    expect(hit?.args).toEqual(["中文"]);
+    expect(hit?.rest).toBe("中文");
     // 反向亦然：命令是小写、用户敲大写
     expect(parseSlashInvocation("/REVIEW", commands)?.command.name).toBe("review");
   });
 
-  it("名字后跟 tab 也算命令（内核把 tab 当分隔符）", () => {
+  it("名字后跟 tab 也算命令", () => {
     const hit = parseSlashInvocation("/review\thello", commands);
     expect(hit?.command.name).toBe("review");
-    expect(hit?.args).toEqual(["hello"]);
+    expect(hit?.rest).toBe("hello");
   });
 });
 
@@ -207,7 +159,7 @@ describe("insertSlashCommand（菜单选中后填进输入框的内容）", () =
     kind: "template",
     name: "review",
     description: "",
-    template: "Review $1 carefully.",
+    template: "Review carefully.",
   };
 
   it("技能只填 /name 加一个空格（正文在磁盘上，交给模型按需读）", () => {
@@ -215,23 +167,28 @@ describe("insertSlashCommand（菜单选中后填进输入框的内容）", () =
     expect(insertSlashCommand(command)).toBe("/review ");
   });
 
-  it("模板在没敲参数时原样插入正文：占位符留在眼前，用户看得见要填哪里", () => {
-    expect(insertSlashCommand(templateCommand)).toBe("Review $1 carefully.");
-  });
-
-  it("带参数时直接展开", () => {
-    expect(insertSlashCommand(templateCommand, ["main.ts"])).toBe("Review main.ts carefully.");
+  it("模板原样插入正文，用户接着往下写要处理的内容", () => {
+    expect(insertSlashCommand(templateCommand)).toBe("Review carefully.");
   });
 });
 
 describe("expandSlashInput（发送前的展开）", () => {
   const commands = buildSlashCommands(
     [skill("commit")],
-    [template("review", "Review $1 carefully.", "看一遍")],
+    [template("review", "Review carefully.", "看一遍")],
   );
 
-  it("模板命令展开成替换后的正文", () => {
-    expect(expandSlashInput("/review main.ts", commands)).toBe("Review main.ts carefully.");
+  it("模板命令展开成正文", () => {
+    expect(expandSlashInput("/review", commands)).toBe("Review carefully.");
+  });
+
+  it("命令名后面写的正文接在模板后面，空一行隔开（不丢用户输入）", () => {
+    expect(expandSlashInput("/review main.ts", commands)).toBe("Review carefully.\n\nmain.ts");
+  });
+
+  it("正文里的 $1 / $ARGUMENTS 只是普通字符，不做替换", () => {
+    const withPlaceholders = buildSlashCommands([], [template("sh", "echo $1 $ARGUMENTS")]);
+    expect(expandSlashInput("/sh 参数", withPlaceholders)).toBe("echo $1 $ARGUMENTS\n\n参数");
   });
 
   it("技能命令原样保留（正文不在渲染层）", () => {

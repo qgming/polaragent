@@ -59,7 +59,7 @@ export interface SubagentToolDeps {
   sessionId: string;
   /** 父会话的工作目录（子会话继承它） */
   cwd: () => string;
-  /** 当前可用的子智能体定义（已按 subagentsEnabled / disabledSubagentNames 过滤） */
+  /** 当前可用的子智能体定义（已按 disabledSubagentNames 过滤） */
   definitions: () => Promise<SubagentDefinition[]>;
   /** 启动一次运行；返回启动后的运行记录。实现见 subagent-runner.ts */
   start: (request: SubagentStartRequest) => Promise<SubagentRun>;

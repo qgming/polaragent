@@ -42,16 +42,11 @@ const BASE_SETTINGS: Settings = {
   density: "comfortable",
   chatFont: "",
   chatFontSize: 14,
-  defaultWorkingDir: null,
   services: [],
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
-  skillDirs: [],
   disabledSkillNames: [],
-  skillsEnabled: true,
-  promptTemplateDirs: [],
-  subagentsEnabled: true,
   disabledSubagentNames: [],
   mcpServers: [],
 };
@@ -61,7 +56,7 @@ function settingsWith(patch: Partial<Settings> = {}): Settings {
 }
 
 let root: string;
-/** 会话工作目录：项目级定义固定落在 `${cwd}/.pi/subagents` */
+/** 会话工作目录：项目级定义固定落在 `${cwd}/.oint/subagents` */
 let cwd: string;
 
 /** 数据目录下的全局定义目录 */
@@ -70,7 +65,7 @@ function globalDir(): string {
 }
 
 function projectDir(): string {
-  return path.join(cwd, ".pi", "subagents");
+  return path.join(cwd, ".oint", "subagents");
 }
 
 /** 一份最小可解析的定义文件（frontmatter + 正文） */
@@ -257,7 +252,7 @@ describe("loadSubagentCatalog", () => {
     expect(definitions).toHaveLength(BUILTIN_SUBAGENTS.length);
   });
 
-  it("项目目录（会话目录下的 .pi/subagents）的定义会被扫描到；与数据目录同名时数据目录优先", async () => {
+  it("项目目录（会话目录下的 .oint/subagents）的定义会被扫描到；与数据目录同名时数据目录优先", async () => {
     await writeDefinition(projectDir(), "project-only.md", markdown("来自项目目录"));
     await writeDefinition(globalDir(), "shared.md", markdown("来自数据目录"));
     await writeDefinition(projectDir(), "shared.md", markdown("来自项目目录"));
@@ -317,12 +312,11 @@ describe("toSubagentInfo", () => {
     source: "builtin",
   };
 
-  it("enabled 同时受总开关与禁用名单控制", () => {
+  it("enabled 由禁用名单控制", () => {
     expect(toSubagentInfo(def, settingsWith()).enabled).toBe(true);
     expect(toSubagentInfo(def, settingsWith({ disabledSubagentNames: ["explorer"] })).enabled).toBe(
       false,
     );
-    expect(toSubagentInfo(def, settingsWith({ subagentsEnabled: false })).enabled).toBe(false);
     // 名单里是别的名字不影响本定义（禁用表是共用的一份）
     expect(toSubagentInfo(def, settingsWith({ disabledSubagentNames: ["other"] })).enabled).toBe(
       true,

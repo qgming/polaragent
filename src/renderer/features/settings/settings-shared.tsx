@@ -1,7 +1,17 @@
-import type { ReactNode } from "react";
+import { Plus } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { field } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { typeEyebrow, typeSection } from "@/renderer/components/assistant-ui/type";
+import { Button } from "@/renderer/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/renderer/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -9,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/renderer/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
 import { cn } from "@/renderer/lib/utils";
 
 /**
@@ -183,4 +194,127 @@ export function SettingsSelect({
 export function PanelLoading() {
   const { t } = useTranslation();
   return <p className="text-[13px] text-ink-3">{t("common.loading")}</p>;
+}
+
+/**
+ * IPC 拒绝时的 message 会带 `Error invoking remote method 'xxx': Error: ` 前缀，
+ * 直接显示给用户是一串噪音 —— 这里剥掉前缀，只留主进程写的中文说明。
+ */
+export function ipcErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, "");
+}
+
+/**
+ * 资源面板的工具栏：左边放筛选 / 说明，右边固定是动作位。
+ * 技能 / 魔法提示 / 子智能体 / MCP / 模型服务五个面板共用，保证「添加」按钮永远在同一个位置。
+ */
+export function PanelToolbar({ children, action }: { children?: ReactNode; action: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
+      <div className="flex shrink-0 items-center gap-2">{action}</div>
+    </div>
+  );
+}
+
+/** 统一的「添加」按钮：主按钮 + Plus 图标；位置由 PanelToolbar 固定，样式不再各面板各写一份 */
+export function AddButton({
+  label,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Button type="button" size="sm" disabled={disabled} onClick={onClick}>
+      <Plus className="size-4" aria-hidden="true" />
+      {label}
+    </Button>
+  );
+}
+
+/**
+ * 统一的表单弹窗：五个面板的新增 / 查看 / 编辑都走它 —— 宽度、头部眉题、正文滚动区、
+ * 底部动作区只此一份，面板不再各自拼 DialogContent（过去尺寸与间距各不相同）。
+ *
+ * 传入的 children 是正文（可滚动），footer 是底部动作区（左侧放次要动作，右侧放取消/保存）。
+ * header 区域右侧留给 DialogContent 自带的关闭按钮（pr-12 是给它留位）。
+ */
+export function SettingsDialog({
+  title,
+  description,
+  children,
+  footer,
+  onClose,
+  bodyClassName,
+}: {
+  title: string;
+  /** 显示给用户的说明；只作为副标题展示，不参与 aria 描述（描述用 sr-only 兜底） */
+  description?: string;
+  children: ReactNode;
+  footer: ReactNode;
+  onClose: () => void;
+  bodyClassName?: string;
+}) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[86vh] w-[560px] max-w-[92vw] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[92vw]">
+        <DialogHeader className="shrink-0 border-border/60 border-b p-4 pr-12">
+          <DialogTitle className={cn(typeEyebrow, "font-normal")}>{title}</DialogTitle>
+          <DialogDescription className="sr-only">{description ?? title}</DialogDescription>
+        </DialogHeader>
+        <div className={cn("app-scrollbar min-h-0 flex-1 overflow-y-auto p-4", bodyClassName)}>
+          {children}
+        </div>
+        <DialogFooter className="shrink-0 flex-row items-center justify-between border-border/60 border-t p-4 sm:justify-between">
+          {footer}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * 「打开文件夹」按钮：走主进程的 app.openPath（那里会校验绝对路径再交给系统）。
+ * 失败原因挂在该按钮的 tooltip 上，不静默吞掉 —— 打开失败通常意味着目录被删或被占用。
+ */
+export function OpenDirButton({ target, label }: { target: string | null; label: string }) {
+  const { t } = useTranslation();
+  const [reason, setReason] = useState<string | null>(null);
+
+  const handleClick = async () => {
+    if (target === null || target === "") return;
+    const result = await window.oint.app.openPath(target).catch(() => null);
+    setReason(result === null || !result.ok ? (result?.reason ?? t("errors.generic")) : null);
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={secondaryButton}
+            disabled={target === null || target === ""}
+            onClick={() => void handleClick()}
+          >
+            {label}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      {reason !== null ? (
+        <TooltipContent>{`${t("settings.openFailed")}：${reason}`}</TooltipContent>
+      ) : null}
+    </Tooltip>
+  );
 }

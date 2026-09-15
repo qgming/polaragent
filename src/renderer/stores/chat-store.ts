@@ -96,6 +96,14 @@ function upsertMessage(
   return { messagesBySession: { ...state.messagesBySession, [sessionId]: next } };
 }
 
+/** 从一个「按会话 id 索引」的记录里删掉某个会话（键不存在时原样返回，避免无谓的重渲染） */
+function omitSession<T>(record: Record<string, T>, id: string): Record<string, T> {
+  if (!(id in record)) return record;
+  const next = { ...record };
+  delete next[id];
+  return next;
+}
+
 /** 对指定消息做局部更新（找不到则原样返回） */
 function updateMessage(
   state: ChatState,
@@ -348,6 +356,21 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     if (get().activeSessionId === id) {
       await get().setActiveSession(null);
     }
+    // 会话已从磁盘消失：把它留下的每会话缓存整批清掉（消息、翻页游标、队列、作业、未决卡片），
+    // 否则这些记录会一直挂在内存里，还可能与将来复用的会话 id 串味
+    set((state) => ({
+      messagesBySession: omitSession(state.messagesBySession, id),
+      loadedSessions: omitSession(state.loadedSessions, id),
+      pageCursorBySession: omitSession(state.pageCursorBySession, id),
+      hasMoreBySession: omitSession(state.hasMoreBySession, id),
+      loadingOlderBySession: omitSession(state.loadingOlderBySession, id),
+      runningBySession: omitSession(state.runningBySession, id),
+      queueBySession: omitSession(state.queueBySession, id),
+      jobsBySession: omitSession(state.jobsBySession, id),
+      compactionNotices: omitSession(state.compactionNotices, id),
+      pendingApprovals: state.pendingApprovals.filter((item) => item.sessionId !== id),
+      pendingAsks: state.pendingAsks.filter((item) => item.sessionId !== id),
+    }));
   },
 
   async forkSession(id, entryId) {

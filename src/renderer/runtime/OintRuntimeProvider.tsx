@@ -11,7 +11,6 @@ import { buildSlashCommands, expandSlashInput } from "@/renderer/features/chat/s
 import { JobToolUIs, SubagentToolUIs } from "@/renderer/features/chat/ToolParts";
 import { resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
 import { useChatStore } from "@/renderer/stores/chat-store";
-import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { SUBAGENT_TOOL_NAMES, useSubagentStore } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts";
@@ -74,8 +73,7 @@ export function OintRuntimeProvider({
   const sessionCwd = useChatStore(
     (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.cwd,
   );
-  const defaultWorkingDir = useSettingsStore((state) => state.settings?.defaultWorkingDir);
-  const workingDir = resolveWorkingDir(sessionCwd, defaultWorkingDir);
+  const workingDir = resolveWorkingDir(sessionCwd);
 
   // 主进程事件 → store reducer（卸载时取消订阅）
   useEffect(() => {

@@ -1,38 +1,27 @@
 /**
  * 斜杠菜单的数据源：把技能与提示模板两个 IPC 列表拉进渲染层。
  *
- * 取数的 workingDir 用**当前会话的 cwd**（会话没绑目录时退到设置里的默认目录），
- * 与主进程 runtime 的 resolveWorkingDir 同一个优先级口径 —— 否则会出现
- * 「菜单里列着 A 目录的技能，模型在 B 目录里找不到」这种对不上的情况。
+ * 取数的 workingDir 用**当前会话的 cwd**，与主进程 runtime 的 resolveWorkingDir 同一个口径
+ * —— 否则会出现「菜单里列着 A 目录的技能，模型在 B 目录里找不到」这种对不上的情况。
  *
- * 面板（设置 → 技能 / 提示模板）走的是 defaultWorkingDir，与这里不同是刻意的：
- * 那里是全局清单，这里必须跟着会话走。
+ * 设置面板（技能 / 魔法提示）不带会话，只列数据目录里的全局资源，与这里不同是刻意的。
  */
 
 import { useEffect, useState } from "react";
 import { useChatStore } from "@/renderer/stores/chat-store";
-import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { buildSlashCommands, type SlashCommand } from "./slash-commands";
 
 /** 稳定空引用：避免每次渲染都产生新数组（zustand v5 下会被判成状态变化） */
 const EMPTY_COMMANDS: SlashCommand[] = [];
 
 /**
- * 工作目录的优先级：会话 cwd 优先，其次设置里的默认目录，都没有则 undefined（主进程那边
- * 再回落到进程当前目录）。
+ * 工作目录：会话绑定的 cwd；没有就是 undefined（主进程那边按「只扫数据目录」处理）。
  *
  * 单独提成纯函数是因为它有**两个**调用方：菜单取清单，以及发送前展开模板（见
  * OintRuntimeProvider）。两边必须同源，否则会出现「菜单里看得见、发送时认不出来」。
  */
-export function resolveWorkingDir(
-  sessionCwd: string | undefined,
-  defaultWorkingDir: string | null | undefined,
-): string | undefined {
-  if (sessionCwd !== undefined && sessionCwd !== "") return sessionCwd;
-  if (defaultWorkingDir !== null && defaultWorkingDir !== undefined && defaultWorkingDir !== "") {
-    return defaultWorkingDir;
-  }
-  return undefined;
+export function resolveWorkingDir(sessionCwd: string | undefined): string | undefined {
+  return sessionCwd !== undefined && sessionCwd !== "" ? sessionCwd : undefined;
 }
 
 /** 当前会话的工作目录（口径见 resolveWorkingDir） */
@@ -40,8 +29,7 @@ export function useActiveWorkingDir(): string | undefined {
   const cwd = useChatStore(
     (s) => s.sessions.find((session) => session.id === s.activeSessionId)?.cwd,
   );
-  const fallback = useSettingsStore((s) => s.settings?.defaultWorkingDir);
-  return resolveWorkingDir(cwd, fallback);
+  return resolveWorkingDir(cwd);
 }
 
 /**

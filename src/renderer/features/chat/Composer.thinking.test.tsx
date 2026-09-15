@@ -83,7 +83,6 @@ function seedStores(options: {
       density: "comfortable",
       chatFont: "",
       chatFontSize: 14,
-      defaultWorkingDir: null,
       services: [
         {
           id: "svc",
@@ -97,11 +96,7 @@ function seedStores(options: {
       defaultModel: { serviceId: "svc", modelId: options.defaultModelId },
       thinkingLevel: options.thinkingLevel ?? "medium",
       permissionMode: "default",
-      skillDirs: [],
       disabledSkillNames: [],
-      skillsEnabled: true,
-      promptTemplateDirs: [],
-      subagentsEnabled: true,
       disabledSubagentNames: [],
       mcpServers: [],
     },

@@ -133,7 +133,7 @@ export interface ChatRuntimeDeps {
   browser?: BrowserAutomation;
   /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
   sessionTitles?: SessionTitleGenerator;
-  /** 会话工作目录解析；默认取索引 cwd，其次 settings.defaultWorkingDir */
+  /** 会话工作目录解析：取索引里绑定的 cwd，未绑定时由实现方回退进程当前目录 */
   resolveWorkingDir: (sessionId: string) => Promise<string>;
   /**
    * MCP 工具来源；未注入时（测试等场景）只装配内置工具。
@@ -619,9 +619,7 @@ export async function loadAgentResources(
   settings: Settings,
   cwd: string,
 ): Promise<LoadedAgentResources> {
-  if (!settings.skillsEnabled) return { skills: [], promptTemplates: [], skillsSection: "" };
-
-  const skillDirs = resolveSkillDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path));
+  const skillDirs = resolveSkillDirs(cwd).map((dir) => path.resolve(cwd, dir));
 
   let skills: Skill[] = [];
   try {
@@ -641,7 +639,7 @@ export async function loadAgentResources(
   try {
     const result = await loadPromptTemplates(
       env,
-      resolvePromptTemplateDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path)),
+      resolvePromptTemplateDirs(cwd).map((dir) => path.resolve(cwd, dir)),
       BACKGROUND_CONTEXT,
     );
     for (const diagnostic of result.diagnostics) {
@@ -684,7 +682,7 @@ export function unregisterSubagentSession(childSessionId: string): void {
 }
 
 /**
- * 当前真正可派的子智能体：总开关关掉就是空，被禁用的名字也剔掉。
+ * 当前真正可派的子智能体：被禁用的名字剔掉，其余照常装配。
  *
  * 读一次、用完就丢 —— 不缓存是刻意的：用户在设置里新建/启用了定义之后，
  * 下一次 Task 调用就该能派到它，不该等到会话重建。
@@ -697,7 +695,6 @@ async function loadEnabledSubagents(
   settings: Settings,
   cwd: string,
 ): Promise<SubagentDefinition[]> {
-  if (!settings.subagentsEnabled) return [];
   try {
     const { definitions, diagnostics } = await loadSubagentCatalog(cwd);
     for (const diagnostic of diagnostics) console.warn(`子智能体定义警告：${diagnostic}`);
@@ -1407,13 +1404,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 读不到就说明这不是子智能体会话，按主会话那一套来。
      */
     const spec = subagentSessions.get(sessionId);
-    // 技能/模板目录可能与工作目录、数据目录都不重叠，必须一并加入路径守卫的根：
+    // 技能/模板目录必然落在会话工作目录（.oint/*）或数据目录之下，两个根一起兜住路径守卫：
     // 否则 loadSkills 的 listDir 会被 validatePathAccess 拒绝，表现为「目录明明存在却是 0 个技能」。
     // （子智能体定义目录不在这一串里：它走普通 fs 读，不受守卫约束 —— 见 loadEnabledSubagents）
-    const skillDirPaths = resolveSkillDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path));
     const env = await createExecEnv({
       cwd,
-      allowedRoots: [cwd, dataDir(), ...skillDirPaths],
+      allowedRoots: [cwd, dataDir()],
     });
 
     const loaded = await loadAgentResources(env, settings, cwd);
@@ -1490,7 +1486,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     /**
      * 系统提示：
      * - 主会话：交互式提示（工作目录 + 工具指导 + 工作规则 + 技能索引 + AGENTS.md），
-     *   再在「开启子智能体且确实有可用定义」时追加委派说明 —— 提示里列一份空清单，
+     *   再在「确实有可用定义」时追加委派说明 —— 提示里列一份空清单，
      *   只会让模型反复尝试派发不存在的子智能体；
      * - 子智能体：换成定义里的 prompt 正文 + 子智能体的工作规则。刻意不给它技能索引：
      *   它是被派来干一件具体的事，技能由主代理挑选与转述。

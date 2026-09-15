@@ -1,6 +1,5 @@
 import type { ExecutionEnv, Skill } from "@earendil-works/pi-agent-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Settings } from "@/shared/contracts/settings";
 import type { SkillInfo } from "@/shared/contracts/skills";
 
 type ListHandler = (event: unknown, request?: { workingDir?: string }) => Promise<SkillInfo[]>;
@@ -30,6 +29,7 @@ import { loadSkills } from "@earendil-works/pi-agent-core";
 import { createExecEnv } from "@/main/pisdk/exec-env";
 import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
+import type { Settings } from "@/shared/contracts/settings";
 import { registerSkillsIpc } from "./skills";
 
 /** 每个目录返回的技能；key 是目录路径 */
@@ -45,28 +45,9 @@ function skill(name: string, dir: string): Skill {
   };
 }
 
-const BASE_SETTINGS: Settings = {
-  theme: "system",
-  language: "zh-CN",
-  density: "comfortable",
-  chatFont: "",
-  chatFontSize: 14,
-  defaultWorkingDir: null,
-  services: [],
-  defaultModel: null,
-  thinkingLevel: "medium",
-  permissionMode: "default",
-  skillDirs: ["/custom/skills"],
-  skillsEnabled: true,
-  promptTemplateDirs: [],
-  subagentsEnabled: true,
-  disabledSubagentNames: [],
-  mcpServers: [],
-  disabledSkillNames: [],
-};
-
-function settingsWith(patch: Partial<Settings>): Settings {
-  return { ...BASE_SETTINGS, ...patch };
+/** handler 只读 disabledSkillNames，测试里不必凑整份 Settings */
+function settingsWithDisabled(names: string[]): Settings {
+  return { disabledSkillNames: names } as Settings;
 }
 
 /** 取回注册好的 skills:list handler（去掉 IPC event 参数） */
@@ -85,46 +66,42 @@ beforeEach(() => {
     return { skills: skillsByDir.get(dir) ?? [], diagnostics: [] };
   });
   vi.mocked(createExecEnv).mockResolvedValue({} as ExecutionEnv);
-  vi.mocked(loadSettings).mockResolvedValue(settingsWith({}));
+  vi.mocked(loadSettings).mockResolvedValue(settingsWithDisabled([]));
   registerSkillsIpc();
 });
 
 describe("skills:list", () => {
-  it("多目录来源按 设置目录 → 数据目录 → 项目目录 的顺序合并", async () => {
-    skillsByDir.set("/custom/skills", [skill("alpha", "/custom/skills")]);
+  it("目录来源按 数据目录 → 项目目录 的顺序合并，磁盘项一律标为用户添加", async () => {
     skillsByDir.set("/data-oint/skills", [skill("beta", "/data-oint/skills")]);
-    skillsByDir.set("C:/work/.pi/skills", [skill("gamma", "C:/work/.pi/skills")]);
+    skillsByDir.set("C:/work/.oint/skills", [skill("gamma", "C:/work/.oint/skills")]);
 
     const list = await listSkills({ workingDir: "C:/work" });
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
-      "/custom/skills",
       "/data-oint/skills",
-      "C:/work/.pi/skills",
+      "C:/work/.oint/skills",
     ]);
-    expect(list.map((item) => item.name)).toEqual(["alpha", "beta", "gamma"]);
-    expect(list.map((item) => item.source)).toEqual(["global", "global", "project"]);
+    expect(list.map((item) => item.name)).toEqual(["beta", "gamma"]);
+    expect(list.map((item) => item.source)).toEqual(["user", "user"]);
   });
 
   it("同名技能「首个胜出」：保留先扫描目录里的条目", async () => {
-    skillsByDir.set("/custom/skills", [
-      skill("dup", "/custom/skills"),
-      skill("only-a", "/custom/skills"),
+    skillsByDir.set("/data-oint/skills", [
+      skill("dup", "/data-oint/skills"),
+      skill("only-a", "/data-oint/skills"),
     ]);
-    skillsByDir.set("/data-oint/skills", [skill("dup", "/data-oint/skills")]);
-    skillsByDir.set("C:/work/.pi/skills", [skill("dup", "C:/work/.pi/skills")]);
+    skillsByDir.set("C:/work/.oint/skills", [skill("dup", "C:/work/.oint/skills")]);
 
     const list = await listSkills({ workingDir: "C:/work" });
 
     expect(list.map((item) => item.name)).toEqual(["dup", "only-a"]);
-    expect(list[0]?.filePath).toBe("/custom/skills/dup/SKILL.md");
-    expect(list[0]?.source).toBe("global");
+    expect(list[0]?.filePath).toBe("/data-oint/skills/dup/SKILL.md");
+    expect(list[0]?.source).toBe("user");
   });
 
   it("某个目录扫描失败时其余目录仍正常返回，并记录告警", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    skillsByDir.set("/custom/skills", [skill("alpha", "/custom/skills")]);
-    skillsByDir.set("C:/work/.pi/skills", [skill("gamma", "C:/work/.pi/skills")]);
+    skillsByDir.set("C:/work/.oint/skills", [skill("gamma", "C:/work/.oint/skills")]);
     vi.mocked(createExecEnv).mockImplementation(async (options) => {
       if (options.cwd === "/data-oint/skills") throw new Error("ENOENT: 目录不存在");
       return {} as ExecutionEnv;
@@ -132,18 +109,18 @@ describe("skills:list", () => {
 
     const list = await listSkills({ workingDir: "C:/work" });
 
-    expect(list.map((item) => item.name)).toEqual(["alpha", "gamma"]);
+    expect(list.map((item) => item.name)).toEqual(["gamma"]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("/data-oint/skills"));
     warn.mockRestore();
   });
 
   it("disabledSkillNames 映射到 SkillInfo.disabled", async () => {
-    skillsByDir.set("/custom/skills", [
-      skill("alpha", "/custom/skills"),
-      skill("beta", "/custom/skills"),
+    skillsByDir.set("/data-oint/skills", [
+      skill("alpha", "/data-oint/skills"),
+      skill("beta", "/data-oint/skills"),
     ]);
     vi.mocked(loadSettings).mockResolvedValue(
-      settingsWith({ disabledSkillNames: ["beta", "不存在的技能"] }),
+      settingsWithDisabled(["beta", "不存在的技能"]),
     );
 
     const list = await listSkills();
@@ -152,24 +129,20 @@ describe("skills:list", () => {
     expect(list.find((item) => item.name === "beta")?.disabled).toBe(true);
   });
 
-  it("空/空白目录项被跳过，workingDir 缺失时不追加项目目录", async () => {
-    skillsByDir.set("/real/skills", [skill("alpha", "/real/skills")]);
-    vi.mocked(loadSettings).mockResolvedValue(
-      settingsWith({ skillDirs: ["/real/skills", "", "   "] }),
-    );
+  it("workingDir 缺失时只扫描数据目录", async () => {
+    skillsByDir.set("/data-oint/skills", [skill("alpha", "/data-oint/skills")]);
 
     const list = await listSkills();
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
-      "/real/skills",
       "/data-oint/skills",
     ]);
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       name: "alpha",
       description: "alpha 的说明",
-      filePath: "/real/skills/alpha/SKILL.md",
-      source: "global",
+      filePath: "/data-oint/skills/alpha/SKILL.md",
+      source: "user",
       disabled: false,
     });
   });

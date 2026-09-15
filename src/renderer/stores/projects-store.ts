@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import type { Project } from "@/shared/contracts";
-import { useSettingsStore } from "./settings-store";
 
 /**
  * 项目列表（侧栏「项目」分组）。
@@ -33,9 +32,7 @@ export const useProjectsStore = create<ProjectsState>()((set) => ({
   },
 
   async addByPicker() {
-    // 默认停在设置里的默认工作目录：多数人第一次要绑的就是它
-    const defaultPath = useSettingsStore.getState().settings?.defaultWorkingDir ?? undefined;
-    const picked = await window.oint.dialog.pickDirectory(defaultPath);
+    const picked = await window.oint.dialog.pickDirectory();
     if (picked === null) return null;
 
     const project = await window.oint.projects.add(picked);

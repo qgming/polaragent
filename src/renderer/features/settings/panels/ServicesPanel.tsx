@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Pencil, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
+import { Eye, EyeOff, Plus, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { field, ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
@@ -24,8 +24,11 @@ import type { ModelCatalogEntry } from "@/shared/contracts/models";
 import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 import { catalogPatch, hasManualCapability } from "../model-entry";
 import {
+  AddButton,
   PanelLoading,
+  PanelToolbar,
   SELECT_NONE,
+  SettingsDialog,
   SettingsField,
   SettingsSection,
   SettingsSelect,
@@ -275,18 +278,35 @@ function ServiceEditor({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[86vh] w-[560px] max-w-[92vw] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[92vw]">
-        <DialogHeader className="border-border/60 border-b p-4 pr-12">
-          <DialogTitle className={cn(typeEyebrow, "font-normal")}>
-            {isNew ? t("settings.addService") : t("settings.editService")}
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            {t("settings.modelServicesDesc")}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+    <SettingsDialog
+      title={isNew ? t("settings.addService") : t("settings.editService")}
+      description={t("settings.modelServicesDesc")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={secondaryButton}
+            disabled={fetch.status === "loading" || draft.baseUrl.trim() === ""}
+            onClick={() => void handleFetch()}
+          >
+            <RefreshCw className={cn("size-3.5", fetch.status === "loading" && "animate-spin")} />
+            {t("settings.fetchModels")}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="button" size="sm" disabled={!canSave} onClick={onSave}>
+              {t("common.save")}
+            </Button>
+          </div>
+        </>
+      }
+    >
+      <div className="space-y-4">
           <FieldBlock label={t("settings.serviceName")}>
             <Input
               value={draft.name}
@@ -562,30 +582,7 @@ function ServiceEditor({
             ) : null}
           </div>
         </div>
-
-        <DialogFooter className="flex-row items-center justify-between border-border/60 border-t p-4 sm:justify-between">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={secondaryButton}
-            disabled={fetch.status === "loading" || draft.baseUrl.trim() === ""}
-            onClick={() => void handleFetch()}
-          >
-            <RefreshCw className={cn("size-3.5", fetch.status === "loading" && "animate-spin")} />
-            {t("settings.fetchModels")}
-          </Button>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-              {t("common.cancel")}
-            </Button>
-            <Button type="button" size="sm" disabled={!canSave} onClick={onSave}>
-              {t("common.save")}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }
 
@@ -656,32 +653,31 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
 
   return (
     <div className="space-y-6">
-      {/* 分类名已由模态的大标题给出（「模型服务」），这里只留一句范围说明与动作，不重复标题 */}
-      <div className="flex items-start justify-between gap-3">
+      {/* 分类名已由模态的大标题给出（「模型服务」），工具栏只放范围说明与添加入口 */}
+      <PanelToolbar
+        action={<AddButton label={t("settings.addService")} onClick={() => setDraft(toDraft())} />}
+      >
         <p className="min-w-0 flex-1 text-xs text-ink-3">{t("settings.modelServicesDesc")}</p>
-        <Button type="button" size="sm" onClick={() => setDraft(toDraft())}>
-          <Plus className="size-4" />
-          {t("settings.addService")}
-        </Button>
-      </div>
+      </PanelToolbar>
 
       {settings.services.length === 0 ? (
         <div className="rounded-xl border border-border/60 p-6 text-center">
           <p className="text-[13.5px] font-medium">{t("settings.noServices")}</p>
           <p className="mt-1 text-xs text-ink-3">{t("settings.noServicesHint")}</p>
-          <Button type="button" size="sm" className="mt-3" onClick={() => setDraft(toDraft())}>
-            <Plus className="size-4" />
-            {t("settings.addService")}
-          </Button>
         </div>
       ) : (
         <div className="space-y-2">
           {settings.services.map((service) => (
             <div
               key={service.id}
-              className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3"
+              className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3 transition-colors hover:bg-foreground/[0.03]"
             >
-              <div className="min-w-0">
+              {/* 整块信息区就是查看/编辑入口：点击打开与新增同一个弹窗组件 */}
+              <button
+                type="button"
+                className="min-w-0 flex-1 cursor-pointer text-left"
+                onClick={() => setDraft(toDraft(service))}
+              >
                 <div className="flex items-center gap-2">
                   <span className="truncate text-[13.5px] font-medium">{service.name}</span>
                   <Badge
@@ -697,16 +693,8 @@ function ServicesPanelBody({ settings }: { settings: Settings }) {
                 <p className="mt-0.5 text-xs text-ink-3">
                   {t("settings.models")} · {service.models.length}
                 </p>
-              </div>
+              </button>
               <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  aria-label={t("settings.editService")}
-                  className={cn(ghostButton, "size-7")}
-                  onClick={() => setDraft(toDraft(service))}
-                >
-                  <Pencil className="size-3.5" />
-                </button>
                 <button
                   type="button"
                   aria-label={t("common.delete")}

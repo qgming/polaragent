@@ -7,7 +7,6 @@ import { typePackage } from "@/renderer/components/assistant-ui/type";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
-import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { DirectoryListing, FileContent, FileTreeEntry } from "@/shared/contracts/files";
 import { PanelEmpty, PanelError, PanelSection } from "./panel-view";
 
@@ -17,7 +16,7 @@ import { PanelEmpty, PanelError, PanelSection } from "./panel-view";
  * 每次只列一层（主进程也照这个口径实现）：工作目录里常有 node_modules / .git 这种
  * 几万条目的子树，一次拉全树既慢又占内存，而人的操作本来就是「点开看一层」。
  *
- * 根固定为会话工作目录（主进程的路径守卫会拒掉根之外的路径）——
+ * 根固定为会话绑定的工作目录（主进程的路径守卫会拒掉根之外的路径）——
  * 这既让面板看得见项目，也保证它不会变成一个任意路径浏览器。
  *
  * 两种模式共用一个组件而不是两个：它们是同一条导航流的前后两屏
@@ -30,14 +29,13 @@ const MAX_PREVIEW_LINES = 4000;
 export function FilesPanel(): React.JSX.Element {
   const { t } = useTranslation();
 
-  /** 浏览的根：会话工作目录优先，其次设置的默认目录 */
+  /** 浏览的根：当前会话绑定的工作目录；没有绑定就没有根 */
   const sessionCwd = useChatStore((s) =>
     s.activeSessionId !== null
       ? s.sessions.find((item) => item.id === s.activeSessionId)?.cwd
       : undefined,
   );
-  const defaultWorkingDir = useSettingsStore((s) => s.settings?.defaultWorkingDir);
-  const root = sessionCwd ?? defaultWorkingDir ?? undefined;
+  const root = sessionCwd;
 
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [preview, setPreview] = useState<FileContent | null>(null);

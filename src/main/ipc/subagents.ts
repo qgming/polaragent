@@ -41,10 +41,9 @@ export function registerSubagentsIpc(): void {
     "读取子智能体列表",
     async (request?: { workingDir?: string }): Promise<SubagentCatalog> => {
       const settings = await loadSettings();
-      // cwd 决定项目级目录（.pi/subagents）落在哪；定义目录固定（数据目录 + 项目目录），
-      // 读取走普通 fs，不需要装配 ExecutionEnv（见 loadSubagentCatalog 的说明）
-      const cwd = request?.workingDir || settings.defaultWorkingDir || process.cwd();
-      const { definitions, diagnostics } = await loadSubagentCatalog(cwd);
+      // cwd 决定项目级目录（.oint/subagents）扫不扫：设置面板不带会话，只列数据目录里的定义；
+      // 项目级定义跟着会话 cwd 走。定义目录固定，读取走普通 fs，不需要装配 ExecutionEnv
+      const { definitions, diagnostics } = await loadSubagentCatalog(request?.workingDir);
       // enabled 由设置现算，不在目录层过滤：已禁用的定义也要显示出来才能重新启用
       return { subagents: definitions.map((def) => toSubagentInfo(def, settings)), diagnostics };
     },

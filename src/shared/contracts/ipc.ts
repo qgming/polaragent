@@ -9,7 +9,7 @@ import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
-import type { PromptTemplateInfo } from "./prompts";
+import type { PromptTemplateInfo, PromptTemplateWriteRequest } from "./prompts";
 import type { ReviewSummary } from "./review";
 import type {
   LoadSessionMessagesOptions,
@@ -19,7 +19,7 @@ import type {
   SetSessionModelResult,
 } from "./session";
 import type { Settings } from "./settings";
-import type { SkillInfo } from "./skills";
+import type { SkillDetail, SkillImportResult, SkillInfo } from "./skills";
 import type {
   SubagentCatalog,
   SubagentInfo,
@@ -84,9 +84,15 @@ export const IPC = {
   },
   skills: {
     list: "skills:list",
+    /** 弹出文件选择框，把 zip 技能包解压导入数据目录的 skills/ */
+    import: "skills:import",
+    read: "skills:read",
+    remove: "skills:remove",
   },
   prompts: {
     list: "prompts:list",
+    write: "prompts:write",
+    remove: "prompts:remove",
   },
   permissions: {
     listRules: "permissions:list-rules",
@@ -243,6 +249,14 @@ export interface IpcInvokeContract {
     request: { workingDir?: string } | undefined;
     response: PromptTemplateInfo[];
   };
+  [IPC.skills.import]: { request: undefined; response: SkillImportResult };
+  [IPC.skills.read]: { request: { name: string }; response: SkillDetail };
+  [IPC.skills.remove]: { request: { name: string }; response: undefined };
+  [IPC.prompts.write]: {
+    request: PromptTemplateWriteRequest;
+    response: PromptTemplateInfo;
+  };
+  [IPC.prompts.remove]: { request: { name: string }; response: undefined };
   [IPC.subagents.list]: {
     request: { workingDir?: string } | undefined;
     response: SubagentCatalog;

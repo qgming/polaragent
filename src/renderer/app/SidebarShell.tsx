@@ -85,8 +85,9 @@ export function SidebarShell() {
   const pendingDeleteSessionId = useUiStore((s) => s.pendingDeleteSessionId);
   const settleDeleteSession = useUiStore((s) => s.settleDeleteSession);
 
+  // trim 后为空也按未命名处理：与列表/Tab 标题的兜底口径一致，避免对话框里出现空引号
   const deleteTitle = useChatStore(
-    (s) => s.sessions.find((item) => item.id === pendingDeleteSessionId)?.title ?? null,
+    (s) => s.sessions.find((item) => item.id === pendingDeleteSessionId)?.title?.trim() || null,
   );
 
   return (
@@ -149,7 +150,7 @@ export function SidebarShell() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t("common.delete")}</DialogTitle>
-              <DialogDescription>「{deleteTitle ?? ""}」</DialogDescription>
+              <DialogDescription>「{deleteTitle ?? t("chat.newChat")}」</DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => settleDeleteSession(false)}>

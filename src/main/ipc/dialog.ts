@@ -1,4 +1,4 @@
-// 对话框通道：把系统目录选择器暴露给设置面板（默认工作目录、技能目录）。
+// 对话框通道：把系统目录选择器暴露给设置面板（目前只有「默认工作目录」在用）。
 // 只提供受控的目录选择，不透出其他 Electron dialog 能力。
 
 import { BrowserWindow, dialog, ipcMain } from "electron";

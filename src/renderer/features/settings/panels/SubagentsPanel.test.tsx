@@ -3,8 +3,8 @@
  *
  * 挂的是真面板 + 真 settings store，只换掉 window.oint 这个进程边界。验的是几条
  * 用户能看见的契约：
+ *   · 默认「用户」页签只列自定义定义；「系统」页签只列内置预设（不可编辑 / 删除）；
  *   · 目录为空时给空态，解析失败的诊断照常显示（不能静默消失）；
- *   · 内置定义只给开关（不可编辑 / 删除），用户定义才给编辑 / 定位 / 删除；
  *   · 行开关写进 disabledSubagentNames —— 启用状态存在设置里，不写进 .md；
  *   · 编辑器在名称不合法、描述为空、正文为空时拒绝落盘；
  *   · 编辑时 read() 的原文按 frontmatter 切开，保存带上原名（重命名要能定位旧文件）。
@@ -63,7 +63,6 @@ function settingsFixture(overrides: Partial<Settings>): Settings {
     density: "comfortable",
     chatFont: "",
     chatFontSize: 14,
-    defaultWorkingDir: null,
     services: [
       {
         id: "svc",
@@ -77,11 +76,7 @@ function settingsFixture(overrides: Partial<Settings>): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    skillDirs: [],
     disabledSkillNames: [],
-    skillsEnabled: true,
-    promptTemplateDirs: [],
-    subagentsEnabled: true,
     disabledSubagentNames: [],
     mcpServers: [],
     ...overrides,
@@ -129,19 +124,50 @@ describe("SubagentsPanel", () => {
     expect(screen.getByText(/解析失败/)).toBeTruthy();
   });
 
-  it("用户定义给编辑 / 定位 / 删除，内置定义只有开关与提示", async () => {
+  it("默认「用户」页签：只列自定义定义，行内给定位 / 删除，整行可点开编辑", async () => {
     stubBridge({ subagents: [USER_ROW, BUILTIN_ROW], diagnostics: [] });
     render(<SubagentsPanel />);
 
     expect(await screen.findByText("helper")).toBeTruthy();
-    // 每行一个开关（顶部总开关不在这个筛选里）；内置行只有它，没有行内动作
-    expect(screen.getAllByRole("switch", { name: /helper|explore/ })).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: "编辑" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "删除" })).toHaveLength(1);
-    // 只读 / 可写的摘要徽标按工具清单判定：helper 带 bash，explore 只有只读三件套
+    // 内置预设不在用户页签里露面
+    expect(screen.queryByText("explore")).toBeNull();
+    // 只读 / 可写的摘要徽标按工具清单判定：helper 带 bash
     expect(screen.getByText("可写文件")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "在文件夹中显示" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "新建子智能体" })).toBeTruthy();
+    expect(screen.getAllByRole("switch", { name: /helper/ })).toHaveLength(1);
+  });
+
+  it("切到「系统」页签：只列内置预设，只有开关与提示、没有行内动作", async () => {
+    stubBridge({ subagents: [USER_ROW, BUILTIN_ROW], diagnostics: [] });
+    render(<SubagentsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "系统" }));
+
+    expect(screen.getByText("explore")).toBeTruthy();
+    expect(screen.queryByText("helper")).toBeNull();
     expect(screen.getByText("只读")).toBeTruthy();
     expect(screen.getByText("内置预设：随应用提供，可禁用但不可编辑或删除")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "在文件夹中显示" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
+    // 新建只会落在数据目录（用户定义），系统页签不给入口
+    expect(screen.queryByRole("button", { name: "新建子智能体" })).toBeNull();
+    expect(screen.getAllByRole("switch", { name: /explore/ })).toHaveLength(1);
+  });
+
+  it("点内置预设打开同一个弹窗：只读展示，没有保存按钮", async () => {
+    const bridge = stubBridge({ subagents: [BUILTIN_ROW], diagnostics: [] });
+    render(<SubagentsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "系统" }));
+    fireEvent.click(await screen.findByRole("button", { name: /explore/ }));
+    await waitFor(() => expect(bridge.read).toHaveBeenCalledWith("explore"));
+
+    const name = (await screen.findByLabelText("名称")) as HTMLInputElement;
+    expect(name.value).toBe("explore");
+    expect(name.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
   it("行开关把定义名写进 / 移出 disabledSubagentNames", async () => {
@@ -168,11 +194,11 @@ describe("SubagentsPanel", () => {
     await waitFor(() => expect(bridge.write).not.toHaveBeenCalled());
   });
 
-  it("编辑：read 的原文只把正文放进编辑框，保存带上原名", async () => {
+  it("编辑：点行打开弹窗，read 的原文只把正文放进编辑框，保存带上原名", async () => {
     const bridge = stubBridge({ subagents: [USER_ROW], diagnostics: [] });
     render(<SubagentsPanel />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    fireEvent.click(await screen.findByRole("button", { name: /helper/ }));
     await waitFor(() => expect(bridge.read).toHaveBeenCalledWith("helper"));
 
     const prompt = (await screen.findByLabelText("系统提示")) as HTMLTextAreaElement;
@@ -187,15 +213,5 @@ describe("SubagentsPanel", () => {
       prompt: "先看再改",
       tools: ["read", "bash"],
     });
-  });
-
-  it("顶部总开关写进 subagentsEnabled（关闭即停用全部委派）", async () => {
-    stubBridge({ subagents: [], diagnostics: [] });
-    render(<SubagentsPanel />);
-
-    // 没有定义行时，页面上唯一的开关就是顶部总开关
-    fireEvent.click(await screen.findByRole("switch"));
-
-    expect(useSettingsStore.getState().settings?.subagentsEnabled).toBe(false);
   });
 });

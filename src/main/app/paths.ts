@@ -19,7 +19,7 @@ export const DATA_DIR_ENV = "OINT_HOME";
 const DATA_DIR_NAME = ".oint";
 
 /** 数据目录内的子目录；缺少时由 ensureAppDirs 补建 */
-const DATA_SUBDIRS = ["sessions", "skills", "cache"] as const;
+const DATA_SUBDIRS = ["sessions", "skills", "prompts", "subagents", "cache"] as const;
 
 /** 数据目录权限：只允许当前用户访问（Windows 忽略该位） */
 const DIR_MODE = 0o700;

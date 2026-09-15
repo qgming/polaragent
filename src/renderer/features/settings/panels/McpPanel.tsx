@@ -1,4 +1,4 @@
-import { Globe, Pencil, Plus, RefreshCw, SquareTerminal, Trash2 } from "lucide-react";
+import { Globe, RefreshCw, SquareTerminal, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -40,7 +40,10 @@ import {
   toMcpDraft,
 } from "../mcp-entry";
 import {
+  AddButton,
   PanelLoading,
+  PanelToolbar,
+  SettingsDialog,
   SettingsField,
   SettingsSection,
   secondaryButton,
@@ -87,7 +90,7 @@ interface EditorProps {
   onSave: (config: McpServerConfig) => void;
 }
 
-/** 新增/编辑弹窗：草稿只在本地，保存或试连时才转成配置 */
+/** 统一弹窗壳（settings-shared 的 SettingsDialog）：尺寸与头部/底部与其余四个面板一致 */
 function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: EditorProps) {
   const { t } = useTranslation();
   const [probe, setProbe] = useState<{ running: boolean; result?: McpProbeResult }>({
@@ -112,21 +115,38 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <SettingsDialog
+      title={draft.name.trim() === "" ? t("settings.mcpAddServer") : t("settings.mcpEditServer")}
+      description={t("settings.mcpEditorDesc")}
+      onClose={onClose}
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={secondaryButton}
+            disabled={!ready || probe.running}
+            onClick={() => void runProbe()}
+          >
+            {t(probe.running ? "settings.mcpTesting" : "settings.mcpTest")}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              disabled={!ready}
+              onClick={() => onSave(toMcpConfig(draft, createdAt))}
+            >
+              {t("common.save")}
+            </Button>
+          </div>
+        </>
+      }
     >
-      <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle>
-            {draft.name.trim() === "" ? t("settings.mcpAddServer") : t("settings.mcpEditServer")}
-          </DialogTitle>
-          <DialogDescription>{t("settings.mcpEditorDesc")}</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
+      <div className="space-y-4">
           <FieldBlock label={t("settings.mcpServerName")} hint={t("settings.mcpServerNameHint")}>
             <Input
               value={draft.name}
@@ -240,33 +260,7 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
             </p>
           ) : null}
         </div>
-
-        <DialogFooter className="sm:justify-between">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={secondaryButton}
-            disabled={!ready || probe.running}
-            onClick={() => void runProbe()}
-          >
-            {t(probe.running ? "settings.mcpTesting" : "settings.mcpTest")}
-          </Button>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="button"
-              disabled={!ready}
-              onClick={() => onSave(toMcpConfig(draft, createdAt))}
-            >
-              {t("common.save")}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </SettingsDialog>
   );
 }
 
@@ -350,21 +344,25 @@ function McpPanelBody({ settings }: { settings: Settings }) {
   return (
     <div className="space-y-6">
       <SettingsSection title={t("settings.mcpServers")} description={t("settings.mcpServersDesc")}>
-        <SettingsField
-          label={t("settings.mcpReconnect")}
-          description={t("settings.mcpReconnectDesc")}
-          control={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className={secondaryButton}
-              disabled={busy}
-              onClick={() => void reload()}
-            >
-              <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden="true" />
-              {t(busy ? "settings.mcpReconnecting" : "settings.mcpReconnect")}
-            </Button>
+        <PanelToolbar
+          action={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={secondaryButton}
+                disabled={busy}
+                onClick={() => void reload()}
+              >
+                <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden="true" />
+                {t(busy ? "settings.mcpReconnecting" : "settings.mcpReconnect")}
+              </Button>
+              <AddButton
+                label={t("settings.mcpAddServer")}
+                onClick={() => setEditor({ draft: createMcpDraft(), createdAt: Date.now() })}
+              />
+            </>
           }
         />
 
@@ -399,7 +397,14 @@ function McpPanelBody({ settings }: { settings: Settings }) {
               return (
                 <div key={config.id} className="rounded-xl border border-border/60 p-3">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    {/* 整块信息区就是查看/编辑入口：点击打开与新增同一个弹窗组件 */}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 cursor-pointer text-left"
+                      onClick={() =>
+                        setEditor({ draft: toMcpDraft(config), createdAt: config.createdAt })
+                      }
+                    >
                       <div className="flex flex-wrap items-center gap-2">
                         {config.transport === "stdio" ? (
                           <SquareTerminal
@@ -440,18 +445,8 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                       {state.error === undefined ? null : (
                         <p className="mt-1 line-clamp-3 text-xs text-destructive">{state.error}</p>
                       )}
-                    </div>
+                    </button>
                     <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        aria-label={t("settings.mcpEditServer")}
-                        className={cn(ghostButton, "size-6")}
-                        onClick={() =>
-                          setEditor({ draft: toMcpDraft(config), createdAt: config.createdAt })
-                        }
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
                       <button
                         type="button"
                         aria-label={t("common.delete")}
@@ -514,22 +509,6 @@ function McpPanelBody({ settings }: { settings: Settings }) {
             })}
           </div>
         )}
-
-        <SettingsField
-          label={t("settings.mcpServers")}
-          control={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className={secondaryButton}
-              onClick={() => setEditor({ draft: createMcpDraft(), createdAt: Date.now() })}
-            >
-              <Plus className="size-3.5" aria-hidden="true" />
-              {t("settings.mcpAddServer")}
-            </Button>
-          }
-        />
       </SettingsSection>
 
       <SettingsSection title={t("settings.mcpNotice")}>

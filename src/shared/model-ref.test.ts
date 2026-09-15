@@ -17,7 +17,6 @@ function settings(over: Partial<Settings> = {}): Settings {
     density: "comfortable",
     chatFont: "",
     chatFontSize: 14,
-    defaultWorkingDir: null,
     services: [
       {
         id: "svc-a",
@@ -39,11 +38,7 @@ function settings(over: Partial<Settings> = {}): Settings {
     defaultModel: { serviceId: "svc-a", modelId: "a1" },
     thinkingLevel: "medium",
     permissionMode: "default",
-    skillDirs: [],
     disabledSkillNames: [],
-    skillsEnabled: true,
-    promptTemplateDirs: [],
-    subagentsEnabled: true,
     disabledSubagentNames: [],
     mcpServers: [],
     ...over,

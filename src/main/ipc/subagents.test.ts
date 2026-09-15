@@ -60,16 +60,11 @@ const BASE_SETTINGS: Settings = {
   density: "comfortable",
   chatFont: "",
   chatFontSize: 14,
-  defaultWorkingDir: null,
   services: [],
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
-  skillDirs: [],
   disabledSkillNames: [],
-  skillsEnabled: true,
-  promptTemplateDirs: [],
-  subagentsEnabled: true,
   disabledSubagentNames: [],
   mcpServers: [],
 };
@@ -124,7 +119,7 @@ function invoke<TResponse>(channel: string, request?: unknown): Promise<TRespons
 }
 
 let root = "";
-/** 会话工作目录：项目级定义固定落在 `${cwd}/.pi/subagents`，给一个绝不存在的路径 */
+/** 会话工作目录：项目级定义固定落在 `${cwd}/.oint/subagents`，给一个绝不存在的路径 */
 let cwd = "";
 
 beforeEach(async () => {
@@ -163,17 +158,8 @@ describe("subagents:list", () => {
       enabled: true,
     });
     expect(catalog.subagents[0]?.promptPreview).not.toBe("");
-    // 定义目录是固定的两处（数据目录 + 会话目录下的 .pi/subagents），读取走普通 fs：
+    // 定义目录是固定的两处（数据目录 + 会话目录下的 .oint/subagents），读取走普通 fs：
     // 这里不再有 ExecutionEnv 可断言 —— 「数据目录里的用户定义能被列出来」由上面的 filePath 覆盖
-  });
-
-  it("subagentsEnabled: false 时全部 enabled=false，但定义照常列出", async () => {
-    vi.mocked(loadSettings).mockResolvedValue(settingsWith({ subagentsEnabled: false }));
-
-    const catalog = await invoke<SubagentCatalog>(IPC.subagents.list, { workingDir: cwd });
-
-    expect(catalog.subagents).toHaveLength(BUILTIN_SUBAGENTS.length);
-    expect(catalog.subagents.every((info) => info.enabled === false)).toBe(true);
   });
 
   it("disabledSubagentNames 只影响名单里的那一行", async () => {

@@ -1,4 +1,4 @@
-import { FolderOpen, Pencil, Trash2 } from "lucide-react";
+import { FolderOpen, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { field, ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
@@ -33,8 +33,11 @@ import {
   subagentCanMutate,
 } from "@/shared/contracts/subagent";
 import {
+  AddButton,
   PanelLoading,
-  SettingsField,
+  PanelToolbar,
+  Segmented,
+  SettingsDialog,
   SettingsSection,
   secondaryButton,
   settingsInput,
@@ -155,10 +158,23 @@ function SubagentEditor({
   }, [loadPrompt]);
 
   const title = info === null ? t("settings.subagentNew") : t("settings.subagentEdit");
+  // 内置预设没有磁盘文件、也不能改：同一个弹窗按只读展示（查看详情），只有开关与提示可用
+  const readOnly = info?.source === "builtin";
 
   if (prompt === null) {
     return (
-      <SettingsSection title={title}>
+      <SettingsDialog
+        title={title}
+        onClose={onClose}
+        footer={
+          <>
+            <span />
+            <Button type="button" size="sm" onClick={onClose}>
+              {t("common.close")}
+            </Button>
+          </>
+        }
+      >
         {readFailed ? (
           <div className="flex items-center gap-2">
             <p className="text-[13px] text-destructive">{t("errors.loadFailed")}</p>
@@ -175,7 +191,7 @@ function SubagentEditor({
         ) : (
           <PanelLoading />
         )}
-      </SettingsSection>
+      </SettingsDialog>
     );
   }
 
@@ -233,135 +249,161 @@ function SubagentEditor({
   const modelValue = model === null ? "" : `${model.serviceId}${MODEL_SEPARATOR}${model.modelId}`;
 
   return (
-    <SettingsSection title={title}>
-      <FieldBlock
-        label={t("settings.subagentName")}
-        hint={t("settings.subagentNameHint")}
-        error={errors.name ? t("settings.subagentNameInvalid") : undefined}
-      >
-        <input
-          type="text"
-          value={name}
-          aria-label={t("settings.subagentName")}
-          aria-invalid={errors.name}
-          onChange={(event) => setName(event.target.value)}
-          className={cn(settingsInput, "w-full font-mono")}
-        />
-      </FieldBlock>
+    <SettingsDialog
+      title={title}
+      onClose={onClose}
+      footer={
+        readOnly ? (
+          <>
+            <span />
+            <Button type="button" size="sm" onClick={onClose}>
+              {t("common.close")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-xs text-destructive">{saveFailed ? t("errors.generic") : ""}</span>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+                {t("settings.subagentCancel")}
+              </Button>
+              <Button type="button" size="sm" disabled={saving} onClick={() => void handleSave()}>
+                {saving ? t("common.loading") : t("settings.subagentSave")}
+              </Button>
+            </div>
+          </>
+        )
+      }
+    >
+      <div className="space-y-4">
+        {readOnly ? (
+          <p className="text-xs text-ink-3">{t("settings.subagentBuiltinHint")}</p>
+        ) : null}
 
-      <FieldBlock
-        label={t("settings.subagentDescription")}
-        hint={t("settings.subagentDescriptionHint")}
-        error={errors.description ? t("settings.subagentDescriptionRequired") : undefined}
-      >
-        <input
-          type="text"
-          value={description}
-          aria-label={t("settings.subagentDescription")}
-          aria-invalid={errors.description}
-          onChange={(event) => setDescription(event.target.value)}
-          className={cn(settingsInput, "w-full")}
-        />
-      </FieldBlock>
-
-      <FieldBlock
-        label={t("settings.subagentPrompt")}
-        hint={t("settings.subagentPromptHint")}
-        error={errors.prompt ? t("settings.subagentPromptRequired") : undefined}
-      >
-        <Textarea
-          value={prompt}
-          aria-label={t("settings.subagentPrompt")}
-          aria-invalid={errors.prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          className={cn(settingsTextarea, "min-h-[220px] resize-y")}
-        />
-      </FieldBlock>
-
-      <FieldBlock label={t("settings.subagentTools")} hint={t("settings.subagentToolsHint")}>
-        <div className="flex flex-wrap gap-x-4 gap-y-2">
-          {SUBAGENT_ASSIGNABLE_TOOLS.map((tool) => (
-            <label key={tool} className="flex items-center gap-1.5 text-xs text-ink-2">
-              <input
-                type="checkbox"
-                checked={tools.includes(tool)}
-                aria-label={tool}
-                onChange={(event) => toggleTool(tool, event.target.checked)}
-                className="size-3.5 accent-foreground"
-              />
-              <span className={mono}>{tool}</span>
-            </label>
-          ))}
-        </div>
-      </FieldBlock>
-
-      <div className="grid grid-cols-2 gap-3">
-        <FieldBlock label={t("settings.subagentModel")}>
-          <select
-            value={modelValue}
-            aria-label={t("settings.subagentModel")}
-            onChange={(event) => handleModelChange(event.target.value)}
-            className={cn(settingsInput, "w-full")}
-          >
-            {/* 原生 select 允许空串值，因此「跟随主会话」直接用它，不必借 Radix 的哨兵 */}
-            <option value="">{t("settings.subagentModelInherit")}</option>
-            {services.flatMap((service) =>
-              service.models.map((entry) => (
-                <option
-                  key={`${service.id}${MODEL_SEPARATOR}${entry.id}`}
-                  value={`${service.id}${MODEL_SEPARATOR}${entry.id}`}
-                >
-                  {`${service.name} · ${entry.name ?? entry.id}`}
-                </option>
-              )),
-            )}
-          </select>
+        <FieldBlock
+          label={t("settings.subagentName")}
+          hint={t("settings.subagentNameHint")}
+          error={errors.name ? t("settings.subagentNameInvalid") : undefined}
+        >
+          <input
+            type="text"
+            value={name}
+            aria-label={t("settings.subagentName")}
+            aria-invalid={errors.name}
+            disabled={readOnly}
+            onChange={(event) => setName(event.target.value)}
+            className={cn(settingsInput, "w-full font-mono")}
+          />
         </FieldBlock>
 
-        <FieldBlock label={t("settings.subagentThinking")}>
-          <select
-            value={thinking ?? ""}
-            aria-label={t("settings.subagentThinking")}
-            onChange={(event) =>
-              setThinking(event.target.value === "" ? null : (event.target.value as ThinkingLevel))
-            }
+        <FieldBlock
+          label={t("settings.subagentDescription")}
+          hint={t("settings.subagentDescriptionHint")}
+          error={errors.description ? t("settings.subagentDescriptionRequired") : undefined}
+        >
+          <input
+            type="text"
+            value={description}
+            aria-label={t("settings.subagentDescription")}
+            aria-invalid={errors.description}
+            disabled={readOnly}
+            onChange={(event) => setDescription(event.target.value)}
             className={cn(settingsInput, "w-full")}
-          >
-            <option value="">{t("settings.subagentThinkingInherit")}</option>
-            {ALL_THINKING_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {t(thinkingLabelKey(level))}
-              </option>
+          />
+        </FieldBlock>
+
+        <FieldBlock
+          label={t("settings.subagentPrompt")}
+          hint={t("settings.subagentPromptHint")}
+          error={errors.prompt ? t("settings.subagentPromptRequired") : undefined}
+        >
+          <Textarea
+            value={prompt}
+            aria-label={t("settings.subagentPrompt")}
+            aria-invalid={errors.prompt}
+            readOnly={readOnly}
+            onChange={(event) => setPrompt(event.target.value)}
+            className={cn(settingsTextarea, "min-h-[220px] resize-y")}
+          />
+        </FieldBlock>
+
+        <FieldBlock label={t("settings.subagentTools")} hint={t("settings.subagentToolsHint")}>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {SUBAGENT_ASSIGNABLE_TOOLS.map((tool) => (
+              <label key={tool} className="flex items-center gap-1.5 text-xs text-ink-2">
+                <input
+                  type="checkbox"
+                  checked={tools.includes(tool)}
+                  aria-label={tool}
+                  disabled={readOnly}
+                  onChange={(event) => toggleTool(tool, event.target.checked)}
+                  className="size-3.5 accent-foreground"
+                />
+                <span className={mono}>{tool}</span>
+              </label>
             ))}
-          </select>
+          </div>
+        </FieldBlock>
+
+        <div className="grid grid-cols-2 gap-3">
+          <FieldBlock label={t("settings.subagentModel")}>
+            <select
+              value={modelValue}
+              aria-label={t("settings.subagentModel")}
+              disabled={readOnly}
+              onChange={(event) => handleModelChange(event.target.value)}
+              className={cn(settingsInput, "w-full")}
+            >
+              {/* 原生 select 允许空串值，因此「跟随主会话」直接用它，不必借 Radix 的哨兵 */}
+              <option value="">{t("settings.subagentModelInherit")}</option>
+              {services.flatMap((service) =>
+                service.models.map((entry) => (
+                  <option
+                    key={`${service.id}${MODEL_SEPARATOR}${entry.id}`}
+                    value={`${service.id}${MODEL_SEPARATOR}${entry.id}`}
+                  >
+                    {`${service.name} · ${entry.name ?? entry.id}`}
+                  </option>
+                )),
+              )}
+            </select>
+          </FieldBlock>
+
+          <FieldBlock label={t("settings.subagentThinking")}>
+            <select
+              value={thinking ?? ""}
+              aria-label={t("settings.subagentThinking")}
+              disabled={readOnly}
+              onChange={(event) =>
+                setThinking(event.target.value === "" ? null : (event.target.value as ThinkingLevel))
+              }
+              className={cn(settingsInput, "w-full")}
+            >
+              <option value="">{t("settings.subagentThinkingInherit")}</option>
+              {ALL_THINKING_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {t(thinkingLabelKey(level))}
+                </option>
+              ))}
+            </select>
+          </FieldBlock>
+        </div>
+
+        <FieldBlock label={t("settings.subagentMaxTurns")}>
+          <input
+            type="number"
+            min={1}
+            max={MAX_SUBAGENT_MAX_TURNS}
+            value={maxTurns}
+            aria-label={t("settings.subagentMaxTurns")}
+            placeholder={t("settings.subagentMaxTurnsInherit", { count: DEFAULT_SUBAGENT_MAX_TURNS })}
+            disabled={readOnly}
+            onChange={(event) => setMaxTurns(event.target.value)}
+            className={cn(settingsInput, "w-28 font-mono")}
+          />
         </FieldBlock>
       </div>
-
-      <FieldBlock label={t("settings.subagentMaxTurns")}>
-        <input
-          type="number"
-          min={1}
-          max={MAX_SUBAGENT_MAX_TURNS}
-          value={maxTurns}
-          aria-label={t("settings.subagentMaxTurns")}
-          placeholder={t("settings.subagentMaxTurnsInherit", { count: DEFAULT_SUBAGENT_MAX_TURNS })}
-          onChange={(event) => setMaxTurns(event.target.value)}
-          className={cn(settingsInput, "w-28 font-mono")}
-        />
-      </FieldBlock>
-
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-destructive">{saveFailed ? t("errors.generic") : ""}</span>
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-            {t("settings.subagentCancel")}
-          </Button>
-          <Button type="button" size="sm" disabled={saving} onClick={() => void handleSave()}>
-            {saving ? t("common.loading") : t("settings.subagentSave")}
-          </Button>
-        </div>
-      </div>
-    </SettingsSection>
+    </SettingsDialog>
   );
 }
 
@@ -373,20 +415,21 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
   const [actionFailed, setActionFailed] = useState(false);
   const [editor, setEditor] = useState<EditorTarget>(null);
   const [confirmRemove, setConfirmRemove] = useState<SubagentInfo | null>(null);
-
-  // 设置面板不挂在某个会话上，扫描起点用默认工作目录（与技能面板同口径）
-  const workingDir = settings.defaultWorkingDir ?? undefined;
+  // 定义来源切换：系统 = 代码里的内置预设，用户 = 自己放进数据目录的 .md 定义
+  // （面板不带会话，项目级 .oint/subagents 只在运行时会话里参与装配）
+  const [source, setSource] = useState<"builtin" | "user">("user");
 
   const refresh = useCallback(async () => {
     setFailed(false);
     setCatalog(null);
     try {
-      setCatalog(await window.oint.subagents.list(workingDir));
+      // 设置面板不挂在某个会话上，只列全局（数据目录）里的定义；项目级定义跟着会话 cwd 走
+      setCatalog(await window.oint.subagents.list());
     } catch {
       setFailed(true);
       setCatalog({ subagents: [], diagnostics: [] });
     }
-  }, [workingDir]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -430,26 +473,34 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
     await refresh();
   };
 
+  const visible = (catalog?.subagents ?? []).filter((info) => info.source === source);
+
   return (
     <div className="space-y-6">
-      <SettingsSection>
-        <SettingsField
-          label={t("settings.subagentsEnabled")}
-          description={t("settings.subagentsEnabledDesc")}
-          control={
-            <Switch
-              size="sm"
-              checked={settings.subagentsEnabled}
-              onCheckedChange={(checked) => void update({ subagentsEnabled: checked })}
-            />
-          }
-        />
-      </SettingsSection>
-
       <SettingsSection
         title={t("settings.subagentsList")}
         description={t("settings.subagentsListDesc")}
       >
+        <PanelToolbar
+          action={
+            source === "user" ? (
+              <AddButton
+                label={t("settings.subagentNew")}
+                onClick={() => setEditor({ info: null })}
+              />
+            ) : undefined
+          }
+        >
+          <Segmented<"builtin" | "user">
+            ariaLabel={t("settings.sourceLabel")}
+            value={source}
+            onChange={setSource}
+            options={[
+              { value: "builtin", label: t("settings.sourceTabSystem") },
+              { value: "user", label: t("settings.sourceTabUser") },
+            ]}
+          />
+        </PanelToolbar>
         {failed ? (
           <div className="flex items-center gap-2">
             <p className="text-[13px] text-destructive">{t("errors.loadFailed")}</p>
@@ -469,35 +520,36 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
             <Skeleton className="h-16 w-full rounded-xl" />
             <Skeleton className="h-16 w-full rounded-xl" />
           </div>
-        ) : catalog.subagents.length === 0 ? (
+        ) : visible.length === 0 ? (
           <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
-            {t("settings.subagentsEmpty")}
+            {source === "builtin"
+              ? t("settings.subagentsSystemEmpty")
+              : t("settings.subagentsEmpty")}
             <span className="mt-1 block text-xs text-ink-4">
-              {t("settings.subagentsEmptyHint")}
+              {source === "builtin"
+                ? t("settings.subagentsSystemEmptyHint")
+                : t("settings.subagentsEmptyHint")}
             </span>
           </p>
         ) : (
           <div className="space-y-2">
-            {catalog.subagents.map((info) => {
+            {visible.map((info) => {
               // 设置里的禁用名单是唯一事实来源，避免列表快照过期（与技能列表同口径）
               const enabled = !settings.disabledSubagentNames.includes(info.name);
               const canWrite = subagentCanMutate(info.tools);
               return (
                 <div
                   key={`${info.source}:${info.name}`}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3"
+                  className="flex items-start justify-between gap-3 rounded-xl border border-border/60 p-3 transition-colors hover:bg-foreground/[0.03]"
                 >
-                  <div className="min-w-0">
+                  {/* 整块信息区就是查看/编辑入口：点击打开与新增同一个弹窗（内置为只读） */}
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 cursor-pointer text-left"
+                    onClick={() => setEditor({ info })}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-[13.5px] font-medium">{info.name}</span>
-                      <Badge
-                        variant="outline"
-                        className={cn(mono, "border-border/60 px-1.5 text-ink-3")}
-                      >
-                        {info.source === "user"
-                          ? t("rightPanel.subagentSourceUser")
-                          : t("rightPanel.subagentSourceBuiltin")}
-                      </Badge>
                       {/* 写权限是「会不会动我的文件」这件事，比工具清单本身更该一眼看到 */}
                       <Badge
                         variant="outline"
@@ -537,19 +589,10 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
                         {t("settings.subagentBuiltinHint")}
                       </p>
                     ) : null}
-                  </div>
+                  </button>
                   <div className="flex shrink-0 items-center gap-1">
                     {info.source === "user" ? (
                       <>
-                        <button
-                          type="button"
-                          aria-label={t("settings.subagentEdit")}
-                          title={t("settings.subagentEdit")}
-                          className={cn(ghostButton, "size-6 shrink-0")}
-                          onClick={() => setEditor({ info })}
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
                         <button
                           type="button"
                           aria-label={t("settings.subagentReveal")}
@@ -588,17 +631,6 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
         {actionFailed ? (
           <p className="text-[13px] text-destructive">{t("errors.generic")}</p>
         ) : null}
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={secondaryButton}
-            onClick={() => setEditor({ info: null })}
-          >
-            {t("settings.subagentNew")}
-          </Button>
-        </div>
       </SettingsSection>
 
       {/* 解析失败的定义必须在界面上出现：静默消失会让人以为「我放的文件没生效」 */}

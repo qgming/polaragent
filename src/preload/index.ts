@@ -67,9 +67,14 @@ const api = {
   },
   skills: {
     list: (workingDir) => ipcRenderer.invoke(IPC.skills.list, { workingDir }),
+    import: () => ipcRenderer.invoke(IPC.skills.import),
+    read: (name) => ipcRenderer.invoke(IPC.skills.read, { name }),
+    remove: (name) => ipcRenderer.invoke(IPC.skills.remove, { name }),
   },
   prompts: {
     list: (workingDir) => ipcRenderer.invoke(IPC.prompts.list, { workingDir }),
+    write: (request) => ipcRenderer.invoke(IPC.prompts.write, request),
+    remove: (name) => ipcRenderer.invoke(IPC.prompts.remove, { name }),
   },
   subagents: {
     list: (workingDir) => ipcRenderer.invoke(IPC.subagents.list, { workingDir }),

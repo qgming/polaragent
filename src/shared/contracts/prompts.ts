@@ -15,3 +15,26 @@ export interface PromptTemplateInfo {
   /** 来自哪个目录（不是文件路径 —— 内核不返回 filePath） */
   dir: string;
 }
+
+/** 名称规则：小写字母/数字开头，允许中间短横线，≤40 字符（与文件名一一对应） */
+export const PROMPT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/** 把任意输入规范成合法模板名：去 .md、小写、空格与下划线转短横线 */
+export function normalizePromptName(raw: string): string {
+  return raw
+    .replace(/\.md$/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
+}
+
+/** 新建 / 更新一份提示模板的请求体（落盘为 `${数据目录}/prompts/<name>.md`） */
+export interface PromptTemplateWriteRequest {
+  /** 原名（重命名时用来定位旧文件）；新建时省略 */
+  originalName?: string;
+  name: string;
+  /** frontmatter 里的 description；留空表示不写 frontmatter */
+  description: string;
+  /** 模板正文（frontmatter 之后的全部内容） */
+  content: string;
+}

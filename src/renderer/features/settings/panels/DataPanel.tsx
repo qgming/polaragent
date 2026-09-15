@@ -3,61 +3,18 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ghostButton } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { typePackage } from "@/renderer/components/assistant-ui/type";
-import { Button } from "@/renderer/components/ui/button";
-import { Input } from "@/renderer/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
 import { cn } from "@/renderer/lib/utils";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { Settings } from "@/shared/contracts/settings";
-import {
-  PanelLoading,
-  SettingsField,
-  SettingsSection,
-  secondaryButton,
-  settingsInput,
-} from "../settings-shared";
+import { OpenDirButton, PanelLoading, SettingsField, SettingsSection } from "../settings-shared";
 
 /**
- * 「打开」按钮：走主进程的 app.openPath（那里会校验绝对路径再交给系统）。
- * 失败原因挂在该按钮的 tooltip 上，不静默吞掉 —— 打开失败通常意味着目录被删或被占用。
+ * 数据面板：只展示数据目录的位置（复制 / 打开）。
+ *
+ * 没有「默认工作目录」这类可改项：会话目录跟随各自绑定的项目走，
+ * 全局资源固定在数据目录的 skills/ prompts/ subagents/ 里，都不需要用户在这里配置。
  */
-function OpenDirButton({ target, label }: { target: string | null; label: string }) {
+function DataPanelBody() {
   const { t } = useTranslation();
-  const [reason, setReason] = useState<string | null>(null);
-
-  const handleClick = async () => {
-    if (target === null || target === "") return;
-    const result = await window.oint.app.openPath(target).catch(() => null);
-    setReason(result === null || !result.ok ? (result?.reason ?? t("errors.generic")) : null);
-  };
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={secondaryButton}
-            disabled={target === null || target === ""}
-            onClick={() => void handleClick()}
-          >
-            {label}
-          </Button>
-        </span>
-      </TooltipTrigger>
-      {reason !== null ? (
-        <TooltipContent>{`${t("settings.openFailed")}：${reason}`}</TooltipContent>
-      ) : null}
-    </Tooltip>
-  );
-}
-
-/** 面板主体：settings 已就绪后由外层传入，避免内部到处判空 */
-function DataPanelBody({ settings }: { settings: Settings }) {
-  const { t } = useTranslation();
-  const update = useSettingsStore((s) => s.update);
   const [dataDir, setDataDir] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -84,13 +41,6 @@ function DataPanelBody({ settings }: { settings: Settings }) {
     } catch {
       setCopied(false);
     }
-  };
-
-  const handlePickWorkingDir = async () => {
-    const dir = await window.oint.dialog
-      .pickDirectory(settings.defaultWorkingDir ?? undefined)
-      .catch(() => null);
-    if (dir) void update({ defaultWorkingDir: dir });
   };
 
   return (
@@ -120,32 +70,6 @@ function DataPanelBody({ settings }: { settings: Settings }) {
             </div>
           }
         />
-        <SettingsField
-          label={t("settings.workingDir")}
-          description={t("settings.workingDirDesc")}
-          htmlFor="settings-working-dir"
-          control={
-            <div className="flex items-center gap-2">
-              <Input
-                id="settings-working-dir"
-                readOnly
-                value={settings.defaultWorkingDir ?? ""}
-                placeholder="—"
-                className={cn(settingsInput, "w-56 font-mono")}
-              />
-              <OpenDirButton target={settings.defaultWorkingDir} label={t("settings.openFolder")} />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={secondaryButton}
-                onClick={() => void handlePickWorkingDir()}
-              >
-                {t("settings.pickDirectory")}
-              </Button>
-            </div>
-          }
-        />
       </SettingsSection>
 
       <p className="text-xs text-ink-4">{t("settings.dataDirHint")}</p>
@@ -154,7 +78,8 @@ function DataPanelBody({ settings }: { settings: Settings }) {
 }
 
 export function DataPanel() {
+  // 与其余面板同一个加载口径：设置就绪前先给占位，避免面板闪一下
   const settings = useSettingsStore((s) => s.settings);
   if (!settings) return <PanelLoading />;
-  return <DataPanelBody settings={settings} />;
+  return <DataPanelBody />;
 }

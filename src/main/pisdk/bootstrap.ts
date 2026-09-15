@@ -32,14 +32,12 @@ export function getInteractionService(): InteractionService | null {
 }
 
 /**
- * 解析会话工作目录：优先该会话绑定的目录（索引 cwd），其次设置里的默认工作目录，
- * 最后回退进程当前目录——保证「在项目里新建的会话」跑在该项目目录下。
+ * 解析会话工作目录：该会话在索引里绑定的目录（在项目里新建的会话就绑定该项目目录），
+ * 没有绑定就回退进程当前目录。
  */
 async function resolveWorkingDir(sessionId: string): Promise<string> {
   const bound = await getSessionStore().readCwd(sessionId);
-  if (bound !== null) return bound;
-  const settings = await loadSettings();
-  return settings.defaultWorkingDir ?? process.cwd();
+  return bound ?? process.cwd();
 }
 
 /** 装配 pisdk 各服务并接线到窗口事件；返回幂等清理函数 */

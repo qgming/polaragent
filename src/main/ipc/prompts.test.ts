@@ -1,7 +1,6 @@
 import type { ExecutionEnv, PromptTemplate } from "@earendil-works/pi-agent-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PromptTemplateInfo } from "@/shared/contracts/prompts";
-import type { Settings } from "@/shared/contracts/settings";
 
 type ListHandler = (
   event: unknown,
@@ -19,10 +18,9 @@ vi.mock("electron", () => ({
   },
 }));
 
-// 目录解析依赖 dataDir()，固定成可断言的路径；设置存储与 exec env 整体 mock，
+// 目录解析依赖 dataDir()，固定成可断言的路径；exec env 与内核加载整体 mock，
 // 本测试只覆盖「目录顺序 → 扫描结果 → 合并/兜底」的纯逻辑，不碰文件系统。
 vi.mock("@/main/app/paths", () => ({ dataDir: () => "/data-oint" }));
-vi.mock("@/main/settings/store", () => ({ loadSettings: vi.fn() }));
 vi.mock("@/main/pisdk/exec-env", () => ({ createExecEnv: vi.fn() }));
 vi.mock("@earendil-works/pi-agent-core", () => ({
   BACKGROUND_CONTEXT: {},
@@ -31,7 +29,6 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
 
 import { loadPromptTemplates } from "@earendil-works/pi-agent-core";
 import { createExecEnv } from "@/main/pisdk/exec-env";
-import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
 import { registerPromptsIpc } from "./prompts";
 
@@ -43,30 +40,6 @@ function template(name: string, description?: string): PromptTemplate {
   return description === undefined
     ? { name, content: `${name} 的正文` }
     : { name, description, content: `${name} 的正文` };
-}
-
-const BASE_SETTINGS: Settings = {
-  theme: "system",
-  language: "zh-CN",
-  density: "comfortable",
-  chatFont: "",
-  chatFontSize: 14,
-  defaultWorkingDir: null,
-  services: [],
-  defaultModel: null,
-  thinkingLevel: "medium",
-  permissionMode: "default",
-  skillDirs: ["/custom/skills"],
-  skillsEnabled: true,
-  disabledSkillNames: [],
-  promptTemplateDirs: ["/custom/prompts"],
-  subagentsEnabled: true,
-  disabledSubagentNames: [],
-  mcpServers: [],
-};
-
-function settingsWith(patch: Partial<Settings>): Settings {
-  return { ...BASE_SETTINGS, ...patch };
 }
 
 /** 取回注册好的 prompts:list handler（去掉 IPC event 参数） */
@@ -85,60 +58,51 @@ beforeEach(() => {
     return { promptTemplates: templatesByDir.get(dir) ?? [], diagnostics: [] };
   });
   vi.mocked(createExecEnv).mockResolvedValue({} as ExecutionEnv);
-  vi.mocked(loadSettings).mockResolvedValue(settingsWith({}));
   registerPromptsIpc();
 });
 
 describe("prompts:list", () => {
-  it("多目录来源按 设置目录 → 数据目录 → 项目目录 的顺序合并", async () => {
-    templatesByDir.set("/custom/prompts", [template("alpha", "alpha 的说明")]);
+  it("目录来源按 数据目录 → 项目目录 的顺序合并，磁盘项一律标为用户添加", async () => {
     templatesByDir.set("/data-oint/prompts", [template("beta", "beta 的说明")]);
-    templatesByDir.set("C:/work/.pi/prompts", [template("gamma", "gamma 的说明")]);
+    templatesByDir.set("C:/work/.oint/prompts", [template("gamma", "gamma 的说明")]);
 
     const list = await listPrompts({ workingDir: "C:/work" });
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
-      "/custom/prompts",
       "/data-oint/prompts",
-      "C:/work/.pi/prompts",
+      "C:/work/.oint/prompts",
     ]);
-    expect(list.map((item) => item.name)).toEqual(["alpha", "beta", "gamma"]);
-    expect(list.map((item) => item.source)).toEqual(["global", "global", "project"]);
-    expect(list.map((item) => item.dir)).toEqual([
-      "/custom/prompts",
-      "/data-oint/prompts",
-      "C:/work/.pi/prompts",
-    ]);
+    expect(list.map((item) => item.name)).toEqual(["beta", "gamma"]);
+    expect(list.map((item) => item.source)).toEqual(["user", "user"]);
+    expect(list.map((item) => item.dir)).toEqual(["/data-oint/prompts", "C:/work/.oint/prompts"]);
   });
 
   it("每个目录各建一个只放行该目录的 env（路径守卫）", async () => {
     await listPrompts({ workingDir: "C:/work" });
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.allowedRoots)).toEqual([
-      ["/custom/prompts"],
       ["/data-oint/prompts"],
-      ["C:/work/.pi/prompts"],
+      ["C:/work/.oint/prompts"],
     ]);
   });
 
   it("同名模板「首个胜出」：保留先扫描目录里的条目", async () => {
-    templatesByDir.set("/custom/prompts", [
-      template("dup", "来自设置目录"),
+    templatesByDir.set("/data-oint/prompts", [
+      template("dup", "来自数据目录"),
       template("only-a", "只此一处"),
     ]);
-    templatesByDir.set("/data-oint/prompts", [template("dup", "来自数据目录")]);
-    templatesByDir.set("C:/work/.pi/prompts", [template("dup", "来自项目目录")]);
+    templatesByDir.set("C:/work/.oint/prompts", [template("dup", "来自项目目录")]);
 
     const list = await listPrompts({ workingDir: "C:/work" });
 
     expect(list.map((item) => item.name)).toEqual(["dup", "only-a"]);
-    expect(list[0]?.description).toBe("来自设置目录");
-    expect(list[0]?.source).toBe("global");
-    expect(list[0]?.dir).toBe("/custom/prompts");
+    expect(list[0]?.description).toBe("来自数据目录");
+    expect(list[0]?.source).toBe("user");
+    expect(list[0]?.dir).toBe("/data-oint/prompts");
   });
 
   it("内核缺 description 时兜底为空串", async () => {
-    templatesByDir.set("/custom/prompts", [template("无描述"), template("有描述", "有说明")]);
+    templatesByDir.set("/data-oint/prompts", [template("无描述"), template("有描述", "有说明")]);
 
     const list = await listPrompts();
 
@@ -148,8 +112,7 @@ describe("prompts:list", () => {
 
   it("某个目录扫描失败时其余目录仍正常返回，并记录告警", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    templatesByDir.set("/custom/prompts", [template("alpha", "alpha 的说明")]);
-    templatesByDir.set("C:/work/.pi/prompts", [template("gamma", "gamma 的说明")]);
+    templatesByDir.set("C:/work/.oint/prompts", [template("gamma", "gamma 的说明")]);
     vi.mocked(createExecEnv).mockImplementation(async (options) => {
       if (options.cwd === "/data-oint/prompts") throw new Error("ENOENT: 目录不存在");
       return {} as ExecutionEnv;
@@ -157,21 +120,17 @@ describe("prompts:list", () => {
 
     const list = await listPrompts({ workingDir: "C:/work" });
 
-    expect(list.map((item) => item.name)).toEqual(["alpha", "gamma"]);
+    expect(list.map((item) => item.name)).toEqual(["gamma"]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("/data-oint/prompts"));
     warn.mockRestore();
   });
 
-  it("空/空白目录项被跳过，workingDir 缺失时不追加项目目录", async () => {
-    templatesByDir.set("/real/prompts", [template("alpha", "alpha 的说明")]);
-    vi.mocked(loadSettings).mockResolvedValue(
-      settingsWith({ promptTemplateDirs: ["/real/prompts", "", "   "] }),
-    );
+  it("workingDir 缺失时只扫描数据目录", async () => {
+    templatesByDir.set("/data-oint/prompts", [template("alpha", "alpha 的说明")]);
 
     const list = await listPrompts();
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
-      "/real/prompts",
       "/data-oint/prompts",
     ]);
     expect(list).toHaveLength(1);
@@ -179,8 +138,8 @@ describe("prompts:list", () => {
       name: "alpha",
       description: "alpha 的说明",
       content: "alpha 的正文",
-      source: "global",
-      dir: "/real/prompts",
+      source: "user",
+      dir: "/data-oint/prompts",
     });
   });
 });

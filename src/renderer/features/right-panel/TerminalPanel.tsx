@@ -9,7 +9,6 @@ import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
-import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { TerminalChunk, TerminalInfo } from "@/shared/contracts/terminal";
 import { PanelEmpty, PanelError } from "./panel-view";
 import { drainQueue, FIRST_SEQ, sortChunks } from "./terminal-queue";
@@ -134,14 +133,13 @@ export function TerminalPanel(): React.JSX.Element {
   const setActive = useTerminalStore((s) => s.setActive);
   const applyEvent = useTerminalStore((s) => s.applyEvent);
   const clearError = useTerminalStore((s) => s.clearError);
-  /** 新终端的启动目录：优先会话工作目录，其次设置的默认目录 */
+  /** 新终端的启动目录：当前会话绑定的工作目录；没有绑定就交给主进程回落 */
   const sessionCwd = useChatStore((s) =>
     s.activeSessionId !== null
       ? s.sessions.find((item) => item.id === s.activeSessionId)?.cwd
       : undefined,
   );
-  const defaultWorkingDir = useSettingsStore((s) => s.settings?.defaultWorkingDir);
-  const cwd = sessionCwd ?? defaultWorkingDir ?? undefined;
+  const cwd = sessionCwd;
 
   /** cwd 的镜像：自动建终端只用挂载那一刻的目录，而它不该成为 effect 的依赖 */
   const cwdRef = useRef(cwd);

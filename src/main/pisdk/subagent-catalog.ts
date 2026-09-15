@@ -314,7 +314,7 @@ export function toSubagentInfo(def: SubagentDefinition, settings: Settings): Sub
     thinkingLevel: def.thinkingLevel ?? null,
     maxTurns: def.maxTurns ?? DEFAULT_SUBAGENT_MAX_TURNS,
     source: def.source,
-    enabled: settings.subagentsEnabled && !settings.disabledSubagentNames.includes(def.name),
+    enabled: !settings.disabledSubagentNames.includes(def.name),
     ...(def.filePath === undefined ? {} : { filePath: def.filePath }),
     promptPreview: singleLine(def.prompt).slice(0, PROMPT_PREVIEW_CHARS),
   };
@@ -335,34 +335,33 @@ export function toSubagentInfo(def: SubagentDefinition, settings: Settings): Sub
  * 只会让人以为这份读取也受 allowedRoots 约束。
  */
 export async function loadSubagentCatalog(
-  cwd: string,
+  workingDir?: string,
 ): Promise<{ definitions: SubagentDefinition[]; diagnostics: string[] }> {
   const diagnostics: string[] = [];
   const definitions: SubagentDefinition[] = [];
   const seen = new Set<string>();
-  // 目录来源与顺序统一由 resources.ts 解析：数据目录 → 项目目录
-  for (const dir of resolveSubagentDirs(cwd)) {
+  // 目录来源与顺序统一由 resources.ts 解析：数据目录 → 项目目录（.oint/subagents，缺工作目录时跳过）
+  for (const dir of resolveSubagentDirs(workingDir)) {
     let entries: Dirent[];
     try {
-      entries = await readdir(dir.path, { withFileTypes: true });
+      entries = await readdir(dir, { withFileTypes: true });
     } catch (error) {
       // 目录还没建出来是最常见的情况（首次使用、项目里没放定义），不当成问题；
       // 其余失败（权限、同名文件占位）必须让用户看见，否则表现就是「定义莫名消失了」
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        diagnostics.push(`读取子智能体目录失败 ${dir.path}：${errorText(error)}`);
+        diagnostics.push(`读取子智能体目录失败 ${dir}：${errorText(error)}`);
       }
       continue;
     }
     for (const entry of entries) {
       if (entry.isDirectory()) continue;
       if (!entry.name.toLowerCase().endsWith(".md")) continue;
-      const filePath = path.join(dir.path, entry.name);
+      const filePath = path.join(dir, entry.name);
       const name = normalizeSubagentName(entry.name);
       if (!SUBAGENT_NAME_PATTERN.test(name)) {
         diagnostics.push(`跳过子智能体定义 ${filePath}：文件名不符合命名规则`);
         continue;
       }
-      // 同名「先出现者优先」：靠前目录（设置 → 数据目录 → 项目目录）里的定义胜出
       // 同名「先出现者优先」：靠前目录（数据目录 → 项目目录）里的定义胜出
       try {
         const parsed = parseSubagentMarkdown(name, await readFile(filePath, "utf8"));

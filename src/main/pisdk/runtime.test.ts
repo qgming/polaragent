@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { createApprovalService } from "./approvals";
@@ -25,6 +25,9 @@ import {
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
+// 资源目录解析依赖 dataDir()：固定成不存在的路径，避免测试读到开发机上真实的 ~/.oint/skills
+vi.mock("@/main/app/paths", () => ({ dataDir: () => "/data-oint-unused" }));
+
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     theme: "system",
@@ -32,15 +35,10 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     density: "comfortable",
     chatFont: "",
     chatFontSize: 14,
-    defaultWorkingDir: null,
     services: [],
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
-    skillDirs: [],
-    skillsEnabled: true,
-    promptTemplateDirs: [],
-    subagentsEnabled: true,
     disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],
@@ -102,29 +100,20 @@ const SKILL_MD = [
   "",
 ].join("\n");
 
-/** 在临时目录里造一个技能目录，返回 { root, skillDir } */
-async function makeSkillFixture(): Promise<{ root: string; skillDir: string }> {
+/** 在临时目录里造一个项目级技能（`<root>/.oint/skills/<name>/SKILL.md`），返回 root */
+async function makeSkillFixture(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "oint-skill-"));
-  const skillDir = path.join(root, "skills");
-  await mkdir(path.join(skillDir, SKILL_NAME), { recursive: true });
-  await writeFile(path.join(skillDir, SKILL_NAME, "SKILL.md"), SKILL_MD, "utf8");
-  return { root, skillDir };
+  const skillDir = path.join(root, ".oint", "skills", SKILL_NAME);
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, "SKILL.md"), SKILL_MD, "utf8");
+  return root;
 }
 
 describe("loadAgentResources", () => {
-  it("skillsEnabled 为 false 时完全跳过加载", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "oint-skill-off-"));
+  it("工作目录下的 .oint/skills 在 allowedRoots 内时能加载，并生成 <available_skills> 索引", async () => {
+    const root = await makeSkillFixture();
     const env = await createExecEnv({ cwd: root, allowedRoots: [root] });
-    const loaded = await loadAgentResources(env, makeSettings({ skillsEnabled: false }), root);
-    expect(loaded.skills).toEqual([]);
-    expect(loaded.promptTemplates).toEqual([]);
-    expect(loaded.skillsSection).toBe("");
-  });
-
-  it("技能目录在 allowedRoots 内时能加载，并生成 <available_skills> 索引", async () => {
-    const { root, skillDir } = await makeSkillFixture();
-    const env = await createExecEnv({ cwd: root, allowedRoots: [root, skillDir] });
-    const loaded = await loadAgentResources(env, makeSettings({ skillDirs: [skillDir] }), root);
+    const loaded = await loadAgentResources(env, makeSettings(), root);
     expect(loaded.skills.map((skill) => skill.name)).toContain(SKILL_NAME);
     expect(loaded.skillsSection).toContain("<available_skills>");
     expect(loaded.skillsSection).toContain(SKILL_NAME);
@@ -133,22 +122,22 @@ describe("loadAgentResources", () => {
   });
 
   it("技能目录不在 allowedRoots 内时会被路径守卫拦掉，表现为 0 个技能", async () => {
-    // 这条测试是「为什么 runtime.ts 必须把 skillDirs 加进 allowedRoots」的回归保护：
+    // 这条测试是「为什么 runtime.ts 必须把 cwd 与 dataDir 加进 allowedRoots」的回归保护：
     // 守卫拒绝后内核只在 diagnostics 里报 list_failed，接口上看起来就是「这个技能不存在」
-    const { root, skillDir } = await makeSkillFixture();
+    const root = await makeSkillFixture();
     const elsewhere = path.join(root, "elsewhere");
     await mkdir(elsewhere, { recursive: true });
     const env = await createExecEnv({ cwd: elsewhere, allowedRoots: [elsewhere] });
-    const loaded = await loadAgentResources(env, makeSettings({ skillDirs: [skillDir] }), root);
+    const loaded = await loadAgentResources(env, makeSettings(), root);
     expect(loaded.skills.map((skill) => skill.name)).not.toContain(SKILL_NAME);
   });
 
   it("disabledSkillNames 里的技能被过滤掉，也不进索引", async () => {
-    const { root, skillDir } = await makeSkillFixture();
-    const env = await createExecEnv({ cwd: root, allowedRoots: [root, skillDir] });
+    const root = await makeSkillFixture();
+    const env = await createExecEnv({ cwd: root, allowedRoots: [root] });
     const loaded = await loadAgentResources(
       env,
-      makeSettings({ skillDirs: [skillDir], disabledSkillNames: [SKILL_NAME] }),
+      makeSettings({ disabledSkillNames: [SKILL_NAME] }),
       root,
     );
     expect(loaded.skills.map((skill) => skill.name)).not.toContain(SKILL_NAME);

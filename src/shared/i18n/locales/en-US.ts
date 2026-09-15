@@ -249,14 +249,10 @@ export const enUS = {
     chatFontMono: "Mono",
     chatFontSize: "Chat font size",
     chatFontSizeDesc: "Applies to chat body text as well as reasoning and tool output",
-    workingDir: "Default working directory",
-    workingDirDesc: "Default directory for new sessions; each session can override it",
-    pickDirectory: "Choose directory",
     dataDir: "Data directory",
     dataDirDesc: "Sessions, settings and skills are stored here",
     dataDirHint: "Sessions, settings and skills all live here — copy this folder to back up.",
     openDataDir: "Open directory",
-    openFolder: "Open",
     openFailed: "Could not open",
     modelServices: "Model services",
     modelServicesDesc: "OpenAI-compatible endpoints only; API keys are stored encrypted",
@@ -295,33 +291,35 @@ export const enUS = {
     defaultModelDesc: "Model used by new sessions",
     noServices: "No model services configured yet",
     noServicesHint: "Add an OpenAI-compatible service to start chatting",
-    skillDirs: "Skill directories",
-    skillDirsDesc:
-      "SKILL.md files are loaded recursively; .pi/skills under the session directory is always scanned",
-    addSkillDir: "Add directory",
-    skillsList: "Discovered skills",
+    // Source switcher: System = shipped with the app, User = placed in the data directory / project
+    sourceLabel: "Source",
+    sourceTabSystem: "System",
+    sourceTabUser: "User",
+    skillsList: "Skills",
     // The slash menu is wired now: disabled skills stay out of the model's list but remain callable from it
     skillsListDesc:
       "Disabled skills stay out of the system prompt; the files remain on disk and can be re-enabled anytime",
     skillsEmpty: "No skills discovered yet",
-    skillsEmptyHint: "Place a SKILL.md inside a skill directory to register one",
+    skillsEmptyHint: "Drop a SKILL.md into the skills folder in the data directory to register one",
+    skillsSystemEmpty: "No built-in skills",
+    skillsSystemEmptyHint: "Skills shipped with the app will appear here",
+    skillImport: "Import skills (.zip)",
+    skillImportDone: "Imported {{files}} files, found {{skills}} skills",
+    skillImportNoSkill:
+      "No recognizable skills in the archive: each skill needs a folder containing SKILL.md",
+    skillImportFailed: "Import failed: ",
+    skillDetailDesc: "Raw SKILL.md of {{name}}",
+    skillRemoveDesc: 'Delete skill "{{name}}"? Its folder is removed together with all files in it.',
     skillDisabled: "Disabled",
     skillEnabled: "Enabled",
-    skillSourceGlobal: "Global",
-    skillSourceProject: "Project",
-    skillsInjection: "Skill injection",
-    skillsInjectionDesc:
-      "When off, skills and magic prompts stay out of the model context; files remain on disk and tools keep working",
-    skillsEnabled: "Enable skills and magic prompts",
     // Subagents section
-    subagentsEnabled: "Enable subagents",
-    subagentsEnabledDesc:
-      "When off, the main AI cannot see the Task tools and stops delegating; existing run records are kept",
     subagentsList: "Available subagents",
     subagentsListDesc:
       "The main AI picks from this list. The description is its only selection signal — say when to delegate to it",
     subagentsEmpty: "No custom subagents yet",
     subagentsEmptyHint: "Create one, or drop a .md definition into the subagents data directory",
+    subagentsSystemEmpty: "No built-in subagents",
+    subagentsSystemEmptyHint: "Presets shipped with the app will appear here",
     subagentBuiltinHint:
       "Built-in preset: shipped with the app, can be disabled but not edited or deleted",
     subagentDisabled: "Disabled",
@@ -359,15 +357,26 @@ export const enUS = {
     subagentDiagnostics: "Load problems",
     promptTemplates: "Magic prompts",
     promptTemplatesDesc:
-      "Reusable prompt snippets (.md). Type / in the composer to invoke one; the body expands into your message",
-    promptTemplateDirs: "Template directories",
-    promptTemplateDirsDesc:
-      "Reads direct .md children; prompts/ in the data directory and .pi/prompts in the session directory are always scanned",
-    addPromptDir: "Add directory",
+      "Reusable prompt snippets (.md). Type / and pick one — the body is posted as the message",
     promptTemplatesList: "Discovered templates",
     promptTemplatesEmpty: "No templates discovered yet",
-    promptTemplatesEmptyHint: "Drop a .md with name and description into a template directory",
-    openPromptDir: "Open directory",
+    promptTemplatesEmptyHint:
+      "Drop a .md with name and description into the prompts folder in the data directory",
+    promptsSystemEmpty: "No built-in magic prompts",
+    promptsSystemEmptyHint: "Magic prompts shipped with the app will appear here",
+    promptNew: "New magic prompt",
+    promptEdit: "Edit magic prompt",
+    promptEditorDesc:
+      "The name becomes the slash command /<name>; picking it (or sending /<name>) posts the body as the message",
+    promptName: "Name",
+    promptNameHint: "Lowercase letters, digits and dashes; becomes the file name (<name>.md)",
+    promptNameInvalid:
+      "Name may only contain lowercase letters, digits and dashes, up to 40 characters",
+    promptDescription: "Description",
+    promptDescriptionHint: "One line describing what this template does (shown in the slash menu)",
+    promptContent: "Body",
+    promptContentRequired: "Body is required",
+    promptRemoveDesc: 'Delete magic prompt "{{name}}"?',
     fetchFailed: "Fetch failed",
     agentsMd: "AGENTS.md",
     agentsMdDesc:
@@ -385,8 +394,6 @@ export const enUS = {
     mcpServersDesc:
       "Tools from an external MCP server are exposed to the model as mcp__<server id>__<tool>",
     mcpReconnect: "Reconnect",
-    mcpReconnectDesc:
-      "Reconnect every enabled server from the current config; unchanged connections stay up",
     mcpReconnecting: "Connecting…",
     mcpEmpty: "No MCP server configured yet",
     mcpEmptyHint:

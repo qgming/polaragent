@@ -144,7 +144,8 @@ function toSummary(meta: SessionMetadata, entry?: LocalIndexEntry): SessionSumma
   const parentSessionId = meta.parentSessionId ?? entry?.parentSessionId;
   return {
     id: meta.id,
-    title: entry?.title ?? null,
+    // 空串/纯空白与「没有标题」是同一件事：归一成 null，消费方只需处理一种空值（与 readTitle 同口径）
+    title: entry?.title?.trim() || null,
     createdAt: meta.createdAt,
     updatedAt: entry?.updatedAt ?? meta.createdAt,
     cwd: meta.cwd ?? entry?.cwd ?? "",

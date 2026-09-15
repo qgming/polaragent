@@ -31,16 +31,11 @@ export const DEFAULT_SETTINGS: Settings = {
   density: "comfortable",
   chatFont: "",
   chatFontSize: 14,
-  defaultWorkingDir: null,
   services: [],
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
-  skillDirs: [],
   disabledSkillNames: [],
-  skillsEnabled: true,
-  promptTemplateDirs: [],
-  subagentsEnabled: true,
   disabledSubagentNames: [],
   mcpServers: [],
 };
@@ -61,9 +56,7 @@ function cloneDefaults(): Settings {
   return {
     ...DEFAULT_SETTINGS,
     services: [],
-    skillDirs: [],
     disabledSkillNames: [],
-    promptTemplateDirs: [],
     disabledSubagentNames: [],
     mcpServers: [],
   };
@@ -106,20 +99,10 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
     permissionMode: normalizePermissionMode(raw.permissionMode),
     language: normalizeLanguage(raw.language),
     services: normalizeServices(raw.services, crypto, warn),
-    skillDirs: Array.isArray(raw.skillDirs)
-      ? raw.skillDirs.filter((dir) => typeof dir === "string")
-      : base.skillDirs,
     disabledSkillNames: Array.isArray(raw.disabledSkillNames)
       ? raw.disabledSkillNames.filter((name) => typeof name === "string")
       : base.disabledSkillNames,
-    // 布尔字段必须显式校验：上面按 Object.keys 的透传会把任意类型原样带进来
-    skillsEnabled: typeof raw.skillsEnabled === "boolean" ? raw.skillsEnabled : base.skillsEnabled,
-    promptTemplateDirs: Array.isArray(raw.promptTemplateDirs)
-      ? raw.promptTemplateDirs.filter((dir) => typeof dir === "string")
-      : base.promptTemplateDirs,
-    // 子智能体：总开关是布尔（必须显式校验），禁用名列表按字符串过滤
-    subagentsEnabled:
-      typeof raw.subagentsEnabled === "boolean" ? raw.subagentsEnabled : base.subagentsEnabled,
+    // 禁用名列表按字符串过滤
     disabledSubagentNames: Array.isArray(raw.disabledSubagentNames)
       ? raw.disabledSubagentNames.filter((name) => typeof name === "string")
       : base.disabledSubagentNames,

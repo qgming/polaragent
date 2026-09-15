@@ -47,24 +47,13 @@ export interface Settings {
   density: DensityMode;
   chatFont: string;
   chatFontSize: number;
-  defaultWorkingDir: string | null;
   services: ModelServiceConfig[];
   /** 新会话默认使用的模型；单个会话可在输入框的模型 chip 里覆盖（会话级选择优先） */
   defaultModel: ModelRef | null;
   thinkingLevel: ThinkingLevel;
   /** 审批模式：default 高风险弹卡 / ai_review 交 AI 审批 / full 全部放行；由 Composer 的权限 chip 切换 */
   permissionMode: PermissionMode;
-  skillDirs: string[];
   disabledSkillNames: string[];
-  /** 是否把技能（SKILL.md）与提示模板注入模型上下文；关闭后退化为纯原生四件套 */
-  skillsEnabled: boolean;
-  /** 用户自定义的提示模板目录（*.md，只读直接子级）；数据目录的 prompts 与会话目录的 .pi/prompts 始终参与扫描 */
-  promptTemplateDirs: string[];
-  /**
-   * 子智能体总开关。关闭时 Task / TaskWait / TaskList / TaskStop 四个工具都不装配，
-   * 主模型也就看不到「可以委派」这件事（与 skillsEnabled 同一个口径）。
-   */
-  subagentsEnabled: boolean;
   /** 被禁用的子智能体名：内置预设与用户定义共用这一份禁用表（与 disabledSkillNames 同构） */
   disabledSubagentNames: string[];
 

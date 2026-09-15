@@ -46,8 +46,8 @@ const SKILLS: SkillInfo[] = [
   {
     name: "review",
     description: "看一遍改动",
-    filePath: "D:\\proj\\.pi\\skills\\review\\SKILL.md",
-    source: "project",
+    filePath: "D:\\proj\\.oint\\skills\\review\\SKILL.md",
+    source: "user",
     disabled: false,
   },
 ];
@@ -55,10 +55,10 @@ const SKILLS: SkillInfo[] = [
 const TEMPLATES: PromptTemplateInfo[] = [
   {
     name: "translate",
-    description: "翻译 $1",
-    content: "把下面这段翻译成 $1：\n\n$ARGUMENTS",
-    source: "project",
-    dir: "D:\\proj\\.pi\\prompts",
+    description: "翻译成中文",
+    content: "把下面这段内容翻译成中文：",
+    source: "user",
+    dir: "D:\\proj\\.oint\\prompts",
   },
 ];
 
@@ -92,7 +92,6 @@ function seedStores() {
       thinkingLevel: "medium",
       defaultModel: null,
       services: [],
-      defaultWorkingDir: null,
       theme: "light",
     } as unknown as Settings,
     loaded: true,
@@ -181,7 +180,7 @@ describe("Composer 的斜杠菜单", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("参数已经开始（协议名后跟空格）就收起菜单：/usr/bin/env 是普通消息", async () => {
+  it("名称后跟空格就收起菜单：/usr/bin/env 是普通消息", async () => {
     render(<Harness onSend={() => {}} />);
     await type("/usr/bin/env node");
 
@@ -246,20 +245,19 @@ describe("Composer 的斜杠菜单", () => {
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     expect(input.value).toBe("/re");
   });
-  it("对已经打完的命令再按 Enter 是发送，并且模板会被展开", async () => {
+  it("对已经打完的命令再按 Enter 是发送：正文原样发出，命令名后写的内容接在后面", async () => {
     const onSend = vi.fn();
     render(<Harness onSend={onSend} />);
-    // 第二个参数带引号：内核用 shell 风格拆参数，引号里的空格不拆
     const input = await type('/translate 日语 "你好 世界"');
 
-    // 名称后面已经带了参数 → 菜单早已收起
+    // 名称后面已经写了正文 → 菜单早已收起
     expect(screen.queryByRole("listbox")).toBeNull();
 
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    // $1 ← 第一个参数；$ARGUMENTS ← 全部参数（含第一个）空格连接
-    expect(onSend).toHaveBeenCalledWith("把下面这段翻译成 日语：\n\n日语 你好 世界");
+    // 模板没有参数：命令名之后的文字原样接在正文后面，$1 之类不会被替换
+    expect(onSend).toHaveBeenCalledWith('把下面这段内容翻译成中文：\n\n日语 "你好 世界"');
   });
 
   it("不是命令的斜杠开头消息原样发送（不吞用户输入）", async () => {

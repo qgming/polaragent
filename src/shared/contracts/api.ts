@@ -10,7 +10,7 @@ import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
 import type { Project } from "./project";
-import type { PromptTemplateInfo } from "./prompts";
+import type { PromptTemplateInfo, PromptTemplateWriteRequest } from "./prompts";
 import type { ReviewSummary } from "./review";
 import type {
   LoadSessionMessagesOptions,
@@ -19,7 +19,7 @@ import type {
   SetSessionModelResult,
 } from "./session";
 import type { Settings } from "./settings";
-import type { SkillInfo } from "./skills";
+import type { SkillDetail, SkillImportResult, SkillInfo } from "./skills";
 import type {
   SubagentCatalog,
   SubagentEventEnvelope,
@@ -103,12 +103,22 @@ export interface OintApi {
     kill(sessionId: string, id: string): Promise<JobInfo>;
   };
   skills: {
-    /** 扫描全局与会话工作目录的技能；workingDir 缺省用默认工作目录 */
+    /** 扫描技能目录并列出；workingDir 缺省表示只扫数据目录里的全局技能 */
     list(workingDir?: string): Promise<SkillInfo[]>;
+    /** 弹出文件选择框，把 zip 技能包导入数据目录的 skills/；用户取消时返回 canceled: true */
+    import(): Promise<SkillImportResult>;
+    /** 读一个全局技能的 SKILL.md 原文，喂给详情弹窗 */
+    read(name: string): Promise<SkillDetail>;
+    /** 删除一个全局技能（连同它的技能目录一起删） */
+    remove(name: string): Promise<void>;
   };
   prompts: {
-    /** 扫描全局与会话工作目录的提示模板；workingDir 缺省用默认工作目录 */
+    /** 扫描提示模板目录并列出；workingDir 缺省表示只扫数据目录里的全局模板 */
     list(workingDir?: string): Promise<PromptTemplateInfo[]>;
+    /** 新建或更新一份全局模板（落盘为 `<名称>.md`）；返回落盘后的那一行 */
+    write(request: PromptTemplateWriteRequest): Promise<PromptTemplateInfo>;
+    /** 删除一份全局模板 */
+    remove(name: string): Promise<void>;
   };
   /**
    * 子智能体：定义目录 + 运行记录。
