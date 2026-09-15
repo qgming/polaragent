@@ -20,6 +20,14 @@ import type {
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
+import type {
+  SubagentCatalog,
+  SubagentEventEnvelope,
+  SubagentInfo,
+  SubagentReadResult,
+  SubagentRun,
+  SubagentWriteRequest,
+} from "./subagent";
 import type { TerminalEvent, TerminalInfo, TerminalReplay } from "./terminal";
 
 /** preload 暴露给渲染进程的全部能力面；渲染进程除此外无特权通道 */
@@ -101,6 +109,30 @@ export interface OintApi {
   prompts: {
     /** 扫描全局与会话工作目录的提示模板；workingDir 缺省用默认工作目录 */
     list(workingDir?: string): Promise<PromptTemplateInfo[]>;
+  };
+  /**
+   * 子智能体：定义目录 + 运行记录。
+   *
+   * 分成两组：「定义」是用户可以编辑的（list/read/write/remove/reveal），
+   * 「运行」是主 AI 委派后产生的（runs/stop/onEvent，按父会话取）。
+   */
+  subagents: {
+    /** 读取目录（内置预设 + 用户定义），enabled 由设置决定 */
+    list(workingDir?: string): Promise<SubagentCatalog>;
+    /** 读一个用户定义的原文（含 frontmatter），喂给编辑框 */
+    read(name: string): Promise<SubagentReadResult>;
+    /** 新建或更新一个用户定义；返回落盘后的那一行 */
+    write(request: SubagentWriteRequest): Promise<SubagentInfo>;
+    /** 删除一个用户定义（内置的删不掉，会抛错） */
+    remove(name: string): Promise<void>;
+    /** 在系统文件管理器里定位该定义的 .md 文件 */
+    reveal(name: string): Promise<{ ok: boolean }>;
+    /** 某个父会话派出去的全部子智能体运行（按开始时间升序） */
+    runs(sessionId: string): Promise<SubagentRun[]>;
+    /** 停止一次运行（等价于 TaskStop）；不在本进程运行中的记录（例如意外终止的历史运行）返回 undefined */
+    stop(sessionId: string, delegationId: string): Promise<SubagentRun | undefined>;
+    /** 订阅运行事件（信封里的 sessionId 是**父**会话），返回取消订阅函数 */
+    onEvent(callback: (payload: SubagentEventEnvelope) => void): () => void;
   };
   permissions: {
     listRules(): Promise<PermissionRuleView[]>;

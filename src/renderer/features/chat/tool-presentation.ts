@@ -1,5 +1,6 @@
 /**
  * 工具调用的纯逻辑层：参数、输出、补丁 → 官方 Elements 组件的入参。
+ * 工具调用的纯逻辑层：参数、输出、补丁 → 官方 Elements 组件的入参。
  *
  * 与渲染分开是为了能测：本仓库的 vitest 是 node 环境且只收 `*.test.ts`，
  * 组件渲染没有测试设施，这里把容易出错的部分（补丁映射、行数截断）留在可测的纯函数里。
@@ -9,6 +10,27 @@
 import type { DiffLine } from "@/renderer/components/assistant-ui/elements/code-diff";
 import type { TodoItem } from "@/renderer/components/assistant-ui/elements/todo-list";
 import { parsePatch } from "@/renderer/components/ui/diff-viewer";
+import {
+  parseSubagentRun,
+  SUBAGENT_TOOL_NAMES,
+  subagentRunsFromDetails,
+} from "@/renderer/stores/subagent-store";
+import type { JobInfo } from "@/shared/contracts/job";
+import {
+  isSubagentRunFinished,
+  type SubagentRun,
+  type SubagentRunStatus,
+  type SubagentSource,
+} from "@/shared/contracts/subagent";
+
+/**
+ * 后台作业四件套在渲染层的名字表。
+ *
+ * 刻意**不复用主进程的 BACKGROUND_JOB_TOOL_NAMES**：渲染层至今没有任何一处 import
+ * `@/main/**`（主进程模块依赖 Node / Electron 运行时，拉进渲染包会把边界搅浑）。
+ * 这四个字符串是工具名，与主进程那份一一对应；改名时两边都要动。
+ */
+export const JOB_TOOL_NAMES = ["bash_background", "job_output", "job_list", "job_kill"];
 
 /** chip 里主参数的展示上限：完整请求在展开面板里，这里只做客串 */
 export const CHIP_LIMIT = 64;
@@ -80,6 +102,13 @@ export function toolChip(args: unknown): string {
     const done = todos.filter((item) => isRecord(item) && item.status === "done").length;
     return `${done}/${todos.length}`;
   }
+
+  // 子智能体委派的 description / task 是一句话而不是路径：按命令规则保留开头
+  //（末尾那一段没有信息量，走路径规则会把「……/xxx」这种尾巴当成重点）
+  const description = args.description;
+  if (typeof description === "string" && description !== "") return shortenCommand(description);
+  const task = args.task;
+  if (typeof task === "string" && task !== "") return shortenCommand(task);
 
   // 兜底：未登记的工具只知道有个字符串参数，按路径规则处理更保守
   const first = Object.values(args).find((value) => typeof value === "string");
@@ -216,16 +245,188 @@ export function parseTodoArgs(value: unknown): TodoDetailData | null {
   return parseTodoState(value, true);
 }
 
+/**
+ * 一次子智能体运行的展开详情。
+ *
+ * 头上那几个短字段是为卡片头部准备的：主会话里的工具卡只显示「谁、什么状态、第几轮、多久」，
+ * 没必要每次都从 `run` 里翻字段；`run` 本身也一并带着，来源徽标 / 工具列表 / 报告 / 停止
+ * 这些用到整份记录的地方直接取它，避免把同一个字段抄两遍（抄出来的那份迟早会漂移）。
+ */
+export interface SubagentDetailData {
+  delegationId: string;
+  agentName: string;
+  status: SubagentRunStatus;
+  description: string;
+  modelId: string;
+  turns: number;
+  toolCalls: number;
+  /** 已经结束才有：仍在跑的耗时按 run 现算（见 subagentElapsedMs），不在这里钉一个会过期的值 */
+  elapsedMs?: number;
+  childSessionId: string;
+  run: SubagentRun;
+  /**
+   * 记账调用（TaskWait / TaskList / TaskStop）带回的运行条数。
+   *
+   * 只有 Task 是「一次委派」，另外三个的 details 是**一批**运行（见契约的 SubagentRunsDetails）。
+   * 卡片因此以第一条为主体，但必须把条数带出来 —— 否则一次等了 3 个子智能体的调用会被读成
+   * 「只等了一个」，而详情里显示的还是第一个的描述。
+   */
+  batchSize?: number;
+}
+
+/**
+ * 运行状态 → 词条键。
+ *
+ * 用 Record<SubagentRunStatus, …> 而不是带 default 的 switch：这是**穷举**映射，
+ * 状态表里加一档时这里会直接是编译错误，而不是悄悄落到一个兜底文案上。
+ */
+export const SUBAGENT_STATUS_LABEL_KEYS: Record<SubagentRunStatus, string> = {
+  running: "rightPanel.subagentRunning",
+  completed: "rightPanel.subagentCompleted",
+  truncated: "rightPanel.subagentTruncated",
+  failed: "rightPanel.subagentFailed",
+  aborted: "rightPanel.subagentAborted",
+  denied: "rightPanel.subagentDenied",
+  // 意外终止：主进程在重启后把没跑完就失联的行降级成它，渲染层只是照实显示
+  interrupted: "rightPanel.subagentInterrupted",
+};
+
+/** 定义来源 → 词条键；同上，穷举由类型保证 */
+export const SUBAGENT_SOURCE_LABEL_KEYS: Record<SubagentSource, string> = {
+  builtin: "rightPanel.subagentSourceBuiltin",
+  user: "rightPanel.subagentSourceUser",
+  temp: "rightPanel.subagentSourceTemp",
+};
+
+/**
+ * 一次运行最后一次被看见的时刻。
+ *
+ * 主进程把孤儿行降级成 interrupted 时会把 endedAt 对齐到 updatedAt（最后一次持久化 =
+ * 最后活着的时间）；旧记录可能只有 updatedAt，再退到 startedAt，保证调用方永远拿到一个
+ * 不会随时间增长的数 —— 终态行上挂着一个会走的钟，读起来就是「还在跑」。
+ */
+export function subagentLastSeenAt(run: SubagentRun): number {
+  return run.endedAt ?? run.updatedAt ?? run.startedAt;
+}
+
+/**
+ * 运行耗时：终态取最后一次被看见的时刻 - startedAt；仍在跑就按「到此为止」算
+ * （面板随事件重渲染，不必自带定时器）。
+ *
+ * interrupted 的耗时必须**冻结**：它已经不在跑了，若还走 now 兜底，面板上那个秒数会
+ * 跟着停留时间一直变大。分支只按状态分：`running` 才允许用 now，其余一律走
+ * subagentLastSeenAt（宁可显示 0，也不给一个会增长的读数）。
+ */
+export function subagentElapsedMs(run: SubagentRun, now: number = Date.now()): number {
+  const endedAt =
+    run.endedAt ?? (isSubagentRunFinished(run.status) ? subagentLastSeenAt(run) : now);
+  return Math.max(0, endedAt - run.startedAt);
+}
+
+/**
+ * 进度估计：turns / maxTurns 的百分比。
+ *
+ * 刻意**不用**「转圈就代表在跑」那种无信息的进度条：turns 是主进程报的真实轮次，
+ * 且只增不减，所以这个数天然单调，条形只会向前走。maxTurns 缺失（旧记录）时给 0，
+ * 让 SubagentList 的进度条停在起点，而不是显示一个凭空的数字。
+ *
+ * interrupted 用的是**同一把尺子**：它就是停下那一刻的 turns / maxTurns，不返回
+ * 100 / -1 之类的哨兵值 —— 那是第二套刻度，调用方还得反推回来才知道怎么画。
+ * 「还在不在跑」只由 run.status 决定：调用方据此把 interrupted 的行挡在活跃进度条外
+ * （见 ToolParts 给 SubagentList 的 running 过滤），而不是从这个比值里猜。
+ */
+export function subagentProgress(run: SubagentRun): number {
+  if (run.maxTurns <= 0) return 0;
+  return Math.min(100, Math.round((run.turns / run.maxTurns) * 100));
+}
+
+/** 运行记录 → 展开详情；字段一一对应，不改动任何值 */
+function toSubagentDetail(run: SubagentRun): SubagentDetailData {
+  return {
+    delegationId: run.delegationId,
+    agentName: run.agentName,
+    status: run.status,
+    description: run.description,
+    modelId: run.modelId,
+    turns: run.turns,
+    toolCalls: run.toolCalls,
+    ...(run.endedAt === undefined ? {} : { elapsedMs: Math.max(0, run.endedAt - run.startedAt) }),
+    childSessionId: run.childSessionId,
+    run,
+  };
+}
+
+/**
+ * 后台作业的展开详情。
+ *
+ * 与子智能体那份的差别：作业的**权威状态**不在工具结果里，而在 store 的
+ * `jobsBySession`（主进程持续推 `job-changed`，重启后由 `jobs.list` 补拉）。
+ * details 里那份 `job` 只是启动/读取那一刻的快照，所以渲染层优先用 store 里同 id 的那条。
+ */
+export interface JobDetailData {
+  /** 作业 id：渲染层据此去 store 里找权威状态 */
+  jobId: string;
+  /** 工具结果里的快照（store 里查不到时用它） */
+  job: JobInfo;
+  /** job_list 的批量：一次列出多个作业时用（单作业工具为 undefined） */
+  batch?: readonly JobInfo[];
+}
+
+/** details → 作业详情；形状不对返回 null，让调用方退回普通工具行 */
+export function parseJobDetail(value: unknown): JobDetailData | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as { job?: unknown; jobs?: unknown };
+  const single = toJobInfo(record.job);
+  if (single !== null) return { jobId: single.id, job: single };
+  if (!Array.isArray(record.jobs)) return null;
+  const many = record.jobs.map(toJobInfo).filter((job): job is JobInfo => job !== null);
+  const first = many[0];
+  if (first === undefined) return null;
+  // 批量以第一条为主体（pill 显示它），整批挂在 batch 上供展开区列出
+  return { jobId: first.id, job: first, batch: many };
+}
+
+/** 单个 JobInfo 的最小校验：缺 id/status 就不是作业快照，别硬造 */
+function toJobInfo(value: unknown): JobInfo | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Partial<JobInfo>;
+  if (typeof record.id !== "string" || record.id === "") return null;
+  if (
+    record.status !== "running" &&
+    record.status !== "exited" &&
+    record.status !== "failed" &&
+    record.status !== "killed"
+  ) {
+    return null;
+  }
+  return record as JobInfo;
+}
+
+/**
+ * 作业的耗时。
+ *
+ * 与子智能体同一套规则：**终态必须冻结**在 endedAt 上，只有 running 才允许用 now ——
+ * 否则一个早就结束的作业会显示一个一直增长的秒数，那是不真实的。
+ * 终态缺 endedAt（记录不全）时退回 startedAt，给出 0 而不是一个会涨的读数。
+ */
+export function jobElapsedMs(job: JobInfo, now: number = Date.now()): number {
+  const endedAt = job.endedAt ?? (job.status === "running" ? now : job.startedAt);
+  return Math.max(0, endedAt - job.startedAt);
+}
 /** 展开面板里用什么渲染结果 */
 export type ToolDetail =
   | { kind: "diff"; diff: EditDiff }
   | { kind: "terminal" }
-  | { kind: "todo"; items: TodoItem[]; revision?: number };
-
+  | { kind: "todo"; items: TodoItem[]; revision?: number }
+  | ({ kind: "subagent" } & SubagentDetailData)
+  | ({ kind: "job" } & JobDetailData);
 /**
  * 选展开面板的渲染方式，并把要用的数据一并解析好。
  *
  * - 失败一律不给详情：`ToolCall` 的收尾标记只有绿勾，报错会被读成成功，改由调用侧走 `ToolFallback`。
+ * - Task 系列（委派 / 等待 / 列表 / 停止）的 details 里挂的是那条运行记录：有记录就给子智能体卡片，
+ *   没记录（比如「等全部结束」这种不带具体运行的调用）落回内置文本面板。**这道判断必须在
+ *   失败闸门之后**：一次启动失败的委派不该显示成一张成功的卡片。
  * - edit 要有能解析出内容的 patch 才算数；解析不出来就当没有详情，让它落回内置的文本面板，
  *   而不是给一个空块。
  * - bash 的输出本身就是内容，直接给终端渲染。
@@ -240,6 +441,31 @@ export function resolveToolDetail(
   args?: unknown,
 ): ToolDetail | null {
   if (isError === true) return null;
+  if (SUBAGENT_TOOL_NAMES.includes(toolName)) {
+    /**
+     * 两种 details 形状都要认：Task 给一条运行记录，TaskWait / TaskList / TaskStop 给一批
+     * （{ runs: [...] }）。只认前一种的话后三个永远解析不出来，卡片会静默落回内置文本面板 ——
+     * 那正是这段注释最初想避免的结果。
+     */
+    const single = parseSubagentRun(details);
+    if (single !== null) return { kind: "subagent", ...toSubagentDetail(single) };
+    const batch = subagentRunsFromDetails(details);
+    // 取第一条当主体：上面已经排除了空批量，这里只为满足「下标可能越界」的类型约束
+    const first = batch?.[0];
+    if (first === undefined) return null;
+    return { kind: "subagent", ...toSubagentDetail(first), batchSize: batch?.length ?? 1 };
+  }
+  /**
+   * 后台作业四件套：details 里是 `{ job }`（起 / 读 / 杀）或 `{ jobs }`（列表）。
+   *
+   * 放在子智能体之后、bash 之前：作业的呈现方式与子智能体同形（状态 pill + 可展开输出），
+   * 而与 bash 的关系只是「都能跑命令」—— bash 是同步等待的、结果是文本，
+   * 作业是后台跑完的、结果是状态。混用同一张卡片会让「这个到底跑完了没」读不出来。
+   */
+  if (JOB_TOOL_NAMES.includes(toolName)) {
+    const job = parseJobDetail(details);
+    return job === null ? null : { kind: "job", ...job };
+  }
   if (toolName === "bash") return { kind: "terminal" };
   // details 要等结果回来才有（message-converter 把它映射到 artifact）；工具参数在调用抵达时就有了
   if (toolName === "todo") {

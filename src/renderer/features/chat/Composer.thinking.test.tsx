@@ -101,6 +101,8 @@ function seedStores(options: {
       disabledSkillNames: [],
       skillsEnabled: true,
       promptTemplateDirs: [],
+      subagentsEnabled: true,
+      disabledSubagentNames: [],
       mcpServers: [],
     },
     loaded: true,

@@ -17,7 +17,9 @@
 // 磁盘上留一份「上次打开的页面」只会制造「重启后它自己回来了」的困惑。
 
 // 阶段 1 的三道「不谎报」关卡（docs/browser-automation-refactor.md §3–§5）：
-//   1. **视口守卫**：面板收起时视口是 0×0，坐标输入会被静默丢弃 —— 先查，再动手；
+//   1. **视口守卫**：确认 guest 布局过（视口非 0×0），坐标输入才可投递 —— 先查，再动手；
+//      注意「收起面板 / display:none」**不会**让已布局过的 guest 归零（实测保留最后一次
+//      布局尺寸），0×0 只可能出现在「从未可见地布局过」时，见 requireViewport 的说明；
 //   2. **ref 校验**：动作前按账本核对 ref 现在的签名，区分「元素被移除」（STALE_REF）、
 //      「编号被复用」（REF_DRIFT）与「模型编造的 ref」（UNKNOWN_REF）；
 //   3. **后果探针**：动作后在页面里读「谁收到了事件」，空事件报 NO_EFFECT、
@@ -591,6 +593,23 @@ export function attachBrowserGuest(contents: WebContents): void {
     console.warn("内置浏览器被重新挂载，改用新的 guest");
   }
   attached = contents;
+  /**
+   * 关掉后台节流：浏览器视图在切走时用 `display:none` **常驻**（见 RightSidebar 的
+   * browserMounted 闩锁），而 Electron 默认会给「不可见」的 WebContents 降频。
+   *
+   * 本机最小复现实测（Electron 44.3.0，与依赖同版本）：
+   *   display:none 下 rAF 92/秒 → 0/秒、定时器 10/秒 → 2/秒；
+   *   调用本方法后 rAF 回到 90/秒、定时器回到 10/秒，与可见时等价。
+   *
+   * 为什么必须在这里关：视口与坐标输入在 display:none 下都还正常（视口保留最后一次
+   * 布局尺寸 380×639、CDP 点击仍命中），所以不会出现「点了没反应」；退化的只有渲染 ——
+   * 懒加载、动画、scrollIntoView、等某元素出现都会变慢或不触发，
+   * 表现为模型在别的视图下操作页面时「页面像冻住了」，而工具还报成功。
+   *
+   * 挂载即调用（而不是等第一次自动化）：面板切走的那一刻就已经在 display:none 下，
+   * 事后补关会让中间那段渲染继续被压住。
+   */
+  contents.setBackgroundThrottling(false);
   loading = false;
   loadError = undefined;
   // 两个缓冲都跟页面走：面板重建后还留着上一个页面的日志与请求记录只会误导
@@ -934,11 +953,21 @@ function isConsoleNoise(entry: BrowserConsoleEntry): boolean {
 }
 
 /**
- * 视口守卫（docs …refactor.md §5）：坐标型动作执行前确认面板真的布局过。
+ * 视口守卫：坐标型动作执行前确认 guest 真的布局过（有非零视口）。
  *
- * 依据是 Electron 探针实测：零尺寸视口下 `sendInputEvent` 与 CDP 的
+ * 依据是 Electron 44.3 探针实测：零尺寸视口下 `sendInputEvent` 与 CDP 的
  * `Input.dispatchMouseEvent` 都会**静默打空**，而 JS 通道（snapshot / evaluate / fill）
- * 照常工作 —— 「读得到、点不到」。面板收起时正是 0×0。
+ * 照常工作 —— 「读得到、点不到」。
+ *
+ * ⚠️ 什么情况会真的 0×0（实测，别按直觉猜「收起面板」）：
+ *   · `display:none` / 宽 0 裁剪 / visibility:hidden —— **都不会**让已布局过的 guest
+ *     归零，guest 保留最后一次布局尺寸（实测 380×639），坐标动作照常可投递；
+ *   · 唯一会得到 0×0 的是 **webview 元素首次插入 DOM 时宿主就是 display:none**
+ *     （从未有过一次可见布局）。而 RightSidebar 的 browserMounted 闩锁保证浏览器
+ *     面板总是「先可见挂载、再被藏起」，这条路径在正常使用中走不到；
+ *   · 另注意：display:none 期间 guest 的渲染会被背景节流（rAF 掉到 0），
+ *     但那不影响输入投递，主进程已在 attachBrowserGuest 里关掉节流（setBackgroundThrottling）。
+ *
  * 不查这一下会怎样：工具照常派发、页面毫无反应，然后报出「已点击（页面没有跳转）」——
  * 模型据此以为选择器/元素有问题，改用别的 ref 再点一遍，永远点不到。
  *

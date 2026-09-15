@@ -1,5 +1,7 @@
+import { BrowserWindow } from "electron";
 import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
+import { IPC } from "@/shared/contracts/ipc";
 import { getBrowserAutomation } from "../browser/service";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
@@ -62,6 +64,17 @@ export function bootstrapPisdk(options: {
     emit,
     approvals: approvalService,
     interactions: interactionService,
+    /**
+     * 子智能体运行事件：与上面的 emit 同一套路，但走 subagents:event 通道。
+     *
+     * 在这里（而不是 runtime 内）拿 BrowserWindow 是刻意的：runtime 必须能在 node 单测里跑，
+     * 而窗口只存在于 Electron 主进程 —— 由装配层注入，runtime 只认「一个发事件的函数」。
+     */
+    emitSubagent: (envelope) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC.subagents.event, envelope);
+      }
+    },
     sessionTitles,
     resolveWorkingDir,
     mcp: mcpServers,

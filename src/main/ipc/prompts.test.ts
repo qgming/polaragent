@@ -60,6 +60,8 @@ const BASE_SETTINGS: Settings = {
   skillsEnabled: true,
   disabledSkillNames: [],
   promptTemplateDirs: ["/custom/prompts"],
+  subagentsEnabled: true,
+  disabledSubagentNames: [],
   mcpServers: [],
 };
 

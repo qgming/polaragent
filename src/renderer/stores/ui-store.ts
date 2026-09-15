@@ -1,16 +1,23 @@
 import { create } from "zustand";
 
 /** 右侧面板的视图。null = 还没选过，面板显示选择列表 */
-export type RightPanelView = "review" | "files" | "sideChat" | "browser" | "terminal";
+export type RightPanelView = "review" | "files" | "subagent" | "browser" | "terminal";
 
 /**
  * 右侧面板五个视图的规范顺序，即面板内选择列表的顺序（与参考图一致）。
  * 加一个视图时只有这一处要改，选择列表与快捷键提示都读它。
+ *
+ * **没有「侧边聊天」这个视图**：它原本是「往主线程之外塞一句小问题」的入口，
+ * 但用户要的是「让模型帮我问一句」，而这件事与子智能体是同一件事 ——
+ * 都需要一条独立、可查看、不污染主上下文的会话。两个入口做同一件事时，
+ * 用户要先猜该点哪个；于是侧边聊天被合进子智能体面板。
  */
 export const RIGHT_PANEL_VIEWS = [
   "review",
   "files",
-  "sideChat",
+  // 子智能体：一次委派的执行详情（任务、进度、报告、子会话转录）。
+  // 排在这里是因为它是唯一「对话形态」的面板，与审查 / 文件那种资料形态分开
+  "subagent",
   "browser",
   "terminal",
 ] as const satisfies readonly RightPanelView[];
@@ -21,6 +28,7 @@ export type SettingsSection =
   | "services"
   | "mcp"
   | "skills"
+  | "subagents"
   | "promptTemplates"
   | "personalization"
   | "data"
@@ -35,6 +43,7 @@ export const SETTINGS_SECTIONS = [
   "services",
   "mcp",
   "skills",
+  "subagents",
   "promptTemplates",
   "personalization",
   "data",
@@ -82,6 +91,14 @@ interface UiState {
    * 这样「打开侧边栏」与「选择内容」是同一屏上的连续动作（与参考图一致）。
    */
   rightPanelView: RightPanelView | null;
+  /**
+   * 子智能体面板要聚焦的运行 id（= 那次 Task 调用的 delegationId）；null = 列出全部运行。
+   *
+   * 单独一个字段而不是并进 rightPanelView：点击主会话里的子智能体组件是「在已打开的面板里
+   * 换一个焦点」，而切换视图是另一回事 —— 并进去就得在每次点击时重新构造视图值，
+   * 关闭面板再打开也就丢掉了焦点。
+   */
+  subagentPanelTarget: string | null;
 
   /**
    * 展开 / 收起面板。
@@ -95,6 +112,16 @@ interface UiState {
   openRightPanel(view: RightPanelView): void;
   /** 回到选择列表（面板保持展开）：这是「换一个内容」，与收起是两件事 */
   showRightPanelChooser(): void;
+  /** 打开右侧栏并聚焦到某次子智能体运行；由主会话里的子智能体组件调用 */
+  openSubagentPanel(delegationId: string): void;
+  /**
+   * 回到运行列表（清掉焦点）。
+   *
+   * 必须是**独立的动作**：不能靠再调一次 openSubagentPanel 表达「返回」——
+   * 那个动作的语义是「聚焦到某一条运行」，拿它当返回等于把同一条又聚焦一遍，
+   * 状态不变所以界面纹丝不动。这正是「点返回没反应」的成因。
+   */
+  clearSubagentPanelTarget(): void;
 
   toggleSidebar(): void;
   openSearch(): void;
@@ -126,6 +153,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   searchJump: null,
   rightPanelOpen: false,
   rightPanelView: null,
+  subagentPanelTarget: null,
   pendingDeleteSessionId: null,
   resolveDeleteSession: null,
   editingMessageId: null,
@@ -137,6 +165,12 @@ export const useUiStore = create<UiState>()((set, get) => ({
   openRightPanel: (view) => set({ rightPanelOpen: true, rightPanelView: view }),
 
   showRightPanelChooser: () => set({ rightPanelView: null }),
+
+  // 点开子智能体组件 = 「把它摊开给我看」：既展开面板，也把焦点定到这一条运行上
+  openSubagentPanel: (delegationId) =>
+    set({ rightPanelOpen: true, rightPanelView: "subagent", subagentPanelTarget: delegationId }),
+
+  clearSubagentPanelTarget: () => set({ subagentPanelTarget: null }),
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   openSearch: () => set({ searchOpen: true }),

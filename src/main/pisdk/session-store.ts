@@ -13,10 +13,40 @@ import {
   SqliteSessionRepo,
 } from "@earendil-works/pi-session-backend-sqlite-node";
 import { dataDir } from "@/main/app/paths";
-import type { ModelRef } from "@/shared/contracts/common";
-import type { ChatMessage, SessionSummary } from "@/shared/contracts/session";
+import { ALL_THINKING_LEVELS, type ModelRef, type ThinkingLevel } from "@/shared/contracts/common";
+import type {
+  ChatMessage,
+  SessionCreateOptions,
+  SessionKind,
+  SessionSummary,
+} from "@/shared/contracts/session";
+import type { SubagentRun, SubagentRunStatus, SubagentSource } from "@/shared/contracts/subagent";
 import { mapEntriesToMessages } from "./message-mapper";
 import { createSessionsIndex, type SessionIndexEntry } from "./sessions-index";
+
+/**
+ * 本地索引条目 + 从属会话字段。
+ *
+ * 索引条目的类型定义在 sessions-index.ts（本文件不拥有那个文件），
+ * 子智能体这类「从属会话」需要多存 kind 与归属信息；这里用交叉类型扩展一次，
+ * 而不是再写第二份索引实现。读取时全部字段缺省值由 toSummary 补齐（kind 缺省 = "chat"）。
+ */
+type LocalIndexEntry = SessionIndexEntry & {
+  /** 会话种类；缺省按 chat（旧索引里没有这个字段） */
+  kind?: SessionKind;
+  /** 发起它的主会话 id；pi 元数据里也有，索引这份是 create 场景的兜底 */
+  parentSessionId?: string;
+  /** 子智能体运行：派发它的那次 Task 工具调用 id 与子智能体名 */
+  parentToolCallId?: string;
+  agentName?: string;
+  /** 子智能体运行 id（与 parentToolCallId 相同，冗余一份便于按会话查） */
+  delegationId?: string;
+  /**
+   * 这次子智能体运行的记录本体。一次运行 == 一个子会话，所以它挂在子会话条目上 ——
+   * 索引是外部 JSON，读回来时必须重新校验（见 parseSubagentRun）。
+   */
+  subagentRun?: SubagentRun;
+};
 
 /** sqlite 包未从入口导出 SqliteOpenSession 类型，这里从 repo 方法推导 */
 type SqliteOpenSession = Awaited<ReturnType<SqliteSessionRepo["open"]>>;
@@ -43,7 +73,8 @@ export interface LoadMessagesResult {
 export interface SessionStore {
   /** 合并索引元数据；archived 可见性由调用方按设置过滤 */
   list(): Promise<SessionSummary[]>;
-  create(options?: { cwd?: string; title?: string }): Promise<SessionSummary>;
+  /** 新建会话：从属会话（subagent）通过 options 带上种类与归属信息 */
+  create(options?: SessionCreateOptions): Promise<SessionSummary>;
   open(id: string): Promise<{ session: SqliteOpenSession; branch: Branch } | undefined>;
   /** 写 pi 会话名 + 索引标题 */
   /** 写 pi 会话名 + 索引标题 */
@@ -66,6 +97,16 @@ export interface SessionStore {
   loadMessages(id: string, options?: LoadMessagesOptions): Promise<LoadMessagesResult>;
   /** 运行结束等场景更新索引（默认刷新 updatedAt） */
   touch(id: string, patch?: SessionIndexEntry): Promise<void>;
+  /**
+   * 落一次子智能体运行的记录。
+   *
+   * 为什么挂在**子会话**条目上、而不是父会话那次 Task 调用的 details 上：details 只在派发时写一次
+   * （转录是追加型的，没有「改回上一条」这回事），进程一退出就再也读不到结局；而子会话条目是
+   * 「一次运行一条记录」的天然主键 —— 重启后只有它还能被后来的进程寻址，靠它才分得清谁没跑完。
+   */
+  saveSubagentRun(childSessionId: string, run: SubagentRun): Promise<void>;
+  /** 某个父会话的全部运行记录（含本进程没见过的历史运行），按 startedAt 升序 */
+  listSubagentRunsFor(parentSessionId: string): Promise<SubagentRun[]>;
 }
 
 const MAIN_BRANCH = "main";
@@ -86,14 +127,31 @@ const PLACEHOLDER_LANE_STATE: LaneState = {
   inbox: [],
 };
 
-function toSummary(meta: SessionMetadata, entry?: SessionIndexEntry): SessionSummary {
+/**
+ * 索引里的 kind 是外部 JSON，可能被手改坏，也可能是旧版本留下的：只认 "subagent"，
+ * 其余（含缺省）一律按 "chat" —— 否则一个坏值会让会话从左侧栏消失。
+ *
+ * 旧版本给侧边聊天写下的 kind 值同样落回 "chat"：那种历史会话会作为普通会话出现在
+ * 左侧栏里。这是有意为之 —— 它只是一段孤立的旧对话，让它可见是用户能看见并删掉它的
+ * 唯一方式；不迁移、不加墓碑、不做特判。
+ */
+function normalizeSessionKind(raw: unknown): SessionKind {
+  return raw === "subagent" ? raw : "chat";
+}
+
+function toSummary(meta: SessionMetadata, entry?: LocalIndexEntry): SessionSummary {
+  // parentSessionId 优先取 pi 元数据（fork 写在那里），本地索引的那份作为 create 场景的兜底
+  const parentSessionId = meta.parentSessionId ?? entry?.parentSessionId;
   return {
     id: meta.id,
     title: entry?.title ?? null,
     createdAt: meta.createdAt,
     updatedAt: entry?.updatedAt ?? meta.createdAt,
     cwd: meta.cwd ?? entry?.cwd ?? "",
-    ...(meta.parentSessionId === undefined ? {} : { parentSessionId: meta.parentSessionId }),
+    kind: normalizeSessionKind(entry?.kind),
+    ...(parentSessionId === undefined ? {} : { parentSessionId }),
+    ...(entry?.parentToolCallId === undefined ? {} : { parentToolCallId: entry.parentToolCallId }),
+    ...(entry?.agentName === undefined ? {} : { agentName: entry.agentName }),
     archived: entry?.archived ?? false,
     pinned: entry?.pinned ?? false,
     messageCount: entry?.messageCount ?? 0,
@@ -111,6 +169,114 @@ function normalizeModelRef(raw: unknown): ModelRef | null {
   return { serviceId, modelId };
 }
 
+/** 契约里的运行状态取值；索引里读到的字符串必须在这一档里，否则整条记录按坏数据丢掉 */
+const SUBAGENT_RUN_STATUSES: readonly SubagentRunStatus[] = [
+  "running",
+  "completed",
+  "truncated",
+  "failed",
+  "aborted",
+  "denied",
+  "interrupted",
+];
+
+function isSubagentRunStatus(raw: unknown): raw is SubagentRunStatus {
+  return typeof raw === "string" && (SUBAGENT_RUN_STATUSES as readonly string[]).includes(raw);
+}
+
+function isSubagentSource(raw: unknown): raw is SubagentSource {
+  return raw === "builtin" || raw === "user" || raw === "temp";
+}
+
+function isThinkingLevel(raw: unknown): raw is ThinkingLevel {
+  return (ALL_THINKING_LEVELS as readonly unknown[]).includes(raw);
+}
+
+/**
+ * 索引里的运行记录同样是外部 JSON，可能被手改坏或被别的版本写坏：只认自己写得出来的形状。
+ *
+ * 必填字段缺一个就返回 undefined（调用方跳过这一条），可选字段只在类型对得上时才带上 ——
+ * 与其把一条读不懂的记录当成「还在跑」交给面板，不如让它消失，其余运行照常显示。
+ */
+function parseSubagentRun(raw: unknown): SubagentRun | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const text = (value: unknown): string | undefined =>
+    typeof value === "string" ? value : undefined;
+  const count = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+  const delegationId = text(record.delegationId);
+  const sessionId = text(record.sessionId);
+  const parentToolCallId = text(record.parentToolCallId);
+  const childSessionId = text(record.childSessionId);
+  const agentName = text(record.agentName);
+  const description = text(record.description);
+  const task = text(record.task);
+  const modelId = text(record.modelId);
+  const startedAt = count(record.startedAt);
+  const maxTurns = count(record.maxTurns);
+  const turns = count(record.turns);
+  const toolCalls = count(record.toolCalls);
+  const tools = record.tools;
+  if (
+    delegationId === undefined ||
+    sessionId === undefined ||
+    parentToolCallId === undefined ||
+    childSessionId === undefined ||
+    agentName === undefined ||
+    description === undefined ||
+    task === undefined ||
+    modelId === undefined ||
+    startedAt === undefined ||
+    maxTurns === undefined ||
+    turns === undefined ||
+    toolCalls === undefined ||
+    !isSubagentRunStatus(record.status) ||
+    !isSubagentSource(record.agentSource) ||
+    !isThinkingLevel(record.thinkingLevel) ||
+    !Array.isArray(tools) ||
+    !tools.every((tool) => typeof tool === "string")
+  ) {
+    return undefined;
+  }
+  // model 是唯一结构化的字段：null = 继承父会话；写了值却解析不出来，说明这条记录已经坏了
+  const rawModel = record.model ?? null;
+  const model = rawModel === null ? null : normalizeModelRef(rawModel);
+  if (rawModel !== null && model === null) return undefined;
+
+  const run: SubagentRun = {
+    delegationId,
+    sessionId,
+    parentToolCallId,
+    childSessionId,
+    agentName,
+    agentSource: record.agentSource,
+    description,
+    task,
+    status: record.status,
+    startedAt,
+    model,
+    modelId,
+    thinkingLevel: record.thinkingLevel,
+    maxTurns,
+    tools,
+    turns,
+    toolCalls,
+  };
+  const endedAt = count(record.endedAt);
+  if (endedAt !== undefined) run.endedAt = endedAt;
+  const updatedAt = count(record.updatedAt);
+  if (updatedAt !== undefined) run.updatedAt = updatedAt;
+  const report = text(record.report);
+  if (report !== undefined) run.report = report;
+  const error = text(record.error);
+  if (error !== undefined) run.error = error;
+  const resumedFrom = text(record.resumedFrom);
+  if (resumedFrom !== undefined) run.resumedFrom = resumedFrom;
+  return run;
+}
+
 /** 创建会话存储；测试可注入临时目录与自定义 repo（如控制时钟） */
 export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): SessionStore {
   const activeRepo =
@@ -123,7 +289,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
   // 同 id 复用打开结果，避免 repo 层重复 open 触发 "Session is already open"
   const handles = new Map<string, Promise<OpenedSession | undefined>>();
 
-  function updateIndex(id: string, patch: SessionIndexEntry): Promise<void> {
+  function updateIndex(id: string, patch: LocalIndexEntry): Promise<void> {
     return index.update(id, patch).catch((error: unknown) => {
       console.warn(`更新会话索引失败 ${id}: ${String(error)}`);
     });
@@ -187,16 +353,34 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     }
   }
 
-  async function create(options: { cwd?: string; title?: string } = {}): Promise<SessionSummary> {
+  async function create(options: SessionCreateOptions = {}): Promise<SessionSummary> {
     try {
-      const session = await activeRepo.create(undefined, BACKGROUND_CONTEXT);
+      // parentSessionId 是 pi 元数据的一部分（fork 也写在那里）：从这里传下去，
+      // 子会话与父会话的关联在底层就固定了，重启后 list 仍读得回来
+      const session = await activeRepo.create(
+        options.parentSessionId === undefined
+          ? undefined
+          : { parentSessionId: options.parentSessionId },
+        BACKGROUND_CONTEXT,
+      );
       const branch = await session.createBranch(MAIN_BRANCH, null, BACKGROUND_CONTEXT);
       if (options.title) await session.setName(options.title, BACKGROUND_CONTEXT);
       handles.set(session.metadata.id, Promise.resolve({ session, branch }));
 
-      const entry: SessionIndexEntry = {
+      // 其余从属字段（kind / 工具调用 id / 子智能体名 / 运行 id）落在本地索引里：
+      // SQLite 后端的 create 只收 { id, parentSessionId }，多出来的字段没有地方放
+      const entry: LocalIndexEntry = {
         ...(options.title === undefined ? {} : { title: options.title }),
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(options.kind === undefined ? {} : { kind: options.kind }),
+        ...(options.parentSessionId === undefined
+          ? {}
+          : { parentSessionId: options.parentSessionId }),
+        ...(options.parentToolCallId === undefined
+          ? {}
+          : { parentToolCallId: options.parentToolCallId }),
+        ...(options.agentName === undefined ? {} : { agentName: options.agentName }),
+        ...(options.delegationId === undefined ? {} : { delegationId: options.delegationId }),
         updatedAt: session.metadata.createdAt,
         messageCount: 0,
       };
@@ -397,6 +581,28 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(id, { ...patch, updatedAt: patch.updatedAt ?? Date.now() });
   }
 
+  async function saveSubagentRun(childSessionId: string, run: SubagentRun): Promise<void> {
+    // 失败只记录：运行记录是「给下一个进程看的账」，写不进去不该让正在跑的运行失败（见接口注释）
+    await updateIndex(childSessionId, { subagentRun: run });
+  }
+
+  async function listSubagentRunsFor(parentSessionId: string): Promise<SubagentRun[]> {
+    const entries = await index.read();
+    const runs: SubagentRun[] = [];
+    for (const raw of Object.values(entries) as unknown[]) {
+      // 条目本身也可能被手改坏（写成字符串 / null）：跳过，绝不让一条坏数据把整份列表带塌
+      if (typeof raw !== "object" || raw === null) continue;
+      const entry = raw as LocalIndexEntry;
+      if (entry.kind !== "subagent" || entry.parentSessionId !== parentSessionId) continue;
+      const run = parseSubagentRun(entry.subagentRun);
+      // sessionId 对不上的记录（例如被贴到了别的条目下）同样跳过
+      if (run === undefined || run.sessionId !== parentSessionId) continue;
+      runs.push(run);
+    }
+    // 与 listSubagentRuns 一样按派发顺序升序：调用方（面板 / 对账 / 工具文案）不必再排一次
+    return runs.sort((left, right) => left.startedAt - right.startedAt);
+  }
+
   return {
     list,
     create,
@@ -412,6 +618,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     fork,
     loadMessages,
     touch,
+    saveSubagentRun,
+    listSubagentRunsFor,
   };
 }
 

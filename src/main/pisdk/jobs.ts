@@ -59,6 +59,12 @@ export interface JobStartInput {
   command: string;
   /** 进程工作目录（会话 cwd，由调用方解析好） */
   cwd: string;
+  /**
+   * 启动这次作业的工具调用 id（可选）：作业结束时 runtime 用它把结论
+   * **回填到那次 `bash_background` 调用**上，而不是往对话里发一条新消息。
+   * 不传就不回填（作业照常跑，结果仍可由 job_output 读到）。
+   */
+  toolCallId?: string;
 }
 
 export interface JobReadOptions {
@@ -85,6 +91,14 @@ export interface JobService {
   cancelSession(sessionId: string): void;
   /** 进程退出（杀全部作业），用于应用退出 */
   dispose(): Promise<void>;
+  /**
+   * 启动这次作业的工具调用 id（记在内部记录里，不进 JobInfo）。
+   *
+   * 运行时在作业退出时靠它把结论回填到那次 `bash_background` 调用上 ——
+   * 那是「作业的结论」该出现的地方，而不是往对话里发一条新消息。
+   * 未知 id（作业已被淘汰 / 记录已清）返回 undefined，调用方据此跳过回填。
+   */
+  toolCallIdOf(id: string): string | undefined;
   /** 取最近一段输出（不推进 read 游标）；通知文案用它带出「最后几行」 */
   peekTail(id: string, maxBytes?: number): string;
   /**
@@ -96,7 +110,15 @@ export interface JobService {
   isSuppressed(sessionId: string): boolean;
 }
 
-/** 服务内部的作业记录：对外快照（JobInfo）+ 进程句柄 + 输出缓冲 + 读取游标 */
+/**
+ * 服务内部的作业记录：对外快照（JobInfo）+ 进程句柄 + 输出缓冲 + 读取游标。
+ *
+ * `toolCallId` 是**故意留在这里、不进 JobInfo 的**：它唯一的用途是「作业结束时
+ * 把结论回填到启动它的那次工具调用上」（见 runtime 的 deliverJobResult）。
+ * JobInfo 是共享契约、会随 ChatEvent 结构化克隆送进渲染进程，
+ * 而渲染层拿到 toolCallId 也没有消费方 —— 与其把它暴露成公共字段，
+ * 不如留在这份内部记录里，边界更清楚。
+ */
 interface JobEntry {
   job: JobInfo;
   /** spawn 成功后接上的进程句柄（stdout / stderr / 退出事件都在它身上） */
@@ -106,6 +128,10 @@ interface JobEntry {
   readCursor: number;
   /** 是否已结算过终态：spawn 的 error 与 close 事件都只允许结算一次 */
   settled: boolean;
+  /** 启动这次作业的工具调用 id：作业结束时据此把结果回填到那次调用上 */
+  toolCallId?: string;
+  /** 启动这次作业的 agent 名（回填时用于文案与面板显示，缺省时按 id 兜底） */
+  agentLabel?: string;
 }
 
 /** 一次读取要返回的文本 + 读完之后的新游标 */
@@ -484,6 +510,8 @@ export function createJobService(deps: JobServiceDeps): JobService {
       buffer: new DrainBuffer(headBytes, bufferBytes),
       readCursor: 0,
       settled: false,
+      // 记下是谁起的它：作业结束时 runtime 靠这个把结论回填到那次调用上
+      ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     };
 
     let child: ChildProcess;
@@ -613,6 +641,12 @@ export function createJobService(deps: JobServiceDeps): JobService {
     bySession.clear();
   }
 
+  /** 启动这次作业的工具调用 id：作业退出时 runtime 靠它把结论回填到那次调用上 */
+  function toolCallIdOf(id: string): string | undefined {
+    return jobs.get(id)?.toolCallId;
+  }
+
+
   function peekTail(id: string, maxBytes = DEFAULT_TAIL_BYTES): string {
     const entry = jobs.get(id);
     if (entry === undefined) return "";
@@ -623,5 +657,5 @@ export function createJobService(deps: JobServiceDeps): JobService {
     return suppressedSessions.has(sessionId);
   }
 
-  return { start, list, get, read, kill, cancelSession, dispose, peekTail, isSuppressed };
+  return { start, list, get, read, kill, cancelSession, dispose, peekTail, isSuppressed, toolCallIdOf };
 }

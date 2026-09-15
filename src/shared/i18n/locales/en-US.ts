@@ -29,7 +29,7 @@ export const enUS = {
     expandSidebar: "Expand sidebar",
   },
   /*
-    Right panel (Review / Files / Side chat / Browser / Terminal).
+   Right panel (Review / Files / Subagent / Browser / Terminal).
 
     The five view names are the five entries of the panel's first screen.
   */
@@ -41,7 +41,7 @@ export const enUS = {
     back: "Back",
     review: "Review",
     files: "Files",
-    sideChat: "Side chat",
+    subagent: "Subagent",
     browser: "Browser",
     terminal: "Terminal",
     // Review
@@ -62,11 +62,46 @@ export const enUS = {
     filesTooLarge: "Large file — showing the first {{size}}",
     filesLoadFailed: "Failed to load",
     filesBack: "Back to list",
-    // Side chat
-    sideChatEmpty: "Ask a side question without interrupting the main thread",
-    sideChatHint:
-      "This conversation is separate from the main thread — good for checking facts, explaining, drafting.",
-    sideChatDisabled: "Side chat is still being prepared",
+    // Subagents: the execution detail of one delegation, shown in the right panel.
+    // Copy is organized around "what did this delegation do", not "a chat window" —
+    // it shows the full evidence chain of the task the main agent handed off.
+    // View label lives at rightPanel.subagent above — one literal, one place
+    subagentEmpty: "No subagent has been delegated in this session yet",
+    subagentEmptyHint:
+      "When Oint splits work that can run in parallel, it delegates to subagents; every delegation's execution detail shows up here.",
+    subagentRunning: "Running",
+    subagentCompleted: "Completed",
+    subagentTruncated: "Turn limit reached",
+    subagentFailed: "Failed",
+    subagentAborted: "Stopped",
+    subagentDenied: "Could not start",
+    // Interrupted: the process exited mid-run, so the outcome is unknown (neither completed nor failed).
+    // Re-running is the main agent's call, so the panel offers no "restart" affordance
+    subagentInterrupted: "Interrupted",
+    subagentInterruptedNote:
+      "The previous process exited while this delegation was running, so whether it succeeded is unknown. Whether to re-run it is the main agent's call: ask it to continue.",
+    subagentInterruptedAt: "Last updated at {{time}}",
+    subagentTask: "Task",
+    subagentReport: "Subagent report",
+    subagentNoReport: "No report yet (running or interrupted)",
+    subagentTranscript: "Execution log",
+    subagentTranscriptEmpty: "The child session has no messages yet",
+    subagentSteps: "{{turns}} turns · {{toolCalls}} tool calls",
+    subagentTools: "Allowed tools",
+    subagentModel: "Model",
+    subagentSource: "Source",
+    subagentSourceBuiltin: "Built-in",
+    subagentSourceUser: "Custom",
+    subagentSourceTemp: "Temporary (created by the main AI)",
+    subagentStop: "Stop",
+    subagentStopped: "Stop requested",
+    subagentPickRun: "Pick a delegation to see its execution detail",
+    subagentOpenDetails: "View execution detail",
+    subagentElapsed: "{{duration}} elapsed",
+    subagentCount: "{{count}} subagents",
+    subagentFinishedCount: "{{finished}}/{{total}} finished",
+    subagentCoordinator: "Main agent",
+    subagentCoordinating: "Coordinating {{count}} delegated tasks",
     // Browser
     browserPlaceholder: "Type a URL and press Enter",
     browserBack: "Back",
@@ -155,6 +190,9 @@ export const enUS = {
     thinkingMedium: "Medium",
     thinkingHigh: "High",
     thinkingClamped: "This model does not support {{wanted}}; sending at {{used}}",
+    // System notice row: system-generated messages like background job exit, rendered separately from user bubbles
+    systemNotice: "System notice",
+    systemNoticeLabel: "System notification row",
   },
   sidebar: {
     today: "Today",
@@ -189,6 +227,7 @@ export const enUS = {
     general: "General",
     services: "Model services",
     skills: "Skills",
+    subagents: "Subagents",
     personalization: "Personalization",
     data: "Data",
     about: "About",
@@ -274,6 +313,50 @@ export const enUS = {
     skillsInjectionDesc:
       "When off, skills and magic prompts stay out of the model context; files remain on disk and tools keep working",
     skillsEnabled: "Enable skills and magic prompts",
+    // Subagents section
+    subagentsEnabled: "Enable subagents",
+    subagentsEnabledDesc:
+      "When off, the main AI cannot see the Task tools and stops delegating; existing run records are kept",
+    subagentsList: "Available subagents",
+    subagentsListDesc:
+      "The main AI picks from this list. The description is its only selection signal — say when to delegate to it",
+    subagentsEmpty: "No custom subagents yet",
+    subagentsEmptyHint: "Create one, or drop a .md definition into the subagents data directory",
+    subagentBuiltinHint:
+      "Built-in preset: shipped with the app, can be disabled but not edited or deleted",
+    subagentDisabled: "Disabled",
+    subagentEnabled: "Enabled",
+    subagentNew: "New subagent",
+    subagentEdit: "Edit",
+    subagentDelete: "Delete",
+    subagentReveal: "Show in folder",
+    subagentName: "Name",
+    subagentNameHint: "Lowercase letters, digits and dashes; becomes the file name (<name>.md)",
+    subagentDescription: "Description",
+    subagentDescriptionHint: "One line on when a task should be handed to it",
+    subagentPrompt: "System prompt",
+    subagentPromptHint:
+      "The subagent's entire instruction set; its final message is the report sent back to the main AI",
+    subagentTools: "Allowed tools",
+    subagentToolsHint:
+      "Read-only trio by default; ticking write tools means it can change your files",
+    subagentToolsReadOnly: "Read-only",
+    subagentToolsCanWrite: "Can write files",
+    subagentModel: "Model",
+    subagentModelInherit: "Follow the main session",
+    subagentThinking: "Thinking level",
+    // The thinking select needs its own "inherit" line: subagentModelInherit is about the model
+    subagentThinkingInherit: "Follow the main session",
+    subagentMaxTurns: "Turn limit",
+    subagentMaxTurnsInherit: "Default ({{count}} turns)",
+    subagentSave: "Save",
+    subagentCancel: "Cancel",
+    subagentDeleteConfirm: 'Delete subagent "{{name}}"? This cannot be undone.',
+    subagentNameInvalid:
+      "Name may only contain lowercase letters, digits and dashes, up to 40 characters",
+    subagentDescriptionRequired: "Description is required",
+    subagentPromptRequired: "System prompt is required",
+    subagentDiagnostics: "Load problems",
     promptTemplates: "Magic prompts",
     promptTemplatesDesc:
       "Reusable prompt snippets (.md). Type / in the composer to invoke one; the body expands into your message",
@@ -405,6 +488,8 @@ export const enUS = {
     elapsed: "running for {{duration}}",
     endedAt: "ended at {{time}}",
     ended: "ended",
+    batchCount: "{{count}} jobs",
+    output: "Job output",
   },
   // Session panel (the popover on the right of the content title bar): environment / tasks / jobs / artifacts / references
   sessionPanel: {
@@ -486,6 +571,15 @@ export const enUS = {
     browserNetwork: "Read the network requests",
     browserNetworkActive: "Reading the network requests",
     browserDialog: "Set the dialog policy",
+    // Subagent quartet: delegate / await / inspect / stop
+    task: "Delegated a subagent",
+    taskActive: "Delegating a subagent",
+    taskWait: "Waited for subagents",
+    taskWaitActive: "Waiting for subagents",
+    taskList: "Inspected subagents",
+    taskListActive: "Inspecting subagents",
+    taskStop: "Stopped a subagent",
+    taskStopActive: "Stopping a subagent",
     browserDialogActive: "Setting the dialog policy",
     call: "Called",
     callActive: "Calling",

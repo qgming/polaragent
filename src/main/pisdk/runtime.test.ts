@@ -10,6 +10,7 @@ import { createApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import {
   abortStaleOperation,
+  agentMessageText,
   applyToolEnd,
   buildSystemPrompt,
   createChatRuntime,
@@ -39,6 +40,8 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     skillDirs: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    subagentsEnabled: true,
+    disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],
     ...overrides,
@@ -300,6 +303,42 @@ describe("applyToolEnd", () => {
 
     expect(part.result).toEqual(details);
     expect(part.details).toEqual(details);
+  });
+});
+
+/**
+ * 取文函数的回归测试。
+ *
+ * 为什么值得单独钉：它是报告链上**唯一**没人测的一环。harness 的 message_end 走到这里，
+ * 结果再进 subagent-runner 记成 `run.report` —— 而 runner 的测试是手工把文本喂进
+ * noteSubagentAssistantMessage 的，所以「喂进去的文本从哪来」这段一直没人管。
+ * 历史上这里对助手消息常数式返回空串，于是所有子智能体的报告恒为空，
+ * 而轮次、工具计数、状态全都正常：TaskWait 显示「已完成 · 4 轮」，报告栏却是空的。
+ */
+describe("agentMessageText", () => {
+  it("助手消息的文本块能取到（子智能体报告走的就是这条路）", () => {
+    expect(
+      agentMessageText({
+        role: "assistant",
+        content: [
+          { type: "text", text: "MAX_CONCURRENT_SUBAGENT_RUNS = 4，" },
+          { type: "text", text: "见 src/shared/contracts/subagent.ts:63" },
+        ],
+      } as never),
+    ).toBe("MAX_CONCURRENT_SUBAGENT_RUNS = 4，见 src/shared/contracts/subagent.ts:63");
+  });
+
+  it("用户消息同样能取到（排队消息那条路没被这次修改影响）", () => {
+    expect(agentMessageText({ role: "user", content: "你好" } as never)).toBe("你好");
+  });
+
+  it("只有非文本块时返回空串：别把思考/工具块当正文", () => {
+    expect(
+      agentMessageText({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "内部推理" }],
+      } as never),
+    ).toBe("");
   });
 });
 

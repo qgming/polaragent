@@ -20,6 +20,8 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     skillDirs: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    subagentsEnabled: true,
+    disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],
   };

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { JobInfo } from "@/shared/contracts/job";
+import type { SubagentRun, SubagentRunStatus } from "@/shared/contracts/subagent";
 import {
   BASH_TAIL_LINES,
   bashCommand,
@@ -6,8 +8,12 @@ import {
   CHIP_LIMIT,
   DIFF_MAX_LINES,
   detailsPatch,
+  jobElapsedMs,
   resolveToolDetail,
+  SUBAGENT_STATUS_LABEL_KEYS,
   shortenPath,
+  subagentElapsedMs,
+  subagentProgress,
   toEditDiff,
   toolChip,
   toolRows,
@@ -30,6 +36,33 @@ const TODOS = [
   { id: "2", text: "改实现", status: "active" },
   { id: "3", text: "补测试", status: "pending" },
 ];
+
+/**
+ * 一条完整的子智能体运行记录：Task 系列工具 details 的真实形状（见 shared/contracts/subagent.ts）。
+ * 字段给全是为了让「字段一一对应」这类断言有东西可查；各用例只改自己关心的那几项。
+ */
+function subagentRun(patch: Partial<SubagentRun> = {}): SubagentRun {
+  return {
+    delegationId: "d-1",
+    sessionId: "s-parent",
+    parentToolCallId: "d-1",
+    childSessionId: "child-1",
+    agentName: "explorer",
+    agentSource: "builtin",
+    description: "调研重试逻辑",
+    task: "读 src/retry.ts",
+    status: "running",
+    startedAt: 1_000,
+    model: null,
+    modelId: "svc/model-x",
+    thinkingLevel: "medium",
+    maxTurns: 30,
+    tools: ["read", "grep", "glob"],
+    turns: 4,
+    toolCalls: 6,
+    ...patch,
+  };
+}
 
 describe("toolChip", () => {
   it("取 command 或 path，再其次任意字符串参数", () => {
@@ -388,5 +421,254 @@ describe("toolRows", () => {
     expect(toolRows([{ type: "tool-call", toolName: "read" }], [0])).toEqual([
       { partIndex: 0, name: "read", chip: "", failed: false },
     ]);
+  });
+});
+
+describe("resolveToolDetail · 子智能体", () => {
+  it("Task 的 details 是运行记录：给子智能体详情，头部字段与整份 run 一并带上", () => {
+    const run = subagentRun({
+      status: "completed",
+      endedAt: 1_800,
+      turns: 5,
+      toolCalls: 7,
+      report: "重试最多 3 次（src/retry.ts:42）",
+    });
+
+    const detail = resolveToolDetail("Task", run);
+
+    expect(detail).toMatchObject({
+      kind: "subagent",
+      delegationId: "d-1",
+      agentName: "explorer",
+      status: "completed",
+      turns: 5,
+      toolCalls: 7,
+      modelId: "svc/model-x",
+      childSessionId: "child-1",
+      elapsedMs: 800,
+    });
+    // 报告 / 工具列表 / 停止按钮这些用到整份记录的地方直接取 run，避免字段抄两份
+    const subagent = detail?.kind === "subagent" ? detail : null;
+    expect(subagent?.run).toEqual(run);
+  });
+
+  it("仍在跑（没有 endedAt）时不带 elapsedMs：耗时由 run 现算，不在详情里钉一个会过期的值", () => {
+    const detail = resolveToolDetail("Task", subagentRun());
+
+    expect(detail?.kind).toBe("subagent");
+    expect(detail).not.toHaveProperty("elapsedMs");
+  });
+
+  it("失败态优先：委派失败不给子智能体卡片，缺字段的 details 也不硬造", () => {
+    // 一次启动失败的 Task details 是 { error }：错误态下必须走 ToolFallback，不能被读成成功卡片
+    expect(resolveToolDetail("Task", { error: "没有名为 analyst 的子智能体" }, true)).toBeNull();
+    // 非错误态下 { error } 不是运行记录（缺 delegationId / childSessionId），落回内置文本面板
+    expect(resolveToolDetail("Task", { error: "没有名为 analyst 的子智能体" })).toBeNull();
+    expect(resolveToolDetail("Task", undefined)).toBeNull();
+  });
+
+  it("TaskWait / TaskList / TaskStop 的 details 是 { runs }：给批量卡片并带上条数", () => {
+    // 这三个工具按契约返回 SubagentRunsDetails（{ runs: [...] }），与 Task 的单条记录不同形状。
+    // 两种都要认：只认单条的话它们会静默落回内置文本面板，
+    // 而「一次等了三个子智能体」这件事在看板上就消失了 —— 条数因此必须带出来。
+    for (const toolName of ["TaskWait", "TaskList", "TaskStop"]) {
+      const details = { runs: [subagentRun()] };
+      expect(() => resolveToolDetail(toolName, details)).not.toThrow();
+      const detail = resolveToolDetail(toolName, details);
+      expect(detail?.kind).toBe("subagent");
+      // 单条批量：条数为 1，卡片退化成那一条的描述，不额外报数（见 ToolParts 的渲染分支）
+      if (detail?.kind === "subagent") expect(detail.batchSize).toBe(1);
+
+      const second = subagentRun({
+        delegationId: "d-2",
+        parentToolCallId: "d-2",
+        childSessionId: "child-2",
+      });
+      const many = resolveToolDetail(toolName, { runs: [subagentRun(), second] });
+      // 两条运行时条数必须报出来：只说主体会让人以为它只动了一条
+      expect(many?.kind === "subagent" ? many.batchSize : null).toBe(2);
+    }
+    // 坏条目被逐条丢掉，而不是让整批消失
+    expect(resolveToolDetail("TaskWait", { runs: [subagentRun(), { nope: true }] })).toMatchObject({
+      kind: "subagent",
+      batchSize: 1,
+    });
+    // 空批量 / 形状不对 / 缺 details：没有可显示的主体，落回内置文本面板
+    expect(resolveToolDetail("TaskWait", { runs: [] })).toBeNull();
+    expect(resolveToolDetail("TaskWait", undefined)).toBeNull();
+    expect(resolveToolDetail("TaskWait", { delegationIds: ["d-1"] })).toBeNull();
+    // 工具参数（description / task）不能凭空补出一份运行记录
+    expect(resolveToolDetail("TaskWait", undefined, false, { delegationIds: ["d-1"] })).toBeNull();
+  });
+});
+
+describe("SUBAGENT_STATUS_LABEL_KEYS", () => {
+  /**
+   * 契约里的全部状态（枚举自 shared/contracts/subagent.ts 的 SubagentRunStatus）。
+   * 新增一档状态时，生产的 Record<SubagentRunStatus, string> 会先出编译错误；
+   * 这个列表与下面的「没有多余键」断言再兜住运行时：状态改了而映射没跟上，
+   * 面板就会渲染 undefined，而不是在测试里变红。
+   */
+  const STATUSES: readonly SubagentRunStatus[] = [
+    "running",
+    "completed",
+    "truncated",
+    "failed",
+    "aborted",
+    "denied",
+    "interrupted",
+  ];
+
+  it("每个状态都有非空词条键，且没有多余键", () => {
+    for (const status of STATUSES) {
+      const key = SUBAGENT_STATUS_LABEL_KEYS[status];
+      expect(key, `状态 ${status} 缺少文案键`).toBeTruthy();
+      expect(key.startsWith("rightPanel.")).toBe(true);
+    }
+    expect(Object.keys(SUBAGENT_STATUS_LABEL_KEYS).sort()).toEqual([...STATUSES].sort());
+  });
+});
+
+describe("subagentElapsedMs", () => {
+  it("interrupted 的耗时冻结在 endedAt 上，不随 now 增长", () => {
+    // 主进程对账孤儿行时会把 endedAt 对齐到 updatedAt（最后一次持久化）。
+    // 这里若还走 now 兜底，「意外终止」的耗时会随面板停留时间一直变大 —— 读起来就是还在跑
+    const run = subagentRun({ status: "interrupted", startedAt: 1_000, endedAt: 5_000 });
+    expect(subagentElapsedMs(run, 5_000)).toBe(4_000);
+    expect(subagentElapsedMs(run, 60_000)).toBe(4_000);
+  });
+
+  it("interrupted 缺 endedAt 时退到 updatedAt / startedAt，同样不增长", () => {
+    const withUpdatedAt = subagentRun({
+      status: "interrupted",
+      startedAt: 1_000,
+      updatedAt: 4_000,
+    });
+    expect(subagentElapsedMs(withUpdatedAt, 5_000)).toBe(3_000);
+    expect(subagentElapsedMs(withUpdatedAt, 99_999)).toBe(3_000);
+
+    // 两个时间戳都没有的旧记录：显示 0 秒，而不是一个活的数字
+    const bare = subagentRun({ status: "interrupted", startedAt: 1_000 });
+    expect(subagentElapsedMs(bare, 99_999)).toBe(0);
+  });
+
+  it("running 仍按 now 现算：心跳只喂给真正在跑的行", () => {
+    expect(subagentElapsedMs(subagentRun({ startedAt: 1_000 }), 3_000)).toBe(2_000);
+  });
+});
+
+describe("subagentProgress", () => {
+  it("按 turns/maxTurns 算百分比，封顶 100，maxTurns 为 0 时给 0 而不是 NaN", () => {
+    expect(subagentProgress(subagentRun({ turns: 0, maxTurns: 30 }))).toBe(0);
+    expect(subagentProgress(subagentRun({ turns: 15, maxTurns: 30 }))).toBe(50);
+    expect(subagentProgress(subagentRun({ turns: 30, maxTurns: 30 }))).toBe(100);
+    // 被截断的记录 turns 可能超过 maxTurns：进度条不越界
+    expect(subagentProgress(subagentRun({ turns: 45, maxTurns: 30 }))).toBe(100);
+    // 旧记录可能缺 maxTurns（解析层给的默认值是 0）：停在起点，不是 NaN
+    expect(subagentProgress(subagentRun({ turns: 7, maxTurns: 0 }))).toBe(0);
+  });
+
+  it("interrupted 用同一把 turns/maxTurns 尺子，不返回哨兵值", () => {
+    // 「还在不在跑」由状态决定：调用方（ToolParts 的 running 过滤）据此把它挡在活跃进度条外，
+    // 这里只负责给出它停下那一刻的真实进度
+    expect(
+      subagentProgress(
+        subagentRun({ status: "interrupted", turns: 15, maxTurns: 30, endedAt: 5_000 }),
+      ),
+    ).toBe(50);
+    // 缺 maxTurns 的旧记录仍然停在起点，不是 NaN
+    expect(subagentProgress(subagentRun({ status: "interrupted", turns: 7, maxTurns: 0 }))).toBe(0);
+  });
+
+  it("随 turns 单调不减，且始终落在 0–100 内", () => {
+    let previous = 0;
+    for (const turns of [0, 1, 2, 3, 7, 15, 29, 30, 31, 80]) {
+      const value = subagentProgress(subagentRun({ turns, maxTurns: 30 }));
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(100);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
+  });
+});
+
+/** 一条完整的作业快照：JobInfo 的真实形状（见 shared/contracts/job.ts），各用例只改关心的字段 */
+function jobInfo(patch: Partial<JobInfo> = {}): JobInfo {
+  return {
+    id: "job-1",
+    sessionId: "s-parent",
+    command: "pnpm dev",
+    cwd: "D:/dev/app",
+    status: "running",
+    startedAt: 1_000,
+    totalBytes: 0,
+    truncated: false,
+    ...patch,
+  };
+}
+
+describe("resolveToolDetail · 后台作业", () => {
+  it("单作业工具的 details 是 { job }：给作业详情，jobId 与快照一并带上", () => {
+    const job = jobInfo({ status: "exited", exitCode: 0, endedAt: 3_000 });
+    const detail = resolveToolDetail("bash_background", { job });
+
+    expect(detail).toMatchObject({ kind: "job", jobId: "job-1", job });
+    // 单作业调用没有批量：batch 缺席，pill 才不会平白多报一句条数
+    expect(detail).not.toHaveProperty("batch");
+  });
+
+  it("job_list 的 details 是 { jobs }：以第一条为主体，整批挂在 batch 上", () => {
+    const a = jobInfo({ id: "job-1" });
+    const b = jobInfo({ id: "job-2", command: "pnpm test" });
+    const detail = resolveToolDetail("job_list", { jobs: [a, b] });
+
+    expect(detail?.kind).toBe("job");
+    const jobs = detail?.kind === "job" ? detail : null;
+    expect(jobs?.jobId).toBe("job-1");
+    expect(jobs?.batch).toEqual([a, b]);
+  });
+
+  it("形状不对时不给详情，落回普通工具行", () => {
+    // 空批量：没有任何作业可呈现，硬造一张 pill 会让「这次调用成功了、只是没作业」消失
+    expect(resolveToolDetail("job_list", { jobs: [] })).toBeNull();
+    // 缺 id / status 不是作业快照
+    expect(resolveToolDetail("job_output", { job: { command: "x" } })).toBeNull();
+    expect(resolveToolDetail("bash_background", undefined)).toBeNull();
+    // 非记录形状（比如契约之外的字符串）同样落回
+    expect(resolveToolDetail("job_kill", "不是对象")).toBeNull();
+  });
+
+  it("坏条目丢掉的只有它自己：一批里有一条记录不全，其余照常显示", () => {
+    const good = jobInfo({ id: "job-2" });
+    const detail = resolveToolDetail("job_list", { jobs: [{ command: "缺 id" }, good] });
+
+    const jobs = detail?.kind === "job" ? detail : null;
+    expect(jobs?.jobId).toBe("job-2");
+    expect(jobs?.batch).toEqual([good]);
+  });
+
+  it("失败闸门仍然生效：一次报错的作业调用不给作业卡片", () => {
+    // resolveToolDetail 的第一道判断：isError 一律 null。调用侧（ToolCallPart）对作业另开一条
+    // 分支直接读 details，正是为了绕开它 —— 作业失败本身就是要显示成「失败」的状态 pill
+    expect(resolveToolDetail("bash_background", { job: jobInfo() }, true)).toBeNull();
+  });
+});
+
+describe("jobElapsedMs", () => {
+  it("running 按 now 现算，终态冻结在 endedAt 上", () => {
+    expect(jobElapsedMs(jobInfo({ startedAt: 1_000 }), 3_000)).toBe(2_000);
+    expect(jobElapsedMs(jobInfo({ startedAt: 1_000, endedAt: 2_500 }), 9_999)).toBe(1_500);
+  });
+
+  it("终态缺 endedAt 时退回 0，不给一个会随时间增长的读数", () => {
+    // 记录不全（例如 spawn 失败、或重启后补拉的旧快照）时宁可显示 0：
+    // 一个早就结束的作业挂着走动的秒数，读起来就是「还在跑」
+    expect(jobElapsedMs(jobInfo({ status: "failed", startedAt: 1_000 }), 9_999)).toBe(0);
+    expect(jobElapsedMs(jobInfo({ status: "killed", startedAt: 1_000 }), 9_999)).toBe(0);
+  });
+
+  it("时钟回拨（endedAt 早于 startedAt）时夹到 0，不出现负数读数", () => {
+    expect(jobElapsedMs(jobInfo({ startedAt: 5_000, endedAt: 4_000 }), 9_999)).toBe(0);
   });
 });

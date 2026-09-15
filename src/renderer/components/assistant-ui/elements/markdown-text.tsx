@@ -12,6 +12,7 @@ import {
 } from "@assistant-ui/react-markdown";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { type FC, memo, useMemo, useRef } from "react";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
@@ -65,7 +66,6 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
 };
 
 export const MarkdownText = memo(MarkdownTextImpl);
-
 const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {
@@ -267,3 +267,27 @@ const defaultComponents = memoizeMarkdownComponents({
   },
   CodeHeader,
 });
+
+/**
+ * 渲染**任意** markdown 文本（不依赖 part 上下文）。
+ *
+ * 为什么需要它：`MarkdownText` 走 `MarkdownTextPrimitive`，正文是从 assistant-ui 的
+ * part 上下文里读的 —— 只有当它挂在某条消息的文本 part 里时才有内容。像「子智能体报告」
+ * 这种**游离于消息之外**的文本（它挂在工具结果上）塞进去只会渲染出一个空壳。
+ *
+ * 这里直接用 react-markdown（本就是直接依赖，也是 MarkdownTextPrimitive 的底层），
+ * 并**复用同一张 defaultComponents**：报告因此与主对话长得完全一样
+ *（标题层级、代码高亮、表格、列表、引用都同一套样式），而不是两套近似的样式各走各的。
+ *
+ * 代价说明：assistant-ui 那层的 `componentsByLanguage`（把 ```mermaid 交给 MermaidDiagram）
+ * 在这里不生效 —— 那个便利参数是 `MarkdownTextPrimitive` 提供的，react-markdown 不认。
+ * 报告里出现 mermaid 时按普通代码块高亮显示，这可以接受：报告是给模型与用户读的结论文本，
+ * 不是画图的地方。
+ */
+export const MarkdownBlock: FC<{ text: string; className?: string }> = ({ text, className }) => (
+  <div className={cn("aui-md", className)}>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={defaultComponents}>
+      {text}
+    </ReactMarkdown>
+  </div>
+);

@@ -28,7 +28,7 @@ export const zhCN = {
     expandSidebar: "展开侧栏",
   },
   /*
-    右侧面板（审查 / 文件 / 侧边聊天 / 浏览器 / 终端）。
+   右侧面板（审查 / 文件 / 子智能体 / 浏览器 / 终端）。
 
     这五个名字就是面板第一屏上的五个入口；快捷键提示里只写字母（P / T），
     Ctrl 与 ⌘ 的前缀由 RightPanelChooser 按平台渲染。
@@ -41,7 +41,7 @@ export const zhCN = {
     back: "返回",
     review: "审查",
     files: "文件",
-    sideChat: "侧边聊天",
+    subagent: "子智能体",
     browser: "浏览器",
     terminal: "终端",
     // 审查
@@ -62,10 +62,46 @@ export const zhCN = {
     filesTooLarge: "文件较大，只显示前 {{size}}",
     filesLoadFailed: "读取失败",
     filesBack: "返回列表",
-    // 侧边聊天
-    sideChatEmpty: "问点边角问题，不打断主对话",
-    sideChatHint: "这里的对话独立于主线程，适合查证、解释、起草。",
-    sideChatDisabled: "侧边聊天还在准备中",
+    // 子智能体：右侧栏里的「一次委派的执行详情」。
+    // 文案围绕「这次委派干了什么」组织，而不是「一个对话窗口」——
+    // 它显示的是主代理派出去的那件事的完整证据链（任务 → 步骤 → 报告）。
+    // 视图名见上面的 rightPanel.subagent（同名字面量只写一处，避免两处漂移）
+    subagentEmpty: "本次会话还没有委派过子智能体",
+    subagentEmptyHint:
+      "让 Oint 处理可分头进行的任务时，它会派出子智能体；每一次委派的执行详情都会出现在这里。",
+    subagentRunning: "运行中",
+    subagentCompleted: "已完成",
+    subagentTruncated: "达到轮次上限",
+    subagentFailed: "失败",
+    subagentAborted: "已停止",
+    subagentDenied: "未能启动",
+    // 意外终止：进程在运行途中退出，结果未知（既不是完成也不是失败）。
+    // 要不要重跑由主代理决定，面板因此不提供任何「重启」按钮
+    subagentInterrupted: "意外终止",
+    subagentInterruptedNote:
+      "上一个进程在这次委派执行途中退出了，它究竟是成功还是失败已无从确认。要不要重新执行由主代理决定：让它继续处理即可。",
+    subagentInterruptedAt: "最后更新于 {{time}}",
+    subagentTask: "任务",
+    subagentReport: "子智能体的汇报",
+    subagentNoReport: "还没有汇报（运行中或已中断）",
+    subagentTranscript: "执行记录",
+    subagentTranscriptEmpty: "子会话里还没有消息",
+    subagentSteps: "{{turns}} 轮 · {{toolCalls}} 次工具调用",
+    subagentTools: "可用工具",
+    subagentModel: "模型",
+    subagentSource: "来源",
+    subagentSourceBuiltin: "内置",
+    subagentSourceUser: "自定义",
+    subagentSourceTemp: "临时（主 AI 创建）",
+    subagentStop: "停止",
+    subagentStopped: "已请求停止",
+    subagentPickRun: "选一次委派查看它的执行详情",
+    subagentOpenDetails: "查看执行详情",
+    subagentElapsed: "耗时 {{duration}}",
+    subagentCount: "{{count}} 个子智能体",
+    subagentFinishedCount: "{{finished}}/{{total}} 已完成",
+    subagentCoordinator: "主代理",
+    subagentCoordinating: "正在协调 {{count}} 项委派",
     // 浏览器
     browserPlaceholder: "输入网址，回车打开",
     browserBack: "后退",
@@ -154,6 +190,9 @@ export const zhCN = {
     thinkingMedium: "中",
     thinkingHigh: "高",
     thinkingClamped: "该模型不支持「{{wanted}}」，已按「{{used}}」发送",
+    // 系统通知行：后台作业结束等系统产生的消息，不在消息树里污染用户视角
+    systemNotice: "系统通知",
+    systemNoticeLabel: "系统通知行",
   },
   sidebar: {
     today: "今天",
@@ -188,6 +227,7 @@ export const zhCN = {
     general: "通用",
     services: "模型服务",
     skills: "技能",
+    subagents: "子智能体",
     personalization: "个性化",
     data: "数据",
     about: "关于",
@@ -270,6 +310,45 @@ export const zhCN = {
     skillsInjection: "技能注入",
     skillsInjectionDesc: "关闭后技能与魔法提示不会进入模型上下文；文件仍在磁盘上，工具也照常可用",
     skillsEnabled: "启用技能与魔法提示",
+    // 子智能体分栏
+    subagentsEnabled: "启用子智能体",
+    subagentsEnabledDesc: "关闭后主 AI 看不到 Task 系列工具，不再委派任务；已有运行记录仍然保留",
+    subagentsList: "可用的子智能体",
+    subagentsListDesc:
+      "主 AI 从这里挑选委派对象。描述是它唯一的挑选依据，写清「什么时候该派给它」最有价值",
+    subagentsEmpty: "还没有自定义子智能体",
+    subagentsEmptyHint: "新建一个，或在数据目录的 subagents 里放置 .md 定义",
+    subagentBuiltinHint: "内置预设：随应用提供，可禁用但不可编辑或删除",
+    subagentDisabled: "禁用",
+    subagentEnabled: "启用",
+    subagentNew: "新建子智能体",
+    subagentEdit: "编辑",
+    subagentDelete: "删除",
+    subagentReveal: "在文件夹中显示",
+    subagentName: "名称",
+    subagentNameHint: "小写字母、数字与短横线，会成为文件名（<名称>.md）",
+    subagentDescription: "描述",
+    subagentDescriptionHint: "一句话说明什么时候该把任务派给它",
+    subagentPrompt: "系统提示",
+    subagentPromptHint: "子智能体的全部行为说明；它的最终回复就是交回给主 AI 的汇报",
+    subagentTools: "可用工具",
+    subagentToolsHint: "默认为只读三件套；勾选写类工具意味着它会改动你的文件",
+    subagentToolsReadOnly: "只读",
+    subagentToolsCanWrite: "可写文件",
+    subagentModel: "模型",
+    subagentModelInherit: "跟随主会话",
+    subagentThinking: "思考档位",
+    // 思考档位的「跟随」只能自己一句：subagentModelInherit 说的是模型，两者不能互相顶替
+    subagentThinkingInherit: "跟随主会话",
+    subagentMaxTurns: "轮次上限",
+    subagentMaxTurnsInherit: "默认（{{count}} 轮）",
+    subagentSave: "保存",
+    subagentCancel: "取消",
+    subagentDeleteConfirm: "删除子智能体「{{name}}」？此操作不可撤销。",
+    subagentNameInvalid: "名称只能是小写字母、数字与短横线，且不超过 40 个字符",
+    subagentDescriptionRequired: "描述不能为空",
+    subagentPromptRequired: "系统提示不能为空",
+    subagentDiagnostics: "加载问题",
     promptTemplates: "魔法提示",
     promptTemplatesDesc:
       "可复用的提示词片段（.md）。在输入框敲 / 可从斜杠菜单里调用，模板正文会展开成消息",
@@ -394,6 +473,10 @@ export const zhCN = {
     truncated: "输出已截断",
     elapsed: "已运行 {{duration}}",
     endedAt: "{{time}} 结束",
+    // 工具状态 pill 专用：job_list 一次列出多条时，后缀一句条数（只说动词会被读成「只动了一条」）
+    batchCount: "共 {{count}} 个作业",
+    // 状态 pill 的展开区标题：里面是进程原样吐出来的字节，按纯文本渲染
+    output: "作业输出",
     ended: "已结束",
   },
   // 会话面板（内容区顶栏右侧的浮层）：环境 / 任务 / 作业 / 产物 / 参考五块
@@ -477,6 +560,15 @@ export const zhCN = {
     browserNetworkActive: "正在读取网络请求",
     browserDialog: "设置了弹窗策略",
     browserDialogActive: "正在设置弹窗策略",
+    // 子智能体四件套：派发 / 等结果 / 查进度 / 停掉
+    task: "委派了子智能体",
+    taskActive: "正在委派子智能体",
+    taskWait: "等待子智能体",
+    taskWaitActive: "正在等待子智能体",
+    taskList: "查看子智能体",
+    taskListActive: "正在查看子智能体",
+    taskStop: "停止了子智能体",
+    taskStopActive: "正在停止子智能体",
     call: "调用了",
     callActive: "正在调用",
     groupCount: "{{count}} 个工具",

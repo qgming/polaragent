@@ -17,6 +17,7 @@ import { registerServicesIpc } from "./services";
 import { registerSessionsIpc } from "./sessions";
 import { registerSettingsIpc } from "./settings";
 import { registerSkillsIpc } from "./skills";
+import { registerSubagentsIpc } from "./subagents";
 import { registerTerminalIpc } from "./terminal";
 import { registerWindowIpc } from "./window";
 
@@ -32,6 +33,7 @@ export function registerIpcHandlers(): void {
   registerInteractionsIpc();
   registerJobsIpc();
   registerSkillsIpc();
+  registerSubagentsIpc();
   registerPromptsIpc();
   registerPermissionsIpc();
   registerAgentsIpc();

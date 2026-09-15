@@ -116,6 +116,9 @@ describe("窗口控制在顶栏与右侧栏之间的交接", () => {
     expect(await within(aside).findByLabelText("最小化")).toBeDefined();
     expect(within(banner).queryByLabelText("最小化")).toBeNull();
     expect(within(aside).getByText("审查")).toBeDefined();
+    // 顺带钉住「选择列表里不再有侧边聊天」：它已经合进子智能体面板（见 ui-store 的注释）
+    expect(within(aside).queryByText("侧边聊天")).toBeNull();
+    expect(within(aside).getByText("子智能体")).toBeDefined();
     expect(within(aside).getByText("终端")).toBeDefined();
   });
 
@@ -128,11 +131,12 @@ describe("窗口控制在顶栏与右侧栏之间的交接", () => {
 
     // 面板头部换成该视图名（没有重复的标题行）
     expect(await within(aside).findByText("浏览器")).toBeDefined();
-    // 侧边聊天 / 终端 这些入口文案随之消失（已离开选择列表）
-    expect(within(aside).queryByText("侧边聊天")).toBeNull();
+    // 子智能体 / 终端 这些入口文案随之消失（已离开选择列表）。
+    // 用「子智能体」当哨兵而不是被点的「浏览器」：后者在面板头部也会出现，测不出「列表已离开」
+    expect(within(aside).queryByText("子智能体")).toBeNull();
 
     // 返回回到选择列表
     within(aside).getByLabelText("返回").click();
-    expect(await within(aside).findByText("侧边聊天")).toBeDefined();
+    expect(await within(aside).findByText("子智能体")).toBeDefined();
   });
 });

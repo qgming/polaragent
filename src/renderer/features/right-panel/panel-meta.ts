@@ -1,11 +1,4 @@
-import {
-  Braces,
-  FileText,
-  Globe,
-  type LucideIcon,
-  MessageSquarePlus,
-  SquareTerminal,
-} from "lucide-react";
+import { Bot, Braces, FileText, Globe, type LucideIcon, SquareTerminal } from "lucide-react";
 import type { RightPanelView } from "@/renderer/stores/ui-store";
 
 /**
@@ -26,8 +19,9 @@ export const RIGHT_PANEL_VIEW_META: Record<
   review: { icon: Braces, labelKey: "rightPanel.review" },
   // 文件：Ctrl+P，与主流编辑器/IDE 的「快速打开文件」同键，肌肉记忆直接可用
   files: { icon: FileText, labelKey: "rightPanel.files", shortcut: "P" },
-  // 侧边聊天：暂时没有快捷键（留给以后子智能体），先只占菜单一行
-  sideChat: { icon: MessageSquarePlus, labelKey: "rightPanel.sideChat" },
+  // 子智能体：Bot 而不是 Network —— 一次委派的详情是「某个代理在干活」，
+  // 而 Network 在浏览器工具卡里已经表示「网络请求」，同屏可能出现两处，图标要能分得开
+  subagent: { icon: Bot, labelKey: "rightPanel.subagent" },
   // 浏览器：Ctrl+T，与「新建标签页」同键
   browser: { icon: Globe, labelKey: "rightPanel.browser", shortcut: "T" },
   terminal: { icon: SquareTerminal, labelKey: "rightPanel.terminal" },

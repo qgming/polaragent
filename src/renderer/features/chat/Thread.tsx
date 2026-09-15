@@ -1,10 +1,6 @@
 import {
   ActionBarPrimitive,
   AuiIf,
-  ErrorPrimitive,
-  type FileMessagePartComponent,
-  groupPartByType,
-  type ImageMessagePartComponent,
   MessagePrimitive,
   ThreadPrimitive,
   useAuiState,
@@ -14,10 +10,11 @@ import {
   CheckIcon,
   CopyIcon,
   GitBranchIcon,
+  InfoIcon,
   PencilIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
 import { DaySeparatorRow } from "@/renderer/components/assistant-ui/elements/day-separator";
@@ -25,18 +22,7 @@ import {
   EmptyState,
   EmptyStateGreeting,
 } from "@/renderer/components/assistant-ui/elements/empty-state";
-import { File } from "@/renderer/components/assistant-ui/elements/file";
-import { Image } from "@/renderer/components/assistant-ui/elements/image";
-import { MarkdownText } from "@/renderer/components/assistant-ui/elements/markdown-text";
-import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningRoot,
-  ReasoningText,
-  ReasoningTrigger,
-} from "@/renderer/components/assistant-ui/elements/reasoning.aui";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
-import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/thinking-indicator";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
@@ -48,8 +34,13 @@ import { ApprovalSection } from "./ApprovalSection";
 import { AskSection } from "./AskSection";
 import { Composer } from "./Composer";
 import { MessageRail } from "./MessageRail";
+import {
+  AssistantMessageParts,
+  IsRunStartContext,
+  MessageError,
+  UserMessageParts,
+} from "./message-parts";
 import { isMessageSequenceSynced } from "./message-seq";
-import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
 import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
@@ -61,31 +52,6 @@ import { useStickToBottom } from "./use-stick-to-bottom";
  * 默认 true：渲染在消息流之外时按"末条"处理，操作栏仍可见。
  */
 const IsRunEndContext = createContext(true);
-
-/**
- * 这条助手消息是不是**当前正在跑的那次运行**的第一条。
- *
- * 状态行只挂在这一条上：一次运行会落成好几条相邻的助手消息，状态要显示在整段的左上角，
- * 而不是当前恰好在流式的那一条（它会随着工具调用往后挪）。
- * 必须是「当前这次」而不是「任一次」—— 否则历史上每次运行的段首都会在任一次运行期间亮起。
- * 默认 true：渲染在消息流之外时按"段首"处理。
- */
-const IsRunStartContext = createContext(true);
-
-/**
- * 助手消息的 part 分组：连续推理与工具调用折进「思维链」组，其余按类型单独出。
- * 这张表决定折叠边界，改它等于改消息的阅读节奏，不要随手加项。
- */
-const GROUP_BY = groupPartByType({
-  reasoning: ["group-chainOfThought", "group-reasoning"],
-  "tool-call": ["group-chainOfThought", "group-tool"],
-  "standalone-tool-call": [],
-});
-
-/** 用户消息里的文本不做 Markdown 解析，原样保留换行 */
-const USER_PARTS = {
-  Text: ({ text }: { text: string }) => <p className="whitespace-pre-wrap">{text}</p>,
-} satisfies MessagePrimitive.Parts.Props["components"];
 
 /** 跨天分隔条：视觉取自 Elements 的 day-separator（细线 + 眉题 + 细线） */
 function DayDivider({ timestamp }: { timestamp: Date | number }) {
@@ -101,16 +67,6 @@ function DayDivider({ timestamp }: { timestamp: Date | number }) {
   return <DaySeparatorRow label={label} />;
 }
 
-function MessageError() {
-  return (
-    <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="aui-message-error-root mt-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive dark:bg-destructive/5">
-        <ErrorPrimitive.Message className="aui-message-error-message line-clamp-2" />
-      </ErrorPrimitive.Root>
-    </MessagePrimitive.Error>
-  );
-}
-
 /**
  * 操作栏按钮：比通用的 TooltipIconButton 小一档（24px 按钮 / 16px 图标 → 22 / 14）。
  * 图标尺寸必须用 `!` 压过 Button 基类的 `[&_svg:not([class*='size-'])]:size-4`
@@ -123,108 +79,6 @@ const ACTION_BUTTON = "size-5.5 [&_svg]:size-3.5!";
  * min-h 恒等于「上间距 + 按钮高」，所以按钮的显隐（运行中收起、hover 才出现）不改变消息间距。
  */
 const ACTION_BAR_ROW = "pt-(--density-gap) min-h-[calc(var(--density-gap)_+_1.375rem)]";
-
-/**
- * 运行秒数。官方没有 selector —— `metadata.timing` 要等消息结束才定下来 —— 所以自己起计时器。
- */
-function useElapsedLabel(active: boolean): string | undefined {
-  const [label, setLabel] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    if (!active) {
-      setLabel(undefined);
-      return;
-    }
-    const start = Date.now();
-    setLabel("0s");
-    const id = setInterval(() => {
-      setLabel(`${Math.round((Date.now() - start) / 1000)}s`);
-    }, 1000);
-    return () => clearInterval(id);
-  }, [active]);
-
-  return label;
-}
-
-/**
- * 一段过程的耗时（秒）：跑的时候不给值，跑完给总秒数。
- *
- * 挂载时就已经结束（历史回读）不给值 —— 那种情况下没有起点，凭空的耗时是编的，
- * 触发行的文字就退回「思考过程」。
- */
-function useFinishedSeconds(active: boolean): number | undefined {
-  const startRef = useRef<number | null>(null);
-  const [seconds, setSeconds] = useState<number | undefined>(undefined);
-
-  useEffect(() => {
-    if (active) {
-      startRef.current = Date.now();
-      setSeconds(undefined);
-      return;
-    }
-    const start = startRef.current;
-    if (start === null) return;
-    startRef.current = null;
-    // 不足一秒也记 1s：既然跑过一轮，显示 0s 会显得没执行
-    setSeconds(Math.max(1, Math.round((Date.now() - start) / 1000)));
-  }, [active]);
-
-  return seconds;
-}
-
-/**
- * 思考块：不描边的折叠块（ghost），触发行直接坐在正文左线上。
- * 收尾后带上实际耗时 —— 上游的 `duration` 一直是个悬着的参数，从未被传入，这里把它接上。
- */
-function ReasoningGroup({ running, children }: { running: boolean; children: React.ReactNode }) {
-  const { t } = useTranslation();
-  const duration = useFinishedSeconds(running);
-
-  return (
-    <ReasoningRoot variant="ghost" streaming={running}>
-      <ReasoningTrigger
-        active={running}
-        label={t("chat.thinking")}
-        duration={duration}
-        durationLabel={(seconds) => t("chat.thoughtFor", { seconds })}
-      />
-      <ReasoningContent aria-busy={running}>
-        <ReasoningText>{children}</ReasoningText>
-      </ReasoningContent>
-    </ReasoningRoot>
-  );
-}
-
-/**
- * 运行状态行：整段回复还在跑时展示，有未完成的工具调用就报它的名字，否则是笼统的思考中。
- *
- * 标签从**线程**里取而不是从所在消息取：状态行挂在段首，而正在流式的往往已经是后面那几条
- * （工具调用会把运行切成多条助手消息），只看自己这条会读不到在跑的工具。
- * 只看最后一条助手消息：一次运行里只有它在流式；从尾部往前找，找到就停。
- * 用词条键（字符串）而不是译文做选择器的返回值，Object.is 才稳定。
- */
-function AssistantThinking() {
-  const { t } = useTranslation();
-  const labelKey = useAuiState((s) => {
-    if (!s.thread.isRunning) return undefined;
-    for (let i = s.thread.messages.length - 1; i >= 0; i -= 1) {
-      const message = s.thread.messages[i];
-      if (message?.role !== "assistant") continue;
-      if (message.status?.type !== "running") break;
-      const pending = message.parts.find(
-        (part) => part.type === "tool-call" && part.result === undefined,
-      );
-      return pending?.type === "tool-call"
-        ? toolActiveLabelKey(pending.toolName)
-        : "tools.thinking";
-    }
-    return "tools.thinking";
-  });
-  const elapsed = useElapsedLabel(labelKey !== undefined);
-
-  if (labelKey === undefined) return null;
-  return <ThinkingIndicator label={t(labelKey)} elapsed={elapsed} />;
-}
 
 /**
  * 助手消息的底部操作栏：复制 + 重新生成 + 分支。
@@ -312,20 +166,16 @@ function UserActionBar() {
   );
 }
 
-const UserFilePart: FileMessagePartComponent = (part) => (
-  <div data-slot="aui_user-message-file" className="py-1">
-    <File {...part} />
-  </div>
-);
-
-const UserImagePart: ImageMessagePartComponent = (part) => (
-  <div data-slot="aui_user-message-image" className="py-1">
-    <Image {...part} />
-  </div>
-);
-
 function UserMessage() {
   const running = useAuiState((s) => s.thread.isRunning);
+  const isSystem = useAuiState((s) => {
+    const custom = s.message.metadata?.custom as { origin?: unknown } | undefined;
+    return custom?.origin === "system";
+  });
+
+  if (isSystem) {
+    return <SystemNoticeRow />;
+  }
 
   return (
     <MessagePrimitive.Root
@@ -338,9 +188,7 @@ function UserMessage() {
 
       <div className="relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer rounded-xl bg-muted px-4 py-2 text-foreground empty:hidden">
-          <MessagePrimitive.Parts
-            components={{ ...USER_PARTS, File: UserFilePart, Image: UserImagePart }}
-          />
+          <UserMessageParts />
         </div>
         {/*
           hover 或键盘聚焦时显形的操作栏，坐在气泡下方的常驻高度里。
@@ -368,9 +216,6 @@ function UserMessage() {
 
 function AssistantMessage() {
   const isRunEnd = useContext(IsRunEndContext);
-  const isRunStart = useContext(IsRunStartContext);
-  // 整段是否还在跑：状态行挂在段首，所以看的是线程而不是这条消息
-  const runRunning = useAuiState((s) => s.thread.isRunning);
 
   return (
     <MessagePrimitive.Root
@@ -386,56 +231,12 @@ function AssistantMessage() {
         className="flex flex-col gap-y-(--density-gap) px-2 leading-relaxed text-foreground wrap-break-word"
       >
         {/*
-          运行状态固定在**整段回复**的左上角：只在段首渲染，且整段还在跑时一直显示。
-          不去跟正文抢位置、也不随正文增长往下漂。
+          正文（运行状态行 / 推理 / 工具 / Markdown）与右侧「子智能体」面板共用一份实现
+          （见 message-parts 的文件头），本组件只负责这段之外属于**主线程**的东西：
+          状态行在不在段首、整段是否还在跑由 AssistantMessageParts 自己按上下文判定，
+          这里因此不给附加闸门（恒 true）。
         */}
-        {isRunStart && runRunning && <AssistantThinking />}
-        <MessagePrimitive.GroupedParts groupBy={GROUP_BY} indicator="never">
-          {({ part, children }) => {
-            switch (part.type) {
-              case "group-chainOfThought":
-                // 思维链把推理与工具折在一起，这里也要 flex + gap，否则组内两块贴在一起
-                return (
-                  <div
-                    data-slot="aui_chain-of-thought"
-                    className="flex flex-col gap-y-(--density-gap)"
-                  >
-                    {children}
-                  </div>
-                );
-              case "group-tool":
-                return <ToolRunGroup indices={part.indices}>{children}</ToolRunGroup>;
-              case "group-reasoning":
-                return (
-                  <ReasoningGroup running={part.status.type === "running"}>
-                    {children}
-                  </ReasoningGroup>
-                );
-              case "text":
-                return <MarkdownText />;
-              case "reasoning":
-                return <Reasoning {...part} />;
-              case "tool-call":
-                return part.toolUI ?? <ToolCallPart {...part} />;
-              case "data":
-                return part.dataRendererUI;
-              case "file":
-                return (
-                  <div data-slot="aui_assistant-message-file" className="py-1">
-                    <File {...part} />
-                  </div>
-                );
-              case "image":
-                return (
-                  <div data-slot="aui_assistant-message-image" className="py-1">
-                    <Image {...part} />
-                  </div>
-                );
-              default:
-                return null;
-            }
-          }}
-        </MessagePrimitive.GroupedParts>
+        <AssistantMessageParts showRunStatus />
         <MessageError />
       </div>
 
@@ -454,6 +255,28 @@ function AssistantMessage() {
           <AssistantActionBar />
         </div>
       )}
+    </MessagePrimitive.Root>
+  );
+}
+/**
+ * 系统通知行：居中、弱化的提示行，带一个小图标。由 UserMessage 在 origin === "system" 时渲染。
+ * 不加用户头像、不加气泡样式、不加操作栏。
+ */
+function SystemNoticeRow() {
+  const { t } = useTranslation();
+
+  return (
+    <MessagePrimitive.Root
+      data-slot="aui_user-message-root"
+      data-role="system"
+      role="status"
+      aria-label={t("chat.systemNoticeLabel")}
+      className="flex animate-in items-center justify-center gap-1.5 px-4 py-2 duration-150 fade-in slide-in-from-bottom-1 motion-reduce:animate-none"
+    >
+      <InfoIcon className="size-3.5 shrink-0 text-ink-3" aria-hidden />
+      <span className="text-center text-xs leading-relaxed text-ink-3">
+        <UserMessageParts />
+      </span>
     </MessagePrimitive.Root>
   );
 }
@@ -620,9 +443,30 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
         ref={viewportRef}
         // 关掉库自带的自动滚动，改由 useStickToBottom 接管：它的「向下滚但没到底」那一支是
         // 空分支，会在用户稍微往下滑时把跟随重新打开 —— 手感上就是滚动被抢。
-        // 其余三个「何时滚到底」的开关（首帧 / 切会话 / 新回合）保持库默认。
         autoScroll={false}
-        // turnAnchor="bottom"（库默认）保持不动：配合上面的 autoScroll={false} 之后它只参与
+        /**
+         * 连「运行开始就滚到底」也必须显式关掉 —— 这一条**不**受上面的 autoScroll 管辖。
+         *
+         * 库把四件事分成两组：autoScroll 只管「内容长高时是否跟着贴底」
+         *（useThreadViewportAutoScroll.js 的 resizeRef 分支），而
+         * scrollToBottomOnRunStart / OnInitialize / OnThreadSwitch 是三个**独立**开关，
+         * 默认全为 true，各自挂在自己的事件上。runStart 那条尤其要紧：
+         *
+         *   useAuiEvent("thread.runStart", () => {
+         *     if (!scrollToBottomOnRunStart) return;
+         *     if (turnAnchor === "top") return;   // 我们的 turnAnchor 是默认的 bottom
+         *     scheduleScrollToBottom("auto");
+         *   });
+         *
+         * 我们的 turnAnchor 正是 bottom，所以那个早退不生效 —— 之前只关 autoScroll 时，
+         * 每来一次运行开始都会强制滚到底并把 followBottomRef 写回 true，
+         * 用户的上滑姿态被反复清掉，表现就是「输出过程中滑不动」。
+         *
+         * 只关这一个：首次进入（OnInitialize）与切会话（OnThreadSwitch）滚到底是对的，
+         * 那两个保持库默认。
+         */
+        scrollToBottomOnRunStart={false}
+        // turnAnchor="bottom"（库默认）保持不动：配合上面的两个开关之后它只参与
         // 锚点计算，不再自己滚动 —— 贴底、松开、恢复全部由 useStickToBottom 决定。
         // 之前用的是 turnAnchor="top"（把用户消息钉在顶部）：它会在回合开始时平滑滚到顶锚，
         // 并在同一次运行冒出第二条助手消息时拆掉顶部占位块，scrollHeight 塌陷导致浏览器钳制

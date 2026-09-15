@@ -1,4 +1,3 @@
-import type { McpServerConfig } from "./mcp";
 import type {
   DensityMode,
   LanguageCode,
@@ -8,6 +7,7 @@ import type {
   ThinkingLevel,
   WireFormat,
 } from "./common";
+import type { McpServerConfig } from "./mcp";
 
 export interface ModelEntry {
   id: string;
@@ -60,6 +60,13 @@ export interface Settings {
   skillsEnabled: boolean;
   /** 用户自定义的提示模板目录（*.md，只读直接子级）；数据目录的 prompts 与会话目录的 .pi/prompts 始终参与扫描 */
   promptTemplateDirs: string[];
+  /**
+   * 子智能体总开关。关闭时 Task / TaskWait / TaskList / TaskStop 四个工具都不装配，
+   * 主模型也就看不到「可以委派」这件事（与 skillsEnabled 同一个口径）。
+   */
+  subagentsEnabled: boolean;
+  /** 被禁用的子智能体名：内置预设与用户定义共用这一份禁用表（与 disabledSkillNames 同构） */
+  disabledSubagentNames: string[];
 
   /**
    * MCP server 列表（外部工具来源）。连接状态不在这里 —— 它属于运行时的

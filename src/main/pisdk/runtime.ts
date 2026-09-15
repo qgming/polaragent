@@ -10,6 +10,7 @@ import {
   type AgentMessage,
   type AgentToolResult,
   BACKGROUND_CONTEXT,
+  type CustomMessage,
   type ExecutionEnv,
   type ExecutionToolContext,
   formatSkillsForSystemPrompt,
@@ -47,6 +48,12 @@ import type {
   ToolCallPart,
 } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
+import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
+import {
+  type SubagentDefinition,
+  type SubagentRun,
+  subagentCanMutate,
+} from "@/shared/contracts/subagent";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import type { BrowserAutomation } from "../browser/types";
 import type { ApprovalService } from "./approvals";
@@ -60,12 +67,31 @@ import {
   type PermissionRuleStore,
 } from "./permissions";
 import { buildProviders, resolveModel } from "./providers";
-import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import { buildSubagentResult } from "./report-delivery";
+import { buildJobResult } from "./job-delivery";
 import type { SessionStore } from "./session-store";
+import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import { loadSubagentCatalog } from "./subagent-catalog";
+// 循环依赖是刻意的：runner 需要 runtime 的 registerSubagentSession / getChatRuntime，
+// runtime 需要 runner 的运行管理。两边都只在函数体内互相调用，模块初始化期不取值，安全。
+import {
+  abortSubagentRunsForParent,
+  forgetSubagentRuns,
+  noteSubagentAssistantMessage,
+  noteSubagentRunEnd,
+  noteSubagentToolCall,
+  reconcileSubagentRuns,
+  reserveSubagentSlot,
+  setSubagentEmitter,
+  startSubagentRun,
+  stopSubagentRun,
+  waitSubagentRuns,
+} from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
-import { buildTools, TOOL_NAMES } from "./tools";
+import { type AppToolContext, buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { createAskTool } from "./tools/ask";
 import { createJobTools, JOB_OUTPUT_TOOL_NAME } from "./tools/jobs";
+import { createSubagentTools } from "./tools/subagent";
 import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
 export interface ChatRuntimeDeps {
@@ -73,6 +99,14 @@ export interface ChatRuntimeDeps {
   sessionStore: SessionStore;
   /** 发往渲染进程的事件（由 IPC 层注入，内部做好异常隔离）；带会话 id，见 ChatEventEnvelope */
   emit: (payload: ChatEventEnvelope) => void;
+  /**
+   * 子智能体运行事件（派发、进度、状态、报告）的出口。
+   *
+   * 与 emit 分开而不是复用：它走 `subagents:event` 通道，emit 只在 `chat:event` 上发
+   * 会话自己的消息流。两条流分开，渲染层才不必从会话消息里反推「这条是不是子智能体的」。
+   * 同样由 IPC 层注入；不注入（单测）时子智能体照常运行，只是没有进度事件。
+   */
+  emitSubagent?: (envelope: SubagentEventEnvelope) => void;
   approvals: ApprovalService;
   /**
    * 提问服务（ask_user 用的那个）。
@@ -165,6 +199,14 @@ export interface ChatRuntime {
    */
   killJob(sessionId: string, id: string): Promise<JobInfo>;
   /**
+   * 子智能体交回报告时的投递入口（由 subagent-runner 在终态调用）。
+   *
+   * 为什么放在这里而不是让 runner 自己 send：唤醒预算与「父会话在不在跑」只有本闭包拿得到，
+   * 而这两样正是投递决策的输入（规则见 report-delivery.ts）。放在这里也让子智能体复用
+   * 与作业退出唤醒**同一格预算** —— 两套预算各算各的，等于把自激的上限翻倍。
+   */
+  deliverSubagentReport(run: SubagentRun): void;
+  /**
    * 切换会话使用的模型（null = 跟随设置里的默认模型）。
    *
    * 热切换：直接把新模型写到 lane 的配置上（内核 `lane.setModel`），**不重建 harness、
@@ -247,6 +289,13 @@ interface SessionRuntime {
   /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
   pendingUserMessageId?: string;
   toolParts: Map<string, ToolCallPartRef>;
+  /**
+   * 本会话创建时装配的那四个子智能体工具（只有主会话有，子智能体会话是空数组）。
+   *
+   * 存一份是为了 MCP 热替换：`harness.setTools` 是**整表替换**，
+   * 不带回去这些工具就会在那次替换后凭空消失（ask_user 踩过同一个坑）。
+   */
+  subagentTools: AgentHarnessTool<AppToolContext>[];
   queue: QueuedMessage[];
   unsubscribers: Array<() => void>;
   /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
@@ -260,6 +309,8 @@ interface SessionRuntime {
   mcpToolsStale?: boolean;
   /** 本会话已被作业退出唤醒几次（上限 MAX_JOB_WAKES）；用户自己发消息时清零 */
   jobWakes: number;
+  /** 下一条从该会话发出的用户消息是否由系统内部产生（如作业结束通知）。由 notifyJobExit 在调用 send/queue 前设置；handleMessageStart user 分支消费后清空。 */
+  pendingSynthetic?: "job";
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -390,10 +441,30 @@ function mapUserParts(message: Extract<AgentMessage, { role: "user" }>): ChatPar
   return parts;
 }
 
-function agentMessageText(message: AgentMessage): string {
-  if (message.role !== "user") return "";
-  if (typeof message.content === "string") return message.content;
-  return message.content
+/**
+ * 取一条消息的可见文本。**助手与用户都要能取**。
+ *
+ * 提到模块级并导出是为了可测：这条链（harness message_end → agentMessageText → 报告）
+ * 原先没有任何测试，而两个消费端（排队中的用户消息、子智能体的报告）各错一次都很难看出来
+ * —— 见下面那段历史。
+ *
+ * 曾经这里第一行是 `if (message.role !== "user") return "";` —— 那时它只被用来取排队中的用户消息。
+ * 后来子智能体用它取**助手消息**当报告（见 noteSubagentAssistantMessage 的调用点），
+ * 于是常数式返回空串：报告永远为空、而轮次照常 +1，坏得极隐蔽
+ * （TaskWait 一律「（没有产出报告）」，但状态、轮次、工具计数全都正常）。
+ *
+ * 角色判断留给调用方：这里只回答「这条消息的正文是什么」，
+ * 一个会把助手消息取成空串的取文函数，本身就是个陷阱。
+ *
+ * 类型上要显式收窄 content：`AgentMessage` 是联合类型，原来那句 `role !== "user"` 的早退
+ * 恰好充当了收窄条件 —— 去掉它之后必须自己判「content 是不是数组」，
+ * 否则助手消息那条分支根本编译不过（TypeScript 帮我们记住了这个改动的影响面）。
+ */
+export function agentMessageText(message: AgentMessage): string {
+  const content = "content" in message ? message.content : undefined;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("");
@@ -584,6 +655,141 @@ export async function loadAgentResources(
   return { skills, promptTemplates, skillsSection: formatSkillsForSystemPrompt(skills) };
 }
 
+/**
+ * 子智能体子会话的登记表：子会话 id → 它的定义与父会话。
+ *
+ * 为什么放在模块级而不是 SessionRuntime 上：`createRuntime` 装配工具与系统提示时必须知道
+ * 「这是不是一个子智能体会话」，而那一刻 runtime 对象还不存在（同一个先有鸡还是先有蛋的问题，
+ * 见下面 laneRef / runtimeRef 的注释）。登记由 subagent-runner 在建好子会话、发出第一条消息
+ * 之前完成，所以装配阶段一定读得到。
+ *
+ * 只增不减不行：会话关闭 / 运行收尾都要注销，否则同一个会话 id 被复用时会认错身份。
+ */
+const subagentSessions = new Map<string, SubagentSessionSpec>();
+
+/** 子智能体子会话的装配依据：定义 + 它归属的父会话 */
+export interface SubagentSessionSpec {
+  definition: SubagentDefinition;
+  parentSessionId: string;
+}
+
+/** 登记一个子智能体子会话（由 subagent-runner 在启动运行前调用） */
+export function registerSubagentSession(childSessionId: string, spec: SubagentSessionSpec): void {
+  subagentSessions.set(childSessionId, spec);
+}
+
+/** 注销子智能体子会话：会话关闭时调用，避免登记表随运行次数无界增长 */
+export function unregisterSubagentSession(childSessionId: string): void {
+  subagentSessions.delete(childSessionId);
+}
+
+/**
+ * 当前真正可派的子智能体：总开关关掉就是空，被禁用的名字也剔掉。
+ *
+ * 读一次、用完就丢 —— 不缓存是刻意的：用户在设置里新建/启用了定义之后，
+ * 下一次 Task 调用就该能派到它，不该等到会话重建。
+ *
+ * **不需要 ExecutionEnv**：定义目录是固定的两处，读取走普通 fs、不经过路径守卫
+ *（技能那条路不同，见 loadAgentResources）。所以这里也不再有「目录不在 allowedRoots 里
+ * 就一个定义都读不到」那个坑。
+ */
+async function loadEnabledSubagents(
+  settings: Settings,
+  cwd: string,
+): Promise<SubagentDefinition[]> {
+  if (!settings.subagentsEnabled) return [];
+  try {
+    const { definitions, diagnostics } = await loadSubagentCatalog(cwd);
+    for (const diagnostic of diagnostics) console.warn(`子智能体定义警告：${diagnostic}`);
+    return definitions.filter((def) => !settings.disabledSubagentNames.includes(def.name));
+  } catch (error) {
+    // 委派只是增强：定义读不出来就当没有子智能体，绝不能因此让会话创建失败
+    console.warn(`读取子智能体定义失败，按无子智能体继续：${toErrorText(error)}`);
+    return [];
+  }
+}
+
+/** 本会话此刻生效的思考档位（子智能体定义优先，其次设置）；子智能体工具的依赖要拿它做显示 */
+async function effectiveThinkingLevel(
+  runtime: SessionRuntime,
+  settings: Settings,
+): Promise<Settings["thinkingLevel"]> {
+  const spec = subagentSessions.get(runtime.sessionId);
+  return spec?.definition.thinkingLevel ?? settings.thinkingLevel;
+}
+
+/** 把定义里的工具名与档位写进子智能体的系统提示，供人核对「这个子智能体拿得到什么」 */
+function describeSubagentTools(tools: readonly string[]): string {
+  return tools.length === 0 ? "（无）" : tools.join("、");
+}
+
+/**
+ * 子智能体的系统提示。
+ *
+ * 三段的分工是刻意的：框定身份（它看不到用户、不能提问、不能再委派）、
+ * 给出定义正文（用户写的那份提示原样照用，不加工）、
+ * 再规定交付物（最后一条消息就是交回主代理的报告）。第三段是最容易漏的一段 ——
+ * 少了它，子智能体会把过程叙述当成交付物，主代理拿到的就是一段「我做了什么」。
+ */
+export function buildSubagentSystemPrompt(def: SubagentDefinition, cwd: string): string {
+  const canMutate = subagentCanMutate(def.tools);
+  const framing = [
+    `你是子智能体「${def.name}」，在主代理委派下完成一件具体的任务。当前工作目录：${cwd}。`,
+    `你看不到用户，不能向用户提问，也不能再委派别的子智能体 —— 只能用手里的工具把这件事做完。`,
+    `可用工具：${describeSubagentTools(def.tools)}。`,
+    canMutate
+      ? "你可以修改文件，但只改任务真正涉及的那些；其余一律不要动。"
+      : "你没有能改文件或执行命令的工具，所以永远不要声称自己做了这类改动。",
+    "你最后一条消息就是主代理收到的报告：写清做了什么、发现了什么（附准确的文件路径与行号）、以及没能完成的部分。",
+    "报告要紧凑：给结论，不要复述自己的过程，也不要为了凑长度写总结。",
+  ].join("\n");
+  return [framing, def.prompt.trim()].filter((part) => part !== "").join("\n\n");
+}
+
+/**
+ * 主会话系统提示里的「委派」段。
+ *
+ * 没有可用子智能体时返回空串 —— 列一份空清单只会让模型反复尝试派发不存在的子智能体
+ * （调用方据此判断要不要追加，见 createRuntime）。
+ *
+ * 这里的措辞是模型行为的唯一来源，所以按「什么时候派 / 什么时候别派 / 派完怎么收敛」
+ * 组织，而不是罗列工具参数（参数的说明在工具自己的 description 里，两处不重复）。
+ */
+export function buildDelegationPrompt(
+  subagents: readonly SubagentDefinition[],
+  parentModelId: string,
+): string {
+  if (subagents.length === 0) return "";
+  const catalog = subagents
+    .map((def) => `- ${def.name}（工具：${describeSubagentTools(def.tools)}）：${def.description}`)
+    .join("\n");
+  return [
+    "## 委派（子智能体）",
+    "把独立的工作派给子智能体去做，自己的上下文留给综合与决策。子智能体在各自独立的上下文里跑，跑完把报告交回来。",
+    "可用的子智能体：",
+    catalog,
+    "什么时候该派：",
+    "- 多件互不依赖的工作可以并行推进：在同一条消息里发多个 Task；",
+    "- 要翻很多文件、很多日志才能得出结论的事：派给 explorer 这类只读子智能体，把结论带回来；",
+    "- 按一份自包含的规格改多个文件：派给可写文件的子智能体；",
+    "- 跑一个具体的测试或构建命令、只要失败清单：派给跑命令的子智能体；",
+    "- 改动做完之后想找人对立地挑毛病：派一次只读审查。",
+    "什么时候不要派：",
+    "- 两三个工具调用就能做完的事；",
+    "- 需要用户拍板的事（提问、确认方案）—— 子智能体不能与用户交互；",
+    "- 必须一步一步看着结果走的活。",
+    "派完之后怎么拿到结果：",
+    "- **报告会被自动送到你这里**：子智能体一跑完，它的报告就会作为一条消息出现（你正在跑就插进当前轮次，",
+    "  空闲就起一轮新运行）。所以你**不必**为等结果而空转，派完继续做手上的事即可；",
+    "- 需要它的结论才能往下走时，用 TaskWait 收敛（报告会完整给你），用 TaskList 看进度、",
+    "  用 TaskStop 停掉确实不该继续的活 —— 不要用 TaskStop「催」；",
+    '- 看到 interrupted（意外终止）的运行：上一个进程在它跑的时候退出了，没人叫它停、也没有错误信息，结果未知。要不要重来由你决定 —— 还重要就用 Task {resumeOf: "<那个运行 id>"} 重派一次，否则把这件事如实告诉用户；',
+    "- description 必填且用户可见：一句话说清这次派发在做什么；",
+    "- 报告要由你综合后给用户，并说明结论来自哪个子智能体；",
+    `- 当前主会话模型：${parentModelId}；子智能体默认继承它，除非定义里固定了别的模型。`,
+  ].join("\n");
+}
+
 /** 会话内待办清单在 session 里的 custom entry 类型 */
 const TODO_ENTRY_TYPE = "todo";
 
@@ -620,6 +826,10 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   const runtimes = new Map<string, SessionRuntime>();
   const creations = new Map<string, Promise<SessionRuntime>>();
+  // 子智能体运行事件的出口：模块级登记表，运行管理器 publish 时用它。
+  // 在这里设而不是在 bootstrap：运行记录的生命周期与这个运行时实例一致，
+  // 换一个实例（单测）就该换一个出口，留着上一条窗口的引用会往已销毁的窗口发消息。
+  setSubagentEmitter(deps.emitSubagent ?? null);
   // 提问服务：与 approvals 一样是「跨会话共用、按会话结算」的服务；bootstrap 注入的那份
   // 同时被 IPC 层持有（渲染层回填答案走它），未注入时就地建一份给单测用
   const interactions = deps.interactions ?? createInteractionService({ emit: deps.emit });
@@ -718,6 +928,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     event: Extract<HarnessEvent, { type: "message_start" }>,
   ): void {
     const message = event.message;
+    // custom 消息（如作业结束通知）待链路层支持后再启用
     if (message.role === "assistant") {
       const messageId = randomUUID();
       runtime.stream = { messageId, parts: [], partIndexByContent: new Map() };
@@ -748,6 +959,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         message: {
           id: messageId,
           role: "user",
+          origin: runtime.pendingSynthetic === "job" ? (runtime.pendingSynthetic = undefined, "system") : undefined,
           createdAt: Date.now(),
           parts: mapUserParts(message),
           status: "complete",
@@ -838,6 +1050,16 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         ...(failed ? { error: message.errorMessage ?? "模型返回错误" } : {}),
       },
     });
+    /**
+     * 子智能体进度的唯一计数点：轮次按「一条助手消息」算，报告取最后一条非空文本。
+     *
+     * 放在 message_end 而不是 message_update：流式期间每条消息会被更新很多次，
+     * 在那里计数会把一次回复算成几十轮。非子智能体会话调用这里是空操作（runner 按子会话 id 查表）。
+     */
+    noteSubagentAssistantMessage(runtime.sessionId, {
+      text: agentMessageText(message),
+      failed,
+    });
     runtime.lastAssistantMessageId = stream.messageId;
     runtime.stream = undefined;
   }
@@ -889,6 +1111,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "tool_end" }>,
   ): void {
+    // 计数要在早退之前：part 缺失只是渲染层的防御分支，这次工具调用确实发生过
+    noteSubagentToolCall(runtime.sessionId);
     const ref = runtime.toolParts.get(event.toolCallId);
     if (!ref) return;
     applyToolEnd(ref.part, event.result, event.isError);
@@ -925,6 +1149,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       });
     }
     runtime.running = false;
+    // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出，
+    // 「truncated」不在这里 —— 它由 maxTurns 判定在计数时先落（见 subagent-runner）
+    noteSubagentRunEnd(runtime.sessionId, {
+      status:
+        event.status === "failed" ? "failed" : event.status === "aborted" ? "aborted" : "completed",
+      ...(event.status === "failed" ? { error: event.error.message } : {}),
+    });
     runtime.runEnded = true;
     runtime.queue = [];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
@@ -1170,10 +1401,20 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     const settings = await deps.getSettings();
     const cwd = await deps.resolveWorkingDir(sessionId);
+    /**
+     * 子智能体子会话：登记表里有 spec 就按定义装配（工具子集、系统提示、模型与档位都随定义走）。
+     * spec 由 subagent-runner 在「建好子会话、发出第一条消息之前」登记，所以这里一定读得到 ——
+     * 读不到就说明这不是子智能体会话，按主会话那一套来。
+     */
+    const spec = subagentSessions.get(sessionId);
     // 技能/模板目录可能与工作目录、数据目录都不重叠，必须一并加入路径守卫的根：
-    // 否则 loadSkills 的 listDir 会被 validatePathAccess 拒绝，表现为「目录明明存在却是 0 个技能」
+    // 否则 loadSkills 的 listDir 会被 validatePathAccess 拒绝，表现为「目录明明存在却是 0 个技能」。
+    // （子智能体定义目录不在这一串里：它走普通 fs 读，不受守卫约束 —— 见 loadEnabledSubagents）
     const skillDirPaths = resolveSkillDirs(settings, cwd).map((dir) => path.resolve(cwd, dir.path));
-    const env = await createExecEnv({ cwd, allowedRoots: [cwd, dataDir(), ...skillDirPaths] });
+    const env = await createExecEnv({
+      cwd,
+      allowedRoots: [cwd, dataDir(), ...skillDirPaths],
+    });
 
     const loaded = await loadAgentResources(env, settings, cwd);
 
@@ -1183,26 +1424,116 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     let laneRef: AgentLane | undefined;
 
     const { models } = buildProviders(settings);
-    // 模型：会话自己绑定的优先，否则用设置里的默认模型。绑定失效（服务/模型被删）时
-    // resolveEffectiveModelRef 会自动回落默认，不至于让一个旧会话打不开。
-    const boundModel = await deps.sessionStore.readModel(sessionId);
+    /**
+     * 模型：子智能体定义固定了模型就按定义（pin），否则继承**父会话实际在用的那个** ——
+     * 读父会话的绑定而不是「设置里的默认」，否则主会话绑定过具体模型时，子智能体会悄悄跑在另一个模型上。
+     * 会话自己绑定的优先，否则用设置里的默认模型；绑定失效（服务/模型被删）时
+     * resolveEffectiveModelRef 会自动回落默认，不至于让一个旧会话打不开。
+     */
+    const boundModel =
+      spec === undefined
+        ? await deps.sessionStore.readModel(sessionId)
+        : (spec.definition.model ?? (await deps.sessionStore.readModel(spec.parentSessionId)));
     const modelRef = resolveEffectiveModelRef(settings, boundModel);
     const model = resolveModel(settings, modelRef);
     if (!model || modelRef === null || models.getProviders().length === 0) {
       throw new Error("请先在设置中配置模型服务");
     }
 
+    /**
+     * 子智能体工具（Task 系列）只在**主会话**装配：子智能体不允许再委派（见 tools/subagent.ts），
+     * 而且它们需要父会话 id、聊天运行时与运行管理器 —— 这三样只有 runtime.ts 拿得到（见 tools.ts 注释）。
+     * 「本会话现在用哪个模型 / 哪一档」走 runtimeRef：装配时 runtime 还没建好（与 laneRef 同一个套路）。
+     */
+    let runtimeRef: SessionRuntime | undefined;
+    const subagentTools =
+      spec === undefined
+        ? createSubagentTools({
+            sessionId,
+            cwd: () => env.cwd,
+            // 定义每次现读：中途新增 / 启用了定义，下一次 Task 就能派它，不用重建会话
+            definitions: async () => loadEnabledSubagents(await deps.getSettings(), env.cwd),
+            /**
+             * 名额预约：同步占位，因此同一条消息里并发发出的多个 Task 不会各看各的快照
+             * （见 tools/subagent.ts 里那段为什么必须同步的说明）。失败时的占位者名单
+             * 就是拒绝文案里要指名道姓的那批人。
+             */
+            reserveSlot: (delegationId, agentName) =>
+              reserveSubagentSlot(sessionId, delegationId, agentName),
+            start: async (request) =>
+              startSubagentRun(request, {
+                sessionId,
+                cwd: env.cwd,
+                parentModelId: runtimeRef?.model.id ?? model.id,
+                parentThinkingLevel:
+                  runtimeRef === undefined
+                    ? settings.thinkingLevel
+                    : await effectiveThinkingLevel(runtimeRef, settings),
+              }),
+            wait: (delegationIds, mode, minCompleted, timeoutSeconds) =>
+              waitSubagentRuns(sessionId, delegationIds, mode, minCompleted, timeoutSeconds),
+            // 对账后的列表（盘上 + 本进程）：TaskList 与并发上限都要看见重启前派出去、没跑完的那些
+            list: () => reconcileSubagentRuns(sessionId),
+            // 未知 id 直接跳过：由工具在文案里说明「没找到」（见 subagent-runner 的 stopSubagentRun）
+            stop: async (delegationIds) => {
+              const stopped: SubagentRun[] = [];
+              for (const delegationId of delegationIds) {
+                const run = await stopSubagentRun(sessionId, delegationId);
+                if (run !== undefined) stopped.push(run);
+              }
+              return stopped;
+            },
+            parentModelId: () => runtimeRef?.model.id ?? model.id,
+          })
+        : [];
+
+    /**
+     * 系统提示：
+     * - 主会话：交互式提示（工作目录 + 工具指导 + 工作规则 + 技能索引 + AGENTS.md），
+     *   再在「开启子智能体且确实有可用定义」时追加委派说明 —— 提示里列一份空清单，
+     *   只会让模型反复尝试派发不存在的子智能体；
+     * - 子智能体：换成定义里的 prompt 正文 + 子智能体的工作规则。刻意不给它技能索引：
+     *   它是被派来干一件具体的事，技能由主代理挑选与转述。
+     */
+    let systemPrompt: string;
+    if (spec === undefined) {
+      systemPrompt = await buildSystemPrompt(settings, cwd, loaded.skillsSection);
+      const available = await loadEnabledSubagents(settings, cwd);
+      const delegation = buildDelegationPrompt(available, model.id);
+      if (delegation !== "") systemPrompt = `${systemPrompt}\n\n${delegation}`;
+    } else {
+      systemPrompt = buildSubagentSystemPrompt(spec.definition, cwd);
+    }
     const created = await AgentHarness.create(
       {
         session: opened.session,
         models,
         model,
-        tools: buildTools(
-          deps.mcp?.tools() ?? [],
-          createAskTool({ sessionId, interactions }),
-          jobToolsFor(sessionId),
-          deps.browser,
-        ),
+        /**
+         * 工具表：
+         * - 主会话：全套（子智能体工具由第 5 个参数传入 —— 它们需要会话 id 与运行管理器）；
+         * - 子智能体：**同一批工具对象**按定义里的 tools 过滤（restrictTools），
+         *   于是「定义里写了 bash」与「子智能体拿到的是 bash」不可能漂移；ask_user / 作业 / 浏览器 /
+         *   MCP / Task 系列都不在可分配名单里，过滤后自然拿不到（见 tools.ts 的注释）。
+         */
+        tools:
+          spec === undefined
+            ? buildTools(
+                deps.mcp?.tools() ?? [],
+                createAskTool({ sessionId, interactions }),
+                jobToolsFor(sessionId),
+                deps.browser,
+                subagentTools,
+              )
+            : restrictTools(
+                buildTools(
+                  deps.mcp?.tools() ?? [],
+                  createAskTool({ sessionId, interactions }),
+                  jobToolsFor(sessionId),
+                  deps.browser,
+                ),
+                spec.definition.tools,
+              ),
         toolContext: {
           env,
           todo,
@@ -1215,7 +1546,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           },
         },
         resources: { skills: loaded.skills, promptTemplates: loaded.promptTemplates },
-        thinkingLevel: settings.thinkingLevel,
+        // 档位：子智能体以定义为准（没写才跟随设置），主会话按设置
+        thinkingLevel: spec?.definition.thinkingLevel ?? settings.thinkingLevel,
         compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
       },
       BACKGROUND_CONTEXT,
@@ -1255,8 +1587,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       queue: [],
       unsubscribers: [],
       jobWakes: 0,
+      // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
+      subagentTools,
     };
-
+    // 供子智能体工具的依赖读取「本会话现在用哪个模型 / 哪一档」（装配时 runtime 还不存在）
+    runtimeRef = runtime;
     runtime.unsubscribers.push(
       created.harness.hooks.on("before_tool", async (event) => {
         try {
@@ -1355,7 +1690,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    * 已经一致时不写：setConfiguration 会往会话里落一条配置更新，没必要每条消息写一次。
    */
   async function applyModel(runtime: SessionRuntime, settings: Settings): Promise<void> {
-    const bound = await deps.sessionStore.readModel(runtime.sessionId);
+    /**
+     * 子智能体的模型：定义里固定了就按定义（pin），否则**继承父会话实际在用的那个** ——
+     * 读父会话的绑定而不是「设置里的默认」，否则主会话绑定过具体模型时，子智能体会悄悄跑在另一个模型上。
+     */
+    const spec = subagentSessions.get(runtime.sessionId);
+    const bound =
+      spec === undefined
+        ? await deps.sessionStore.readModel(runtime.sessionId)
+        : (spec.definition.model ?? (await deps.sessionStore.readModel(spec.parentSessionId)));
     const ref = resolveEffectiveModelRef(settings, bound);
     // 一个可用模型都没有：保持现状，让发送阶段照常报错（这里不该吞掉「请先配置模型服务」）
     if (ref === null) return;
@@ -1403,7 +1746,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    */
   async function applyThinkingLevel(runtime: SessionRuntime, settings: Settings): Promise<void> {
     try {
-      const desired = clampThinkingLevel(runtime.model, settings.thinkingLevel);
+      // 子智能体以定义为准（没写才跟随设置）：否则「定义里写了 high 的子智能体」会被这里的设置值
+      // 按回去，定义形同虚设
+      const desired = clampThinkingLevel(
+        runtime.model,
+        subagentSessions.get(runtime.sessionId)?.definition.thinkingLevel ?? settings.thinkingLevel,
+      );
       const current = await runtime.lane.getThinkingLevel(BACKGROUND_CONTEXT);
       if (current === desired) return;
       await runtime.lane.setThinkingLevel(desired, BACKGROUND_CONTEXT);
@@ -1420,7 +1768,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     images?: ImageContent[],
     messageId?: string,
     options?: ChatSendOptions,
-    internal?: { jobWake?: boolean },
+    internal?: { jobWake?: boolean; message?: CustomMessage },
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
     // 用户自己发起的消息清零作业唤醒预算；作业通知走 jobWake，不算用户发言（见 notifyJobExit）
@@ -1440,10 +1788,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.runEnded = false;
     // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期项：新一次运行先清空
     runtime.pendingEntries = [];
-    // 记录渲染层乐观消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
-    runtime.pendingUserMessageId = messageId;
+    // 记录渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
+    // 系统通知消息（internal.message）没有乐观 id：通过 message_start 事件自带 id，不走 pending
+    if (internal?.message === undefined) runtime.pendingUserMessageId = messageId;
     const runId = randomUUID();
     runtime.runId = runId;
+    /**
+     * 新一轮指令：上一轮派出去的委派不该继续跑 —— 新指令很可能已经改了前提（用户换了方向、
+     * 原问题不再成立），让它们跑完只是白烧 token，还会在用户看得见的列表里留下过时的运行。
+     * 只对**主会话**做：子智能体自己不会有委派（契约不允许嵌套）。
+     */
+    if (!subagentSessions.has(runtime.sessionId)) abortSubagentRunsForParent(runtime.sessionId);
     emitSafe(runtime.sessionId, { type: "run-started", runId });
     try {
       const rewound = options?.rewindToEntryId;
@@ -1492,20 +1847,63 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     }
   }
+  /** 启动这次作业的那次工具调用 id：结论要回填到它上面（见 job-delivery 的文件头） */
+  function jobToolCallId(jobId: string): string | undefined {
+    return jobs.toolCallIdOf(jobId);
+  }
+
   /**
-   * 作业退出通知：自包含、简短，带命令、状态、退出码与**尾部若干行输出**。
+   * 作业到达终态：把结论**回填到启动它的那次 `bash_background` 调用上**。
    *
-   * 通知不消耗 job_output 的 drain 游标（peekTail 只读缓冲），所以模型按提示再调一次
-   * job_output 仍能读到那些行 —— 否则「需要更多输出就调用 job_output」会变成一句空话。
+   * 与子智能体的 deliverSubagentReport 同一个形状与同一个理由：结论属于「这次调用」，
+   * 写进它的 part（result / details / isError / status）就等于「这一步的结果回来了」，
+   * 界面据此渲染成工具状态组件，模型下一轮也能在上下文里读到 ——
+   * 而不是往对话里发一条用户消息。
+   *
+   * 找不到那次调用（part 已不在内存、或这是一次重启后的历史作业）时静默跳过：
+   * 作业的输出仍可由 job_output 读到，界面那份 `job-changed` 事件也已经把状态更新了。
+   */
+  function deliverJobResult(job: JobInfo): void {
+    const runtime = runtimes.get(job.sessionId);
+    if (!runtime) return;
+    const toolCallId = jobToolCallId(job.id);
+    if (toolCallId === undefined) return;
+    const ref = runtime.toolParts.get(toolCallId);
+    if (!ref) return;
+    const result = buildJobResult(job, jobs.peekTail(job.id).replace(/\s+$/, ""));
+    // running 不写回：还没结束就没有结论（与子智能体同一个约定）
+    if (result === null) return;
+    ref.part.result = result.text;
+    ref.part.details = { job };
+    ref.part.isError = result.isError;
+    ref.part.status = result.isError ? "error" : "done";
+    emitSafe(runtime.sessionId, {
+      type: "part-upsert",
+      messageId: ref.messageId,
+      partIndex: ref.partIndex,
+      part: ref.part,
+    });
+  }
+
+  /**
+   * 作业退出后的**提醒**（不再是「结论」）。
+   *
+   * 结论已经在这一刻被 deliverJobResult 回填到那次调用上了（那是转录的一部分，
+   * 模型下一轮看得到），所以这条推给对话的消息只做一件事：**让模型现在就醒来看一眼**。
+   * 因此它不再复制尾部输出 —— 那会与工具结果里那份重复一遍，
+   * 而重复的长文本正是要避免的（构建日志可以很长）。
+   *
+   * 唤醒决策一律保持不变（正在跑就 steer、空闲就 send 且受 MAX_JOB_WAKES 约束）：
+   * 作业在会话空闲时结束，模型确实需要被叫起来，去掉它等于悄悄砍掉一个已有特性。
+   * 这条通知不消耗 job_output 的 drain 游标，所以模型照着提示去读仍能读到那些内容。
    */
   function jobExitNotice(job: JobInfo): string {
     const code = job.exitCode === undefined ? "" : `，退出码 ${job.exitCode}`;
-    const tail = jobs.peekTail(job.id).replace(/\s+$/, "");
-    const head =
+    return (
       `后台作业 ${job.id} 已结束（状态 ${job.status}${code}）：${job.command}\n` +
-      `工作目录：${job.cwd}`;
-    const body = tail === "" ? "（没有捕获到输出）" : `尾部输出：\n${tail}`;
-    return `${head}\n${body}\n需要更多输出就调用 ${JOB_OUTPUT_TOOL_NAME} {"id":"${job.id}"}。`;
+      `它的输出与结论已经写在上面那次调用的结果里；` +
+      `要读还没看过的输出就调用 ${JOB_OUTPUT_TOOL_NAME} {"id":"${job.id}"}。`
+    );
   }
 
   /**
@@ -1519,6 +1917,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const runtime = runtimes.get(job.sessionId);
     // 会话已经关掉（或还没建起来）时没有可通知的对象
     if (!runtime || jobs.isSuppressed(job.sessionId)) return;
+    // 先落结论（界面与模型都在那次调用上看到它），再决定要不要叫醒模型 ——
+    // 标记下一条 user 消息是系统产生的（见 pendingSynthetic 说明）
+    runtime.pendingSynthetic = "job";
+    // 顺序有讲究：结论是必做的，唤醒只是提醒；反过来会让「到预算了就不写结论」成为可能
+    deliverJobResult(job);
     const text = jobExitNotice(job);
     if (runtime.running) {
       void queue(runtime.sessionId, text, "steer").catch((error: unknown) => {
@@ -1536,6 +1939,42 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         console.warn(`发送作业结束通知失败 ${job.id}：${toErrorText(error)}`);
       },
     );
+  }
+  /**
+   * 子智能体到达终态：把结果**回填到那次 Task 调用的 part 上**（本次修复的核心形状）。
+   *
+   * 用户的要求是：报告不作为用户消息出现，而是作为「调用子智能体」这一步的结果，
+   * 显示在「xxx 已完成」这个状态里。所以这里不做「推一条消息」，而是改写那次调用的 part：
+   * 它已经在转录里、已经在界面上，补上终态与报告就等于「这次调用的结果回来了」。
+   *
+   * 为什么要写进 part 而不是只在 store 里留一份：
+   * - 界面：渲染层从 part.artifact（= details）解析出 SubagentDetailData，pill 因此从
+   *   「已完成」直接取到报告；
+   * - 模型：这条 part 的 details/result 是**会话转录的一部分**，模型下一次发言时它就在
+   *   上下文里 —— 这就是「主会话可以来读取这个内容」，不需要系统替模型开口，
+   *   也就不再有自激唤醒的问题（原先那套唤醒预算因此删掉）。
+   *
+   * 找不到那次调用的 part 时静默跳过：可能已经滚出内存、或这是一次重启后的历史运行。
+   * 那种情况下报告仍在运行记录与右侧栏面板里，界面不会因此显示错状态。
+   */
+  function deliverSubagentReport(run: SubagentRun): void {
+    const runtime = runtimes.get(run.sessionId);
+    if (!runtime) return;
+    const ref = runtime.toolParts.get(run.delegationId);
+    if (!ref) return;
+    const result = buildSubagentResult(run);
+    // running 不写回：正在跑的运行不该有「结果」，那一步由进度事件负责
+    if (result === null) return;
+    ref.part.result = result.text;
+    ref.part.details = run;
+    ref.part.isError = result.isError;
+    ref.part.status = result.isError ? "error" : "done";
+    emitSafe(runtime.sessionId, {
+      type: "part-upsert",
+      messageId: ref.messageId,
+      partIndex: ref.partIndex,
+      part: ref.part,
+    });
   }
 
   /**
@@ -1617,12 +2056,35 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     interactions.cancelSession(sessionId);
     runtime.queue = [];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
+    /**
+     * 先把「这次运行结束了」定下来，再去请求内核中止。
+     *
+     * 为什么顺序不能反：`lane.abort()` 不只是「请求中止」，它会 `await this.drive({operationId})`
+     * —— 也就是**驱动那一轮跑到能收尾为止**再返回。而正在执行的工具没有中断通道
+     *（工具只从 `context.abortSignal` 拿到信号，我们的工具集一个都没读），
+     * 所以一条长命令会把 abort 拖到它自己结束。原来这里 await 完才（在失败分支）改 running，
+     * 用户看到的就是「点了停止没反应」。
+     *
+     * 现在把顺序反过来：用户按下的那一刻运行就算结束了 —— UI 立刻脱离 running、
+     * 队列清空、也不再接受新的插话。内核那次 abort 仍是**必须**发出去的（否则这一轮
+     * 的工具调用还会继续、还会往会话里写），只是不再拿它的完成当作用户看到结果的前提。
+     *
+     * 与 handleRunEnd 的关系：那边收到 run_end 时会再设一次 running=false 并写终态，
+     * 都是幂等的；`runEnded` 标志保证不会把状态翻回去（见 handleRunEnd 末尾）。
+     */
+    runtime.running = false;
+    runtime.runEnded = true;
+    runtime.queue = [];
+    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
+    emitSafe(runtime.sessionId, {
+      type: "run-ended",
+      runId: runtime.runId ?? randomUUID(),
+      reason: "aborted",
+    });
     try {
-      const result = await runtime.lane.abort(BACKGROUND_CONTEXT);
-      if (!result.ok) runtime.running = false;
+      await runtime.lane.abort(BACKGROUND_CONTEXT);
     } catch (error) {
-      runtime.running = false;
-      console.warn(`停止运行失败 ${sessionId}：${toErrorText(error)}`);
+      console.warn(`请求中止运行失败 ${sessionId}：${toErrorText(error)}`);
     }
   }
 
@@ -1683,6 +2145,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   async function closeSession(sessionId: string): Promise<void> {
+    // 子智能体子会话（或它的父会话）：注销定义登记与运行记录 —— 放在「有没有 runtime」之前，
+    // 因为登记表是模块级的，即便这个会话已经没有运行时也不该在里面留下条目
+    unregisterSubagentSession(sessionId);
+    forgetSubagentRuns(sessionId);
     const runtime = runtimes.get(sessionId);
     if (!runtime) return;
     runtimes.delete(sessionId);
@@ -1739,6 +2205,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     killJob,
     setModel,
     closeSession,
+    deliverSubagentReport,
     dispose,
   };
   defaultRuntime = api;

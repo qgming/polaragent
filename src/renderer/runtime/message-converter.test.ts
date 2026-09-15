@@ -150,6 +150,155 @@ describe("toThreadMessage", () => {
       undefined,
     );
   });
+
+  /**
+   * 嵌套是 assistant-ui 自己的契约（ToolCallMessagePart.messages），不是我们发明的字段：
+   * Task 调用通过它承载整条子会话转录，渲染侧由 PartPrimitive.Messages 直接消费。
+   * 平铺的 part 在树的遍历里到不了子会话，所以这里必须真的挂上。
+   */
+  it("Task 工具调用把子会话转录挂成嵌套消息", () => {
+    const child: ChatMessage = {
+      ...baseMessage,
+      id: "child-1",
+      parts: [{ type: "text", text: "子智能体的回复" }],
+    };
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "Task",
+          argsText: "{}",
+          details: { delegationId: "call-1", childSessionId: "child-1" },
+          status: "done",
+        },
+      ],
+    };
+    const resolveChild = (childSessionId: string): readonly ChatMessage[] | undefined =>
+      childSessionId === "child-1" ? [child] : undefined;
+
+    const part = toThreadMessage(message, resolveChild).content?.[0];
+    expect(part).toMatchObject({
+      type: "tool-call",
+      toolCallId: "call-1",
+      // 嵌套挂在「派发它的那次调用」上：parentId 用 toolCallId，而不是子消息 id
+      parentId: "call-1",
+      messages: [
+        {
+          id: "child-1",
+          role: "assistant",
+          content: [{ type: "text", text: "子智能体的回复" }],
+        },
+      ],
+    });
+  });
+
+  /**
+   * 取不到转录时必须**一个键都不写**：库的树遍历用 `part.messages?.length` 判断有没有嵌套，
+   * `messages: undefined` 与根本没有 `messages` 在快照 / 克隆里是两种形状。
+   * 缺省 resolver（单参数调用）也走这条：现有调用方依赖它保持平铺。
+   */
+  it("解析不到子会话（undefined / 空数组 / 缺省 resolver）时不写 messages", () => {
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "Task",
+          argsText: "{}",
+          details: { delegationId: "call-1", childSessionId: "child-1" },
+          status: "done",
+        },
+      ],
+    };
+
+    const converted = [
+      toThreadMessage(message),
+      toThreadMessage(message, () => undefined),
+      toThreadMessage(message, () => []),
+    ];
+    for (const thread of converted) {
+      const part = thread.content?.[0];
+      expect(part).toBeDefined();
+      // content 允许是字符串，先收窄成对象再看键
+      const keys = typeof part === "object" && part !== null ? Object.keys(part) : [];
+      expect(keys).not.toContain("messages");
+      expect(keys).not.toContain("parentId");
+    }
+  });
+
+  /**
+   * 子会话转录里可能留下嵌套的 Task 调用（白名单现在禁止再派，但盘上的转录是既成事实）。
+   * resolveChild 必须往下传，否则第二层会退化成平铺 —— 与主线程上的形状不一致。
+   */
+  it("递归：子消息里的 Task 调用再挂一层", () => {
+    const grandchild: ChatMessage = {
+      ...baseMessage,
+      id: "grandchild-1",
+      parts: [{ type: "text", text: "孙子会话的回复" }],
+    };
+    const child: ChatMessage = {
+      ...baseMessage,
+      id: "child-1",
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-2",
+          toolName: "Task",
+          argsText: "{}",
+          details: { delegationId: "call-2", childSessionId: "child-2" },
+          status: "done",
+        },
+      ],
+    };
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "Task",
+          argsText: "{}",
+          details: { delegationId: "call-1", childSessionId: "child-1" },
+          status: "done",
+        },
+      ],
+    };
+    const resolveChild = (childSessionId: string): readonly ChatMessage[] | undefined => {
+      if (childSessionId === "child-1") return [child];
+      if (childSessionId === "child-2") return [grandchild];
+      return undefined;
+    };
+
+    const outer = toThreadMessage(message, resolveChild).content?.[0];
+    expect(outer).toMatchObject({
+      type: "tool-call",
+      parentId: "call-1",
+      messages: [
+        {
+          id: "child-1",
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-2",
+              // 第二层的 parentId 是它自己那次调用：每一层都归到派发它的 toolCallId
+              parentId: "call-2",
+              messages: [
+                {
+                  id: "grandchild-1",
+                  role: "assistant",
+                  content: [{ type: "text", text: "孙子会话的回复" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
 });
 
 describe("appendMessageToText", () => {

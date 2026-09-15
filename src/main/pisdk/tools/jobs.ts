@@ -196,7 +196,7 @@ export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
     description: START_DESCRIPTION,
     parameters: startSchema,
     async execute(
-      _toolCallId,
+      toolCallId,
       rawParams,
       _onUpdate,
       toolContext,
@@ -205,7 +205,9 @@ export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
       const cwd = params.cwd ?? toolContext.env.cwd;
       let job: JobInfo;
       try {
-        job = await jobs.start({ sessionId, command: params.command, cwd });
+        // 带上这次调用的 id：作业结束时 runtime 靠它把结论回填到**这次调用**上，
+        // 而不是往对话里发一条新消息（见 job-delivery 的文件头）
+        job = await jobs.start({ sessionId, command: params.command, cwd, toolCallId });
       } catch (error) {
         // 起不来是**可以继续的事实**：把原因写进内容让模型换个做法，而不是让整轮运行失败
         const detail = error instanceof Error ? error.message : String(error);

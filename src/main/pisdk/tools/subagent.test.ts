@@ -1,0 +1,675 @@
+/**
+ * 子智能体四个工具（Task / TaskWait / TaskList / TaskStop）的测试。
+ *
+ * 这里不碰 harness、Electron 与文件系统：createSubagentTools 的依赖整体注入，
+ * 本文件钉住工具自己负责的那一层 ——
+ * - 参数校验与失败回执（isError + 给模型看的文案）；
+ * - 并发上限在工具侧直接拒绝（排队会让模型以为「已经派出去了」）；
+ * - details 的形状（成功 = SubagentRun，其余 = { runs }，渲染层按它画卡片）；
+ * - TaskWait 的超时语义：还没跑完是 running，不是失败。
+ *
+ * 运行管理器（pisdk/subagent-runner.ts）的真实行为不在本文件范围：这里只验证工具
+ * 把请求原样交给它、并把返回的记录原样带出去。
+ */
+
+import { type AgentHarnessToolInvocation, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_SUBAGENT_TOOLS,
+  MAX_CONCURRENT_SUBAGENT_RUNS,
+  type SubagentDefinition,
+  type SubagentRun,
+} from "@/shared/contracts/subagent";
+import {
+  createSubagentTools,
+  normalizeSubagentTools,
+  SUBAGENT_TOOL_NAMES,
+  type SubagentStartRequest,
+  type SubagentToolDeps,
+} from "./subagent";
+
+type SubagentTool = ReturnType<typeof createSubagentTools>[number];
+type SubagentToolParams = Parameters<SubagentTool["execute"]>[1];
+type SubagentToolContext = Parameters<SubagentTool["execute"]>[3];
+type SubagentToolResult = Awaited<ReturnType<SubagentTool["execute"]>>;
+
+/** 工具不读 toolContext（父会话 id / cwd 都在 deps 里），空壳即可 */
+const TOOL_CONTEXT = {} as SubagentToolContext;
+
+/** execute 的第六个参数（harness 上下文）：本测试不用它，给一个最小实现 */
+const INVOCATION: AgentHarnessToolInvocation = {
+  invocationId: "call-1",
+  operationId: "op-1",
+  turnId: "turn-1",
+  getMemo: async () => undefined,
+  setMemo: async () => {},
+};
+
+/** 一个可用的子智能体定义；默认只读三件套 */
+function definition(name: string, patch: Partial<SubagentDefinition> = {}): SubagentDefinition {
+  return {
+    name,
+    description: `${name} 的说明`,
+    prompt: "你是子智能体，只做被派的那件事。",
+    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    source: "builtin",
+    ...patch,
+  };
+}
+
+/** 一条运行记录：只填工具层会读的字段，其余用中性默认值 */
+function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
+  return {
+    delegationId: "d-1",
+    sessionId: "s-parent",
+    parentToolCallId: "d-1",
+    childSessionId: "child-1",
+    agentName: "scout",
+    agentSource: "builtin",
+    description: "调研重试逻辑",
+    task: "看 src/retry.ts 的重试逻辑",
+    status: "running",
+    startedAt: 1_000,
+    model: null,
+    modelId: "svc/model-x",
+    thinkingLevel: "medium",
+    maxTurns: 30,
+    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    turns: 2,
+    toolCalls: 3,
+    ...patch,
+  };
+}
+
+/** 一条上一进程留下来的、已经意外终止的运行：重派用例的起点 */
+function interruptedRun(patch: Partial<SubagentRun> = {}): SubagentRun {
+  return makeRun({
+    delegationId: "d-old",
+    parentToolCallId: "d-old",
+    childSessionId: "child-old",
+    agentName: "scout",
+    description: "调研重试逻辑",
+    task: "看 src/retry.ts 的重试逻辑",
+    status: "interrupted",
+    startedAt: 1_000,
+    endedAt: 2_000,
+    updatedAt: 2_000,
+    turns: 3,
+    toolCalls: 4,
+    ...patch,
+  });
+}
+
+/**
+ * 可注入的完整 deps：每个用例只覆盖自己关心的那几个。
+ *
+ * `reserveSlot` 默认是**真的占位**（一个本地 Map），不是恒返回 ok 的桩：
+ * 并发上限那几条用例正是靠「占位会被记住」才能测出同批并发时的真实行为，
+ * 用一个永远放行的假实现会把要验的东西验成空的。
+ */
+function createDeps(overrides: Partial<SubagentToolDeps> = {}): SubagentToolDeps {
+  const held = new Map<string, string>();
+  const MAX = MAX_CONCURRENT_SUBAGENT_RUNS;
+  return {
+    sessionId: "s-parent",
+    cwd: () => "C:/work",
+    definitions: vi.fn(async () => [definition("scout"), definition("reporter")]),
+    start: vi.fn(async (request: SubagentStartRequest) =>
+      makeRun({
+        delegationId: request.toolCallId,
+        agentName: request.definition.name,
+        agentSource: request.definition.source,
+        description: request.description,
+        task: request.task,
+        ...(request.resumedFrom === undefined ? {} : { resumedFrom: request.resumedFrom }),
+      }),
+    ),
+    reserveSlot: (delegationId, agentName) => {
+      if (held.size >= MAX) {
+        return {
+          ok: false,
+          holders: [...held].map(([id, name]) => ({ delegationId: id, agentName: name })),
+        };
+      }
+      held.set(delegationId, agentName);
+      return { ok: true };
+    },
+    wait: vi.fn(async () => [] as SubagentRun[]),
+    list: vi.fn(async () => [] as SubagentRun[]),
+    stop: vi.fn(async () => [] as SubagentRun[]),
+    parentModelId: () => "svc/model-x",
+    ...overrides,
+  };
+}
+
+/** 按名字调用一次工具；params 的校验交给 schema，这里只测 execute 的行为 */
+async function invoke(
+  deps: SubagentToolDeps,
+  name: string,
+  toolCallId: string,
+  params: SubagentToolParams,
+): Promise<SubagentToolResult> {
+  const tool = createSubagentTools(deps).find((candidate) => candidate.name === name);
+  if (tool === undefined) throw new Error(`工具不存在：${name}`);
+  return tool.execute(toolCallId, params, () => {}, TOOL_CONTEXT, INVOCATION, BACKGROUND_CONTEXT);
+}
+
+/** 回执的文本部分：可能是一段或多段，测试统一拼起来看 */
+function resultText(result: SubagentToolResult): string {
+  return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+}
+
+/** 取第一次 start 的请求；没调用过直接抛错，避免断言拿到 undefined */
+function firstStart(deps: SubagentToolDeps): SubagentStartRequest {
+  const call = vi.mocked(deps.start).mock.calls.at(0);
+  if (call === undefined) throw new Error("deps.start 未被调用");
+  return call[0];
+}
+
+/** 取最后一次 start 的请求 */
+function lastStart(deps: SubagentToolDeps): SubagentStartRequest {
+  const call = vi.mocked(deps.start).mock.calls.at(-1);
+  if (call === undefined) throw new Error("deps.start 未被调用");
+  return call[0];
+}
+
+describe("normalizeSubagentTools", () => {
+  it("未指定工具时给只读三件套", () => {
+    expect(normalizeSubagentTools(undefined)).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+  });
+
+  it("未知工具名被丢掉；丢掉后为空则回落到只读三件套", () => {
+    expect(normalizeSubagentTools(["read", "teleport"])).toEqual(["read"]);
+    expect(normalizeSubagentTools(["teleport"])).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+    // 空数组不能透传：restrictTools 把空允许表当「不限制」，tools 写错的临时定义会拿到全部工具
+    expect(normalizeSubagentTools([])).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+  });
+});
+
+describe("Task", () => {
+  it("未知 agent 名：返回失败回执，并把可用的名字告诉模型", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-1", {
+      agent: "analyst",
+      description: "分析重试逻辑",
+      task: "读 src/retry.ts",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    const text = resultText(result);
+    expect(text).toContain("analyst");
+    expect(text).toContain("scout");
+    expect(text).toContain("reporter");
+    expect(result.details).toEqual({ error: expect.stringContaining("analyst") });
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("agent 与 definition 都没给：拒绝并说明有两条路可走", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-1", {
+      description: "没有指名",
+      task: "做点事",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(resultText(result)).toContain("agent");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("临时定义：source=temp、model=null，tools 缺省为只读三件套", async () => {
+    const deps = createDeps();
+
+    await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-2", {
+      description: "临时子智能体跑一件事",
+      task: "把 CHANGELOG 写出来",
+      definition: { name: "My Temp Agent", description: "临时的", prompt: "你是临时子智能体。" },
+    });
+
+    const request = firstStart(deps);
+    expect(request).toMatchObject({
+      toolCallId: "call-2",
+      description: "临时子智能体跑一件事",
+      task: "把 CHANGELOG 写出来",
+    });
+    expect(request.definition).toMatchObject({
+      name: "my-temp-agent", // 名字先规范化再当运行标签用
+      source: "temp",
+      model: null,
+      tools: [...DEFAULT_SUBAGENT_TOOLS],
+    });
+    // 临时定义不查目录：目录里有没有同名定义都不影响这次派发
+    expect(vi.mocked(deps.definitions)).not.toHaveBeenCalled();
+  });
+
+  it("临时定义里写了未知工具名：只留白名单内的，不整份丢掉", async () => {
+    const deps = createDeps();
+
+    await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-3", {
+      description: "带工具名",
+      task: "读文件",
+      definition: {
+        name: "temp-2",
+        description: "临时的",
+        prompt: "p",
+        tools: ["read", "teleport"],
+      },
+    });
+
+    expect(lastStart(deps).definition.tools).toEqual(["read"]);
+  });
+
+  it("并发上限：名额已被占满时直接拒绝，不再启动", async () => {
+    // 占满名额的是**预约**（reserveSlot），不再是 list() 里的 running 行：
+    // 上限的判据必须是「谁占着名额」，而 list() 是一份可能过期的快照（见 execute 里的注释）
+    let reserved = 0;
+    const deps = createDeps({
+      reserveSlot: () => {
+        if (reserved >= MAX_CONCURRENT_SUBAGENT_RUNS) {
+          return {
+            ok: false,
+            holders: Array.from({ length: MAX_CONCURRENT_SUBAGENT_RUNS }, (_, index) => ({
+              delegationId: `d-${index}`,
+              agentName: `agent-${index}`,
+            })),
+          };
+        }
+        reserved += 1;
+        return { ok: true };
+      },
+    });
+    // 先占满：前 MAX 次派发各自拿走一个名额
+    for (let index = 0; index < MAX_CONCURRENT_SUBAGENT_RUNS; index += 1) {
+      const held = await invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-${index}`, {
+        agent: "scout",
+        description: "占位",
+        task: "做点事",
+      });
+      expect(held).not.toHaveProperty("isError");
+    }
+    vi.mocked(deps.start).mockClear();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-9", {
+      agent: "scout",
+      description: "再派一个",
+      task: "做点事",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    const text = resultText(result);
+    expect(text).toContain(`${MAX_CONCURRENT_SUBAGENT_RUNS}`);
+    expect(text).toContain("上限");
+    expect(text).toContain(SUBAGENT_TOOL_NAMES.wait); // 文案要给出下一步：先收敛再派
+    // 拒绝文案要指名道姓：只说「超上限」模型不知道该等谁
+    expect(text).toContain("d-0");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("同一批并发派发不会绕过上限：5 个同时发只有 4 个能出去", async () => {
+    /**
+     * 这条用例存在的唯一理由就是防 TOCTOU：真实故障是「同一条消息里发 4 个 sleeper +
+     * 第 5 个 explorer，5 个全部成功」，而顺序发第 5 个会被正确拒绝。
+     *
+     * 所以这里必须让 execute 真的并发跑起来（Promise.all），并且让 reserveSlot 的占位
+     * 在返回前就生效 —— 若有人把上限改回「先 await list() 再 await start()」，
+     * 5 个 execute 会各自读到同一个空列表，这条断言立刻失败。
+     */
+    const deps = createDeps();
+    const attempts = Array.from({ length: MAX_CONCURRENT_SUBAGENT_RUNS + 1 }, (_, index) =>
+      invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-${index}`, {
+        agent: "scout",
+        description: `第 ${index} 个`,
+        task: "做点事",
+      }),
+    );
+
+    const results = await Promise.all(attempts);
+    // isError 只在失败分支上：先按它筛出被拒的那一条，再收窄类型
+    const refused = results.filter((result) => "isError" in result && result.isError === true);
+
+    expect(refused).toHaveLength(1);
+    expect(vi.mocked(deps.start)).toHaveBeenCalledTimes(MAX_CONCURRENT_SUBAGENT_RUNS);
+    expect(resultText(refused[0] as SubagentToolResult)).toContain("上限");
+  });
+
+  it("上限是「≥」而不是「>」：还有一个空位时照常派发", async () => {
+    let reserved = 0;
+    const deps = createDeps({
+      reserveSlot: () => {
+        if (reserved >= MAX_CONCURRENT_SUBAGENT_RUNS - 1) {
+          return { ok: false, holders: [] };
+        }
+        reserved += 1;
+        return { ok: true };
+      },
+    });
+    for (let index = 0; index < MAX_CONCURRENT_SUBAGENT_RUNS - 2; index += 1) {
+      await invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-fill-${index}`, {
+        agent: "scout",
+        description: "占位",
+        task: "做点事",
+      });
+    }
+    vi.mocked(deps.start).mockClear();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-8", {
+      agent: "scout",
+      description: "最后一个空位",
+      task: "做点事",
+    });
+
+    expect(result).not.toHaveProperty("isError");
+    expect(vi.mocked(deps.start)).toHaveBeenCalledTimes(1);
+  });
+
+  it("成功派发：details 就是运行记录，文本不带错误", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-7", {
+      agent: "scout",
+      description: "调研重试逻辑",
+      task: "读 src/retry.ts",
+    });
+
+    // 渲染层按 details 里的运行记录画卡片，所以这里必须是完整的 SubagentRun
+    expect(result.details).toMatchObject({
+      delegationId: "call-7",
+      agentName: "scout",
+      description: "调研重试逻辑",
+      task: "读 src/retry.ts",
+      status: "running",
+    });
+    expect(result).not.toHaveProperty("isError");
+    expect(resultText(result)).toContain("call-7");
+    expect(resultText(result)).toContain(SUBAGENT_TOOL_NAMES.wait);
+  });
+
+  it("启动抛错：转成失败回执，而不是让异常冒出去", async () => {
+    const deps = createDeps({
+      start: vi.fn(async () => {
+        throw new Error("子会话创建失败");
+      }),
+    });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-1", {
+      agent: "scout",
+      description: "起不来",
+      task: "做点事",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(resultText(result)).toContain("子会话创建失败");
+  });
+});
+
+describe("Task 的 resumeOf", () => {
+  it("重派一次意外终止的运行：沿用原来的 agent / task / description，写下 resumedFrom，并拿到新的 delegationId", async () => {
+    const deps = createDeps({ list: vi.fn(async () => [interruptedRun()]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", { resumeOf: "d-old" });
+
+    const request = firstStart(deps);
+    expect(request.resumedFrom).toBe("d-old");
+    expect(request.definition.name).toBe("scout");
+    expect(request.description).toBe("调研重试逻辑");
+    expect(request.task).toBe("看 src/retry.ts 的重试逻辑");
+    // 新的一条用自己的 toolCallId 当 delegationId：旧记录留在列表里，不被覆盖
+    expect(result.details).toMatchObject({ delegationId: "call-new", resumedFrom: "d-old" });
+    expect(result).not.toHaveProperty("isError");
+    const text = resultText(result);
+    expect(text).toContain("call-new");
+    expect(text).toContain("d-old");
+  });
+
+  it("显式给的 description / task 优先于沿用", async () => {
+    const deps = createDeps({ list: vi.fn(async () => [interruptedRun()]) });
+
+    await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-old",
+      description: "接着调研重试逻辑，这次带上测试",
+      task: "补齐 src/retry.ts 的单测",
+    });
+
+    expect(lastStart(deps).description).toBe("接着调研重试逻辑，这次带上测试");
+    expect(lastStart(deps).task).toBe("补齐 src/retry.ts 的单测");
+  });
+
+  it("要接续的运行还在跑：拒绝，并让模型改用 TaskWait 收敛它", async () => {
+    const deps = createDeps({ list: vi.fn(async () => [makeRun({ delegationId: "d-live" })]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-live",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(resultText(result)).toContain(SUBAGENT_TOOL_NAMES.wait);
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("resumeOf 是个不存在的 id：拒绝，并指出用 TaskList 看有哪些", async () => {
+    const deps = createDeps(); // list 默认空
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-ghost",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    const text = resultText(result);
+    expect(text).toContain("d-ghost");
+    expect(text).toContain(SUBAGENT_TOOL_NAMES.list);
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("原来的子智能体已经不存在：拒绝，并把现在可用的名字列出来", async () => {
+    const deps = createDeps({
+      list: vi.fn(async () => [interruptedRun({ agentName: "retired" })]),
+      definitions: vi.fn(async () => [definition("scout"), definition("reporter")]),
+    });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-old",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    const text = resultText(result);
+    expect(text).toContain("retired");
+    expect(text).toContain("scout");
+    expect(text).toContain("reporter");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("想换成别的 agent 再「接续」：拒绝，并说明这条运行属于谁", async () => {
+    const deps = createDeps({ list: vi.fn(async () => [interruptedRun()]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-old",
+      agent: "reporter",
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(resultText(result)).toContain("scout");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("临时定义换了名字：同样拒绝（接续的必须是同一个子智能体）", async () => {
+    const deps = createDeps({ list: vi.fn(async () => [interruptedRun()]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-new", {
+      resumeOf: "d-old",
+      definition: { name: "someone-else", description: "另一个", prompt: "p" },
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+});
+
+describe("Task 不带 resumeOf 时的必填参数（行为不变）", () => {
+  it("description 为空：原样拒绝", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-1", {
+      description: "   ",
+      task: "做点事",
+    });
+
+    expect(result).toMatchObject({ isError: true, details: { error: "description 为空" } });
+    expect(resultText(result)).toContain("description 不能为空");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+
+  it("task 为空：原样拒绝", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-1", {
+      description: "一件事",
+      task: "   ",
+    });
+
+    expect(result).toMatchObject({ isError: true, details: { error: "task 为空" } });
+    expect(resultText(result)).toContain("task 不能为空");
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+  });
+});
+
+describe("TaskWait", () => {
+  it("mode / minCompleted / delegationIds / timeoutSeconds 原样转发，输出带每条运行的状态与报告", async () => {
+    const completed = makeRun({
+      delegationId: "d-a",
+      agentName: "scout",
+      status: "completed",
+      endedAt: 5_000,
+      report: "重试逻辑在 src/retry.ts:42，最多 3 次",
+    });
+    const stillRunning = makeRun({ delegationId: "d-b", agentName: "reporter" });
+    const deps = createDeps({ wait: vi.fn(async () => [completed, stillRunning]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.wait, "call-1", {
+      delegationIds: ["d-a", "d-b"],
+      mode: "any",
+      minCompleted: 2,
+      timeoutSeconds: 123,
+    });
+
+    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(["d-a", "d-b"], "any", 2, 123);
+    expect(result.details).toEqual({ runs: [completed, stillRunning] });
+    const text = resultText(result);
+    expect(text).toContain("[scout]");
+    expect(text).toContain("已完成");
+    expect(text).toContain("重试逻辑在 src/retry.ts:42，最多 3 次");
+    expect(text).toContain("[reporter]");
+    expect(text).toContain("仍在运行");
+    expect(result).not.toHaveProperty("isError");
+  });
+
+  it("缺省参数按契约给 all / 1 / 默认等待秒数", async () => {
+    const deps = createDeps({
+      wait: vi.fn(async () => [makeRun({ status: "completed", endedAt: 2_000, report: "完成" })]),
+    });
+
+    await invoke(deps, SUBAGENT_TOOL_NAMES.wait, "call-1", {});
+
+    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(undefined, "all", 1, 600);
+  });
+
+  it("超时不是失败：还在跑的运行以 running + 无报告回来，回执不带错误", async () => {
+    const deps = createDeps({ wait: vi.fn(async () => [makeRun({ status: "running" })]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.wait, "call-1", { timeoutSeconds: 5 });
+
+    const text = resultText(result);
+    expect(text).toContain("仍在运行");
+    expect(text).toContain("（还没产出最终报告）");
+    expect(text).not.toContain("Error:");
+    expect(result).not.toHaveProperty("isError");
+  });
+
+  it("没有可等的运行：给一句说明（含没找到的 id），而不是空回执", async () => {
+    const deps = createDeps(); // wait 默认返回 []
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.wait, "call-1", {
+      delegationIds: ["d-ghost"],
+    });
+
+    expect(resultText(result)).toContain("d-ghost");
+    expect(result.details).toEqual({ runs: [] });
+  });
+});
+
+describe("TaskList", () => {
+  it("空会话：给一句「还没有运行」，details 是空 runs 而不是 undefined", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.list, "call-1", {});
+
+    expect(resultText(result)).toContain("还没有子智能体运行");
+    expect(result.details).toEqual({ runs: [] });
+  });
+
+  it("意外终止的运行照常列出来，带上「要不要重来由你决定」的指引", async () => {
+    const deps = createDeps({
+      list: vi.fn(async () => [
+        interruptedRun(),
+        makeRun({ delegationId: "d-live", agentName: "reporter" }),
+      ]),
+    });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.list, "call-1", {});
+
+    const text = resultText(result);
+    expect(text).toContain("[interrupted]");
+    expect(text).toContain("已意外终止");
+    expect(text).toContain("结果未知");
+    expect(text).toContain("d-old");
+    // 工具说明里必须写清「决定权在主代理」以及重来用哪个参数（模型挑工具时只看这段）
+    const tool = createSubagentTools(deps).find(
+      (candidate) => candidate.name === SUBAGENT_TOOL_NAMES.list,
+    );
+    expect(tool?.description).toContain("interrupted");
+    expect(tool?.description).toContain("resumeOf");
+    expect(tool?.description).toContain("由你决定");
+  });
+
+  it("重派出来的那条会标出接续的是哪一次", async () => {
+    const deps = createDeps({
+      list: vi.fn(async () => [interruptedRun({ status: "running", resumedFrom: "d-old" })]),
+    });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.list, "call-1", {});
+
+    expect(resultText(result)).toContain("接续 d-old");
+  });
+});
+
+describe("TaskStop", () => {
+  it("未知 id：不抛错，把没找到的 id 说出来，空结果也能安全收尾", async () => {
+    const deps = createDeps(); // stop 默认返回 []
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.stop, "call-1", {
+      delegationIds: ["d-ghost"],
+    });
+
+    expect(vi.mocked(deps.stop)).toHaveBeenCalledWith(["d-ghost"]);
+    const text = resultText(result);
+    expect(text).toContain("d-ghost");
+    expect(text).toContain("没有找到");
+    expect(result.details).toEqual({ runs: [] });
+    expect(result).not.toHaveProperty("isError");
+  });
+
+  it("重复 id 只停一次；停成功时输出停止后的状态", async () => {
+    const stopped = makeRun({ status: "aborted", endedAt: 3_000, error: "主代理停止了这次运行" });
+    const deps = createDeps({ stop: vi.fn(async () => [stopped]) });
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.stop, "call-1", {
+      delegationIds: ["d-1", "d-1"],
+    });
+
+    expect(vi.mocked(deps.stop)).toHaveBeenCalledWith(["d-1"]);
+    const text = resultText(result);
+    expect(text).toContain("已停止");
+    expect(text).toContain("主代理停止了这次运行");
+    expect(result.details).toEqual({ runs: [stopped] });
+  });
+});

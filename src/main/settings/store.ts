@@ -40,6 +40,8 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledSkillNames: [],
   skillsEnabled: true,
   promptTemplateDirs: [],
+  subagentsEnabled: true,
+  disabledSubagentNames: [],
   mcpServers: [],
 };
 
@@ -62,6 +64,7 @@ function cloneDefaults(): Settings {
     skillDirs: [],
     disabledSkillNames: [],
     promptTemplateDirs: [],
+    disabledSubagentNames: [],
     mcpServers: [],
   };
 }
@@ -114,6 +117,12 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
     promptTemplateDirs: Array.isArray(raw.promptTemplateDirs)
       ? raw.promptTemplateDirs.filter((dir) => typeof dir === "string")
       : base.promptTemplateDirs,
+    // 子智能体：总开关是布尔（必须显式校验），禁用名列表按字符串过滤
+    subagentsEnabled:
+      typeof raw.subagentsEnabled === "boolean" ? raw.subagentsEnabled : base.subagentsEnabled,
+    disabledSubagentNames: Array.isArray(raw.disabledSubagentNames)
+      ? raw.disabledSubagentNames.filter((name) => typeof name === "string")
+      : base.disabledSubagentNames,
     // MCP server 列表：逐条归一（命令/参数/环境变量可能是任意 JSON），非法条目直接丢掉
     mcpServers: normalizeMcpServers(raw.mcpServers),
   };

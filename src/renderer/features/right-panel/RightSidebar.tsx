@@ -9,13 +9,13 @@ import { FilesPanel } from "./FilesPanel";
 import { RIGHT_PANEL_VIEW_META } from "./panel-meta";
 import { ReviewPanel } from "./ReviewPanel";
 import { RightPanelChooser } from "./RightPanelChooser";
-import { SideChatPanel } from "./SideChatPanel";
+import { SubagentPanel } from "./SubagentPanel";
 import { TerminalPanel } from "./TerminalPanel";
 /**
  * 右侧栏本体：内容区顶栏那颗按钮开出来的面板。
  *
  * 三屏结构（都在这一块界面内，没有第二层浮层）：
- *   1. **选择列表**（rightPanelView === null）—— 审查 / 文件 / 侧边聊天 / 浏览器 / 终端；
+ *   1. **选择列表**（rightPanelView === null）—— 审查 / 文件 / 子智能体 / 浏览器 / 终端；
  *   2. **某个面板** —— 点第一屏的一项进入，标题左侧是「返回」（回到选择列表）；
  *   3. **收起** —— 只由内容区顶栏那颗右侧栏开关负责（面板内没有收起按钮）。
  * 收起时视图退回 null，所以再次打开总是落在第一屏（见 ui-store 的 closeRightPanel）。
@@ -29,7 +29,7 @@ import { TerminalPanel } from "./TerminalPanel";
  *   · 收起期间整棵子树 `inert`：宽度 0 + 剪裁只是视觉上不可见，
  *     里面的按钮仍会被 Tab 命中、仍进辅助技术树。
  *
- * 视图本体按 rightPanelView 挂载（切走就卸载）：五个面板各有互斥的重活
+ * 视图本体按 rightPanelView 挂载（切走就卸载）：各面板各有互斥的重活
  *（文件树请求、webview 页面、xterm 实例），同时留着只会白占内存，
  * 而每个面板的重建成本都很低（终端有主进程的回放缓冲兜底，切回来能补齐输出）。
  *
@@ -86,7 +86,7 @@ export function RightSidebar(): React.JSX.Element {
           1. **没有「收起面板」按钮**。开合只由顶栏那颗右侧栏开关负责 ——
              同一个动作有两个入口时，人会在两处之间犹豫；
              而那颗开关本来就一直在屏幕上（不像 × 只在面板展开时存在）。
-          2. 「返回」与「收起」是不同意图：返回回到五个入口的选择列表、
+          2. 「返回」与「收起」是不同意图：返回回到六个入口的选择列表、
              面板保持展开；这里没有收起。所以两者不会互相替代。
           3. 窗口控制（最小化 / 最大化 / 关闭）在面板展开时挪到这里的最右端，
              与内容区顶栏同一行的右端对齐；展开期间顶栏那套不再渲染
@@ -134,7 +134,7 @@ export function RightSidebar(): React.JSX.Element {
 /**
  * 视图分发表。
  *
- * 单独一个组件而不是在 RightSidebar 里写 switch：五个面板各自的 props 与数据源都不同，
+ * 单独一个组件而不是在 RightSidebar 里写 switch：六个面板各自的 props 与数据源都不同，
  * 放在同一处会让主壳变成一个什么都懂的巨型函数。
  */
 function RightPanelViewHost({ view }: { view: RightPanelView }): React.JSX.Element {
@@ -143,11 +143,15 @@ function RightPanelViewHost({ view }: { view: RightPanelView }): React.JSX.Eleme
   // 为什么只有它特殊：<webview> 被卸载时 Electron 会把 guest 一起销毁 ——
   // 页面、滚动位置、表单草稿全丢，而主进程的自动化服务会拿不到 guest、
   // 一路等到超时（表现就是「模型想接着操作网页，却报浏览器不可用」）。
-  // 其余四个面板（审查 / 文件 / 侧聊 / 终端）重建成本低，切走即卸载是对的，保持原样。
+  // 其余五个面板（审查 / 文件 / 侧聊 / 子智能体 / 终端）重建成本低，切走即卸载是对的，保持原样。
   //
   // 隐藏用 display:none 而不是卸载、也不改尺寸：实测 guest 的视口尺寸不会因此归零
   //（元素不参与布局时 guest 保留最后一次的 innerWidth/innerHeight），
   // 所以隐藏期间依赖坐标的 click / type 依然能投递 —— 这条正是「后台自动化」的前提。
+  // 唯一要注意的是渲染节流：display:none 期间 Chromium 会压低 guest 的 rAF/定时器，
+  // 主进程已在 attachBrowserGuest 里调用 setBackgroundThrottling(false) 关掉它
+  //（本机 Electron 44.3 实测：rAF 92→0，关节流后回到 90；见 service.ts 的说明）。
+  //
   const [browserMounted, setBrowserMounted] = useState(view === "browser");
   useEffect(() => {
     if (view === "browser") setBrowserMounted(true);
@@ -166,7 +170,7 @@ function RightPanelViewHost({ view }: { view: RightPanelView }): React.JSX.Eleme
 }
 
 /**
- * 除浏览器外的四个面板：切走就卸载（重建成本低，同时留着只会白占内存）。
+ * 除浏览器外的五个面板：切走就卸载（重建成本低，同时留着只会白占内存）。
  *
  * 单独一个组件而不是在上一层的 return 里写 switch：那一层要同时表达
  * 「浏览器常驻」与「其余瞬时」，两件事混在一个 switch 里读不出这个区别。
@@ -177,8 +181,8 @@ function TransientPanel({ view }: { view: RightPanelView }): React.JSX.Element {
       return <ReviewPanel />;
     case "files":
       return <FilesPanel />;
-    case "sideChat":
-      return <SideChatPanel />;
+    case "subagent":
+      return <SubagentPanel />;
     case "terminal":
       return <TerminalPanel />;
     case "browser":

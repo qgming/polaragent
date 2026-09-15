@@ -37,6 +37,8 @@ function makeSettings(mcpServers: McpServerConfig[]): Settings {
     disabledSkillNames: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    subagentsEnabled: true,
+    disabledSubagentNames: [],
     mcpServers,
   };
 }
@@ -90,7 +92,10 @@ function createFakeClient(options: {
 }
 
 /** 组装被测对象：设置可随时替换，客户端按配置建 */
-function setup(initial: McpServerConfig[], overrides: Partial<Record<string, { fail?: string }>> = {}) {
+function setup(
+  initial: McpServerConfig[],
+  overrides: Partial<Record<string, { fail?: string }>> = {},
+) {
   const log: string[] = [];
   let current = makeSettings(initial);
   const servers = createMcpServers({
@@ -225,9 +230,7 @@ describe("createMcpServers", () => {
     const ok = await servers.probe(makeConfig({ id: "mcp-draft" }));
     expect(ok.ok).toBe(true);
     if (ok.ok) {
-      expect(ok.tools.map((tool) => tool.qualifiedName)).toEqual([
-        "mcp__mcp-draft__read_file",
-      ]);
+      expect(ok.tools.map((tool) => tool.qualifiedName)).toEqual(["mcp__mcp-draft__read_file"]);
     }
 
     const bad = await servers.probe(makeConfig({ id: "mcp-X" }));

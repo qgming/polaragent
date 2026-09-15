@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-session-backend-sqlite-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TextPart } from "@/shared/contracts/session";
+import type { SubagentRun } from "@/shared/contracts/subagent";
 import { createSessionStore, type SessionStore } from "./session-store";
 import { createSessionsIndex } from "./sessions-index";
 
@@ -256,5 +257,157 @@ describe("session-store", () => {
       await index.update(session.id, { model: broken as never });
       await expect(store.readModel(session.id)).resolves.toBeNull();
     }
+  });
+
+  /**
+   * 子智能体运行记录的**真实**落盘往返。
+   *
+   * 为什么必须有这一条（而不是只靠 subagent-runner 里那份 mock 过的 store）：
+   * 「进程在上一次运行期间退出」这件事只能靠索引里那条记录认出来，
+   * 而 runner 的测试把 store 整个换成了 stub —— 那只证明「它调了 saveSubagentRun」，
+   * 证明不了「写进去的东西真的能被下一个进程按父会话读回来」。这里用真索引走一遍。
+   */
+  describe("子智能体运行记录", () => {
+    function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
+      return {
+        delegationId: "d-1",
+        sessionId: "s-parent",
+        parentToolCallId: "d-1",
+        childSessionId: "child-1",
+        agentName: "scout",
+        agentSource: "builtin",
+        description: "调研重试逻辑",
+        task: "看 src/retry.ts",
+        status: "running",
+        startedAt: 1_000,
+        model: null,
+        modelId: "svc/model-x",
+        thinkingLevel: "medium",
+        maxTurns: 30,
+        tools: ["read", "grep"],
+        turns: 2,
+        toolCalls: 3,
+        updatedAt: 2_000,
+        ...patch,
+      };
+    }
+
+    /** 建一个子智能体子会话：kind 与 parentSessionId 决定了它会不会被 listSubagentRunsFor 认领 */
+    async function makeChild(delegationId: string, parentSessionId: string) {
+      return store.create({
+        title: `scout · ${delegationId}`,
+        kind: "subagent",
+        parentSessionId,
+        parentToolCallId: delegationId,
+        agentName: "scout",
+        delegationId,
+      });
+    }
+
+    it("写进子会话条目后能按父会话读回来，且字段完整", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const child = await makeChild("d-1", parent.id);
+      const run = makeRun({ sessionId: parent.id, childSessionId: child.id });
+
+      await store.saveSubagentRun(child.id, run);
+      const runs = await store.listSubagentRunsFor(parent.id);
+
+      expect(runs).toHaveLength(1);
+      // 全字段往返，不只是 id：面板与 TaskList 都直接读这份记录
+      expect(runs[0]).toEqual(run);
+    });
+
+    it("只认自己的父会话，别的会话与 kind 不匹配的条目都不出现", async () => {
+      const mine = await store.create({ title: "我的会话" });
+      const other = await store.create({ title: "别人的会话" });
+      const mineChild = await makeChild("d-mine", mine.id);
+      const otherChild = await makeChild("d-other", other.id);
+      // 普通会话（kind 缺省 = chat）即使被塞了运行记录也不该被认领
+      const plain = await store.create({ title: "普通会话" });
+
+      await store.saveSubagentRun(
+        mineChild.id,
+        makeRun({ sessionId: mine.id, childSessionId: mineChild.id, delegationId: "d-mine" }),
+      );
+      await store.saveSubagentRun(
+        otherChild.id,
+        makeRun({ sessionId: other.id, childSessionId: otherChild.id, delegationId: "d-other" }),
+      );
+      await store.saveSubagentRun(
+        plain.id,
+        makeRun({ sessionId: plain.id, childSessionId: plain.id }),
+      );
+
+      const runs = await store.listSubagentRunsFor(mine.id);
+      expect(runs.map((run) => run.delegationId)).toEqual(["d-mine"]);
+    });
+
+    it("重写同一条子会话即覆盖：终点那份记录盖掉起点那份", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const child = await makeChild("d-1", parent.id);
+      await store.saveSubagentRun(
+        child.id,
+        makeRun({ sessionId: parent.id, childSessionId: child.id }),
+      );
+      await store.saveSubagentRun(
+        child.id,
+        makeRun({
+          sessionId: parent.id,
+          childSessionId: child.id,
+          status: "interrupted",
+          endedAt: 5_000,
+          updatedAt: 5_000,
+        }),
+      );
+
+      const runs = await store.listSubagentRunsFor(parent.id);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ status: "interrupted", endedAt: 5_000 });
+    });
+
+    it("多条运行按 startedAt 升序（面板与 TaskList 直接沿用这个顺序）", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const late = await makeChild("d-late", parent.id);
+      const early = await makeChild("d-early", parent.id);
+      await store.saveSubagentRun(
+        late.id,
+        makeRun({
+          sessionId: parent.id,
+          childSessionId: late.id,
+          delegationId: "d-late",
+          startedAt: 9_000,
+        }),
+      );
+      await store.saveSubagentRun(
+        early.id,
+        makeRun({
+          sessionId: parent.id,
+          childSessionId: early.id,
+          delegationId: "d-early",
+          startedAt: 1_000,
+        }),
+      );
+
+      const runs = await store.listSubagentRunsFor(parent.id);
+      expect(runs.map((run) => run.delegationId)).toEqual(["d-early", "d-late"]);
+    });
+
+    it("索引里的坏记录被跳过，不让整份列表消失", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const good = await makeChild("d-good", parent.id);
+      const bad = await makeChild("d-bad", parent.id);
+      await store.saveSubagentRun(
+        good.id,
+        makeRun({ sessionId: parent.id, childSessionId: good.id, delegationId: "d-good" }),
+      );
+      // 越过类型把坏数据直接写进索引：缺 delegationId 的运行记录必须被解析层拒掉。
+      // 索引是外部 JSON，手改坏是真会发生的（见实现里那条跳过注释）。
+      await createSessionsIndex(baseDir).update(bad.id, {
+        subagentRun: { status: "running" },
+      } as never);
+
+      const runs = await store.listSubagentRunsFor(parent.id);
+      expect(runs.map((run) => run.delegationId)).toEqual(["d-good"]);
+    });
   });
 });

@@ -2,15 +2,23 @@ import { getChatRuntime } from "@/main/pisdk/runtime";
 import { getSessionStore } from "@/main/pisdk/session-store";
 import type { ModelRef } from "@/shared/contracts/common";
 import { IPC } from "@/shared/contracts/ipc";
-import type { LoadSessionMessagesOptions } from "@/shared/contracts/session";
+import {
+  isHiddenSessionKind,
+  type LoadSessionMessagesOptions,
+  type SessionCreateOptions,
+} from "@/shared/contracts/session";
 import { handle } from "./handler";
 
-/** 注册会话域通道；归档可见性由渲染层按设置过滤，主进程不做二次过滤 */
+/** 注册会话域通道；归档可见性由渲染层按设置过滤，主进程只挡掉从属会话 */
 export function registerSessionsIpc(): void {
   const store = getSessionStore();
 
-  handle(IPC.sessions.list, "读取会话列表", () => store.list());
-  handle(IPC.sessions.create, "创建会话", (options?: { cwd?: string; title?: string }) =>
+  // 子智能体这类从属会话不进左侧栏：过滤放在 IPC 层而不是 store ——
+  // 内部调用方（子智能体运行时、搜索）还需要拿到完整列表来按 parentSessionId 关联
+  handle(IPC.sessions.list, "读取会话列表", async () =>
+    (await store.list()).filter((summary) => !isHiddenSessionKind(summary.kind)),
+  );
+  handle(IPC.sessions.create, "创建会话", (options?: SessionCreateOptions) =>
     store.create(options),
   );
   handle(IPC.sessions.rename, "重命名会话", (request: { id: string; title: string }) =>

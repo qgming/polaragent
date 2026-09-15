@@ -3,6 +3,7 @@ import type { OintApi } from "@/shared/contracts/api";
 import type { BrowserEvent } from "@/shared/contracts/browser";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
+import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
 import type { TerminalEvent } from "@/shared/contracts/terminal";
 
 // 渲染进程唯一入口：只暴露白名单方法，不透传 ipcRenderer 原始能力
@@ -69,6 +70,23 @@ const api = {
   },
   prompts: {
     list: (workingDir) => ipcRenderer.invoke(IPC.prompts.list, { workingDir }),
+  },
+  subagents: {
+    list: (workingDir) => ipcRenderer.invoke(IPC.subagents.list, { workingDir }),
+    read: (name) => ipcRenderer.invoke(IPC.subagents.read, { name }),
+    write: (request) => ipcRenderer.invoke(IPC.subagents.write, request),
+    remove: (name) => ipcRenderer.invoke(IPC.subagents.remove, { name }),
+    reveal: (name) => ipcRenderer.invoke(IPC.subagents.reveal, { name }),
+    runs: (sessionId) => ipcRenderer.invoke(IPC.subagents.runs, { sessionId }),
+    stop: (sessionId, delegationId) =>
+      ipcRenderer.invoke(IPC.subagents.stop, { sessionId, delegationId }),
+    onEvent: (callback) => {
+      // 与 chat.onEvent 同一套：透传信封（事件 + 所属父会话 id）
+      const listener = (_event: Electron.IpcRendererEvent, payload: SubagentEventEnvelope) =>
+        callback(payload);
+      ipcRenderer.on(IPC.subagents.event, listener);
+      return () => ipcRenderer.removeListener(IPC.subagents.event, listener);
+    },
   },
   permissions: {
     listRules: () => ipcRenderer.invoke(IPC.permissions.listRules),

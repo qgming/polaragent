@@ -4,8 +4,8 @@
 // - pi 内核原生四件套（bash/read/write/edit）：description 在本文件**整体覆盖**。内核自带的
 //   文案偏操作说明（返回什么、怎么截断），不讲「什么时候该用它」，而模型选错工具的首要原因
 //   就是缺少场景指导 —— 所以这里替换而不是追加。
-// - 自建工具（grep/glob/todo/ask_user/browser）：见 ./tools/。ask_user 由调用方注入（见 buildTools），
-//   浏览器工具在 buildTools 内默认装配（它们只依赖主进程单例，不需要调用方传东西）。
+// - 自建工具（grep/glob/todo/ask_user/browser/子智能体）：见 ./tools/。ask_user 与子智能体工具
+//   由调用方注入（见 buildTools），浏览器工具在 buildTools 内默认装配（它们只依赖主进程单例）。
 //
 // 刻意不做的：持久终端、任意代码执行、插件树操作 —— 它们会引入新的权限面，超出
 // 「把内核能力原样呈现 + 少量只读增强」的产品定位。
@@ -93,9 +93,13 @@ function prepareBash(execution: BashExecution, toolContext: ExecutionToolContext
  *   同样由 runtime 按会话创建；
  * - browserAutomation：浏览器自动化实现（见 browser/types.ts）。生产环境传主进程单例，
  *   测试传假实现；**不传就完全不装配浏览器工具** —— 于是单测里 buildTools() 的结果
- *   与加这个参数之前完全一致。
+ *   与加这个参数之前完全一致；
+ * - subagentTools：四个子智能体工具（见 tools/subagent.ts）。它们必须由 runtime 注入而不是
+ *   在这里装配：需要**父会话 id**、聊天运行时（子会话的 prompt 走 getChatRuntime().send）与
+ *   运行管理器，这三样只有 runtime.ts 拿得到。位置固定在 jobTools 之后、extraTools 之前 ——
+ *   `extraTools` 是「谁都可以塞」的扩展位，子智能体工具是产品内置的一组，不该混在扩展位后面。
  *
- * 注意 askTool 与 jobTools 都是**可选**的：不传就没有对应的工具。会话创建
+ * 注意前四个参数都是**可选**的：不传就没有对应的工具。会话创建
  * （runtime 的 tools: ...）与 MCP 热替换（applyMcpTools 的 harness.setTools）两条路径
  * 都必须把它们带上，否则热替换之后这些工具会凭空消失（ask_user 踩过同一个坑）。
  */
@@ -104,6 +108,7 @@ export function buildTools(
   askTool?: AgentHarnessTool<AppToolContext>,
   jobTools: AgentHarnessTool<AppToolContext>[] = [],
   browserAutomation?: BrowserAutomation,
+  subagentTools: AgentHarnessTool<AppToolContext>[] = [],
 ): AgentHarnessTool<AppToolContext>[] {
   return [
     { ...createBashTool<AppToolContext>({ prepare: prepareBash }), description: BASH_DESCRIPTION },
@@ -117,11 +122,32 @@ export function buildTools(
     ...(browserAutomation === undefined
       ? []
       : (createBrowserTools(browserAutomation) as AgentHarnessTool<AppToolContext>[])),
-    // 子代理（子 lane）上线时**不要**把这些工具注入子 lane：子代理不能自己卡住等用户
+    // 子智能体（子 lane）上线时**不要**把这些工具注入子 lane：子智能体不能自己卡住等用户
     // （ask_user），也不该自己起后台进程（作业工具），更不该操作用户正盯着的浏览器 ——
     // 它要把结果写进最终回复，由主 lane 统一提问与调度（见 tools/ask.ts 顶部注释）
     ...(askTool === undefined ? [] : [askTool]),
     ...jobTools,
+    // 子智能体工具：只有主会话装配，且只对主会话可见（子智能体不允许再委派）
+    ...subagentTools,
     ...extraTools,
   ];
+}
+
+/**
+ * 按允许名单过滤工具集（子会话装配时用：它的 tools 是定义里写的那几个）。
+ *
+ * 为什么是「同一批工具对象上做过滤」而不是再造一套：子智能体的 `tools` 列表是**同一份**工具表上的
+ * 允许名单 —— 于是「设置里允许了 bash」与「子智能体实际拿到的是 bash」永远不可能漂移
+ * （参考实现里两套工厂函数各写一遍，名字或行为对不上时没有任何地方会报错）。
+ *
+ * `allowed` 为空时**原样返回**：契约里空数组表示「没有指定」而不是「什么都不给」，
+ * 真的什么都不给会让子智能体连 read 都没有，等于跑不起来。
+ */
+export function restrictTools(
+  tools: AgentHarnessTool<AppToolContext>[],
+  allowed: readonly string[],
+): AgentHarnessTool<AppToolContext>[] {
+  if (allowed.length === 0) return tools;
+  const names = new Set(allowed);
+  return tools.filter((tool) => names.has(tool.name));
 }

@@ -13,12 +13,20 @@ import type { PromptTemplateInfo } from "./prompts";
 import type { ReviewSummary } from "./review";
 import type {
   LoadSessionMessagesOptions,
+  SessionCreateOptions,
   SessionMessagesPage,
   SessionSummary,
   SetSessionModelResult,
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillInfo } from "./skills";
+import type {
+  SubagentCatalog,
+  SubagentInfo,
+  SubagentReadResult,
+  SubagentRun,
+  SubagentWriteRequest,
+} from "./subagent";
 import type { TerminalInfo, TerminalReplay } from "./terminal";
 
 /**
@@ -89,6 +97,23 @@ export const IPC = {
     read: "agents:read",
     write: "agents:write",
   },
+  /**
+   * 子智能体：定义目录的读写 + 运行记录的查询/停止。
+   *
+   * `runs` 按**父会话**过滤：一次委派是主会话里的一次工具调用，
+   * 详情面板取的是「当前这个会话派出去的子智能体」，而不是全局运行列表。
+   * `event` 与 chat:event 同构，是主进程 → 渲染进程的单向推送，不属于 invoke 映射。
+   */
+  subagents: {
+    list: "subagents:list",
+    read: "subagents:read",
+    write: "subagents:write",
+    remove: "subagents:remove",
+    reveal: "subagents:reveal",
+    runs: "subagents:runs",
+    stop: "subagents:stop",
+    event: "subagents:event",
+  },
   dialog: {
     pickDirectory: "dialog:pick-directory",
   },
@@ -152,7 +177,7 @@ export interface IpcInvokeContract {
   [IPC.settings.write]: { request: Settings; response: undefined };
   [IPC.sessions.list]: { request: undefined; response: SessionSummary[] };
   [IPC.sessions.create]: {
-    request: { cwd?: string; title?: string } | undefined;
+    request: SessionCreateOptions | undefined;
     response: SessionSummary;
   };
   [IPC.sessions.rename]: { request: { id: string; title: string }; response: undefined };
@@ -217,6 +242,20 @@ export interface IpcInvokeContract {
   [IPC.prompts.list]: {
     request: { workingDir?: string } | undefined;
     response: PromptTemplateInfo[];
+  };
+  [IPC.subagents.list]: {
+    request: { workingDir?: string } | undefined;
+    response: SubagentCatalog;
+  };
+  [IPC.subagents.read]: { request: { name: string }; response: SubagentReadResult };
+  [IPC.subagents.write]: { request: SubagentWriteRequest; response: SubagentInfo };
+  [IPC.subagents.remove]: { request: { name: string }; response: undefined };
+  [IPC.subagents.reveal]: { request: { name: string }; response: { ok: boolean } };
+  [IPC.subagents.runs]: { request: { sessionId: string }; response: SubagentRun[] };
+  [IPC.subagents.stop]: {
+    request: { sessionId: string; delegationId: string };
+    /** 不在本进程运行中的记录没有可停的东西（例如对账出来的 interrupted） */
+    response: SubagentRun | undefined;
   };
   [IPC.permissions.listRules]: { request: undefined; response: PermissionRuleView[] };
   [IPC.permissions.addRule]: { request: PermissionRuleView; response: undefined };

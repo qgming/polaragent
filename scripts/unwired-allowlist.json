@@ -1,6 +1,5 @@
 {
   "agent-plan.tsx": "P2-2 计划模式配套 UI，尚未排期",
-  "subagent-list.tsx": "P2-3 子代理配套 UI，尚未排期",
   "permission-grant.tsx": "P2-3 MCP「按 server 批量授权」已由设置里的 MCP 分栏承担（写 mcp__<server>__* 规则）；本组件仍未接线",
   "prompt-library.tsx": "提示模板的对话内可搜索面板；斜杠菜单已接线，这个面板仍未排期",
   "message-timing.aui.tsx": "runtime 未提供 timing 元数据，接上也是恒空",
@@ -15,6 +14,6 @@
   "error-state.tsx": "通用状态 UI，缺对应的数据源/触发点",
   "draft-restore.tsx": "通用状态 UI，缺对应的数据源/触发点",
   "stopped-run.tsx": "通用状态 UI，缺对应的数据源/触发点",
-  "agent-status.tsx": "通用状态 UI，缺对应的数据源/触发点",
+  "subagent-list.tsx": "逐条进度条的委派卡片：主会话里的委派已改由 agent-status 的 pill 承担（见 ToolParts 的 SubagentStatus），本组件暂无接线点；保留是因为并行委派若真要做一张专门的进度卡，它那套按真实轮次推进的进度条仍是更贴的形状",
   "tool-fallback.aui.tsx": "vendored 兜底组件：失败态改由 ToolCall 的 isError 表达（红叉 + 整行转红），本文件暂无接线点"
 }

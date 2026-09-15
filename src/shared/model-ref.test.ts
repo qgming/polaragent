@@ -43,6 +43,8 @@ function settings(over: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     skillsEnabled: true,
     promptTemplateDirs: [],
+    subagentsEnabled: true,
+    disabledSubagentNames: [],
     mcpServers: [],
     ...over,
   };

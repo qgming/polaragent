@@ -83,3 +83,38 @@ export function resolvePromptTemplateDirs(
   }
   return dirs;
 }
+
+/** 待扫描的子智能体定义目录及其来源标记（与 SkillDir 同构） */
+export interface SubagentDir {
+  path: string;
+  source: SkillSource;
+}
+
+/**
+ * 解析子智能体定义目录清单，顺序固定为：
+ * 1. `${dataDir()}/subagents` —— 数据目录下的全局默认位置，始终参与扫描（global）；
+ * 2. `${workingDir}/.pi/subagents` —— 会话工作目录下的项目级定义（project），workingDir 缺失时跳过。
+ *
+ * 为什么没有可配置目录列表：子智能体定义和技能、MCP 一样各自住在自己的文件夹里，
+ * 定义来源只由文件夹约定决定；再给一份用户配置的目录列表，等于给「定义到底从哪来」
+ * 多造一处需要同步的真相，面板里的目录选择器因此被移除。扫描范围只有上面两个来源。
+ *
+ * ipc/subagents.ts（设置面板的定义列表）与 pisdk/subagent-catalog.ts（装配子会话时读取定义）
+ * 共用这一份解析，两处不要再各写一份。
+ *
+ * 边界处理：
+ * - 去空值：workingDir 为 undefined 或空串时不追加项目目录。
+ * - 不去重：两个来源目录重合时会被扫描两次（下游逐目录独立扫描，合并时按定义 name 去重，
+ *   最终结果不受影响），因此这里不做去重以免改变顺序语义。
+ * - 不做相对路径归一化：数据目录与项目目录沿用 `${...}/subagents`、`${...}/.pi/subagents`
+ *   的拼接写法，不换成 path.join。
+ */
+export function resolveSubagentDirs(workingDir?: string): SubagentDir[] {
+  const dirs: SubagentDir[] = [];
+  // 数据目录下的 subagents 作为全局默认位置，始终参与扫描
+  dirs.push({ path: `${dataDir()}/subagents`, source: "global" });
+  if (workingDir !== undefined && workingDir !== "") {
+    dirs.push({ path: `${workingDir}/.pi/subagents`, source: "project" });
+  }
+  return dirs;
+}
