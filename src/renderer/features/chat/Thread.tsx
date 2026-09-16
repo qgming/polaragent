@@ -556,9 +556,8 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
             )}
           </div>
 
-          {/* 审批卡与提问卡接在消息流尾部、Composer 之前（同区：先审批，后提问） */}
+          {/* 审批卡接在消息流尾部（提问卡不在这里：它固定在输入框上方，见 ViewportFooter） */}
           <ApprovalSection requests={approvals} onResolve={onResolve} />
-          <AskSection requests={asks} onRespond={onRespond} />
 
           {/*
             脚注带是**透明**的：消息会从 Composer 身下滚过，衬在它四周，
@@ -571,6 +570,16 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
             className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-4"
           >
             <ScrollToBottom />
+            {/*
+              提问卡固定在输入框**上方**、不跟随消息流：模型问话时用户多半正在读别处，
+              卡片跟着消息尾部滚走等于把唯一能作答的入口藏起来。放在 sticky 脚注里
+              与 Composer 同宽同层（px-4 与 Composer 外层的水平内边距一致）。
+            */}
+            {asks.length > 0 && (
+              <div className="px-4">
+                <AskSection requests={asks} onRespond={onRespond} />
+              </div>
+            )}
             <Composer />
           </ThreadPrimitive.ViewportFooter>
         </div>

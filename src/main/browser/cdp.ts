@@ -65,6 +65,14 @@ export const BROWSER_CDP_ALLOWED: ReadonlySet<string> = new Set([
   // Console / Log：控制台（console 通道）
   "Console.enable",
   "Log.enable",
+  // Network：**只开放 enable**（网络记录通道）。
+  //
+  // 记录改走 CDP 而不是 Electron 的 session.webRequest，唯一原因是多标签：
+  // webRequest 挂在 session 上，而所有浏览器标签共用 `persist:oint-browser` 分区 ——
+  // 它分不清一条请求来自哪个标签。CDP 的 Network 域天然是 per-target 的，
+  // 每个标签的缓冲因此互不串味。拦截与 mock（Network.setRequestInterception / Fetch）
+  // 仍然关着：这里只订阅事件，不改变任何请求的行为。
+  "Network.enable",
 ]);
 
 /**
@@ -100,7 +108,8 @@ export type CdpMethodDecision = "allow" | "gated" | "forbidden" | "unknown";
  * 这里仍然会拒 —— 白名单出错时不能变成"直接漏"。
  */
 export function decideCdpMethod(method: string): CdpMethodDecision {
-  if (BROWSER_CDP_FORBIDDEN_PREFIXES.some((prefix) => method.startsWith(prefix))) return "forbidden";
+  if (BROWSER_CDP_FORBIDDEN_PREFIXES.some((prefix) => method.startsWith(prefix)))
+    return "forbidden";
   if (BROWSER_CDP_ALLOWED.has(method)) return "allow";
   if (BROWSER_CDP_GATED.has(method)) return "gated";
   if (BROWSER_CDP_GATED_PREFIXES.some((prefix) => method.startsWith(prefix))) return "gated";
@@ -124,7 +133,7 @@ function denyReason(method: string, decision: CdpMethodDecision): string {
   if (decision === "gated") {
     return (
       `CDP 方法 ${method} 属于开关控制的域（Network / Fetch / Target / Emulation / 文件上传），` +
-      "默认关闭且当前版本没有开放入口。请改用已有的工具（browser_network 读请求记录）。"
+      "默认关闭且当前版本没有开放入口。请改用已有的工具（browser_logs 的 type: network 读请求记录）。"
     );
   }
   return (
@@ -141,7 +150,6 @@ export function cdpDeniedError(method: string, decision: CdpMethodDecision): Bro
     reason: "PERMISSION_DENIED",
   });
 }
-
 
 /** 从任意错误里抽出可读文本 */
 function messageOf(error: unknown): string {
@@ -179,7 +187,8 @@ const CDP_METHOD_MISSING =
   /wasn't found|was not found|Method not found|Unknown method|is not part of the .* protocol|does not exist in the protocol|is not defined in the protocol/i;
 
 /** 参数不合法 */
-const CDP_INVALID_PARAMS = /Invalid parameters|Invalid params|Failed to deserialize params|Invalid value|is not a valid/i;
+const CDP_INVALID_PARAMS =
+  /Invalid parameters|Invalid params|Failed to deserialize params|Invalid value|is not a valid/i;
 
 /**
  * 把一次 CDP 失败映射成带错误码的 BrowserToolError（§2 的错误码）。
@@ -202,16 +211,20 @@ export function mapCdpError(error: unknown, method: string): BrowserToolError {
     );
   }
   if (code === -32602 || CDP_INVALID_PARAMS.test(text)) {
-    return new BrowserToolError("INVALID_ARGUMENT", `CDP 方法 ${method} 的参数不合法：${text}`, detail);
+    return new BrowserToolError(
+      "INVALID_ARGUMENT",
+      `CDP 方法 ${method} 的参数不合法：${text}`,
+      detail,
+    );
   }
   if (code === -32001 || CDP_CONTEXT_GONE.test(text)) {
     // 会话 / 上下文没了：页面导航走了、渲染进程重启、调试器被别人抢走。重试即可，别让模型改代码。
     return new BrowserToolError(
       "UNAVAILABLE",
       `CDP 会话已不可用（${method} 失败：页面可能刚导航或渲染进程已重启）：${text}` +
-      "。请重新 snapshot 确认页面还在，再重试。",
-        detail,
-      );
+        "。请重新 snapshot 确认页面还在，再重试。",
+      detail,
+    );
   }
   if (CDP_TARGET_MISSING.test(text)) {
     return new BrowserToolError(
@@ -261,6 +274,8 @@ const CDP_PRE_ENABLE_DOMAINS: readonly string[] = [
   "Accessibility",
   "Console",
   "Log",
+  // Network 失败只让「网络记录」这一条通道降级：它是观察用的，不该拖垮整个会话
+  "Network",
 ];
 
 /** 预启用失败就不能算附着成功的域 */
@@ -304,9 +319,13 @@ export class CdpSession {
   async attach(target: CdpTarget): Promise<void> {
     if (this.isAttached()) return;
     if (target.isDestroyed()) {
-      throw new BrowserToolError("UNAVAILABLE", "CDP 附着失败：guest 已被销毁（浏览器面板已卸载）。", {
-        reason: "TARGET_DESTROYED",
-      });
+      throw new BrowserToolError(
+        "UNAVAILABLE",
+        "CDP 附着失败：guest 已被销毁（浏览器面板已卸载）。",
+        {
+          reason: "TARGET_DESTROYED",
+        },
+      );
     }
     const dbg = target.debugger;
     if (dbg.isAttached()) {
@@ -672,7 +691,8 @@ export function exceptionThrownToRecord(params: unknown): CdpConsoleRecord | nul
   if (details === null) return null;
   const exception = asRecord(details.exception);
   const description = typeof exception?.description === "string" ? exception.description : "";
-  const thrown = exception?.value === undefined || exception?.value === null ? "" : String(exception.value);
+  const thrown =
+    exception?.value === undefined || exception?.value === null ? "" : String(exception.value);
   const headline = typeof details.text === "string" ? details.text.trim() : "";
   const body = description !== "" ? description : thrown;
   let text = headline;
@@ -694,6 +714,87 @@ export function exceptionThrownToRecord(params: unknown): CdpConsoleRecord | nul
         ? frame.lineNumber
         : -1;
   return { level: "error", text, source: url, line: line < 0 ? 0 : line + 1 };
+}
+
+// ---------------------------------------------------------------------------
+// 网络事件的整形（纯函数：把 Network.* 的推送转成「一次请求」的各个阶段）
+//
+// 为什么不用 Electron 的 webRequest：它挂在 session 上，而所有浏览器标签共用同一个
+// persist 分区 —— 分不清一条请求来自哪个标签。Network 域天然是 per-target 的，
+// 每个标签各订阅各的，缓冲不会串味。
+// ---------------------------------------------------------------------------
+
+/** 一次请求的开始：`Network.requestWillBeSent` 里我们关心的部分 */
+export interface CdpNetworkRequestStart {
+  requestId: string;
+  url: string;
+  method: string;
+  /** 协议里的资源类型（Document / XHR / Fetch / Script …），已经归一成小写词表 */
+  resourceType: string;
+  /** 事件时刻（毫秒时间戳），用来算耗时 —— service 侧不再自己记开始时间 */
+  at: number;
+}
+
+/** CDP 的 type 字段 → 契约里的小写词表（模型看到 "xhr" / "fetch" 比 "XHR" 更一致） */
+function normalizeResourceType(value: unknown): string {
+  return typeof value === "string" && value !== "" ? value.toLowerCase() : "other";
+}
+
+/** `Network.requestWillBeSent` → 请求开始；形状不对返回 null */
+export function networkRequestWillBeSent(params: unknown): CdpNetworkRequestStart | null {
+  const obj = asRecord(params);
+  const request = asRecord(obj?.request);
+  const requestId = typeof obj?.requestId === "string" ? obj.requestId : "";
+  const url = typeof request?.url === "string" ? request.url : "";
+  if (requestId === "" || url === "") return null;
+  return {
+    requestId,
+    url,
+    method: typeof request?.method === "string" ? request.method : "GET",
+    resourceType: normalizeResourceType(obj?.type),
+    at: Date.now(),
+  };
+}
+
+/** `Network.responseReceived` → 状态码；形状不对返回 null */
+export function networkResponseReceived(
+  params: unknown,
+): { requestId: string; status: number } | null {
+  const obj = asRecord(params);
+  const response = asRecord(obj?.response);
+  const requestId = typeof obj?.requestId === "string" ? obj.requestId : "";
+  if (requestId === "") return null;
+  const status = typeof response?.status === "number" ? response.status : 0;
+  return { requestId, status };
+}
+
+/** `Network.loadingFinished` → 请求结束（成功路径）；形状不对返回 null */
+export function networkLoadingFinished(params: unknown): { requestId: string; at: number } | null {
+  const obj = asRecord(params);
+  const requestId = typeof obj?.requestId === "string" ? obj.requestId : "";
+  if (requestId === "") return null;
+  return { requestId, at: Date.now() };
+}
+
+/**
+ * `Network.loadingFailed` → 失败原因；形状不对返回 null。
+ *
+ * `canceled` 要如实带上：用户点了停止、或页面自己 abort 掉一个请求，与
+ * DNS 失败 / 连接被拒是两类完全不同的事实，而它们在协议里长得一样。
+ */
+export function networkLoadingFailed(
+  params: unknown,
+): { requestId: string; error: string; at: number } | null {
+  const obj = asRecord(params);
+  const requestId = typeof obj?.requestId === "string" ? obj.requestId : "";
+  if (requestId === "") return null;
+  const raw = typeof obj?.errorText === "string" && obj.errorText !== "" ? obj.errorText : "failed";
+  const canceled = obj?.canceled === true;
+  return {
+    requestId,
+    error: canceled && !/cancel/i.test(raw) ? `canceled (${raw})` : raw,
+    at: Date.now(),
+  };
 }
 
 // ---------------------------------------------------------------------------

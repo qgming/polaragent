@@ -8,11 +8,19 @@
 // 所以这里断言的就是那个不变量：**元素插入 DOM 时必须带上一个 src**。
 // jsdom 里没有真正的 guest，测不了「是否 attach」；但「有没有设 src」是它的必要前提，
 // 而「忘了设」正是那次踩坑的形态。配套的 Electron 集成复现见 docs 的浏览器操作一节。
+//
+// 多标签落地后这里又多了两个不变量：
+//   1. **每个面板把自己的 tabId 与 guest 登记给主进程**（dom-ready 后 registerTab）——
+//      主进程靠它按 tabId 找到 guest，模型的 open-request 也在这条回执上结算；
+//   2. **模型操作提示只出现在事件指定的标签上**（agent 事件带 tabId 时）。
+// 隐藏/常驻（display:none 而不是卸载）由 RightSidebar 负责，见 RightSidebar.test.tsx。
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel } from "@/renderer/features/right-panel/BrowserPanel";
 import i18n from "@/renderer/i18n";
+import { useUiStore } from "@/renderer/stores/ui-store";
+import type { BrowserEvent } from "@/shared/contracts/browser";
 
 /**
  * 造一个能在 jsdom 里当 webview 用的元素。
@@ -20,17 +28,23 @@ import i18n from "@/renderer/i18n";
  * 不能只靠 document.createElement("webview")：jsdom 会给出一个 HTMLUnknownElement，
  * 而面板会调用 canGoBack/canGoForward 等方法 —— 缺了它们，测试失败的原因是
  * 「stub 不全」而不是「被测代码错了」，那种噪声会让人不再相信这个文件。
+ *
+ * 返回 webviews 数组（按创建顺序）与 ready()：面板是命令式创建元素的，
+ * 测试得拿到元素本身才能触发 dom-ready（guest 登记发生在那一刻）。
  */
-function stubWebviewElement(host: HTMLElement): { element: HTMLElement; created: () => boolean } {
-  let created = false;
+function stubWebviewElement(): {
+  webviews: HTMLElement[];
+  ready(index: number): void;
+} {
+  const webviews: HTMLElement[] = [];
   const original = document.createElement.bind(document);
 
   vi.spyOn(document, "createElement").mockImplementation(
     (tagName: string, options?: ElementCreationOptions) => {
       const element = original(tagName, options);
       if (tagName !== "webview") return element;
-      created = true;
-      // 面板用到的 webview 专有成员：给最小实现，返回可预测的值
+      // 每个元素给一个不同的 WebContents id：断言「登记的是这个标签的 guest」时才有区分度
+      const webContentsId = webviews.length + 1;
       Object.assign(element, {
         canGoBack: () => false,
         canGoForward: () => false,
@@ -39,14 +53,60 @@ function stubWebviewElement(host: HTMLElement): { element: HTMLElement; created:
         reload: () => undefined,
         stop: () => undefined,
         loadURL: () => Promise.resolve(),
+        getWebContentsId: () => webContentsId,
       });
+      webviews.push(element);
       return element;
     },
   );
 
   return {
-    element: host,
-    created: () => created,
+    webviews,
+    ready: (index) => {
+      const element = webviews[index];
+      if (element === undefined) throw new Error(`没有第 ${index} 个 webview 元素`);
+      // Electron 在 guest 可用后发出 dom-ready：面板在那一刻读 getWebContentsId 并登记
+      element.dispatchEvent(new Event("dom-ready"));
+    },
+  };
+}
+
+/** 主进程浏览器桥的替身：记录登记 / 注销 / 激活调用，并能向面板推送事件 */
+function stubBrowserBridge(): {
+  registerTab: ReturnType<typeof vi.fn>;
+  unregisterTab: ReturnType<typeof vi.fn>;
+  activateTab: ReturnType<typeof vi.fn>;
+  emit(event: BrowserEvent): void;
+} {
+  const registerTab = vi.fn(() => Promise.resolve());
+  const unregisterTab = vi.fn(() => Promise.resolve());
+  const activateTab = vi.fn(() => Promise.resolve());
+  const listeners: ((event: BrowserEvent) => void)[] = [];
+
+  vi.stubGlobal("oint", {
+    app: { openPath: () => Promise.resolve({ ok: true }) },
+    browser: {
+      status: () => Promise.resolve(null),
+      registerTab,
+      unregisterTab,
+      activateTab,
+      onEvent: (callback: (event: BrowserEvent) => void) => {
+        listeners.push(callback);
+        return () => {
+          const index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
+    },
+  });
+
+  return {
+    registerTab,
+    unregisterTab,
+    activateTab,
+    emit: (event) => {
+      for (const listener of [...listeners]) listener(event);
+    },
   };
 }
 
@@ -54,6 +114,11 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  useUiStore.setState({
+    rightPanelTabs: [],
+    activeTabId: null,
+    pendingBrowserRequest: null,
+  });
 });
 
 beforeAll(async () => {
@@ -61,22 +126,20 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  vi.stubGlobal("oint", {
-    app: { openPath: () => Promise.resolve({ ok: true }) },
-    browser: {
-      status: () => Promise.resolve(null),
-      // 面板挂载时会订阅；必须返回取消订阅函数，否则卸载 TypeError
-      onEvent: () => () => {},
-    },
+  useUiStore.setState({
+    rightPanelTabs: [],
+    activeTabId: null,
+    pendingBrowserRequest: null,
   });
 });
 
 describe("BrowserPanel 的 webview 引导", () => {
   it("把元素插进 DOM 时**必须同时给它一个 src** —— 否则 Electron 永远不会创建 guest", () => {
-    const { element: host } = stubWebviewElement(document.body);
-    render(<BrowserPanel />);
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
 
-    const webview = host.querySelector("webview") ?? document.querySelector("webview");
+    const webview = webviews[0] ?? document.querySelector("webview");
     expect(webview, "面板没有创建 webview 元素").not.toBeNull();
 
     // 这是本次修复的核心不变量。Electron 44 的 <webview> 只在第一次设置 src 时才
@@ -87,11 +150,11 @@ describe("BrowserPanel 的 webview 引导", () => {
   });
 
   it("用 about:blank 引导，而不是让地址栏先有内容（空态提示要照常显示）", () => {
-    const { element: host } = stubWebviewElement(document.body);
-    render(<BrowserPanel />);
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
 
-    const webview = host.querySelector("webview");
-    expect(webview?.getAttribute("src")).toBe("about:blank");
+    expect(webviews[0]?.getAttribute("src")).toBe("about:blank");
 
     // 引导不等于「打开了页面」：空态提示必须还在。
     // 若哪天有人在 onNavigate 里放行了 about:blank，hasPage 会变成 true、提示消失、
@@ -100,10 +163,115 @@ describe("BrowserPanel 的 webview 引导", () => {
   });
 
   it("引导之后地址栏仍然是空的（不给用户看 about:blank）", () => {
-    stubWebviewElement(document.body);
-    render(<BrowserPanel />);
+    stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
 
     const address = screen.getByLabelText("输入网址，回车打开") as HTMLInputElement;
     expect(address.value).toBe("");
+  });
+});
+
+describe("BrowserPanel 与主进程的标签登记", () => {
+  it("dom-ready 之后用 tabId + webContentsId 登记 guest", () => {
+    const bridge = stubBrowserBridge();
+    const { ready } = stubWebviewElement();
+
+    render(<BrowserPanel tabId="t1" active />);
+    // dom-ready 之前不登记：那一刻 getWebContentsId 还不可用（面板读了会抛）
+    expect(bridge.registerTab).not.toHaveBeenCalled();
+
+    ready(0);
+    expect(bridge.registerTab).toHaveBeenCalledWith("t1", 1, undefined);
+  });
+
+  it("为 open-request 建的标签把回执一起交回，并结算掉待处理的请求", () => {
+    const bridge = stubBrowserBridge();
+    const { ready } = stubWebviewElement();
+    useUiStore.setState({
+      rightPanelTabs: [{ id: "t1", view: "browser", title: null }],
+      activeTabId: "t1",
+      pendingBrowserRequest: { requestId: "r7", tabId: "t1" },
+    });
+
+    render(<BrowserPanel tabId="t1" active />);
+    ready(0);
+
+    expect(bridge.registerTab).toHaveBeenCalledWith("t1", 1, "r7");
+    expect(useUiStore.getState().pendingBrowserRequest).toBeNull();
+  });
+
+  it("多个标签各自登记自己的 tabId 与 guest（不会串号）", () => {
+    const bridge = stubBrowserBridge();
+    const { ready } = stubWebviewElement();
+
+    render(
+      <>
+        <BrowserPanel tabId="t1" active={false} />
+        <BrowserPanel tabId="t2" active />
+      </>,
+    );
+    ready(0);
+    ready(1);
+
+    expect(bridge.registerTab).toHaveBeenCalledWith("t1", 1, undefined);
+    expect(bridge.registerTab).toHaveBeenCalledWith("t2", 2, undefined);
+  });
+
+  it("卸载标签时注销 guest（fire-and-forget，主进程据此释放引用）", () => {
+    const bridge = stubBrowserBridge();
+    stubWebviewElement();
+
+    const { unmount } = render(<BrowserPanel tabId="t1" active />);
+    unmount();
+
+    expect(bridge.unregisterTab).toHaveBeenCalledWith("t1");
+  });
+
+  it("成为当前标签时通知主进程激活（status 里的 active 由它维护）", () => {
+    const bridge = stubBrowserBridge();
+    stubWebviewElement();
+
+    const { rerender } = render(<BrowserPanel tabId="t1" active={false} />);
+    expect(bridge.activateTab).not.toHaveBeenCalled();
+
+    rerender(<BrowserPanel tabId="t1" active />);
+    expect(bridge.activateTab).toHaveBeenCalledWith("t1");
+  });
+});
+
+describe("BrowserPanel 的页面标题与模型提示", () => {
+  it("页面报出标题后标签名换成标题（页面没写标题时退回 URL）", () => {
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    useUiStore.setState({
+      rightPanelTabs: [{ id: "t1", view: "browser", title: null }],
+      activeTabId: "t1",
+    });
+
+    render(<BrowserPanel tabId="t1" active />);
+
+    const element = webviews[0];
+    // webview 的事件把字段挂在事件对象上（不是 detail），与 did-navigate 的 url 同一形态
+    const titled = new Event("page-title-updated");
+    Object.assign(titled, { title: "示例页面" });
+    element?.dispatchEvent(titled);
+
+    expect(useUiStore.getState().rightPanelTabs[0]?.title).toBe("示例页面");
+  });
+
+  it("模型操作提示只出现在事件指定的标签上；不带 tabId 的按「对所有标签成立」处理", async () => {
+    const bridge = stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    bridge.emit({ type: "agent", active: true, note: "", tabId: "t2" } as BrowserEvent);
+    expect(screen.queryByText("Oint 正在操作这个页面…")).toBeNull();
+
+    bridge.emit({ type: "agent", active: true, note: "" } as BrowserEvent);
+    expect(await screen.findByText("Oint 正在操作这个页面…")).toBeDefined();
+
+    bridge.emit({ type: "agent", active: false, note: "" } as BrowserEvent);
+    await waitFor(() => expect(screen.queryByText("Oint 正在操作这个页面…")).toBeNull());
   });
 });

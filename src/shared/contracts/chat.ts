@@ -19,11 +19,44 @@ export interface ChatSendOptions {
   rewindToEntryId?: string | null;
 }
 
+/**
+ * 流式 part 的增量：只带新增的那一小段文本。
+ *
+ * 为什么必须有它：`part-upsert` 携带的是**整段累积文本**，模型每吐一个 token 都发一条，
+ * 一条 50KB 的回复在流式期间要重复序列化/传输几十上百次（O(n²) 的 IPC 负载），
+ * 渲染层每收到一条还要整篇重渲染。增量只传新增长度，IPC 负载降为 O(n)。
+ *
+ * 权威性：增量只是**优化通道**。对应 part 的创建 / 收尾仍由 part-upsert 全量给出
+ *（text_end / toolcall_end 等），因此丢一条增量只会短暂少几个字，随后被全量校正；
+ * 缺口过大时渲染层也可以用快照（chat:snapshot）整条补齐。
+ */
+export interface PartDeltaEvent {
+  type: "part-delta";
+  messageId: string;
+  partIndex: number;
+  /** 追加到 part 的哪个字段：正文 / 推理用 text，工具参数用 argsText */
+  kind: "text" | "reasoning" | "args";
+  delta: string;
+}
+
+/**
+ * 某会话当前流式消息的完整快照（没有在流的消息时为 null）。
+ *
+ * 渲染层错过创建事件（窗口重载、早于订阅达到等）时用它整条补齐 ——
+ * 增量协议下「只收到后半段增量」会拼出错误文本，快照是唯一的权威修复手段。
+ */
+export interface ChatStreamSnapshot {
+  messageId: string;
+  parts: ChatPart[];
+  createdAt: number;
+}
+
 /** 主进程 → 渲染进程的聊天事件；渲染进程只消费，不反向发送 */
 export type ChatEvent =
   | { type: "run-started"; runId: string }
   | { type: "message-added"; message: ChatMessage }
   | { type: "part-upsert"; messageId: string; partIndex: number; part: ChatPart }
+  | PartDeltaEvent
   | {
       type: "message-updated";
       messageId: string;

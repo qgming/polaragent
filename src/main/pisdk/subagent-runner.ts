@@ -20,6 +20,7 @@ import type { ThinkingLevel } from "@/shared/contracts/common";
 import type { SessionCreateOptions } from "@/shared/contracts/session";
 import {
   DEFAULT_SUBAGENT_MAX_TURNS,
+  isSubagentRunFinished,
   MAX_CONCURRENT_SUBAGENT_RUNS,
   MAX_SUBAGENT_MAX_TURNS,
   type SubagentEventEnvelope,
@@ -129,18 +130,30 @@ export function releaseSubagentSlot(delegationId: string): void {
   slotReservations.delete(delegationId);
 }
 
-/** 某个父会话当前的名额占位者：在跑的运行 + 同一批里已预约、还没跑起来的 */
+/**
+ * 某个父会话当前的名额占位者：在跑的运行 + 同一批里已预约、还没跑起来的。
+ *
+ * 判据是「**现在还在跑**」，不是「历史上记过多少条」：终态的运行不再占名额，
+ * 否则跑完的委派会一直挂着，上限迟早被历史记录填满（表现为「没人在跑却一直说超上限」）。
+ * 运行是否终态以契约的 isSubagentRunFinished 为准（与面板 / TaskList 对状态的判定同源）。
+ *
+ * 按 delegationId 去重：同一次运行在「预约」与 liveRuns 里可能各出现一次
+ *（预约覆盖到运行登记之间的窗口），各数一遍会让上限提前触发、拒绝文案里的计数也对不上。
+ */
 export function subagentSlotHolders(sessionId: string): SubagentSlotHolder[] {
-  const holders: SubagentSlotHolder[] = [];
+  const holders = new Map<string, SubagentSlotHolder>();
   for (const entry of liveRuns.values()) {
-    if (entry.run.sessionId !== sessionId || entry.finished) continue;
-    holders.push({ delegationId: entry.run.delegationId, agentName: entry.run.agentName });
+    if (entry.run.sessionId !== sessionId || isSubagentRunFinished(entry.run.status)) continue;
+    holders.set(entry.run.delegationId, {
+      delegationId: entry.run.delegationId,
+      agentName: entry.run.agentName,
+    });
   }
   for (const [delegationId, reservation] of slotReservations) {
-    if (reservation.sessionId !== sessionId) continue;
-    holders.push({ delegationId, agentName: reservation.agentName });
+    if (reservation.sessionId !== sessionId || holders.has(delegationId)) continue;
+    holders.set(delegationId, { delegationId, agentName: reservation.agentName });
   }
-  return holders;
+  return [...holders.values()];
 }
 
 function errorText(error: unknown): string {
@@ -365,6 +378,12 @@ async function startReservedRun(
   });
   const entry: LiveRun = { run, settled, settle, finished: false };
   liveRuns.set(run.delegationId, entry);
+  /**
+   * 运行一登记，预约就归还：名额从此由 liveRuns 里这条运行持有（终态时自动让出）。
+   * 留着预约会让同一次运行被数两遍，而且它会一直躺在 slotReservations 里 ——
+   * 哪怕运行早已结束，上限也会被这些「幽灵占位」慢慢填满（4 个跑完之后第 5 个永远派不出去）。
+   */
+  releaseSubagentSlot(run.delegationId);
   liveByChild.set(run.childSessionId, entry);
   registerSubagentSession(run.childSessionId, {
     definition,
@@ -441,6 +460,11 @@ export function forgetSubagentRuns(sessionId: string): void {
     liveRuns.delete(delegationId);
     liveByChild.delete(entry.run.childSessionId);
   }
+  // 预约也是这个会话的名额状态：正在启动窗口里的那些同样不该留下，
+  // 否则会话关了它们还占着位置，之后同名 id 再来派发会被自己的旧占位挡住
+  for (const [delegationId, reservation] of slotReservations) {
+    if (reservation.sessionId === sessionId) slotReservations.delete(delegationId);
+  }
 }
 
 /**
@@ -460,7 +484,9 @@ export async function reconcileSubagentRuns(sessionId: string): Promise<Subagent
     persisted = await getSessionStore().listSubagentRunsFor(sessionId);
   } catch (error) {
     // 索引读不出来不是运行的错：本进程知道的照常返回，绝不把错误抛给面板 / 工具
-    console.warn(`读取子智能体运行记录失败，只返回本进程的运行（${sessionId}）：${errorText(error)}`);
+    console.warn(
+      `读取子智能体运行记录失败，只返回本进程的运行（${sessionId}）：${errorText(error)}`,
+    );
     return live;
   }
 

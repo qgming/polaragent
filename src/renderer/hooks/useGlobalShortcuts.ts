@@ -15,7 +15,7 @@ function matchesModifier(event: KeyboardEvent): boolean {
  *
  * 两个新键落在右侧面板上，是因为右栏的入口只有顶栏那颗按钮，没有快捷键时
  * 「看一眼文件树」这种高频小动作要经过「点按钮 → 点菜单」两步。
- * 提示标签由 RightPanelMenu 按同一份元数据渲染，两处不会漂移。
+ * 提示标签由 RightPanelChooser 按同一份元数据渲染，两处不会漂移。
  */
 export function useGlobalShortcuts(): void {
   useEffect(() => {
@@ -43,7 +43,9 @@ export function useGlobalShortcuts(): void {
           break;
         // 右栏两个带快捷键的视图：Ctrl+P 文件、Ctrl+T 浏览器。
         // 与主流编辑器/浏览器的「快速打开文件」「新建标签页」同键，肌肉记忆直接可用。
-        // 按键落到 openRightPanel 而不是直接开面板：它自带「再按一次收起」的开关语义。
+        // 按键落到 openRightPanel：它展开面板并切到那个视图的标签，已有标签就复用 ——
+        // 所以 Ctrl+T 是「切到浏览器」（没有再建一个），多开走面板上的「+」，
+        // 不让同一个键在「切过去」和「再开一个」之间二选一。
         case "p":
           event.preventDefault();
           ui.openRightPanel("files");

@@ -1,7 +1,7 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { BrowserEvent, BrowserStatus } from "./browser";
-import type { ChatEventEnvelope, ChatSendOptions } from "./chat";
+import type { ChatEventEnvelope, ChatSendOptions, ChatStreamSnapshot } from "./chat";
 import type { ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
@@ -84,6 +84,13 @@ export interface OintApi {
     stop(sessionId: string): Promise<void>;
     queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
     compact(sessionId: string, instructions?: string): Promise<void>;
+    /**
+     * 当前流式消息的完整快照（没有在流时为 null）。
+     *
+     * 增量事件（part-delta）只带新增文本，渲染层一旦发现缺口（消息/part 不存在、
+     * 下标对不上）就用它整条补齐。窗口重载、订阅晚于运行开始等场景靠这条兜底。
+     */
+    snapshot(sessionId: string): Promise<ChatStreamSnapshot | null>;
     /** 订阅主进程推送的聊天事件（含所属会话 id），返回取消订阅函数 */
     onEvent(callback: (payload: ChatEventEnvelope) => void): () => void;
   };
@@ -213,16 +220,26 @@ export interface OintApi {
     summary(sessionId: string): Promise<ReviewSummary>;
   };
   /**
-   * 内置浏览器：读状态 + 订阅事件。
+   * 内置浏览器：标签注册 + 状态 + 事件订阅。
    *
    * **没有导航 / 点击之类的通道**，那是刻意的：页面由主进程直接驱动
-   * （见 main/browser/service.ts 顶部对攻击面的说明）。渲染层这一侧只负责
-   * 「把 webview 建出来」与「把状态显示给人看」。
+   * （见 main/browser/service.ts 顶部对攻击面的说明）。渲染层这一侧负责
+   * 「把 webview 建出来」「把 tabId ↔ guest 的绑定登记回来」「把状态显示给人看」。
    */
   browser: {
-    /** 当前状态：面板是否已挂载、页面在哪、模型是否正在操作 */
+    /** 当前状态：打开了哪些标签、模型是否正在操作 */
     status(): Promise<BrowserStatus>;
-    /** 订阅浏览器事件（状态变化 / 打开面板请求 / 模型操作中），返回取消订阅函数 */
+    /**
+     * 登记一个浏览器标签：建好 webview 之后调用，把它的 guest 交给主进程。
+     * requestId 由主进程的 open-request 事件给出（见 BrowserEvent），
+     * 带回它表示「模型要的那个标签已经就绪」。
+     */
+    registerTab(tabId: string, webContentsId: number, requestId?: string): Promise<void>;
+    /** 注销一个标签（标签关闭时）：主进程释放该 guest 的引用与缓冲 */
+    unregisterTab(tabId: string): Promise<void>;
+    /** 告诉主进程用户切到了哪个标签（决定 status 里的 active） */
+    activateTab(tabId: string): Promise<void>;
+    /** 订阅浏览器事件（状态变化 / 开标签请求 / 模型操作中），返回取消订阅函数 */
     onEvent(callback: (event: BrowserEvent) => void): () => void;
   };
 }

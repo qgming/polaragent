@@ -6,6 +6,8 @@ import type {
   AskRequest,
   ChatEvent,
   ChatMessage,
+  ChatPart,
+  ChatStreamSnapshot,
   JobInfo,
   ModelRef,
   QueuedMessage,
@@ -15,6 +17,306 @@ import type {
 
 /** 单页加载的消息条数 */
 const PAGE_SIZE = 40;
+
+/**
+ * 流式 part 事件的合帧窗口（毫秒）。
+ *
+ * 为什么需要它：主进程每个 token 发一条事件（part-delta 是增量，已很小），
+ * 但渲染层**每条事件一次 set** 就等于一次同步 React 渲染（zustand 走
+ * useSyncExternalStore，跨事件不批处理）。多路流并行时每秒上百条事件，主线程被
+ * 一个个渲染任务切碎，滚动与点击全部排队 —— 表现就是「界面卡死」。
+ *
+ * 32ms 与 30fps 对齐：文本以肉眼连续的节奏增长，而渲染频率与 token 速率解耦。
+ * 这只是「合帧」而不是「节流到看不见」：窗口内的增量全部保留（拼接在一起）。
+ */
+const STREAM_FLUSH_INTERVAL_MS = 32;
+
+/** 缓冲区里的事件条数上限：超出就先提交一次，避免后台窗口 rAF/定时器被拖慢时无限堆积 */
+const STREAM_BUFFER_LIMIT = 400;
+
+/**
+ * 同一个 part 的待提交状态。
+ *
+ * `base` 是最近一次 part-upsert 的**全量** part（创建 / text_end / toolcall_end 等），
+ * 增量只在 base 之后做字符串拼接。这个次序保证「先创建（空文本）→ 增量 → 收尾全量」
+ * 三段都能正确合并：upsert 会清空此前累积的增量（它已经包含那些内容），
+ * 之后的增量再从零累积。
+ */
+interface PartBufferEntry {
+  base?: ChatPart;
+  textDelta: string;
+  reasoningDelta: string;
+  argsDelta: string;
+}
+
+/** sessionId → messageId → partIndex → 待提交状态 */
+type PartBuffer = Map<string, Map<string, Map<number, PartBufferEntry>>>;
+
+const partBuffers: PartBuffer = new Map();
+/** 检测到增量缺口的会话（消息/part 不存在）：flush 后逐个用快照重同步 */
+const resyncSessions = new Set<string>();
+/** 快照重同步的在飞闸门 + 防抖（异常情况下不许把快照 IPC 打成风暴） */
+const resyncInFlight = new Set<string>();
+const lastResyncAt = new Map<string, number>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 取（或建）某个 part 的缓冲条目 */
+function bufferEntry(
+  messageBuffer: Map<string, Map<number, PartBufferEntry>>,
+  messageId: string,
+  partIndex: number,
+): PartBufferEntry {
+  let byPart = messageBuffer.get(messageId);
+  if (byPart === undefined) {
+    byPart = new Map();
+    messageBuffer.set(messageId, byPart);
+  }
+  let entry = byPart.get(partIndex);
+  if (entry === undefined) {
+    entry = { textDelta: "", reasoningDelta: "", argsDelta: "" };
+    byPart.set(partIndex, entry);
+  }
+  return entry;
+}
+
+function bufferUpsert(
+  sessionId: string,
+  messageId: string,
+  partIndex: number,
+  part: ChatPart,
+): void {
+  let bySession = partBuffers.get(sessionId);
+  if (bySession === undefined) {
+    bySession = new Map();
+    partBuffers.set(sessionId, bySession);
+  }
+  const entry = bufferEntry(bySession, messageId, partIndex);
+  entry.base = part;
+  // upsert 是全量：此前累积的增量都已包含在它里面
+  entry.textDelta = "";
+  entry.reasoningDelta = "";
+  entry.argsDelta = "";
+}
+
+function bufferDelta(
+  sessionId: string,
+  messageId: string,
+  partIndex: number,
+  kind: "text" | "reasoning" | "args",
+  delta: string,
+): void {
+  let bySession = partBuffers.get(sessionId);
+  if (bySession === undefined) {
+    bySession = new Map();
+    partBuffers.set(sessionId, bySession);
+  }
+  const entry = bufferEntry(bySession, messageId, partIndex);
+  if (kind === "text") entry.textDelta += delta;
+  else if (kind === "reasoning") entry.reasoningDelta += delta;
+  else entry.argsDelta += delta;
+}
+
+function scheduleFlush(): void {
+  if (flushTimer !== null) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushStreamEvents();
+  }, STREAM_FLUSH_INTERVAL_MS);
+}
+
+/** 缓冲区里的事件条数（测试与上限判断用） */
+function bufferedEventCount(): number {
+  let count = 0;
+  for (const bySession of partBuffers.values()) {
+    for (const byPart of bySession.values()) count += byPart.size;
+  }
+  return count;
+}
+
+/** 把增量拼到 part 上；没有可拼内容时返回 null（避免无谓的新对象） */
+function appendDeltas(part: ChatPart, entry: PartBufferEntry): ChatPart | null {
+  if (part.type === "text") {
+    if (entry.textDelta === "") return null;
+    return { ...part, text: part.text + entry.textDelta };
+  }
+  if (part.type === "reasoning") {
+    if (entry.reasoningDelta === "") return null;
+    return { ...part, text: part.text + entry.reasoningDelta };
+  }
+  if (part.type === "tool-call") {
+    if (entry.argsDelta === "") return null;
+    return { ...part, argsText: part.argsText + entry.argsDelta };
+  }
+  return null;
+}
+
+/**
+ * 一次 flush：把缓冲的 part 事件合批写进 store（一次 set = 一次渲染）。
+ *
+ * 缺口处理：消息不存在（错过 message-added）、part 下标对不上、增量没有可落的 part
+ * （错过创建）—— 这三种情况都说明增量链断了，标记该会话在 flush 后走快照重同步。
+ */
+function flushBuffers(pending: PartBuffer): Partial<ChatState> | null {
+  let messagesBySession = useChatStore.getState().messagesBySession;
+  let changed = false;
+
+  for (const [sessionId, bySession] of pending) {
+    const list = messagesBySession[sessionId];
+    let nextList = list ?? [];
+    let sessionChanged = false;
+
+    for (const [messageId, byPart] of bySession) {
+      const messageIndex = nextList.findIndex((message) => message.id === messageId);
+      if (messageIndex < 0) {
+        resyncSessions.add(sessionId);
+        continue;
+      }
+      const message = nextList[messageIndex];
+      if (message === undefined) continue;
+      const parts = [...message.parts];
+      let partsChanged = false;
+
+      for (const [partIndex, entry] of byPart) {
+        const existing = parts[partIndex];
+        if (entry.base === undefined && existing === undefined) {
+          // 增量落在不存在的 part 上：错过创建事件，整条补齐
+          resyncSessions.add(sessionId);
+          continue;
+        }
+        if (entry.base !== undefined) {
+          if (partIndex < parts.length) parts[partIndex] = entry.base;
+          else if (partIndex === parts.length) parts.push(entry.base);
+          else {
+            // 下标跳跃：中间还有没见过的 part，拼下去就是错位的
+            resyncSessions.add(sessionId);
+            continue;
+          }
+          partsChanged = true;
+        }
+        const target = parts[partIndex];
+        if (target === undefined) continue;
+        const patched = appendDeltas(target, entry);
+        if (patched !== null) {
+          parts[partIndex] = patched;
+          partsChanged = true;
+        }
+      }
+
+      if (partsChanged) {
+        nextList = nextList.map((item, index) =>
+          index === messageIndex ? { ...item, parts } : item,
+        );
+        sessionChanged = true;
+      }
+    }
+
+    if (sessionChanged) {
+      messagesBySession = { ...messagesBySession, [sessionId]: nextList };
+      changed = true;
+    }
+  }
+
+  return changed ? { messagesBySession } : null;
+}
+
+/** 把快照整条落到 store：消息不存在就补建一条（窗口重载中途接上流） */
+function applyStreamSnapshot(
+  state: ChatState,
+  sessionId: string,
+  snapshot: ChatStreamSnapshot,
+): Partial<ChatState> {
+  const list = state.messagesBySession[sessionId] ?? [];
+  const index = list.findIndex((message) => message.id === snapshot.messageId);
+  const existing = index >= 0 ? list[index] : undefined;
+  const next: ChatMessage =
+    existing !== undefined
+      ? { ...existing, parts: snapshot.parts }
+      : {
+          id: snapshot.messageId,
+          role: "assistant",
+          createdAt: snapshot.createdAt,
+          parts: snapshot.parts,
+          status: "streaming",
+        };
+  const messages =
+    existing !== undefined ? list.map((item, i) => (i === index ? next : item)) : [...list, next];
+  return { messagesBySession: { ...state.messagesBySession, [sessionId]: messages } };
+}
+
+/** flush 时发现过缺口的会话：拉一次完整快照整条补齐 */
+function maybeResync(): void {
+  if (resyncSessions.size === 0) return;
+  for (const sessionId of [...resyncSessions]) {
+    resyncSessions.delete(sessionId);
+    void resyncStream(sessionId);
+  }
+}
+
+async function resyncStream(sessionId: string): Promise<void> {
+  if (resyncInFlight.has(sessionId)) return;
+  const last = lastResyncAt.get(sessionId) ?? 0;
+  if (Date.now() - last < 1000) return;
+  // 测试环境没有 preload 桥：安静跳过（缺口只是渲染不完整，不该让测试炸掉）
+  const bridge = typeof window === "undefined" ? undefined : window.oint?.chat;
+  if (bridge === undefined) return;
+
+  lastResyncAt.set(sessionId, Date.now());
+  resyncInFlight.add(sessionId);
+  try {
+    const snapshot = await bridge.snapshot(sessionId);
+    if (snapshot !== null) {
+      useChatStore.setState((state) => applyStreamSnapshot(state, sessionId, snapshot));
+    }
+  } catch (error) {
+    console.warn(`补齐流式快照失败：${String(error)}`);
+  } finally {
+    resyncInFlight.delete(sessionId);
+  }
+}
+
+/**
+ * 立即提交缓冲的流式 part 事件（同步）。
+ *
+ * 两个调用场景：
+ *   · 结构事件（message-updated / run-ended 等）到达前先把 part 落定，保证顺序语义；
+ *   · 测试里显式推进（合帧窗口不参与断言时序）。
+ */
+export function flushStreamEvents(sessionId?: string): void {
+  if (partBuffers.size === 0) {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    return;
+  }
+  if (sessionId !== undefined && !partBuffers.has(sessionId)) return;
+
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+
+  const ids = sessionId === undefined ? [...partBuffers.keys()] : [sessionId];
+  const pending: PartBuffer = new Map();
+  for (const id of ids) {
+    const buffered = partBuffers.get(id);
+    if (buffered === undefined) continue;
+    partBuffers.delete(id);
+    pending.set(id, buffered);
+  }
+
+  const partial = flushBuffers(pending);
+  if (partial !== null) useChatStore.setState(partial);
+  // 还有别的会话攒着事件：重新排一次提交
+  if (partBuffers.size > 0) scheduleFlush();
+  maybeResync();
+}
+
+/** 丢弃某会话的待提交 part 事件（消息被截断/会话被移除时调用，防止事件把旧内容拼回来） */
+export function clearStreamBuffer(sessionId: string): void {
+  partBuffers.delete(sessionId);
+  resyncSessions.delete(sessionId);
+}
 
 interface ChatState {
   /** 会话列表（按 updatedAt 降序） */
@@ -215,6 +517,9 @@ async function rewriteUserMessage(
 ): Promise<void> {
   const kept = list.slice(0, plan.keepCount);
 
+  // 截断前先把攒着的流式事件清掉：它们属于被替换掉的旧回复，落下只会把旧文本拼回来
+  clearStreamBuffer(sessionId);
+
   set((state) => ({
     messagesBySession: { ...state.messagesBySession, [sessionId]: kept },
   }));
@@ -358,6 +663,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
     // 会话已从磁盘消失：把它留下的每会话缓存整批清掉（消息、翻页游标、队列、作业、未决卡片），
     // 否则这些记录会一直挂在内存里，还可能与将来复用的会话 id 串味
+    clearStreamBuffer(id);
     set((state) => ({
       messagesBySession: omitSession(state.messagesBySession, id),
       loadedSessions: omitSession(state.loadedSessions, id),
@@ -415,6 +721,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
     await window.oint.chat.stop(sessionId);
+    // 停止前把攒着的文本先落定：主进程随后不会再补发收尾全量，被丢在缓冲里就是永久缺一段
+    flushStreamEvents(sessionId);
     set((state) => ({ runningBySession: { ...state.runningBySession, [sessionId]: false } }));
   },
 
@@ -484,25 +792,35 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   applyEvent(sessionId, event) {
+    /**
+     * 高频流式事件进合帧缓冲：**不是丢掉，是攒着一次性提交**。
+     * 正文/推理/工具参数的每个 token 都走这里；一次 flush = 一次 set = 一次渲染。
+     */
+    if (event.type === "part-delta") {
+      bufferDelta(sessionId, event.messageId, event.partIndex, event.kind, event.delta);
+      scheduleFlush();
+      if (bufferedEventCount() > STREAM_BUFFER_LIMIT) flushStreamEvents();
+      return;
+    }
+    if (event.type === "part-upsert") {
+      bufferUpsert(sessionId, event.messageId, event.partIndex, event.part);
+      scheduleFlush();
+      if (bufferedEventCount() > STREAM_BUFFER_LIMIT) flushStreamEvents();
+      return;
+    }
+    /**
+     * 结构事件（消息结束、运行结束、审批、作业……）低频，立即应用；
+     * 但先把该会话攒着的 part 落定 —— 否则「已完成」会先于最后一段文本到达，
+     * 界面会有一帧显示「跑完了但文字少一截」。
+     */
+    flushStreamEvents(sessionId);
+
     switch (event.type) {
       case "run-started":
         set((state) => ({ runningBySession: { ...state.runningBySession, [sessionId]: true } }));
         break;
       case "message-added":
         set((state) => upsertMessage(state, sessionId, event.message));
-        break;
-      case "part-upsert":
-        set((state) =>
-          updateMessage(state, sessionId, event.messageId, (message) => {
-            const parts = [...message.parts];
-            if (event.partIndex < parts.length) {
-              parts[event.partIndex] = event.part;
-            } else {
-              parts.push(event.part);
-            }
-            return { ...message, parts };
-          }),
-        );
         break;
       case "message-updated":
         set((state) =>

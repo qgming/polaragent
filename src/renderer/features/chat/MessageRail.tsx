@@ -262,11 +262,17 @@ export function MessageRail({
     update();
     viewport.addEventListener("scroll", schedule, { passive: true });
 
-    // 消息组被换掉 / 消息被重挂：childList 会响；光有消息但高度变了（流式追加、图片载入）
-    // 只响 resize，也要跟。两者都并到 schedule。
+    // 消息挂载 / 卸载要重算：只盯消息组的**直接子节点**增减。
+    // 流式正文增长改的是 characterData 与子孙结构，不会改这条列表 —— 那部分由下面的
+    // ResizeObserver（消息组高度变化）覆盖。早先 observe(viewport, {subtree: true}) 让
+    // 每个 token 的 DOM 变化都触发一次回调，多路流时纯属浪费。
     const target = viewport.querySelector('[data-slot="aui_message-group"]');
     const mutations = new MutationObserver(schedule);
-    mutations.observe(viewport, { childList: true, subtree: true });
+    if (target !== null) {
+      mutations.observe(target, { childList: true });
+    } else {
+      mutations.observe(viewport, { childList: true, subtree: true });
+    }
     const resize = target === null ? null : new ResizeObserver(schedule);
     if (target !== null) resize?.observe(target);
 

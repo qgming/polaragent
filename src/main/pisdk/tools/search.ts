@@ -70,9 +70,9 @@ interface WalkedFile {
   name: string;
 }
 
-/** 英文单复数：1 match / 2 matches */
-function count(amount: number, singular: string): string {
-  return `${amount} ${singular}${amount === 1 ? "" : "s"}`;
+/** 英文单复数：复数形式显式传入 —— 直接拼 "s" 会得到 "matchs" 这类错词（match 的复数是 matches） */
+function count(amount: number, singular: string, plural = `${singular}s`): string {
+  return `${amount} ${amount === 1 ? singular : plural}`;
 }
 
 /** 统一出口：content 是给模型看的文本，details 随结果一起留档 */
@@ -358,7 +358,7 @@ export function createGrepTool<
       }
       const summary = truncated
         ? `Limit ${limit} reached under ${resolution.root} — more matches exist; refine "pattern" or "include", or raise "limit" (max ${GREP_MAX_LIMIT}). Showing the first ${matches.length} matches after ${count(scanned, "file")} searched.`
-        : `${count(matches.length, "match")} in ${count(files.size, "file")} under ${resolution.root} (${count(scanned, "file")} searched).`;
+        : `${count(matches.length, "match", "matches")} in ${count(files.size, "file")} under ${resolution.root} (${count(scanned, "file")} searched).`;
       return textResult([...matches, summary].join("\n"), details);
     },
   };

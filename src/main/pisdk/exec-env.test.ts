@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -82,6 +82,28 @@ describe("createExecEnv 路径守卫", () => {
 
     const names = getOrThrow(await env.listDir(root, BACKGROUND_CONTEXT)).map((info) => info.name);
     expect(names).toContain("read-me.txt");
+  });
+
+  it("显式加入的系统临时目录可读（bash spill 文件住在那），其余越界路径照旧被拒", async () => {
+    // 与会话环境的根配置同构（见 runtime 的 sessionAllowedRoots）：bash 超长输出落盘后
+    // 工具结果给出 "Full output: <path>"，模型要能用 read 直接打开，不必退回去 bash cat
+    const spillEnv = await createExecEnv({ cwd: root, allowedRoots: [os.tmpdir()] });
+    const spillFile = path.join(os.tmpdir(), `oint-spill-${process.pid}.log`);
+
+    writeFileSync(spillFile, "tail of a huge command\n");
+    try {
+      const readSpill = await spillEnv.readTextFile(spillFile, BACKGROUND_CONTEXT);
+      expect(readSpill.ok).toBe(true);
+      if (readSpill.ok) expect(readSpill.value).toBe("tail of a huge command\n");
+
+      // 放行的是这一个根：根之外的路径（这里用不存在的家目录路径，守卫在碰盘之前就拒绝）依旧越界
+      const stillOutside = path.join(os.homedir(), "oint-never-allowed", "x.txt");
+      const readOutside = await spillEnv.readTextFile(stillOutside, BACKGROUND_CONTEXT);
+      expect(readOutside.ok).toBe(false);
+      if (!readOutside.ok) expect(readOutside.error.code).toBe("permission_denied");
+    } finally {
+      rmSync(spillFile, { force: true });
+    }
   });
 
   it("cwd 内 exec 可用且能取回 stdout（无可用 shell 则跳过）", async () => {

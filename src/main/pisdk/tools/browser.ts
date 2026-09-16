@@ -1,18 +1,22 @@
-// 内置浏览器工具：让模型自己操作右侧面板那个浏览器。
+// 内置浏览器工具：让模型自己操作右侧栏里那些浏览器标签。
 //
 // 与其它自建工具的差异：它们操作的是**主进程持有的 guest WebContents**
 //（见 main/browser/service.ts），而不是会话的工作目录。所以：
 //   · 不进 exec-env 的路径守卫 —— 浏览器读的是网页，不是工作区文件；
-//   · 状态是**全局单例**而不是会话级的 —— 内置浏览器只有一份（详见 browser/types.ts），
-//     工具因此不需要 sessionId 之外的依赖注入，直接取单例即可。
+//   · 状态是主进程单例（多标签），工具只按 tabId 指定目标。
 //
 // 依赖经参数注入（BrowserAutomation）而不是 import 具体实现：service.ts 依赖 electron，
 // 而这个文件要能在 node 环境的单测里跑（假实现即可，见 browser.test.ts）。
 //
+// **工具只有九个**（原先十四个）。合并的口径是按「问题」分而不是按「事件」分：
+// click / type / press / hover / select / scroll 六种动作的参数天然互斥，
+// 合进 browser_act 的一个 action 字段；console / network 两种读取合进 browser_logs 的 type。
+// 每个工具都接受可选的 `tab`（作用于哪个标签），输出里也带当前标签身份 ——
+// 用户可能同时开着好几个标签，模型必须能把动作指到对的那个上。
+//
 // 权限分级（见 permissions.ts，名单常量在 shared/contracts/browser.ts）：
-//   · snapshot / console / network / screenshot / wait 是只读的 → LOW_RISK_TOOLS，模型可以自由地「先看一眼」；
-//   · open / history / click / type / press / hover / select / dialog / evaluate 会改变页面状态或执行代码
-//     → high，逐次审批。这几条正是「模型能不能替我在某个网站上点确认」的分界线，不该默认放行。
+//   · snapshot / logs / screenshot / wait 是只读的 → LOW_RISK_TOOLS，模型可以自由地「先看一眼」；
+//   · open / history / act / dialog / evaluate 会改变页面状态或执行代码 → high，逐次审批。
 //
 // 工具文案用英文，与内核四件套、todo、jobs 一致；面向维护者的注释是中文。
 
@@ -33,6 +37,7 @@ import type {
   BrowserAutomation,
   BrowserNetworkQuery,
   BrowserOptionMatch,
+  BrowserTabOperations,
   BrowserWaitOptions,
 } from "../../browser/types";
 
@@ -45,12 +50,12 @@ const CONSOLE_LIMIT = 100;
 const NETWORK_LIMIT = 80;
 
 /**
- * 已知错误码的运行时副本（§2 冻结）。
+ * 已知错误码的运行时副本（冻结）。
  *
  * 类型只在编译期存在，工具层要在运行时判断「这个错误是不是带码的浏览器失败」，
  * 所以必须有一份值。这里刻意不 import 具体类（src/main/browser/errors.ts）：
- *   1. 工具层与主进程实现分属两次改动，按**结构**识别（有 code 且在名单内）能让
- *      两侧各自独立落地，也把 electron 侧的依赖挡在 node 单测之外；
+ *   1. 工具层与主进程实现按**结构**识别（有 code 且在名单内）能让两侧各自独立落地，
+ *      也把 electron 侧的依赖挡在 node 单测之外；
  *   2. detail 的键是开放集合（命中者 / 视口 / ref…），字段名不该固化进工具层。
  */
 const BROWSER_ERROR_CODES: readonly BrowserErrorCode[] = [
@@ -127,13 +132,15 @@ const FAILURE_NEXT_STEP: Record<BrowserErrorCode, string> = {
   STALE_REF: "元素已被移除（页面重渲染过）—— 重新 browser_snapshot，再对新的 ref 操作。",
   REF_DRIFT: "节点还在但语义变了（框架复用了节点）—— 重新 browser_snapshot 核对目标后再操作。",
   NO_EFFECT:
-    "动作发出但页面没有任何反应 —— 重新 browser_snapshot 看现状，并用 browser_console / browser_network 查原因。",
+    "动作发出但页面没有任何反应 —— 重新 browser_snapshot 看现状，并用 browser_logs 查原因。",
   WRONG_TARGET:
-    "该位置被别的元素占据（浮层遮挡或坐标偏移）—— 先 browser_press Escape 关掉浮层，或改用 browser_evaluate 直接操作目标。",
-  BLOCKED: "被浏览器策略拦下（弹窗 / 权限 / 导航白名单）—— 换个入口或先处理权限，别重试同一个动作。",
-  NOT_FOUND: "目标不存在 —— 重新 browser_snapshot 确认页面上还有什么。",
+    '该位置被别的元素占据（浮层遮挡或坐标偏移）—— 先用 browser_act 的 press 动作发 "Escape" 关掉浮层，或改用 browser_evaluate 直接操作目标。',
+  BLOCKED:
+    "被浏览器策略拦下（弹窗 / 权限 / 导航白名单）—— 换个入口或先处理权限，别重试同一个动作。",
+  NOT_FOUND:
+    "目标不存在 —— 重新 browser_snapshot 确认页面上还有什么；标签不存在时用 browser_open 打开或新建一个。",
   UNAVAILABLE:
-    "浏览器面板未布局或未挂载（视口 0×0 时坐标输入无法投递）—— 请用户在右侧展开浏览器面板后重试，或改用 browser_evaluate。",
+    "浏览器还没就绪（面板未布局 / 标签未挂载）—— 先用 browser_open 打开一个网址（它会自己把面板拉出来）后重试，或改用 browser_evaluate。",
   INVALID_ARGUMENT: "参数不合法 —— 按工具的 schema 修正参数后重试。",
   TOOL_FAILED: "操作失败但原因不明 —— 可原样重试一次；仍失败就重新 browser_snapshot 后换一种做法。",
 };
@@ -152,7 +159,7 @@ function formatBrowserFailure(tool: string, failure: BrowserFailure): string {
 }
 
 /**
- * 失败渲染的唯一出口（在 withAgentActivity 里统一调用）。
+ * 失败渲染的唯一出口（在 withinTab 里统一调用）。
  *
  * 带 code 的失败换成可读文本再抛 —— 内核把抛出的文案作为工具结果回给模型；
  * 没有 code 的错误原样上抛，保持「参数校验错误 / 非浏览器错误」的既有形态。
@@ -162,6 +169,22 @@ function decorateBrowserFailure(tool: string, error: unknown): unknown {
   return failure === undefined ? error : new Error(formatBrowserFailure(tool, failure));
 }
 
+/**
+ * 目标标签参数：每个浏览器工具都有它。
+ *
+ * 为什么值得做成一个共享常量而不是各写一遍：这句话就是模型学会「多标签怎么用」的
+ * 唯一入口 —— 每个工具各讲一遍，迟早会讲岔；而漏讲的那个工具会让模型以为
+ * 「这个工具只能作用于当前标签」。
+ */
+const tabParam = Type.Optional(
+  Type.String({
+    minLength: 1,
+    description:
+      'Which browser tab to act on, e.g. "t2". Take the id from the "Tab:" line of any previous browser result. ' +
+      "Omit it to keep working in the tab you used last (the tool says which one that was).",
+  }),
+);
+
 const openSchema = Type.Object({
   url: Type.String({
     minLength: 1,
@@ -169,99 +192,101 @@ const openSchema = Type.Object({
       'The web address to open, e.g. "example.com" or "https://example.com/path?q=1". ' +
       "A missing scheme is completed to https. Only http and https are accepted.",
   }),
+  newTab: Type.Optional(
+    Type.Boolean({
+      description:
+        "true opens a new tab for this page instead of navigating the current one — use it to keep the " +
+        "current page open (comparing two pages, following a link without losing your place).",
+    }),
+  ),
+  tab: tabParam,
 });
 
 const historySchema = Type.Object({
   action: Type.Union([Type.Literal("back"), Type.Literal("forward"), Type.Literal("reload")], {
-    description: '"back" / "forward" move through this page\'s own history; "reload" refetches it.',
+    description: '"back" / "forward" move through this tab\'s own history; "reload" refetches it.',
   }),
+  tab: tabParam,
 });
 
-const snapshotSchema = Type.Object({});
+const snapshotSchema = Type.Object({ tab: tabParam });
 
-const clickSchema = Type.Object({
-  ref: Type.String({
-    minLength: 1,
-    description:
-      'Element ref from the most recent browser_snapshot, e.g. "e12". ' +
-      "Refs are only valid for the snapshot that produced them: if the page changed, snapshot again.",
-  }),
-});
+/** browser_act 的六种动作：参数互斥，所以一个 action 字段就能讲清 */
+const ACT_ACTIONS = ["click", "type", "press", "hover", "select", "scroll"] as const;
+type ActAction = (typeof ACT_ACTIONS)[number];
 
-const typeSchema = Type.Object({
-  ref: Type.String({
-    minLength: 1,
-    description: 'Element ref from the most recent browser_snapshot, e.g. "e12".',
-  }),
-  text: Type.String({
-    description: "Text to put into the field. Any existing content in it is replaced.",
-  }),
-  submit: Type.Optional(
-    Type.Boolean({
+const actSchema = Type.Object({
+  action: Type.Union(
+    [
+      Type.Literal("click"),
+      Type.Literal("type"),
+      Type.Literal("press"),
+      Type.Literal("hover"),
+      Type.Literal("select"),
+      Type.Literal("scroll"),
+    ],
+    {
       description:
-        "true to press Enter after typing (search boxes, login forms). Default false: only fill the field.",
-    }),
+        "click {ref} | type {ref, text, submit?} | press {key, ref?} | hover {ref} | " +
+        "select {ref, value|label|index} | scroll {deltaY, deltaX?}",
+    },
   ),
-});
-
-const screenshotSchema = Type.Object({});
-
-const consoleSchema = Type.Object({});
-
-const evaluateSchema = Type.Object({
-  code: Type.String({
-    minLength: 1,
-    description:
-      "JavaScript to run in the page. The last expression's value is returned as JSON. " +
-      "Use it only when the snapshot cannot answer the question (e.g. a page variable or a computed style).",
-  }),
-});
-
-const pressSchema = Type.Object({
-  key: Type.String({
-    minLength: 1,
-    description:
-      'The key to press, e.g. "Enter", "Escape", "Tab", "ArrowDown", "PageDown", "Control+A", "Shift+Tab". ' +
-      'Names follow KeyboardEvent.key; a modifier combination is written with "+".',
-  }),
   ref: Type.Optional(
     Type.String({
       minLength: 1,
       description:
-        "Element ref from the most recent browser_snapshot. When given, the element is clicked first to move " +
-        'focus onto it, e.g. "e12". Omit it to send the key to whatever the page currently has focused.',
+        'Element ref from the most recent browser_snapshot, e.g. "e12". Required for click / type / hover / ' +
+        "select; optional for press (given, the element is clicked first to move focus onto it).",
     }),
   ),
-});
-
-const hoverSchema = Type.Object({
-  ref: Type.String({
-    minLength: 1,
-    description: 'Element ref from the most recent browser_snapshot, e.g. "e12".',
-  }),
-});
-
-const selectSchema = Type.Object({
-  ref: Type.String({
-    minLength: 1,
-    description: 'Element ref of the dropdown from the most recent browser_snapshot, e.g. "e12".',
-  }),
+  text: Type.Optional(
+    Type.String({
+      description:
+        "For type: the text to put into the field. Any existing content in it is replaced.",
+    }),
+  ),
+  submit: Type.Optional(
+    Type.Boolean({
+      description:
+        "For type: true presses Enter after typing (search boxes, login forms). Default false.",
+    }),
+  ),
+  key: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        'For press: the key, e.g. "Enter", "Escape", "Tab", "ArrowDown", "PageDown", "Control+A", "Shift+Tab". ' +
+        'Names follow KeyboardEvent.key; a modifier combination is written with "+".',
+    }),
+  ),
   value: Type.Optional(
     Type.String({
-      description: 'Program value of the option, e.g. "us" — usually what the form submits.',
+      description: 'For select: program value of the option, e.g. "us" (what the form submits).',
     }),
   ),
   label: Type.Optional(
     Type.String({
-      description: 'Text of the option as the user sees it, e.g. "United States".',
+      description: 'For select: the option text as the user sees it, e.g. "United States".',
     }),
   ),
   index: Type.Optional(
     Type.Number({
       minimum: 1,
-      description: "1-based position of the option in the list (1 = the first option).",
+      description: "For select: 1-based position of the option in the list (1 = the first option).",
     }),
   ),
+  deltaY: Type.Optional(
+    Type.Number({
+      description:
+        "For scroll: pixels to scroll down (negative scrolls up), e.g. 600 for about one screen.",
+    }),
+  ),
+  deltaX: Type.Optional(
+    Type.Number({
+      description: "For scroll: pixels to scroll right (negative scrolls left). Default 0.",
+    }),
+  ),
+  tab: tabParam,
 });
 
 const waitSchema = Type.Object({
@@ -292,147 +317,103 @@ const waitSchema = Type.Object({
         "Ignored when ms is given.",
     }),
   ),
+  tab: tabParam,
 });
 
-const networkSchema = Type.Object({
+const screenshotSchema = Type.Object({ tab: tabParam });
+
+/** browser_logs：两种读取视图（原先的 browser_console / browser_network） */
+const logsSchema = Type.Object({
+  type: Type.Union([Type.Literal("console"), Type.Literal("network")], {
+    description:
+      '"console" for script output and uncaught errors (incremental read); ' +
+      '"network" for the requests the page made (full buffered list).',
+  }),
   failuresOnly: Type.Optional(
     Type.Boolean({
-      description: "true to return only failed requests and 4xx/5xx responses. Default false.",
+      description:
+        "network only: true returns just failed requests and 4xx/5xx responses. Default false.",
     }),
   ),
   clear: Type.Optional(
     Type.Boolean({
       description:
-        "true to empty the buffer before returning, so the log measures only what happens from now on. " +
-        "Default false.",
+        "network only: true empties the buffer before returning, so the list measures only what happens " +
+        "from now on. Default false.",
     }),
   ),
+  tab: tabParam,
 });
 
 const dialogSchema = Type.Object({
   action: Type.Union([Type.Literal("accept"), Type.Literal("dismiss")], {
     description:
-      '"accept" clicks OK, "dismiss" clicks Cancel / closes. Stays in effect for every later dialog until changed.',
+      '"accept" clicks OK, "dismiss" clicks Cancel / closes. Stays in effect for every later dialog of this ' +
+      "tab until changed.",
   }),
-  promptText: Type.Optional(
-    Type.String({
-      description:
-        "Text to type into a prompt() dialog before it is accepted. Only used for prompt dialogs, and only " +
-        "when action is accept.",
-    }),
-  ),
+  tab: tabParam,
+});
+
+const evaluateSchema = Type.Object({
+  code: Type.String({
+    minLength: 1,
+    description:
+      "JavaScript to run in the page. The last expression's value is returned as JSON. " +
+      "Use it only when the snapshot cannot answer the question (e.g. a page variable or a computed style).",
+  }),
+  tab: tabParam,
 });
 
 const OPEN_DESCRIPTION =
-  "Open a web address in the built-in browser in the right sidebar, and wait for the page to finish loading.\n\n" +
+  "Open a web address in the built-in browser in the right sidebar. The panel opens by itself — do not ask the user to open it.\n\n" +
   "When to use it: to reach a page before reading or interacting with it (sites the user asked about, docs, dashboards).\n" +
   "When NOT to use it: when a page is already open and you only need its content (use browser_snapshot); " +
-  "to fetch a URL whose text you just need as data — this drives a real browser window the user is watching.\n\n" +
-  "Notes: only http/https addresses work; file:, javascript: and data: are rejected. " +
-  "The built-in browser must be open in the right sidebar (Ctrl+T); if it is not, this reports how to open it.\n" +
-  "Output: the resulting page url and title. A load error may be reported for the url while the page still shows content.";
+  "to fetch a URL whose text is just data — this drives a real browser window the user is watching.\n\n" +
+  "Notes: only http/https addresses work. With newTab: true a new tab opens (use it to keep the current page " +
+  "and compare); without it the current tab navigates away. The result names the tab and the open-tab list — " +
+  "pass that id as `tab` to the other browser tools whenever more than one is open.\n" +
+  "Output: the tab, its url and title. A load error may be reported for the url while the page still shows content.";
 
 const HISTORY_DESCRIPTION =
-  "Move the built-in browser through its own history: back, forward, or reload.\n\n" +
+  "Move a browser tab through its own history: back, forward, or reload.\n\n" +
   "When to use it: after following a link you want to come back from; to retry a page that failed to load; " +
   "to refresh data after the user changed something outside the page.\n" +
   "When NOT to use it: to reach a known url (use browser_open); to change what the page shows " +
-  "(use browser_click / browser_type).\n\n" +
-  "Output: the resulting page url and title; a failure message when there is nothing to go back or forward to.";
+  "(use browser_act).\n\n" +
+  "Output: the tab, its url and title; a failure message when there is nothing to go back or forward to.";
 
 const SNAPSHOT_DESCRIPTION =
-  "Read the open page: its visible text plus the list of interactive elements (buttons, links, inputs) with a `ref` for each.\n\n" +
+  "Read a page: its visible text plus the list of interactive elements (buttons, links, inputs) with a `ref` for each.\n\n" +
   "When to use it: first thing after browser_open, and again after every action that can change the page — " +
   "it is the only reliable way to know what is currently on screen.\n" +
   "When NOT to use it: when you only need to know whether the page finished loading " +
   "(browser_open already reports that).\n\n" +
-  `Output: url, title, the visible text (truncated at ${SNAPSHOT_TEXT_LIMIT} characters), and elements as ` +
-  'lines of `ref role "name"` in document order. Refs are valid only for this snapshot.\n' +
+  `Output: the tab, url, title, the visible text (truncated at ${SNAPSHOT_TEXT_LIMIT} characters), and elements as ` +
+  'lines of `ref role "name"` in document order. Refs are valid only for this snapshot: after the page changes, ' +
+  "snapshot again before acting.\n" +
   "The text is what the user sees: it does not include hidden menus, collapsed sections, or content behind a click.";
 
-const CLICK_DESCRIPTION =
-  "Click an element of the open page, identified by the `ref` from a recent browser_snapshot.\n\n" +
-  "When to use it: to follow a link, press a button, tick a box, open a menu, submit a filled-in form.\n" +
-  "When NOT to use it: on an element you have not just seen in a snapshot (the page may have re-rendered " +
-  "and the ref gone stale); to type into a field (use browser_type).\n\n" +
-  "Notes: the click is a real mouse event sent to the page, so hover-menus and framework handlers behave " +
-  "as they do for the user; the element is scrolled into view first. A disabled or hidden element is reported " +
-  "as an error instead of being clicked blindly.\n" +
-  "Output: the element's name and whether the click caused a navigation. Always snapshot again afterwards.";
-
-const TYPE_DESCRIPTION =
-  "Type text into an input, textarea or other editable element of the open page, identified by a `ref`.\n\n" +
-  "When to use it: filling a search box or a form field before clicking its submit button, " +
-  "or passing submit: true.\n" +
-  "When NOT to use it: to read what a field currently contains (browser_snapshot reports each field's value).\n\n" +
-  "Notes: any existing content in the field is replaced, not appended to. The field is focused and scrolled " +
-  "into view first. With submit: true an Enter key is sent after typing, which is how search and login forms " +
-  "are normally submitted.\n" +
-  "Output: the element's name and whether the interaction caused a navigation.";
-
-const SCREENSHOT_DESCRIPTION =
-  "Take a picture of the visible part of the built-in browser and look at it.\n\n" +
-  "When to use it: when the answer depends on how the page looks rather than on its text — a chart, a captcha, " +
-  "a layout problem, whether something is visually hidden or overlapped.\n" +
-  "When NOT to use it: as a substitute for browser_snapshot — the screenshot shows only the visible viewport, " +
-  "contains no element refs, and costs far more tokens than the text.\n\n" +
-  "Output: a PNG image of the current viewport.";
-
-const CONSOLE_DESCRIPTION =
-  "Read the console messages (including uncaught errors) the open page has produced since the last read.\n\n" +
-  "When to use it: a page is blank or an action had no visible effect and you suspect a script error; " +
-  "after browser_evaluate to see whether the code you ran logged anything.\n" +
-  "When NOT to use it: to read the page content (use browser_snapshot).\n\n" +
-  'Output: one line per message as "[level] text (source:line)", oldest first. ' +
-  "Reading drains the buffer: each call returns only the messages added since the previous call, " +
-  "and a call with no new messages says so.";
-
-const EVALUATE_DESCRIPTION =
-  "Run a piece of JavaScript in the open page and get its value back as JSON.\n\n" +
-  "When to use it: the escape hatch for questions the snapshot cannot answer — reading a page variable, " +
-  "a computed style, a data attribute, or a small calculation over the DOM.\n" +
-  "When NOT to use it: for anything browser_snapshot already reports (text, links, form values) — " +
-  "those are cheaper and cannot break the page. Do not use it to fetch other URLs.\n\n" +
-  "Notes: the code runs in the page's own context, so it can see the page's globals and the DOM; " +
-  "it cannot reach Node or this app. Promise results are awaited. The value must be JSON-serialisable.\n" +
-  "Output: the JSON value, or the error message if the code threw.";
-
-const PRESS_DESCRIPTION =
-  "Press a key or a key combination on the open page, optionally aimed at one element.\n\n" +
-  "When to use it: to submit a search box or form with Enter (finer than browser_type submit: true, which " +
-  "always presses it right after typing); to walk a menu that has no refs with Tab or ArrowDown; to scroll a " +
-  "long page with PageDown; to close an overlay with Escape; to select the whole field with Control+A and then " +
-  "replace it with browser_type.\n" +
-  "When NOT to use it: to put text into a field — use browser_type, which replaces the existing content; this " +
-  "tool sends the key whether or not it lands anywhere, so a key that hits nothing changes nothing.\n\n" +
-  'Notes: keys are named as in KeyboardEvent.key ("Enter", "Escape", "Tab", "ArrowDown", "PageDown") and a ' +
-  'combination is written with "+" ("Control+A", "Shift+Tab"). With a ref the element is clicked first to put ' +
-  "focus on it — that is also how you focus an element the page does not focus itself; without a ref the key " +
-  "goes to the element the page currently has focused (often <body>, where most keys do nothing).\n" +
-  "Output: the normalized keys that were sent, the target element when a ref was given, and whether pressing " +
-  "caused a navigation.";
-
-const HOVER_DESCRIPTION =
-  "Move the mouse over an element of the open page, identified by the ref from a recent browser_snapshot.\n\n" +
-  "When to use it: to open a hover menu or submenu, show a tooltip, or make a :hover rule take effect, then " +
-  "snapshot again to see the elements it revealed.\n" +
-  "When NOT to use it: to activate something — that is browser_click. Many menus open on hover as well, so try " +
-  "click first; use hover when a click would navigate away or select something you do not want.\n\n" +
-  "Notes: the pointer really moves, so CSS and JS hover handlers behave as they do for the user; nothing is " +
-  "clicked, and nothing changes except the hover itself. The only way to see what appeared is to snapshot " +
-  "again.\n" +
-  "Output: the element's name and whether hovering caused a navigation (it almost never does).";
-
-const SELECT_DESCRIPTION =
-  "Choose an option in a dropdown of the open page, identified by the ref from a recent browser_snapshot.\n\n" +
-  "When to use it: a form control is a real <select> and the snapshot lists options you can pick.\n" +
-  "When NOT to use it: on dropdowns built from divs (they are not <select> — click the control, then click the " +
-  "option); to fill a free-text field (use browser_type).\n\n" +
-  'Notes: value is the program value of the option ("us", usually what the form submits), label is the text the ' +
-  'user sees ("United States"), and index is the 1-based position in the list, for options whose value and ' +
-  "label are both empty or duplicated. Give exactly one of value / label / index — zero or several is rejected, " +
-  "because silently selecting the wrong option would corrupt the form. The element is scrolled into view first.\n" +
-  "Output: the label and value that were actually selected, and whether selecting caused a navigation.";
+const ACT_DESCRIPTION =
+  "Act on a page: click, type, press, hover, select, or scroll.\n\n" +
+  "When to use it: to change what the page shows — follow a link, fill and submit a form, open a menu, pick a " +
+  "dropdown option, or scroll to content that is below the fold.\n" +
+  "Pick the action and give its arguments:\n" +
+  "  · click {ref} — follow a link, press a button, tick a box, open a menu, submit a filled-in form.\n" +
+  "  · type {ref, text, submit?} — replace the content of a field; submit: true presses Enter right after " +
+  "(search boxes, login forms).\n" +
+  '  · press {key, ref?} — a key or combination ("Enter", "Escape", "Tab", "PageDown", "Control+A"); with a ref ' +
+  "the element is clicked first to put focus on it.\n" +
+  "  · hover {ref} — move the mouse over an element to open a hover menu / tooltip; snapshot again to see what appeared.\n" +
+  "  · select {ref, exactly one of value / label / index} — choose an option of a real <select> dropdown.\n" +
+  "  · scroll {deltaY, deltaX?} — wheel-scroll the page at the viewport centre (positive = down); use it to reach " +
+  "content that is below the fold.\n\n" +
+  "When NOT to use it: on an element you have not just seen in a snapshot (the page may have re-rendered and the " +
+  "ref gone stale); to read what a field holds (the snapshot reports it).\n\n" +
+  "Notes: every action is a real input event followed by a page-side check — when the page shows no reaction the " +
+  "call fails with NO_EFFECT instead of pretending success, and a click whose coordinates land on a different " +
+  'element fails with WRONG_TARGET rather than clicking the wrong thing. Press "Escape" to close an overlay that ' +
+  "is blocking a target.\n" +
+  "Output: what was acted on and whether the interaction caused a navigation. Snapshot again to see the result.";
 
 const WAIT_DESCRIPTION =
   "Wait until the page shows a piece of text or an element, or for a fixed number of milliseconds.\n\n" +
@@ -441,39 +422,68 @@ const WAIT_DESCRIPTION =
   "only appears once data arrives, or a container selector. text matches case-insensitively as a substring, " +
   "which is what you need when the page has no stable selector (class names are build hashes).\n" +
   "When NOT to use it: as a substitute for looking — snapshot first to see whether the page is loading at all, " +
-  "and re-check with browser_network when you want to know whether a request finished.\n\n" +
+  "and re-check with browser_logs type network when you want to know whether a request finished.\n\n" +
   "Notes: give exactly one of text / selector / ms. timeoutMs (default 5000) applies only to text and selector; " +
-  "both it and ms are capped at 30000 by the browser.\n" +
+  "both it and ms are capped at 30000.\n" +
   "Output: whether the condition was met and how long it took. On timeout the message also says what the page " +
   "looked like at that moment — read it before retrying.";
 
-const NETWORK_DESCRIPTION =
-  "Read the network requests the open page has made.\n\n" +
-  "When to use it: a page is blank or a button did nothing and you need to tell an API returning 500 apart from " +
-  "a request blocked by CORS and from a request that was never sent at all; a page is slower than expected and " +
-  "you want to see which request is taking the time.\n" +
-  "When NOT to use it: to read script errors and page messages (use browser_console).\n\n" +
-  "Notes: unlike browser_console this is NOT an incremental read — every call returns the whole record that is " +
-  "currently buffered, so calling it twice shows the same requests twice. Pass clear: true to empty the buffer " +
-  "first when you want to measure only what happens from now on; failuresOnly: true narrows the answer to failed " +
-  "requests and 4xx/5xx responses.\n" +
-  'Output: one line per request as "METHOD status url (type, Nms)". A status of failed means no response was ' +
-  `received, with the reason appended when known. At most the last ${NETWORK_LIMIT} requests are shown.`;
+const SCREENSHOT_DESCRIPTION =
+  "Take a picture of the visible part of a browser tab and look at it.\n\n" +
+  "When to use it: when the answer depends on how the page looks rather than on its text — a chart, a captcha, " +
+  "a layout problem, whether something is visually hidden or overlapped.\n" +
+  "When NOT to use it: as a substitute for browser_snapshot — the screenshot shows only the visible viewport, " +
+  "contains no element refs, and costs far more tokens than the text.\n\n" +
+  "Output: a PNG image of the current viewport.";
+
+const LOGS_DESCRIPTION =
+  "Read what a page reported: its console messages (type: console) or its network requests (type: network).\n\n" +
+  "When to use it: a page is blank or a button did nothing and you need to tell a script error apart from " +
+  "nothing happening at all (console), or an API returning 500 apart from a request that was never sent (network); " +
+  "after browser_evaluate to see whether the code you ran logged anything; after browser_dialog to read what a " +
+  "dialog said.\n" +
+  "When NOT to use it: to read the page content (use browser_snapshot).\n\n" +
+  "Notes: console is an incremental read — each call returns only the messages added since the previous call " +
+  "(and says so when there are none), so it is the right tool for watching a flow step by step. network is the " +
+  "opposite: every call returns the whole buffered list, so calling it twice shows the same requests twice; pass " +
+  "clear: true to measure only what happens from now on, or failuresOnly: true to narrow it to failures and 4xx/5xx.\n" +
+  'Output: one line per message as "[level] text (source:line)" / per request as "METHOD status url (type, Nms)".';
 
 const DIALOG_DESCRIPTION =
-  "Set how the built-in browser answers JavaScript dialogs (alert / confirm / prompt).\n\n" +
-  "When to use it: a flow shows a confirmation dialog you need to accept; a prompt() needs text typed into it " +
-  "(promptText).\n" +
-  'When NOT to use it: as a way to answer "the dialog that is about to appear" — this sets a policy, not a ' +
-  "one-off answer, and it stays in effect until you change it again. The content of each dialog is logged to " +
-  "the console (level=warning); read it with browser_console.\n\n" +
+  "Set how a browser tab answers JavaScript dialogs (alert / confirm).\n\n" +
+  "When to use it: a flow shows a confirmation dialog you need to accept; set accept before triggering it.\n" +
+  "When NOT to use it: as a one-off answer — this sets a policy for that tab, not for the dialog that is about " +
+  "to appear, and it stays in effect until you change it again. The content of each dialog is logged to the " +
+  "console (level=warning); read it with browser_logs type console.\n\n" +
   "Notes: a JS dialog blocks the page's renderer — while nobody answers it the page is completely stuck and " +
-  "every later operation times out (measured behaviour, not theory). The built-in browser therefore dismisses " +
-  'dialogs automatically by default, so a page is never stuck; use accept for the flows that need "OK" ' +
-  "(confirmation dialogs, beforeunload save prompts). promptText is only used on prompt dialogs and only when " +
-  "action is accept.\n" +
+  "every later operation times out. The built-in browser therefore dismisses dialogs automatically by default, " +
+  'so a page is never stuck; use accept for the flows that need "OK". `prompt()` is not supported by the ' +
+  "built-in browser at all: a page calling it throws immediately (visible in the console), and there is no way " +
+  "to type into it.\n" +
   "Output: the policy now in effect, and how many dialogs have been answered automatically since this tool was " +
   "last called.";
+
+const EVALUATE_DESCRIPTION =
+  "Run a piece of JavaScript in the page and get its value back as JSON.\n\n" +
+  "When to use it: the escape hatch for questions the snapshot cannot answer — reading a page variable, " +
+  "a computed style, a data attribute, or a small calculation over the DOM.\n" +
+  "When NOT to use it: for anything browser_snapshot already reports (text, links, form values) — " +
+  "those are cheaper and cannot break the page. Do not use it to fetch other URLs.\n\n" +
+  "Notes: the code runs in the page's own context, so it can see the page's globals and the DOM; " +
+  "it cannot reach Node or this app. Promise results are awaited. The value must be JSON-serialisable.\n" +
+  "Output: the JSON value, or the error message if the code threw.";
+
+/**
+ * 标签身份那一行：每个结果的第一个信息。
+ *
+ * 多标签下「我刚操作的是哪一个」是后续所有 `tab` 参数的唯一来源，
+ * 所以哪怕只有一个标签也照给 —— 模型不必去记「什么时候会有这一行」。
+ */
+function tabLine(automation: BrowserAutomation, tabId: string): string {
+  const tabs = automation.listTabs();
+  if (tabs.length <= 1) return `Tab: ${tabId}`;
+  return `Tab: ${tabId} (open tabs: ${tabs.map((tab) => tab.tabId).join(", ")})`;
+}
 
 /** 快照 → 给模型看的文本：文本在前、元素清单在后（元素才是下一步要用的） */
 function formatSnapshot(snapshot: BrowserSnapshot): string {
@@ -488,7 +498,7 @@ function formatSnapshot(snapshot: BrowserSnapshot): string {
   ) {
     lines.push(
       `Viewport: ${snapshot.viewport.width}×${snapshot.viewport.height} — the panel is not laid out, ` +
-        "so coordinate input (click / type / press / hover / select) cannot be delivered. " +
+        "so coordinate input (the click / type / press / hover / select / scroll actions) cannot be delivered. " +
         "Ask the user to expand the browser panel, or use browser_evaluate.",
     );
   }
@@ -537,7 +547,7 @@ function formatSnapshot(snapshot: BrowserSnapshot): string {
 /**
  * 控制台消息 → 给模型看的文本。
  *
- * dropped 是被过滤掉的来源（Electron 自身的安全警告等，见 §6）：过滤该做，
+ * dropped 是被过滤掉的来源（Electron 自身的安全警告等）：过滤该做，
  * 但必须让模型知道「少了的那几条不是页面没产生」。读取语义仍是增量 ——
  * 只报上次读取之后的新消息。
  */
@@ -577,7 +587,7 @@ function formatPageState(action: string, state: BrowserPageState): string {
 /**
  * 网络记录 → 给模型看的文本。
  *
- * 三种事实必须分开说（§6），否则模型没法据此决策：
+ * 三种事实必须分开说，否则模型没法据此决策：
  *   1. bufferEmpty —— 缓冲里一条记录都没有；
  *   2. noFailures —— 有记录但全都成功了。旧实现在这里回「还没有记录」，与事实相反，
  *      而模型正是靠这句话决定要不要继续等接口；
@@ -637,63 +647,8 @@ function formatWait(result: BrowserWaitResult): string {
   );
 }
 
-/** 「三选一」参数个数不对时的统一错误：说清要求与实际给了哪几个，模型才知道怎么改 */
-function exclusiveParamError(tool: string, names: readonly string[], given: string[]): Error {
-  const actual = given.length === 0 ? "0 个" : `${given.length} 个（${given.join("、")}）`;
-  return new Error(`${tool} 需要恰好给出 ${names.join(" / ")} 中的一个，实际给了 ${actual}。`);
-}
-
-/** browser_select 的 value / label / index → BrowserOptionMatch（个数不对直接抛错） */
-function pickOptionMatch(input: {
-  value?: string;
-  label?: string;
-  index?: number;
-}): BrowserOptionMatch {
-  const given: string[] = [];
-  if (input.value !== undefined) given.push("value");
-  if (input.label !== undefined) given.push("label");
-  if (input.index !== undefined) given.push("index");
-  const names = ["value", "label", "index"];
-  if (given.length !== 1) throw exclusiveParamError("browser_select", names, given);
-
-  if (input.value !== undefined) return { kind: "value", value: input.value };
-  if (input.label !== undefined) return { kind: "label", label: input.label };
-  if (input.index !== undefined) return { kind: "index", index: input.index };
-  // 上面的计数已经保证三者恰有一个；这一行只是让类型收敛（TS 无法从计数推断解构结果）
-  throw exclusiveParamError("browser_select", names, given);
-}
-
-/** browser_wait 的 text / selector / ms → BrowserWaitOptions（个数不对直接抛错） */
-function pickWaitOptions(input: {
-  text?: string;
-  selector?: string;
-  ms?: number;
-  timeoutMs?: number;
-}): BrowserWaitOptions {
-  const given: string[] = [];
-  if (input.text !== undefined) given.push("text");
-  if (input.selector !== undefined) given.push("selector");
-  if (input.ms !== undefined) given.push("ms");
-  if (given.length !== 1)
-    throw exclusiveParamError("browser_wait", ["text", "selector", "ms"], given);
-
-  const options: BrowserWaitOptions = {};
-  if (input.text !== undefined) options.text = input.text;
-  else if (input.selector !== undefined) options.selector = input.selector;
-  else if (input.ms !== undefined) options.ms = input.ms;
-  if (input.timeoutMs !== undefined) options.timeoutMs = input.timeoutMs;
-  return options;
-}
-
-/** 面板提示条文案：wait 的三类目标互斥，说清这次在等什么 */
-function waitNote(options: BrowserWaitOptions): string {
-  if (options.text !== undefined) return "正在等待文字出现";
-  if (options.selector !== undefined) return "正在等待元素出现";
-  return "正在等待页面";
-}
-
 /**
- * 动作成功 → outcome 里必须交代的两件事（§4 / §6）。
+ * 动作成功 → outcome 里必须交代的两件事。
  *
  * effect 三态要区别对待：
  *   hit —— 探针确认事件落到了目标上，这是常态，不再多说（默认形态不变，不啰嗦）；
@@ -716,48 +671,109 @@ function withActionNotes(text: string, outcome: BrowserActionOutcome): string {
 }
 
 /**
- * 统一把「模型正在操作页面」推给面板，并把这次调用排进串行队列。
+ * 统一入口：解析目标标签 → 标记「模型正在操作这个标签」→ 跑动作 → 收口错误。
  *
- * **串行是必需的**：内核默认 toolExecution 是 parallel，模型可以在一轮里同时发多个
- * 工具调用（一次点两处、或边点边截图）。click / type 是「移鼠标 → 按下 → 抬起」三步，
- * 两次调用交错会把坐标与按键落到错误的元素上 —— 表现为随机点错东西，最难排查。
- * 排队后每次操作自成一个完整序列，代价只是并行度，而浏览器本来就一次只干一件事。
- *
- * 用计数而不是布尔记录「有几个操作在跑」：先结束的那个不该把提示条清掉，
- * 否则还有工具在动的时候界面看起来已经停了 —— 并行执行下那会真的发生。
+ * 串行化在**服务侧按标签**做（同一标签上的「移鼠标 → 按下 → 抬起」不会被别的调用插进来；
+ * 不同标签上的操作互不阻塞）。工具层不再自己排队 —— 那会让两个标签互相等，
+ * 而模型一次点两个不同页面本来是完全安全的。
  *
  * 失败也在这里收口：主进程抛的 BrowserToolError 带 code/detail，统一渲染成
- * 「错误码 + 详情 + 下一步」；tool 参数就是首行要写的工具名（browser_click 等）。
+ * 「错误码 + 详情 + 下一步」；tool 参数就是首行要写的工具名（browser_act 等）。
  */
-let activityCount = 0;
-let activityChain: Promise<unknown> = Promise.resolve();
-
-function withAgentActivity<T>(
+function withinTab<T>(
   automation: BrowserAutomation,
+  tabId: string | undefined,
   note: string,
-  run: () => Promise<T>,
   tool: string,
+  run: (ops: BrowserTabOperations) => Promise<T>,
 ): Promise<T> {
-  // activityChain 永远以「已完成」的状态接上（错误在下面被吞掉），所以只需一个回调；
-  // 上一次调用失败也不该阻断这一次 —— 每次调用各自拿到自己的结果或错误。
-  const queued = activityChain.then(() => {
-    activityCount += 1;
-    automation.setAgentActive(true, note);
-    return run()
-      .catch((error: unknown) => {
-        throw decorateBrowserFailure(tool, error);
-      })
-      .finally(() => {
-        activityCount = Math.max(0, activityCount - 1);
-        // 只有最后一个结束的才清提示条：计数归零才代表真的没有操作在跑
-        if (activityCount === 0) automation.setAgentActive(false);
-      });
-  });
-  activityChain = queued.then(
-    () => undefined,
-    () => undefined,
-  );
-  return queued;
+  let ops: BrowserTabOperations;
+  try {
+    ops = automation.tab(tabId);
+  } catch (error) {
+    return Promise.reject(decorateBrowserFailure(tool, error));
+  }
+  ops.setAgentActive(true, note);
+  return run(ops)
+    .catch((error: unknown) => {
+      throw decorateBrowserFailure(tool, error);
+    })
+    .finally(() => {
+      ops.setAgentActive(false);
+    });
+}
+
+/** browser_act 的 select 动作：value / label / index 恰有一个 */
+function pickOptionMatch(input: {
+  value?: string;
+  label?: string;
+  index?: number;
+}): BrowserOptionMatch {
+  const given: string[] = [];
+  if (input.value !== undefined) given.push("value");
+  if (input.label !== undefined) given.push("label");
+  if (input.index !== undefined) given.push("index");
+  if (given.length !== 1) {
+    throw new Error(
+      `select 需要且只需要 value / label / index 中的一个（收到 ${given.length} 个：${given.join(", ") || "无"}）——` +
+        "选中错误的项会把整张表单改坏，所以这里不做猜测。",
+    );
+  }
+  if (input.value !== undefined) return { kind: "value", value: input.value };
+  if (input.label !== undefined) return { kind: "label", label: input.label };
+  if (input.index !== undefined) return { kind: "index", index: input.index };
+  // 上面的计数已经保证三者恰有一个；这一行只是让类型收敛（TS 无法从计数推断解构结果）
+  throw new Error("select 缺少选项参数");
+}
+
+/** browser_wait 的 text / selector / ms → BrowserWaitOptions（个数不对直接抛错） */
+function pickWaitOptions(input: {
+  text?: string;
+  selector?: string;
+  ms?: number;
+  timeoutMs?: number;
+}): BrowserWaitOptions {
+  const given: string[] = [];
+  if (input.text !== undefined) given.push("text");
+  if (input.selector !== undefined) given.push("selector");
+  if (input.ms !== undefined) given.push("ms");
+  if (given.length !== 1) {
+    throw new Error(
+      `browser_wait 需要且只需要 text / selector / ms 中的一个（收到 ${given.length} 个：${given.join(", ") || "无"}）。`,
+    );
+  }
+
+  const options: BrowserWaitOptions = {};
+  if (input.text !== undefined) options.text = input.text;
+  else if (input.selector !== undefined) options.selector = input.selector;
+  else if (input.ms !== undefined) options.ms = input.ms;
+  if (input.timeoutMs !== undefined) options.timeoutMs = input.timeoutMs;
+  return options;
+}
+
+/** 面板提示条文案：wait 的三类目标互斥，说清这次在等什么 */
+function waitNote(options: BrowserWaitOptions): string {
+  if (options.text !== undefined) return "正在等待文字出现";
+  if (options.selector !== undefined) return "正在等待元素出现";
+  return "正在等待页面";
+}
+
+/** browser_act 面板提示条文案：一句话说清这次在做什么 */
+function actNote(input: { action: ActAction; ref?: string; key?: string }): string {
+  switch (input.action) {
+    case "click":
+      return `正在点击 ${input.ref ?? ""}`;
+    case "type":
+      return `正在输入到 ${input.ref ?? ""}`;
+    case "press":
+      return `正在按键 ${input.key ?? ""}`;
+    case "hover":
+      return `正在悬停到 ${input.ref ?? ""}`;
+    case "select":
+      return "正在选择下拉项";
+    case "scroll":
+      return "正在滚动页面";
+  }
 }
 
 /**
@@ -775,16 +791,25 @@ export function createBrowserTools(
     description: OPEN_DESCRIPTION,
     parameters: openSchema,
     async execute(_toolCallId, params: Static<typeof openSchema>) {
-      const state = await withAgentActivity(
-        automation,
-        `正在打开 ${params.url}`,
-        () => automation.open(params.url),
-        BROWSER_TOOL_NAMES.open,
-      );
-      return {
-        content: [{ type: "text", text: formatPageState("Opened", state) }],
-        details: { state },
-      };
+      try {
+        const state = await automation.open(params.url, {
+          ...(params.tab === undefined ? {} : { tabId: params.tab }),
+          ...(params.newTab === true ? { newTab: true } : {}),
+        });
+        // open 会把目标设成「工作标签」，这里问一次它的身份，好让后续调用能指名道姓
+        const tabId = automation.tab().tabId;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${tabLine(automation, tabId)}\n${formatPageState("Opened", state)}`,
+            },
+          ],
+          details: { state, tabId },
+        };
+      } catch (error) {
+        throw decorateBrowserFailure(BROWSER_TOOL_NAMES.open, error);
+      }
     },
   };
 
@@ -796,16 +821,24 @@ export function createBrowserTools(
     async execute(_toolCallId, params: Static<typeof historySchema>) {
       const label =
         params.action === "back" ? "后退" : params.action === "forward" ? "前进" : "刷新";
-      const state = await withAgentActivity(
+      return withinTab(
         automation,
+        params.tab,
         `正在${label}`,
-        () => automation.history(params.action),
         BROWSER_TOOL_NAMES.history,
+        async (ops) => {
+          const state = await ops.history(params.action);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${tabLine(automation, ops.tabId)}\n${formatPageState(params.action, state)}`,
+              },
+            ],
+            details: { state, tabId: ops.tabId },
+          };
+        },
       );
-      return {
-        content: [{ type: "text", text: formatPageState(params.action, state) }],
-        details: { state },
-      };
     },
   };
 
@@ -814,137 +847,126 @@ export function createBrowserTools(
     label: BROWSER_TOOL_NAMES.snapshot,
     description: SNAPSHOT_DESCRIPTION,
     parameters: snapshotSchema,
-    async execute() {
-      const result = await withAgentActivity(
+    async execute(_toolCallId, params: Static<typeof snapshotSchema>) {
+      return withinTab(
         automation,
+        params.tab,
         "正在读取页面",
-        () => automation.snapshot(),
         BROWSER_TOOL_NAMES.snapshot,
+        async (ops) => {
+          const result = await ops.snapshot();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${tabLine(automation, ops.tabId)}\n${formatSnapshot(result)}`,
+              },
+            ],
+            details: result,
+          };
+        },
       );
-      return { content: [{ type: "text", text: formatSnapshot(result) }], details: result };
     },
   };
 
-  const click: AgentHarnessTool<ExecutionToolContext, typeof clickSchema> = {
-    name: BROWSER_TOOL_NAMES.click,
-    label: BROWSER_TOOL_NAMES.click,
-    description: CLICK_DESCRIPTION,
-    parameters: clickSchema,
-    async execute(_toolCallId, params: Static<typeof clickSchema>) {
-      const outcome = await withAgentActivity(
+  const act: AgentHarnessTool<ExecutionToolContext, typeof actSchema> = {
+    name: BROWSER_TOOL_NAMES.act,
+    label: BROWSER_TOOL_NAMES.act,
+    description: ACT_DESCRIPTION,
+    parameters: actSchema,
+    async execute(_toolCallId, params: Static<typeof actSchema>) {
+      return withinTab(
         automation,
-        `正在点击 ${params.ref}`,
-        () => automation.click(params.ref),
-        BROWSER_TOOL_NAMES.click,
+        params.tab,
+        actNote(params),
+        BROWSER_TOOL_NAMES.act,
+        async (ops) => {
+          const header = tabLine(automation, ops.tabId);
+          switch (params.action) {
+            case "click": {
+              if (params.ref === undefined) throw new Error("click 需要 ref（来自最近一次快照）。");
+              const outcome = await ops.click(params.ref);
+              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
+              const text = withActionNotes(
+                outcome.navigated
+                  ? `Clicked ${target}. The page navigated; snapshot again to see the new content.`
+                  : `Clicked ${target}. The page did not navigate; snapshot again to see what changed.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "type": {
+              if (params.ref === undefined) throw new Error("type 需要 ref（来自最近一次快照）。");
+              if (params.text === undefined) throw new Error("type 需要 text。");
+              const outcome = await ops.type(params.ref, params.text, params.submit === true);
+              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
+              const suffix = params.submit === true ? " and pressed Enter" : "";
+              const text = withActionNotes(
+                outcome.navigated
+                  ? `Typed into ${target}${suffix}. The page navigated; snapshot again to see the result.`
+                  : `Typed into ${target}${suffix}. The page did not navigate; snapshot again to confirm the field now holds the text.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "press": {
+              if (params.key === undefined)
+                throw new Error("press 需要 key（如 Enter / Escape / Control+A）。");
+              const outcome = await ops.press(params.key, params.ref);
+              const where =
+                outcome.name === ""
+                  ? ""
+                  : ` on ${params.ref ?? "(the focused element)"} ("${outcome.name}")`;
+              const text = withActionNotes(
+                outcome.navigated
+                  ? `Pressed ${outcome.keys}${where}. The page navigated; snapshot again to see the new content.`
+                  : `Pressed ${outcome.keys}${where}. The page did not navigate; snapshot again to see what changed.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "hover": {
+              if (params.ref === undefined) throw new Error("hover 需要 ref（来自最近一次快照）。");
+              const outcome = await ops.hover(params.ref);
+              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
+              const text = withActionNotes(
+                outcome.navigated
+                  ? `Hovered ${target}. The page navigated; snapshot again to see the new content.`
+                  : `Hovered ${target}. The page did not navigate; snapshot again to see what appeared.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "select": {
+              if (params.ref === undefined)
+                throw new Error("select 需要 ref（来自最近一次快照）。");
+              const match = pickOptionMatch(params);
+              const outcome = await ops.select(params.ref, match);
+              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
+              const suffix = outcome.navigated
+                ? "The page navigated; snapshot again to see the new content."
+                : "The page did not navigate; snapshot again to confirm the field now holds the selection.";
+              const text = withActionNotes(
+                `Selected "${outcome.label}" (value="${outcome.value}") in ${target}. ${suffix}`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "scroll": {
+              const deltaY = params.deltaY;
+              if (typeof deltaY !== "number" || !Number.isFinite(deltaY) || deltaY === 0) {
+                throw new Error("scroll 需要非零的 deltaY（正数向下、负数向上，600 约一屏）。");
+              }
+              const outcome = await ops.scroll(deltaY, params.deltaX ?? 0);
+              const text = withActionNotes(
+                `Scrolled ${deltaY > 0 ? "down" : "up"} ${Math.abs(deltaY)}px.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+          }
+        },
       );
-      const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-      const text = withActionNotes(
-        outcome.navigated
-          ? `Clicked ${target}. The page navigated; snapshot again to see the new content.`
-          : `Clicked ${target}. The page did not navigate; snapshot again to see what changed.`,
-        outcome,
-      );
-      return { content: [{ type: "text", text }], details: outcome };
-    },
-  };
-
-  const typeTool: AgentHarnessTool<ExecutionToolContext, typeof typeSchema> = {
-    name: BROWSER_TOOL_NAMES.type,
-    label: BROWSER_TOOL_NAMES.type,
-    description: TYPE_DESCRIPTION,
-    parameters: typeSchema,
-    async execute(_toolCallId, params: Static<typeof typeSchema>) {
-      const outcome = await withAgentActivity(
-        automation,
-        `正在输入到 ${params.ref}`,
-        () => automation.type(params.ref, params.text, params.submit === true),
-        BROWSER_TOOL_NAMES.type,
-      );
-      const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-      const suffix = params.submit === true ? " and pressed Enter" : "";
-      const text = withActionNotes(
-        outcome.navigated
-          ? `Typed into ${target}${suffix}. The page navigated; snapshot again to see the result.`
-          : `Typed into ${target}${suffix}. The page did not navigate; snapshot again to confirm the field now holds the text.`,
-        outcome,
-      );
-      return { content: [{ type: "text", text }], details: outcome };
-    },
-  };
-
-  const press: AgentHarnessTool<ExecutionToolContext, typeof pressSchema> = {
-    name: BROWSER_TOOL_NAMES.press,
-    label: BROWSER_TOOL_NAMES.press,
-    description: PRESS_DESCRIPTION,
-    parameters: pressSchema,
-    async execute(_toolCallId, params: Static<typeof pressSchema>) {
-      const outcome = await withAgentActivity(
-        automation,
-        `正在按键 ${params.key}`,
-        () => automation.press(params.key, params.ref),
-        BROWSER_TOOL_NAMES.press,
-      );
-      const where =
-        outcome.name === ""
-          ? ""
-          : ` on ${params.ref ?? "(the focused element)"} ("${outcome.name}")`;
-      const text = withActionNotes(
-        outcome.navigated
-          ? `Pressed ${outcome.keys}${where}. The page navigated; snapshot again to see the new content.`
-          : `Pressed ${outcome.keys}${where}. The page did not navigate; snapshot again to see what changed.`,
-        outcome,
-      );
-      return { content: [{ type: "text", text }], details: outcome };
-    },
-  };
-
-  const hover: AgentHarnessTool<ExecutionToolContext, typeof hoverSchema> = {
-    name: BROWSER_TOOL_NAMES.hover,
-    label: BROWSER_TOOL_NAMES.hover,
-    description: HOVER_DESCRIPTION,
-    parameters: hoverSchema,
-    async execute(_toolCallId, params: Static<typeof hoverSchema>) {
-      const outcome = await withAgentActivity(
-        automation,
-        `正在悬停到 ${params.ref}`,
-        () => automation.hover(params.ref),
-        BROWSER_TOOL_NAMES.hover,
-      );
-      const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-      const text = withActionNotes(
-        outcome.navigated
-          ? `Hovered ${target}. The page navigated; snapshot again to see the new content.`
-          : `Hovered ${target}. The page did not navigate; snapshot again to see what appeared.`,
-        outcome,
-      );
-      return { content: [{ type: "text", text }], details: outcome };
-    },
-  };
-
-  const select: AgentHarnessTool<ExecutionToolContext, typeof selectSchema> = {
-    name: BROWSER_TOOL_NAMES.select,
-    label: BROWSER_TOOL_NAMES.select,
-    description: SELECT_DESCRIPTION,
-    parameters: selectSchema,
-    async execute(_toolCallId, params: Static<typeof selectSchema>) {
-      // 参数校验放在这里而不是交给 schema：typebox 表达不了「恰好一个」，而服务侧抛出的
-      // 中文错误会原样回给模型，模型据此就能改对参数。
-      const match = pickOptionMatch(params);
-      const outcome = await withAgentActivity(
-        automation,
-        "正在选择下拉项",
-        () => automation.select(params.ref, match),
-        BROWSER_TOOL_NAMES.select,
-      );
-      const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-      const suffix = outcome.navigated
-        ? "The page navigated; snapshot again to see the new content."
-        : "The page did not navigate; snapshot again to confirm the field now holds the selection.";
-      const text = withActionNotes(
-        `Selected "${outcome.label}" (value="${outcome.value}") in ${target}. ${suffix}`,
-        outcome,
-      );
-      return { content: [{ type: "text", text }], details: outcome };
     },
   };
 
@@ -955,13 +977,21 @@ export function createBrowserTools(
     parameters: waitSchema,
     async execute(_toolCallId, params: Static<typeof waitSchema>) {
       const options = pickWaitOptions(params);
-      const result = await withAgentActivity(
+      return withinTab(
         automation,
+        params.tab,
         waitNote(options),
-        () => automation.wait(options),
         BROWSER_TOOL_NAMES.wait,
+        async (ops) => {
+          const result = await ops.wait(options);
+          return {
+            content: [
+              { type: "text", text: `${tabLine(automation, ops.tabId)}\n${formatWait(result)}` },
+            ],
+            details: result,
+          };
+        },
       );
-      return { content: [{ type: "text", text: formatWait(result) }], details: result };
     },
   };
 
@@ -970,71 +1000,61 @@ export function createBrowserTools(
     label: BROWSER_TOOL_NAMES.screenshot,
     description: SCREENSHOT_DESCRIPTION,
     parameters: screenshotSchema,
-    async execute() {
-      const shot = await withAgentActivity(
+    async execute(_toolCallId, params: Static<typeof screenshotSchema>) {
+      return withinTab(
         automation,
+        params.tab,
         "正在截图",
-        () => automation.screenshot(),
         BROWSER_TOOL_NAMES.screenshot,
+        async (ops) => {
+          const shot = await ops.screenshot();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${tabLine(automation, ops.tabId)}\nScreenshot of the visible viewport (${shot.width}×${shot.height}).`,
+              },
+              { type: "image", data: shot.data, mimeType: shot.mimeType },
+            ],
+            details: { width: shot.width, height: shot.height, tabId: ops.tabId },
+          };
+        },
       );
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Screenshot of the visible viewport (${shot.width}×${shot.height}).`,
-          },
-          { type: "image", data: shot.data, mimeType: shot.mimeType },
-        ],
-        details: { width: shot.width, height: shot.height },
-      };
     },
   };
 
-  const consoleTool: AgentHarnessTool<ExecutionToolContext, typeof consoleSchema> = {
-    name: BROWSER_TOOL_NAMES.console,
-    label: BROWSER_TOOL_NAMES.console,
-    description: CONSOLE_DESCRIPTION,
-    parameters: consoleSchema,
-    async execute() {
-      // 读缓冲本身不碰页面，但它也要走这条链：**「每个工具都在同一条串行链上」是
-      // 一条不该有例外的规则** —— 一旦有一个例外，下一个人加工具时就不知道要不要包，
-      // 而漏包的代价（两次点击序列交错）极难归因。代价只是提示条多闪一下。
-      const report = await withAgentActivity(
+  const logs: AgentHarnessTool<ExecutionToolContext, typeof logsSchema> = {
+    name: BROWSER_TOOL_NAMES.logs,
+    label: BROWSER_TOOL_NAMES.logs,
+    description: LOGS_DESCRIPTION,
+    parameters: logsSchema,
+    async execute(_toolCallId, params: Static<typeof logsSchema>) {
+      // 读缓冲本身不碰页面，但它也要走这条链：提示条与错误收口的口径必须一致
+      return withinTab(
         automation,
-        "正在读取页面控制台",
-        () => automation.console(),
-        BROWSER_TOOL_NAMES.console,
+        params.tab,
+        params.type === "console" ? "正在读取控制台" : "正在读取网络记录",
+        BROWSER_TOOL_NAMES.logs,
+        async (ops) => {
+          const header = tabLine(automation, ops.tabId);
+          if (params.type === "console") {
+            const report = await ops.console();
+            return {
+              content: [{ type: "text", text: `${header}\n${formatConsole(report)}` }],
+              details: report,
+            };
+          }
+          const query: BrowserNetworkQuery = {
+            ...(params.failuresOnly === undefined ? {} : { failuresOnly: params.failuresOnly }),
+            ...(params.clear === undefined ? {} : { clear: params.clear }),
+          };
+          const report = await ops.network(query);
+          return {
+            content: [{ type: "text", text: `${header}\n${formatNetwork(report)}` }],
+            details: report,
+          };
+        },
       );
-      return {
-        content: [{ type: "text", text: formatConsole(report) }],
-        details: report,
-      };
-    },
-  };
-
-  const network: AgentHarnessTool<ExecutionToolContext, typeof networkSchema> = {
-    name: BROWSER_TOOL_NAMES.network,
-    label: BROWSER_TOOL_NAMES.network,
-    description: NETWORK_DESCRIPTION,
-    parameters: networkSchema,
-    async execute(_toolCallId, params: Static<typeof networkSchema>) {
-      const query: BrowserNetworkQuery = {
-        failuresOnly: params.failuresOnly === true,
-        clear: params.clear === true,
-      };
-      // 返回值从「裸数组」换成了 BrowserNetworkReport（§6）：bufferEmpty / noFailures / omitted
-      // 是三种不同的事实，工具层必须分开说，否则模型会把「全都成功了」读成「还没发请求」。
-      const report = await withAgentActivity(
-        automation,
-        "正在读取网络请求",
-        () => automation.network(query),
-        BROWSER_TOOL_NAMES.network,
-      );
-      const parts: string[] = [];
-      // 清空是「从现在开始量」的动作：先说明缓冲已经空了，再看记录，顺序不能反
-      if (params.clear === true) parts.push("Network log cleared before this read.");
-      parts.push(formatNetwork(report));
-      return { content: [{ type: "text", text: parts.join("\n") }], details: report };
     },
   };
 
@@ -1044,27 +1064,24 @@ export function createBrowserTools(
     description: DIALOG_DESCRIPTION,
     parameters: dialogSchema,
     async execute(_toolCallId, params: Static<typeof dialogSchema>) {
-      const promptText = params.promptText ?? "";
-      // 空串等同于没给：prompt 弹窗的默认文字是页面自己写的，不该被空串盖掉
-      const policy: BrowserDialogPolicy =
-        promptText === "" ? { action: params.action } : { action: params.action, promptText };
-      const outcome = await withAgentActivity(
+      const policy: BrowserDialogPolicy = { action: params.action };
+      return withinTab(
         automation,
+        params.tab,
         "正在设置弹窗策略",
-        () => automation.dialog(policy),
         BROWSER_TOOL_NAMES.dialog,
+        async (ops) => {
+          const outcome = await ops.dialog(policy);
+          const text =
+            `Dialogs in this tab are now answered automatically with "${outcome.policy.action}".\n` +
+            `${outcome.handledSinceLastRead} dialog(s) were answered since the last time this tool was called. ` +
+            "Their content is in the console (browser_logs type console).";
+          return {
+            content: [{ type: "text", text: `${tabLine(automation, ops.tabId)}\n${text}` }],
+            details: outcome,
+          };
+        },
       );
-      const lines = [
-        `JavaScript dialogs will now be ${policy.action === "accept" ? "accepted" : "dismissed"}.`,
-      ];
-      if (promptText !== "") lines.push(`Prompt text: "${promptText}"`);
-      lines.push(
-        outcome.handledSinceLastRead === 0
-          ? "No dialogs have popped up since the last call to this tool."
-          : `${outcome.handledSinceLastRead} dialog(s) have been handled automatically since the last call to this tool.`,
-      );
-      lines.push("Details of each dialog are logged to the console (browser_console).");
-      return { content: [{ type: "text", text: lines.join("\n") }], details: outcome };
     },
   };
 
@@ -1074,31 +1091,22 @@ export function createBrowserTools(
     description: EVALUATE_DESCRIPTION,
     parameters: evaluateSchema,
     async execute(_toolCallId, params: Static<typeof evaluateSchema>) {
-      const result = await withAgentActivity(
+      return withinTab(
         automation,
-        "正在页面中执行脚本",
-        () => automation.evaluate(params.code),
+        params.tab,
+        "正在页面内求值",
         BROWSER_TOOL_NAMES.evaluate,
+        async (ops) => {
+          const result = await ops.evaluate(params.code);
+          const header = tabLine(automation, ops.tabId);
+          const text = result.ok
+            ? `${header}\n${result.value === "" ? "(the code returned nothing)" : result.value}`
+            : `${header}\nThe code threw: ${result.error}`;
+          return { content: [{ type: "text", text }], details: result };
+        },
       );
-      const text = result.ok ? `Result: ${result.value}` : `The code threw: ${result.error}`;
-      return { content: [{ type: "text", text }], details: result };
     },
   };
 
-  return [
-    open,
-    history,
-    snapshot,
-    click,
-    typeTool,
-    press,
-    hover,
-    select,
-    wait,
-    screenshot,
-    consoleTool,
-    network,
-    dialog,
-    evaluate,
-  ];
+  return [open, history, snapshot, act, wait, screenshot, logs, dialog, evaluate];
 }

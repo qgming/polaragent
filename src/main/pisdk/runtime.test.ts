@@ -22,6 +22,7 @@ import {
   type PendingEntry,
   pairEntryWithMessage,
   readLaneModelRef,
+  sessionAllowedRoots,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
@@ -142,6 +143,16 @@ describe("loadAgentResources", () => {
     );
     expect(loaded.skills.map((skill) => skill.name)).not.toContain(SKILL_NAME);
     expect(loaded.skillsSection).not.toContain(SKILL_NAME);
+  });
+});
+
+describe("sessionAllowedRoots", () => {
+  it("包含 cwd、数据目录与系统临时目录：bash spill 文件（Full output: <path>）必须能被 read 打开", () => {
+    expect(sessionAllowedRoots("D:\\work\\demo")).toEqual([
+      "D:\\work\\demo",
+      "/data-oint-unused", // 本文件把 dataDir mock 成固定路径
+      tmpdir(),
+    ]);
   });
 });
 

@@ -46,7 +46,7 @@ function hardenWebviews(win: BrowserWindow): void {
     // 被拒后页面什么都不显示，看起来和「点击没生效」一模一样。把 URL 记进控制台
     // 缓冲（见 service.ts 的 recordBrowserPopup），模型读一次 console 就能分清。
     contents.setWindowOpenHandler(({ url }) => {
-      recordBrowserPopup(url);
+      recordBrowserPopup(contents, url);
       return { action: "deny" };
     });
     attachBrowserGuest(contents);

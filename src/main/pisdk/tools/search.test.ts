@@ -128,6 +128,19 @@ describe("grep", () => {
     });
   });
 
+  it("汇总行的英文单复数正确：3 matches，不是 3 matchs", async () => {
+    const text = textOf(await runGrep(root, { pattern: "alpha", include: "*.ts" }));
+
+    // match 的复数是 matches（es）：按单数拼 "s" 会写出 "matchs" —— 模型会照抄这个词
+    expect(text.split("\n").at(-1)).toContain("3 matches in 3 files");
+  });
+
+  it("只有一条命中时用单数 match / file", async () => {
+    const text = textOf(await runGrep(root, { pattern: "jsx" }));
+
+    expect(text.split("\n").at(-1)).toContain("1 match in 1 file");
+  });
+
   it("无命中时给出明确文案而不是空响应，并报告搜过的文件数", async () => {
     const outcome = await runGrep(root, { pattern: "definitely-not-here" });
     const text = textOf(outcome);

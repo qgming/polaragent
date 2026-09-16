@@ -18,32 +18,40 @@ export function RightPanelChooser(): React.JSX.Element {
   const openRightPanel = useUiStore((s) => s.openRightPanel);
 
   return (
-    <ul className="flex flex-col px-2 pt-2">
-      {RIGHT_PANEL_VIEWS.map((view) => {
-        const meta = RIGHT_PANEL_VIEW_META[view];
-        const Icon = meta.icon;
+    <div className="flex flex-col">
+      <ul className="flex flex-col px-2 pt-2">
+        {RIGHT_PANEL_VIEWS.map((view) => {
+          const meta = RIGHT_PANEL_VIEW_META[view];
+          const Icon = meta.icon;
 
-        return (
-          <li key={view}>
-            <button
-              type="button"
-              onClick={() => openRightPanel(view)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-3.5 text-left",
-                "text-[14.5px] text-foreground outline-none transition-colors",
-                "hover:bg-accent focus-visible:ring-1 focus-visible:ring-foreground/20",
-              )}
-            >
-              <Icon className="text-ink-2 size-[18px] shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{t(meta.labelKey)}</span>
-              {/* 快捷键提示：只给真有快捷键的那两项，其余留白 ——
-                  给每一项都画一个空胶囊会变成噪声 */}
-              {meta.shortcut !== undefined && <ShortcutHint letter={meta.shortcut} />}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+          return (
+            <li key={view}>
+              <button
+                type="button"
+                onClick={() => openRightPanel(view)}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-lg px-3 py-3.5 text-left",
+                  "text-[14.5px] text-foreground outline-none transition-colors",
+                  "hover:bg-accent focus-visible:ring-1 focus-visible:ring-foreground/20",
+                )}
+              >
+                <Icon className="text-ink-2 size-[18px] shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{t(meta.labelKey)}</span>
+                {/* 快捷键提示：只给真有快捷键的那两项，其余留白 ——
+                    给每一项都画一个空胶囊会变成噪声 */}
+                {meta.shortcut !== undefined && <ShortcutHint letter={meta.shortcut} />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {/* 一句话说清多开的规则：浏览器每次从这里打开都是新标签（多开是特性），
+          其余视图再点一次只是切回已有标签。不说的话，「怎么开了两个浏览器」和
+          「为什么文件只开了一个」都会变成困惑 */}
+      <p className="px-4 pt-2 text-[11.5px] leading-relaxed text-ink-4">
+        {t("rightPanel.chooserHint")}
+      </p>
+    </div>
   );
 }
 

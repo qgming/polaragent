@@ -67,4 +67,7 @@ export function registerChatIpc(): void {
       await getChatRuntime().compact(request.sessionId, request.instructions);
     },
   );
+  handle(IPC.chat.snapshot, "读取流式快照", async (request: { sessionId: string }) => {
+    return getChatRuntime().streamSnapshot(request.sessionId);
+  });
 }

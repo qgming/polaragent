@@ -11,6 +11,7 @@ import type {
   BrowserPageState,
   BrowserSnapshot,
   BrowserStatus,
+  BrowserTabInfo,
   BrowserWaitResult,
 } from "@/shared/contracts/browser";
 
@@ -45,7 +46,7 @@ export interface BrowserPressOutcome extends BrowserActionOutcome {
  * 三种都给，是因为「选中某一项」在页面上的表达方式本来就有三种：
  * value 是给程序看的（"us"）、label 是给人看的（"United States"）、
  * index 用于那些两者都空/重复的列表。只留一种会逼模型先写一段 evaluate 去查 ——
- * 那正是 browser_select 想省掉的一步。
+ * 那正是 browser_act 里 select 动作想省掉的一步。
  */
 export type BrowserOptionMatch =
   | { kind: "value"; value: string }
@@ -91,7 +92,7 @@ export interface BrowserDialogOutcome {
    * 上次调用本工具之后、被自动处理掉的弹窗数。
    *
    * 刻意不在这里回弹窗内容：内容已经进了控制台缓冲（level=warning），
-   * 读它走 browser_console —— 那条路是低风险的只读工具，
+   * 读它走 browser_logs —— 那条路是低风险的只读工具，
    * 不该为了「看一眼刚才弹了什么」就要过一次审批。
    */
   handledSinceLastRead: number;
@@ -115,27 +116,20 @@ export interface BrowserScreenshot {
 export type BrowserEvaluateResult = { ok: true; value: string } | { ok: false; error: string };
 
 /**
- * 内置浏览器的自动化能力。
+ * 一个浏览器标签上的操作集合。
  *
- * 实现是**全局单例**而不是按会话的：内置浏览器只有一个（右侧面板那一份，共用
- * `persist:oint-browser` 分区），同一时刻也只可能有一个页面。按会话建实例会让
- * 「A 会话打开的页面」与「用户眼前看到的页面」变成两份状态，而用户只看得见一份。
+ * 为什么按标签切一刀而不是在 BrowserAutomation 的每个方法上加一个 tabId 参数：
+ * 一次工具调用总是要连续做几件事（先定位、再校验、再报效果），把「作用于哪个标签」
+ * 在入口处解析一次、之后全部走同一个句柄，就不可能出现「定位用了 A 标签、点击落到 B 标签」
+ * 这类跨标签串味的错。句柄由 BrowserAutomation.tab() 给出。
  */
-export interface BrowserAutomation {
-  /**
-   * 标记「模型正在操作页面」（工具调用进行中），面板据此显示提示条。
-   *
-   * 放进这个接口而不是让工具直接 import service：service 依赖 electron，
-   * 而工具层要能在 node 里测试（见本文件顶部说明）。
-   */
+export interface BrowserTabOperations {
+  tabId: string;
+  /** 标记「模型正在操作这个标签」（面板据此显示提示条）；按计数增减 */
   setAgentActive(active: boolean, note?: string): void;
-  /** 当前状态（面板是否已挂载、页面在哪、模型是否在操作） */
-  status(): BrowserStatus;
-  /** 导航到 URL（缺 scheme 补 https）；返回导航后的页面状态 */
-  open(url: string): Promise<BrowserPageState>;
   /** 后退 / 前进 / 刷新 */
   history(action: "back" | "forward" | "reload"): Promise<BrowserPageState>;
-  /** 读页面：可见文本 + 可交互元素清单（element 的 ref 供 click / type 使用） */
+  /** 读页面：可见文本 + 可交互元素清单（element 的 ref 供 act 使用） */
   snapshot(): Promise<BrowserSnapshot>;
   /** 按 ref 点击（含链接跳转、表单提交按钮） */
   click(ref: string): Promise<BrowserActionOutcome>;
@@ -147,19 +141,21 @@ export interface BrowserAutomation {
   hover(ref: string): Promise<BrowserActionOutcome>;
   /** 选择下拉框的一项（按 value / label / index 匹配） */
   select(ref: string, match: BrowserOptionMatch): Promise<BrowserSelectOutcome>;
+  /** 在视口中心滚动页面（deltaY > 0 向下）；返回滚动前后的位置以便如实回报 */
+  scroll(deltaY: number, deltaX?: number): Promise<BrowserActionOutcome>;
   /** 等文本出现 / 等元素出现 / 等固定时长 */
   wait(options: BrowserWaitOptions): Promise<BrowserWaitResult>;
   /** 截图当前视口 */
   screenshot(): Promise<BrowserScreenshot>;
   /**
-   * 取页面控制台消息（增量读取：返回上次读取之后的新消息）。
+   * 取该标签控制台消息（增量读取：返回上次读取之后的新消息）。
    *
-   * 与其它读方法一样是 async：guest 不在时它要等面板打开（见 §等面板挂载的说明），
+   * 与其它读方法一样是 async：guest 不在时它要等面板打开，
    * 而等待只能发生在异步方法里。返回值本身仍是同步就能取到的缓冲内容。
    */
   console(): Promise<BrowserConsoleReport>;
   /**
-   * 读网络记录。
+   * 读该标签的网络记录。
    *
    * 与 console **语义相反**：不做增量清空，每次都给当前窗口内的完整记录。
    * 理由是两者被使用的时机不同 —— 控制台是「边跑边看日志」，重复读会淹没上下文；
@@ -167,8 +163,41 @@ export interface BrowserAutomation {
    * 需要「从现在开始量」时用 `clear: true` 显式清空。
    */
   network(query?: BrowserNetworkQuery): Promise<BrowserNetworkReport>;
-  /** 改 JS 弹窗（alert / confirm / prompt）的处理策略 */
+  /** 改该标签 JS 弹窗（alert / confirm）的处理策略 */
   dialog(policy: BrowserDialogPolicy): Promise<BrowserDialogOutcome>;
   /** 在页面里执行一段 JS（逃生门：快照表达不了的检查） */
   evaluate(code: string): Promise<BrowserEvaluateResult>;
+}
+
+/**
+ * 内置浏览器的自动化能力（主进程单例）。
+ *
+ * 实现是**全局单例**而不是按会话的：内置浏览器就是右侧栏那一组标签，
+ * 用户只看得见一份。按会话建实例会让「A 会话打开的页面」与「用户眼前看到的页面」
+ * 变成两份状态，而模型与用户看的必须是同一份。
+ *
+ * 多标签的边界：**标签的生命周期属于渲染层**（它创建 <webview>），主进程这边
+ * 按渲染层登记的 tabId 记账。工具调用要操作某个标签时先 `tab()` 拿句柄 ——
+ * 没有可用标签时报 UNAVAILABLE，提示模型先用 browser_open。
+ */
+export interface BrowserAutomation {
+  /** 当前状态（打开了哪些标签、模型是否正在操作） */
+  status(): BrowserStatus;
+  /** 当前所有标签（按创建顺序） */
+  listTabs(): BrowserTabInfo[];
+  /**
+   * 打开一个网址。
+   *
+   * 三种去向：给了 tabId → 在指定标签里导航；newTab=true → 请渲染层新建一个标签再导航；
+   * 都没给 → 导航到模型的工作标签（还没有就请渲染层建一个）。
+   * 无论哪种，这个标签都会成为模型后续调用的工作标签。
+   */
+  open(url: string, options?: { tabId?: string; newTab?: boolean }): Promise<BrowserPageState>;
+  /**
+   * 取某个标签的操作句柄。
+   *
+   * tabId 缺省 = 模型的工作标签 → 唯一打开的标签 → 用户正在看的标签；
+   * 一个标签都没有时抛 UNAVAILABLE（提示先 browser_open）。
+   */
+  tab(tabId?: string): BrowserTabOperations;
 }

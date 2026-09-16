@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts";
 import { dispatchEvent } from "./event-bridge";
 
-/** ChatEvent 全部 11 种事件各构造一个样本 */
+/** ChatEvent 全部 12 种事件各构造一个样本 */
 const sampleEvents: ChatEvent[] = [
   { type: "run-started", runId: "r1" },
   {
@@ -10,6 +10,7 @@ const sampleEvents: ChatEvent[] = [
     message: { id: "m1", role: "assistant", createdAt: 1, parts: [], status: "complete" },
   },
   { type: "part-upsert", messageId: "m1", partIndex: 0, part: { type: "text", text: "hi" } },
+  { type: "part-delta", messageId: "m1", partIndex: 0, kind: "text", delta: "!" },
   { type: "message-updated", messageId: "m1", patch: { status: "complete" } },
   { type: "queue-updated", items: [{ id: "q1", text: "t", mode: "steer" }] },
   {

@@ -26,7 +26,20 @@ import {
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
+import { BUILTIN_SUBAGENTS } from "../subagent-catalog";
 import type { AppToolContext } from "../tools";
+
+/**
+ * 内置子智能体清单（名字 + 一句话用途），拼进 Task 的描述。
+ *
+ * 为什么从定义生成而不是手抄一份：名字与用途只在 subagent-catalog 的 BUILTIN_SUBAGENTS 里定义，
+ * 两处各写一份必然漂移。这份清单必须出现在 Task 的描述里 —— 只写在系统提示时，
+ * 模型一旦没注意到它，就只能在收到「没有名为 X 的子智能体」的报错后才知道内置了哪几个
+ *（实测：模型因此一直在用 definition 临时造子智能体，而不是直接派 explorer 这类现成的）。
+ */
+const BUILTIN_SUBAGENT_ROSTER = BUILTIN_SUBAGENTS.map(
+  (definition) => `- ${definition.name}：${definition.description}`,
+).join("\n");
 
 /** 四个工具的名字：UI 图标表、权限层与测试都按它们登记 */
 export const SUBAGENT_TOOL_NAMES = {
@@ -243,6 +256,10 @@ const TASK_DESCRIPTION =
   "已经派出去的运行变成 interrupted（意外终止）时：上一个进程在它跑的时候退出了，没人叫它停，\n" +
   "我们也没有任何错误信息 —— **结果未知**。接下来怎么办由你决定：这件事还重要就用 resumeOf 重新\n" +
   "派一次（不用把任务全文再抄一遍），否则如实告诉用户它被打断了、以及你已经知道的部分。\n\n" +
+  "内置子智能体（直接用 agent 指定，不需要先定义）：\n" +
+  BUILTIN_SUBAGENT_ROSTER +
+  "\n" +
+  "系统提示里可能还列出用户自定义的定义；只干一次的特殊分工可以用 definition 临时定义。\n\n" +
   "参数：\n" +
   "- description：**必填且用户可见**（用 resumeOf 时可省略，沿用原来那句），一句话说明这次派发在做什么；\n" +
   "  写「调研 X 模块的重试逻辑」这样的一行。\n" +

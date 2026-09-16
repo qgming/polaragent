@@ -165,7 +165,9 @@ export function AskCard({
   return (
     <form
       data-slot="ask-card"
-      className={cn(paper, "flex w-full max-w-md flex-col gap-3.5 rounded-[20px] p-4", className)}
+      // 宽度跟着容器走（原先是 max-w-md）：卡片固定在输入框上方，与 Composer 同宽 ——
+      // 更窄会让人以为它是另一条独立的东西，而不是「该你说话了」这件事的一部分
+      className={cn(paper, "flex w-full flex-col gap-3.5 rounded-[20px] p-4", className)}
       onSubmit={handleSubmit}
       {...props}
     >

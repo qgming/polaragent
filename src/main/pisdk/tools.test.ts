@@ -85,6 +85,17 @@ describe("buildTools", () => {
     }
   });
 
+  it("read / edit 的描述都说明行号不属于文件内容（read 的输出确实带行号）", () => {
+    const tools = buildTools();
+    const read = tools.find((tool) => tool.name === TOOL_NAMES.read);
+    const edit = tools.find((tool) => tool.name === TOOL_NAMES.edit);
+
+    // read 承诺行号；edit 是逐字符匹配，必须警告模型别把行号复制进 oldText/newText
+    expect(read?.description).toContain("带行号");
+    expect(edit?.description).toContain("行号");
+    expect(edit?.description).toContain("oldText");
+  });
+
   it("自建工具的 name 与 label 一致", () => {
     const tools = buildTools();
     for (const name of CUSTOM_TOOLS) {

@@ -70,6 +70,8 @@ export const IPC = {
     queue: "chat:queue",
     compact: "chat:compact",
     event: "chat:event",
+    /** 拉取某会话当前流式消息的完整快照（增量缺口时整条补齐，见 ChatStreamSnapshot） */
+    snapshot: "chat:snapshot",
   },
   approvals: {
     respond: "approvals:respond",
@@ -152,14 +154,21 @@ export const IPC = {
     summary: "review:summary",
   },
   /**
-   * 内置浏览器：只有「读状态」一个 invoke 通道。
+   * 内置浏览器：状态读取 + 标签注册（三个 invoke 通道）。
    *
    * 页面的驱动（导航 / 点击 / 读内容）**不经过渲染层**：guest 由主进程从
    * did-attach-webview 拿到后直接操作（见 browser/service.ts）。渲染层的面板只需
-   * 把 <webview> 建出来，再用下面的 event 订阅「页面变了 / 模型在操作」。
+   * 把 <webview> 建出来、把「哪个 tabId 对应哪个 webContents」登记回来，
+   * 再用下面的 event 订阅「页面变了 / 模型在操作 / 请你开标签」。
    */
   browser: {
     status: "browser:status",
+    /** 登记一个标签：渲染层建好 webview 后调用，主进程据此把 tabId 与 guest 绑定 */
+    registerTab: "browser:register-tab",
+    /** 注销一个标签：标签页被关闭时调用，主进程释放它的 guest 引用与缓冲 */
+    unregisterTab: "browser:unregister-tab",
+    /** 用户切到了某个标签：主进程用它回答「active 是哪一个」 */
+    activateTab: "browser:activate-tab",
     /** 主进程 → 渲染进程的单向推送（同 terminal:event） */
     event: "browser:event",
   },
@@ -313,4 +322,17 @@ export interface IpcInvokeContract {
   [IPC.files.readFile]: { request: { path: string; root: string }; response: FileContent };
   [IPC.review.summary]: { request: { sessionId: string }; response: ReviewSummary };
   [IPC.browser.status]: { request: undefined; response: BrowserStatus };
+  [IPC.browser.registerTab]: {
+    /**
+     * 渲染层把一个浏览器标签的 guest 交给主进程。
+     *
+     * webContentsId 由 webview 元素的 getWebContentsId() 给出（主进程据此找到那个
+     * guest）；requestId 是回执：主进程之前在 open-request 里给的凭据，
+     * 带回来表示「你要的那个标签已经建好并挂上了」。
+     */
+    request: { tabId: string; webContentsId: number; requestId?: string };
+    response: undefined;
+  };
+  [IPC.browser.unregisterTab]: { request: { tabId: string }; response: undefined };
+  [IPC.browser.activateTab]: { request: { tabId: string }; response: undefined };
 }

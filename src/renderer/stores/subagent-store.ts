@@ -376,6 +376,14 @@ function authoritativeIdSet(runs: readonly SubagentRun[]): Record<string, true> 
 }
 
 export const useSubagentStore = create<SubagentState>()((set, get) => {
+  /**
+   * refresh 的在飞闸门：同一会话已有一次 `subagents:runs` 在飞就复用它。
+   *
+   * 多个调用方（主会话 pill、右侧面板、切会话）都可能同时来要同一份权威列表；
+   * 不合并的话一次挂载就会连着发好几条 IPC，而它们要的是同一份数据。
+   */
+  const refreshInFlight = new Map<string, Promise<void>>();
+
   /** 写入落定行并重算对外行；没有变化就完全不碰 state */
   const putDurable = (sessionId: string, incoming: readonly SubagentRun[]): void => {
     set((state) => {
@@ -397,6 +405,48 @@ export const useSubagentStore = create<SubagentState>()((set, get) => {
 
   const watch = (sessionId: string): void => {
     set((state) => ({ watchedSessions: { ...state.watchedSessions, [sessionId]: true } }));
+  };
+
+  /**
+   * 拉一次权威列表并落进 store（refresh 的实际实现；去重闸门见 refresh）。
+   */
+  const refreshOnce = async (sessionId: string): Promise<void> => {
+    watch(sessionId);
+    let list: SubagentRun[];
+    try {
+      list = await window.oint.subagents.runs(sessionId);
+    } catch {
+      // 拉不到就保持现状：转录那一路仍然可用（面板至少显示转录里有的行），
+      // 而在这里抛错只会变成调用方 effect 的 unhandled rejection。
+      // 关键：**不标记已对账** —— 一次 IPC 抖动不能把满屏 running 行判成意外终止
+      return;
+    }
+    /**
+     * runs() 是主进程的权威快照：它既进落定层（与转录走同一条「不降级终态」的合并规则），
+     * 又给出「哪些 running 是真的」这份名单 —— 名单之外还写着 running 的行只是重启后的残影，
+     * 到这一步才会被降级成意外终止（见 mergeDisplayed）。
+     */
+    set((state) => {
+      const durable = mergeDurable(state.durableRuns[sessionId] ?? [], list);
+      const authoritativeIds = {
+        ...state.authoritativeIds,
+        [sessionId]: authoritativeIdSet(list),
+      };
+      return {
+        durableRuns: { ...state.durableRuns, [sessionId]: durable },
+        authoritativeIds,
+        reconciledSessions: { ...state.reconciledSessions, [sessionId]: true },
+        runs: {
+          ...state.runs,
+          [sessionId]: mergeDisplayed(
+            durable,
+            state.liveRuns[sessionId],
+            authoritativeIds[sessionId],
+          ),
+        },
+      };
+    });
+    for (const run of list) void get().loadChild(run.childSessionId);
   };
 
   return {
@@ -435,43 +485,19 @@ export const useSubagentStore = create<SubagentState>()((set, get) => {
       void get().loadChild(run.childSessionId);
     },
 
-    async refresh(sessionId) {
-      watch(sessionId);
-      let list: SubagentRun[];
-      try {
-        list = await window.oint.subagents.runs(sessionId);
-      } catch {
-        // 拉不到就保持现状：转录那一路仍然可用（面板至少显示转录里有的行），
-        // 而在这里抛错只会变成调用方 effect 的 unhandled rejection。
-        // 关键：**不标记已对账** —— 一次 IPC 抖动不能把满屏 running 行判成意外终止
-        return;
-      }
-      /**
-       * runs() 是主进程的权威快照：它既进落定层（与转录走同一条「不降级终态」的合并规则），
-       * 又给出「哪些 running 是真的」这份名单 —— 名单之外还写着 running 的行只是重启后的残影，
-       * 到这一步才会被降级成意外终止（见 mergeDisplayed）。
-       */
-      set((state) => {
-        const durable = mergeDurable(state.durableRuns[sessionId] ?? [], list);
-        const authoritativeIds = {
-          ...state.authoritativeIds,
-          [sessionId]: authoritativeIdSet(list),
-        };
-        return {
-          durableRuns: { ...state.durableRuns, [sessionId]: durable },
-          authoritativeIds,
-          reconciledSessions: { ...state.reconciledSessions, [sessionId]: true },
-          runs: {
-            ...state.runs,
-            [sessionId]: mergeDisplayed(
-              durable,
-              state.liveRuns[sessionId],
-              authoritativeIds[sessionId],
-            ),
-          },
-        };
-      });
-      for (const run of list) void get().loadChild(run.childSessionId);
+    refresh(sessionId) {
+      // 同一会话已有一次在飞：复用那一次（调用方 await 的都是同一份权威列表）
+      const inFlight = refreshInFlight.get(sessionId);
+      if (inFlight !== undefined) return inFlight;
+      const task = (async () => {
+        try {
+          await refreshOnce(sessionId);
+        } finally {
+          refreshInFlight.delete(sessionId);
+        }
+      })();
+      refreshInFlight.set(sessionId, task);
+      return task;
     },
 
     setRunsFromTranscript(sessionId, messages) {

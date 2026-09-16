@@ -12,14 +12,11 @@ import {
   FileTextIcon,
   GlobeIcon,
   HistoryIcon,
-  KeyboardIcon,
-  ListChecksIcon,
   ListIcon,
   ListTodoIcon,
   type LucideIcon,
   MessageCircleQuestion,
   MousePointerClickIcon,
-  MousePointerIcon,
   NetworkIcon,
   PenLineIcon,
   RocketIcon,
@@ -28,11 +25,10 @@ import {
   SquareIcon,
   SquarePenIcon,
   TerminalIcon,
-  TextCursorInputIcon,
   TextSearchIcon,
   TimerIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type AgentState,
@@ -95,20 +91,16 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   job_output: ScrollTextIcon,
   job_list: ListIcon,
   job_kill: SquareIcon,
-  // 浏览器十四件套：打开 / 历史 / 读页面 / 点击 / 输入 / 截图 / 控制台 / 执行脚本 / 按键 / 悬停 / 下拉 / 等待 / 网络 / 弹窗策略
+  // 浏览器九件套：打开 / 历史 / 读页面 / 动作（点击·输入·按键·悬停·下拉·滚动）/ 等待 /
+  // 截图 / 日志（控制台·网络）/ 弹窗策略 / 执行脚本
   browser_open: GlobeIcon,
   browser_history: HistoryIcon,
   browser_snapshot: ScanEyeIcon,
-  browser_click: MousePointerClickIcon,
-  browser_type: TextCursorInputIcon,
+  browser_act: MousePointerClickIcon,
   browser_screenshot: CameraIcon,
-  browser_console: ScrollTextIcon,
+  browser_logs: ScrollTextIcon,
   browser_evaluate: CodeIcon,
-  browser_press: KeyboardIcon,
-  browser_hover: MousePointerIcon,
-  browser_select: ListChecksIcon,
   browser_wait: TimerIcon,
-  browser_network: NetworkIcon,
   browser_dialog: BellRingIcon,
   // 子智能体四件套：委派 / 等它 / 列一下 / 停掉（与主进程 tools.ts 的 Task 系列一一对应）
   Task: Bot,
@@ -133,24 +125,19 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   job_output: { resting: "tools.jobOutput", active: "tools.jobOutputActive" },
   job_list: { resting: "tools.jobList", active: "tools.jobListActive" },
   job_kill: { resting: "tools.jobKill", active: "tools.jobKillActive" },
-  // 浏览器十四件套（词条见 locales 的 tools.browser*），后六项是按键 / 悬停 / 下拉 / 等待 / 网络 / 弹窗策略
+  // 浏览器九件套（词条见 locales 的 tools.browser*）
   browser_open: { resting: "tools.browserOpen", active: "tools.browserOpenActive" },
   browser_history: { resting: "tools.browserHistory", active: "tools.browserHistoryActive" },
   browser_snapshot: { resting: "tools.browserSnapshot", active: "tools.browserSnapshotActive" },
-  browser_click: { resting: "tools.browserClick", active: "tools.browserClickActive" },
-  browser_type: { resting: "tools.browserType", active: "tools.browserTypeActive" },
+  browser_act: { resting: "tools.browserAction", active: "tools.browserActionActive" },
+  browser_wait: { resting: "tools.browserWait", active: "tools.browserWaitActive" },
   browser_screenshot: {
     resting: "tools.browserScreenshot",
     active: "tools.browserScreenshotActive",
   },
-  browser_console: { resting: "tools.browserConsole", active: "tools.browserConsoleActive" },
-  browser_evaluate: { resting: "tools.browserEvaluate", active: "tools.browserEvaluateActive" },
-  browser_press: { resting: "tools.browserPress", active: "tools.browserPressActive" },
-  browser_hover: { resting: "tools.browserHover", active: "tools.browserHoverActive" },
-  browser_select: { resting: "tools.browserSelect", active: "tools.browserSelectActive" },
-  browser_wait: { resting: "tools.browserWait", active: "tools.browserWaitActive" },
-  browser_network: { resting: "tools.browserNetwork", active: "tools.browserNetworkActive" },
+  browser_logs: { resting: "tools.browserLogs", active: "tools.browserLogsActive" },
   browser_dialog: { resting: "tools.browserDialog", active: "tools.browserDialogActive" },
+  browser_evaluate: { resting: "tools.browserEvaluate", active: "tools.browserEvaluateActive" },
   // 子智能体四件套（词条见 locales 的 tools.task*）
   Task: { resting: "tools.task", active: "tools.taskActive" },
   TaskWait: { resting: "tools.taskWait", active: "tools.taskWaitActive" },
@@ -293,6 +280,18 @@ function SubagentStatus({
   }, []);
 
   /**
+   * 消息数组在流式期间每个 flush 都会换引用（正文在长），拿它当 effect 依赖等于让
+   * 下面那段「推导运行行 + 向主进程对账」跟着每个 token 跑一遍 —— 每个 Task pill
+   * 都来一次，多路流并行时就是一场 subagents:runs 的 IPC 风暴（卡死的主要放大器之一）。
+   *
+   * 结构签名只在**形状**变化时变：条数、末条 id、末条 parts 数。Task 调用落地、新消息
+   * 到达都会改变它，而正文增长不会 —— 对账语义（转录里出现了新的委派）只依赖形状。
+   */
+  const structureKey = `${messages?.length ?? -1}:${messages?.at(-1)?.id ?? ""}:${messages?.at(-1)?.parts.length ?? -1}`;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  /**
    * 把父会话的转录交给 store 推导运行行。
    *
    * 转录只是**一路**来源，而且是重启后最不可信的那一路：`Task` 的 details 落的
@@ -304,15 +303,18 @@ function SubagentStatus({
    * 这件事以前只有右侧栏面板做，主会话里的 pill 从没做过 ——
    * 于是重启后对话里就一直显示「运行中 · 0s」，而磁盘上的记录其实是对的。
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 结构签名才是触发条件，messages 从 ref 读最新值
   useEffect(() => {
     if (activeSessionId === null) return;
+    const current = messagesRef.current;
+    if (current === undefined) return;
     const store = useSubagentStore.getState();
-    if (messages !== undefined) store.setRunsFromTranscript(activeSessionId, messages);
+    store.setRunsFromTranscript(activeSessionId, current);
     // 拉不到时 refresh 自己会保持现状（不标记已对账），失败只记在控制台，不打断对话
     void store.refresh(activeSessionId).catch((failure: unknown) => {
       console.warn(`读取子智能体运行列表失败：${String(failure)}`);
     });
-  }, [activeSessionId, messages]);
+  }, [activeSessionId, structureKey]);
 
   /**
    * pill 显示的其实是 store 里那条**已经对过账**的行，details 只是兜底。

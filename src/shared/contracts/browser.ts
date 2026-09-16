@@ -123,50 +123,71 @@ export interface BrowserNetworkReport {
   noFailures: boolean;
 }
 
+/**
+ * 一个浏览器标签的对外身份。
+ *
+ * 右侧栏可以同时开着多个浏览器标签（各自一个 <webview> guest），主进程按 tabId 记账，
+ * 模型的每个浏览器工具都能用 `tab` 参数指定作用于哪一个；缺省是「模型的工作标签」。
+ */
+export interface BrowserTabInfo {
+  /** 形如 "t3"；由渲染层分配，全局唯一 */
+  tabId: string;
+  /** 用户此刻在看的那个标签 */
+  active: boolean;
+  url: string;
+  title: string;
+}
+
 /** 触摸过一次「模型正在操作页面」的状态视图；面板重挂载后用它重新同步 */
 export interface BrowserStatus {
-  /** guest 是否已就绪（浏览器面板已挂载） */
+  /** 是否至少有一个浏览器标签已就绪 */
   open: boolean;
-  state: BrowserPageState;
+  /** 当前所有浏览器标签（按创建顺序） */
+  tabs: BrowserTabInfo[];
   /** 模型正在操作页面（工具调用进行中） */
   agentActive: boolean;
 }
 
 /** 主进程 → 渲染进程的单向推送 */
 export type BrowserEvent =
-  /** 页面状态变化：导航、加载开始/结束、标题变化、加载失败 */
-  | { type: "state"; state: BrowserPageState }
-  /** 模型要用内置浏览器：请把右侧面板切到「浏览器」并展开 */
-  | { type: "open-request" }
-  /** 模型开始 / 结束操作页面，面板据此显示提示条 */
-  | { type: "agent"; active: boolean; note?: string };
+  /** 某个标签的页面状态变化：导航、加载开始/结束、标题变化、加载失败 */
+  | { type: "state"; tabId: string; state: BrowserPageState }
+  /**
+   * 模型要用内置浏览器：请把右侧栏展开、并在需要时**新建**一个浏览器标签。
+   *
+   * requestId 是回执凭据：渲染层把目标标签建好（webview 挂上）后，用
+   * browser:register-tab 把这个 id 带回来，主进程才知道该往哪个 guest 上导航 ——
+   * 「新建标签」是渲染层的动作，没有回执主进程就只能盲等。
+   */
+  | { type: "open-request"; requestId: string; newTab: boolean; tabId?: string }
+  /** 模型开始 / 结束操作某个标签的页面，面板据此在该标签上显示提示条 */
+  | { type: "agent"; active: boolean; note?: string; tabId?: string };
 
 /**
  * 工具名常量：权限层、UI 图标表与测试都按它登记，避免三处各写一份字面量。
  *
- * 职责边界刻意不重叠（对齐 Playwright MCP / codex 那类 agent 浏览器工具的词汇表）：
- *   · open / history —— 到哪个页面；
+ * **刻意只有 9 个**（原先 14 个）：工具越多，模型在「该用哪个」上的选择成本越高，
+ * 而浏览器动作 90% 落在同一组语义上。合并的口径是按**问题**分而不是按**事件**分：
+ *   · open / history —— 到哪个页面（history 管 back/forward/reload）；
  *   · snapshot —— 页面长什么样（带 ref 的可交互元素清单，后面所有动作都靠 ref）；
- *   · click / type / press / hover / select —— 改变页面状态；
+ *   · act —— 改变页面状态：click / type / press / hover / select / scroll 六合一，
+ *     它们的参数天然互斥（ref / text / key / 值），一个 action 字段就能讲清；
  *   · wait —— 等异步渲染落定（SPA 的头号问题）；
  *   · screenshot —— 看起来是什么样；
- *   · console / network —— 页面自己报了什么错、发了什么请求；
- *   · dialog —— JS 弹窗策略（alert/confirm/prompt 不处理会把页面永久卡住）；
+ *   · logs —— 页面自己报了什么错、发了什么请求（console / network 两种视图）；
+ *   · dialog —— JS 弹窗策略（alert/confirm 不处理会把页面永久卡住）；
  *   · evaluate —— 逃生门（快照表达不了的检查）。
+ *
+ * 每一个工具都接受可选的 `tab` 参数（作用于哪个标签），输出里也带当前标签身份。
  */
 export const BROWSER_TOOL_NAMES = {
   open: "browser_open",
   history: "browser_history",
   snapshot: "browser_snapshot",
-  click: "browser_click",
-  type: "browser_type",
-  press: "browser_press",
-  hover: "browser_hover",
-  select: "browser_select",
+  act: "browser_act",
   wait: "browser_wait",
   screenshot: "browser_screenshot",
-  console: "browser_console",
-  network: "browser_network",
+  logs: "browser_logs",
   dialog: "browser_dialog",
   evaluate: "browser_evaluate",
 } as const;
@@ -185,8 +206,7 @@ export const BROWSER_TOOL_NAME_LIST = Object.values(BROWSER_TOOL_NAMES);
  */
 export const BROWSER_READ_ONLY_TOOL_NAMES = [
   BROWSER_TOOL_NAMES.snapshot,
-  BROWSER_TOOL_NAMES.console,
-  BROWSER_TOOL_NAMES.network,
+  BROWSER_TOOL_NAMES.logs,
   BROWSER_TOOL_NAMES.screenshot,
   BROWSER_TOOL_NAMES.wait,
 ];
@@ -223,15 +243,16 @@ export interface BrowserWaitResult {
 }
 
 /**
- * JS 弹窗（alert / confirm / prompt）的处理策略。
+ * JS 弹窗（alert / confirm）的处理策略。
  *
  * 为什么必须有：实测 alert() 会把 guest 的渲染进程**永久卡住** —— 点击调用超时，
  * 之后任何求值也超时（页面在等一个永远不会有人点的按钮）。所以策略有一个默认值
  * （dismiss），模型可以改，但页面绝不会因为没人应答而僵死。
+ *
+ * 没有 promptText：Electron 的 guest 里 `prompt()` 直接抛
+ * 「prompt() is not supported.」（实测），给它配文本参数是永远走不到的路。
  */
 export interface BrowserDialogPolicy {
   /** accept = 点「确定」，dismiss = 点「取消」/ 关闭 */
   action: "accept" | "dismiss";
-  /** prompt 弹窗要填入的文本；仅 prompt 使用 */
-  promptText?: string;
 }

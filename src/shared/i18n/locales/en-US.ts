@@ -39,6 +39,13 @@ export const enUS = {
     title: "Right panel",
     /** "Back": from a panel to the five-entry chooser (panel stays open) */
     back: "Back",
+    /** "+": go back to the chooser and pick a view (that plus does not open a browser tab itself) */
+    newTab: "New tab",
+    /** The × on a tab */
+    tabClose: "Close tab",
+    /** The line under the chooser: which views can be opened more than once */
+    chooserHint:
+      "The browser can keep several tabs open; every other view stays single — opening it again just switches back.",
     review: "Review",
     files: "Files",
     subagent: "Subagent",
@@ -309,7 +316,8 @@ export const enUS = {
       "No recognizable skills in the archive: each skill needs a folder containing SKILL.md",
     skillImportFailed: "Import failed: ",
     skillDetailDesc: "Raw SKILL.md of {{name}}",
-    skillRemoveDesc: 'Delete skill "{{name}}"? Its folder is removed together with all files in it.',
+    skillRemoveDesc:
+      'Delete skill "{{name}}"? Its folder is removed together with all files in it.',
     skillDisabled: "Disabled",
     skillEnabled: "Enabled",
     // Subagents section
@@ -557,26 +565,16 @@ export const enUS = {
     browserHistoryActive: "Moving through page history",
     browserSnapshot: "Read the page",
     browserSnapshotActive: "Reading the page",
-    browserClick: "Clicked a page element",
-    browserClickActive: "Clicking a page element",
-    browserType: "Filled in a page field",
-    browserTypeActive: "Filling in a page field",
+    browserAction: "Acted on the page",
+    browserActionActive: "Acting on the page",
     browserScreenshot: "Captured the page",
     browserScreenshotActive: "Capturing the page",
-    browserConsole: "Read the page console",
-    browserConsoleActive: "Reading the page console",
+    browserLogs: "Read the page logs",
+    browserLogsActive: "Reading the page logs",
     browserEvaluate: "Ran a page script",
     browserEvaluateActive: "Running a page script",
-    browserPress: "Pressed a key",
-    browserPressActive: "Pressing a key",
-    browserHover: "Hovered over an element",
-    browserHoverActive: "Hovering over an element",
-    browserSelect: "Selected a dropdown option",
-    browserSelectActive: "Selecting a dropdown option",
     browserWait: "Waited for the page",
     browserWaitActive: "Waiting for the page",
-    browserNetwork: "Read the network requests",
-    browserNetworkActive: "Reading the network requests",
     browserDialog: "Set the dialog policy",
     // Subagent quartet: delegate / await / inspect / stop
     task: "Delegated a subagent",

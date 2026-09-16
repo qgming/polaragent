@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SUBAGENT_TOOLS,
+  MAX_CONCURRENT_SUBAGENT_RUNS,
   type SubagentDefinition,
   type SubagentEventEnvelope,
   type SubagentRun,
@@ -48,8 +49,10 @@ import {
   noteSubagentRunEnd,
   noteSubagentToolCall,
   reconcileSubagentRuns,
+  reserveSubagentSlot,
   setSubagentEmitter,
   startSubagentRun,
+  subagentSlotHolders,
 } from "./subagent-runner";
 
 const PARENT: SubagentRunnerParent = {
@@ -121,7 +124,10 @@ function collectEvents(): SubagentEventEnvelope[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  store.create.mockResolvedValue({ id: "child-1" });
+  // 每次 create 都给一个不同的子会话 id：进度与终态都按子会话 id 找运行，
+  // 同一个 id 会让多条运行互相顶掉（名额相关的用例要能一条一条地终结）
+  let childCount = 0;
+  store.create.mockImplementation(async () => ({ id: `child-${++childCount}` }));
   store.saveSubagentRun.mockResolvedValue(undefined);
   store.listSubagentRunsFor.mockResolvedValue([]);
 });
@@ -341,5 +347,71 @@ describe("报告投递", () => {
     expect(last?.[1].status).toBe("completed");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+/**
+ * 并发名额账本：工具层只做一次同步的 reserveSubagentSlot，真正的占位账本在这里。
+ *
+ * 回归的是两个曾经叠加的缺陷：预约从不归还（成功启动后一直留在 slotReservations 里）、
+ * 计数时又把 liveRuns 与预约各数一遍 —— 于是每条运行被数两遍，跑完的运行永远占着名额，
+ * 「派过 4 个（都结束了）之后第 5 个」被永久拒绝，拒绝文案还报出双倍的运行数。
+ */
+describe("并发名额", () => {
+  /**
+   * 按工具层的真实顺序派一次：先同步预约、再启动。
+   *
+   * 必须走这两步 —— 预约才是缺陷的来源（成功启动后没有归还），只调 startSubagentRun
+   * 会让 slotReservations 一直是空的，把要验的东西验成空的。
+   */
+  async function dispatchRun(delegationId: string): Promise<SubagentRun> {
+    const reservation = reserveSubagentSlot(PARENT.sessionId, delegationId, "scout");
+    expect(reservation.ok).toBe(true);
+    return startRun(delegationId);
+  }
+
+  /** 起满上限的运行且都不终结（chat.send 是桩，跑不到 run_end） */
+  async function startAtLimit(): Promise<SubagentRun[]> {
+    const runs: SubagentRun[] = [];
+    for (let index = 0; index < MAX_CONCURRENT_SUBAGENT_RUNS; index += 1) {
+      runs.push(await dispatchRun(`d-${index}`));
+    }
+    return runs;
+  }
+
+  it("已结束的运行不再占名额：跑完一批之后还能继续派", async () => {
+    const runs = await startAtLimit();
+    for (const run of runs) {
+      noteSubagentRunEnd(run.childSessionId, { status: "completed" });
+    }
+
+    // 终态的运行不是「在跑」：名额账本里一个都不该剩下
+    expect(subagentSlotHolders(PARENT.sessionId)).toEqual([]);
+    expect(reserveSubagentSlot(PARENT.sessionId, "d-next", "scout")).toEqual({ ok: true });
+  });
+
+  it("同一次运行只占一个名额：预约与运行记录不会各数一遍", async () => {
+    // 先预约、再启动 —— 工具层的真实顺序，中间就是「同一次运行同时躺在两个账本里」的启动窗口
+    const reserved = reserveSubagentSlot(PARENT.sessionId, "d-1", "scout");
+    expect(reserved.ok).toBe(true);
+    const run = await startRun("d-1");
+
+    // 两个账本各数一遍的话这里是 2（拒绝文案因此报出「6 个在跑」而实际只有 3 个）
+    expect(subagentSlotHolders(PARENT.sessionId)).toEqual([
+      { delegationId: run.delegationId, agentName: "scout" },
+    ]);
+    // 名额按会话记账：别的会话不受影响
+    expect(subagentSlotHolders("s-other")).toEqual([]);
+  });
+
+  it("真正到上限时依然拒绝，并带回全部占位者", async () => {
+    const runs = await startAtLimit();
+
+    const rejected = reserveSubagentSlot(PARENT.sessionId, "d-next", "scout");
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(rejected.holders.map((holder) => holder.delegationId).sort()).toEqual(
+      runs.map((run) => run.delegationId).sort(),
+    );
   });
 });

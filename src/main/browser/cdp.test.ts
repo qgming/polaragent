@@ -14,8 +14,8 @@ import {
   BROWSER_CDP_FORBIDDEN_PREFIXES,
   BROWSER_CDP_GATED,
   buildCaptureScreenshotParams,
-  CdpSession,
   type CdpDebugger,
+  CdpSession,
   cdpDeniedError,
   cdpErrorCode,
   consoleCallToRecord,
@@ -24,6 +24,10 @@ import {
   isAllowedCdpMethod,
   logEntryToRecord,
   mapCdpError,
+  networkLoadingFailed,
+  networkLoadingFinished,
+  networkRequestWillBeSent,
+  networkResponseReceived,
   readPngSize,
   SCREENSHOT_MAX_WIDTH,
 } from "./cdp";
@@ -135,9 +139,16 @@ describe("CDP 白名单（§9.2 deny-by-default）", () => {
   });
 
   it("开关控制的域与方法是 gated（默认关），未登记的域是 unknown", () => {
-    for (const method of ["Network.enable", "Fetch.enable", "Target.createTarget"]) {
+    // Network 只放开了 enable（记录用）；拦截 / mock 与多目标（Fetch / Target）仍然关着。
+    // 其余 Network.* 方法（setRequestInterception 之类）必须还是 gated —— 它们会改变请求行为。
+    for (const method of [
+      "Network.setRequestInterception",
+      "Fetch.enable",
+      "Target.createTarget",
+    ]) {
       expect(decideCdpMethod(method), method).toBe("gated");
     }
+    expect(isAllowedCdpMethod("Network.enable")).toBe(true);
     for (const method of ["Emulation.setDeviceMetricsOverride", "DOM.setFileInputFiles"]) {
       expect(decideCdpMethod(method), method).toBe("gated");
     }
@@ -151,7 +162,8 @@ describe("CDP 白名单（§9.2 deny-by-default）", () => {
   it("白名单表里只有协议的「默认开放」集合（不多不少）", () => {
     // 表被无意扩大时这条会红 —— 白名单的每一次扩大都应该是显式决定
     expect([...BROWSER_CDP_ALLOWED].every((method) => method.includes("."))).toBe(true);
-    expect(BROWSER_CDP_ALLOWED.size).toBe(29);
+    // 30 = 原来的 29 + Network.enable（网络记录从 session.webRequest 迁到 CDP，理由见 cdp.ts）
+    expect(BROWSER_CDP_ALLOWED.size).toBe(30);
     expect([...BROWSER_CDP_ALLOWED].some((method) => method.startsWith("Cookie."))).toBe(false);
   });
 
@@ -174,7 +186,9 @@ describe("CdpSession.send", () => {
     await expect(session.send("Storage.getCookies")).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
-    await expect(session.send("Network.enable")).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(session.send("Network.setRequestInterception")).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
     expect(dbg.methodsSent()).toEqual([]);
   });
 
@@ -457,9 +471,9 @@ describe("控制台事件整形（Runtime.consoleAPICalled / Log.entryAdded）",
       line: 1,
     });
     // url 为空时退回 entry.source（分类），不至于让 source 一栏空掉
-    expect(logEntryToRecord({ entry: { source: "security", level: "warning", text: "x" } })?.source).toBe(
-      "security",
-    );
+    expect(
+      logEntryToRecord({ entry: { source: "security", level: "warning", text: "x" } })?.source,
+    ).toBe("security");
   });
 
   it("结构不对（空文本 / 没有 entry）时返回 null，不编一条假日志", () => {
@@ -471,7 +485,12 @@ describe("控制台事件整形（Runtime.consoleAPICalled / Log.entryAdded）",
   it("Electron 自己的日志 source 形如 node:electron/js2c，能被既有的噪音过滤认出", () => {
     // service 侧的 isConsoleNoise 按 source 前缀过滤；这里钉住「协议字段映射到那一栏」这件事
     const record = logEntryToRecord({
-      entry: { source: "javascript", level: "warning", text: "Electron Security Warning", url: "node:electron/js2c/renderer_init.js" },
+      entry: {
+        source: "javascript",
+        level: "warning",
+        text: "Electron Security Warning",
+        url: "node:electron/js2c/renderer_init.js",
+      },
     });
     expect(record?.source.startsWith("node:electron/js2c")).toBe(true);
   });
@@ -496,8 +515,69 @@ describe("截图参数与 PNG 尺寸", () => {
     const base64 = fakePng(1280, 720);
     expect(readPngSize(base64)).toEqual({ width: 1280, height: 720 });
     // 不是 PNG 就返回 null：调用方那边退化成「尺寸未知」，而不是编一个数字
-    expect(readPngSize(Buffer.from("not a png at all, but long enough").toString("base64"))).toBeNull();
+    expect(
+      readPngSize(Buffer.from("not a png at all, but long enough").toString("base64")),
+    ).toBeNull();
     expect(readPngSize("")).toBeNull();
+  });
+});
+
+describe("网络事件整形（Network.* → 契约记录）", () => {
+  it("requestWillBeSent：取出 url / method / 归一后的资源类型", () => {
+    const start = networkRequestWillBeSent({
+      requestId: "r1",
+      request: { url: "https://example.com/api/items", method: "POST" },
+      type: "XHR",
+    });
+    expect(start).not.toBeNull();
+    expect(start?.requestId).toBe("r1");
+    expect(start?.url).toBe("https://example.com/api/items");
+    expect(start?.method).toBe("POST");
+    // 词表统一成小写：模型看到 "xhr" 比 "XHR" 更容易与其它输出对齐
+    expect(start?.resourceType).toBe("xhr");
+  });
+
+  it("requestWillBeSent：缺 requestId 或 url 时返回 null（不编造记录）", () => {
+    expect(networkRequestWillBeSent({ request: { url: "https://x/" } })).toBeNull();
+    expect(networkRequestWillBeSent({ requestId: "r1", request: {} })).toBeNull();
+    expect(networkRequestWillBeSent(null)).toBeNull();
+  });
+
+  it("responseReceived → 状态码", () => {
+    expect(networkResponseReceived({ requestId: "r1", response: { status: 500 } })).toEqual({
+      requestId: "r1",
+      status: 500,
+    });
+    expect(networkResponseReceived({ requestId: "r1", response: {} })).toEqual({
+      requestId: "r1",
+      status: 0,
+    });
+    expect(networkResponseReceived({})).toBeNull();
+  });
+
+  it("loadingFinished → 结束时刻", () => {
+    const finished = networkLoadingFinished({ requestId: "r1" });
+    expect(finished?.requestId).toBe("r1");
+    expect(typeof finished?.at).toBe("number");
+    expect(networkLoadingFinished({})).toBeNull();
+  });
+
+  it("loadingFailed：如实带上 canceled（与 DNS/连接失败是两类事实）", () => {
+    const canceled = networkLoadingFailed({
+      requestId: "r1",
+      errorText: "net::ERR_ABORTED",
+      canceled: true,
+    });
+    expect(canceled?.error).toBe("canceled (net::ERR_ABORTED)");
+
+    const failed = networkLoadingFailed({
+      requestId: "r2",
+      errorText: "net::ERR_CONNECTION_REFUSED",
+    });
+    expect(failed?.error).toBe("net::ERR_CONNECTION_REFUSED");
+
+    // 没有 errorText 时也要有一条可读的失败原因，不能空着
+    expect(networkLoadingFailed({ requestId: "r3" })?.error).toBe("failed");
   });
 });
 

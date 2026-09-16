@@ -4,10 +4,16 @@ import { useTranslation } from "react-i18next";
 import { field } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
+import { useUiStore } from "@/renderer/stores/ui-store";
 import { PanelEmpty } from "./panel-view";
 
 /**
- * 内置浏览器面板。
+ * 内置浏览器面板：**一个实例 = 一个浏览器标签 = 一个 <webview> guest**。
+ *
+ * 标签的数量与身份由 RightSidebar / ui-store 管（id 形如 "t3"），这里只负责
+ * 「这个 tabId 的 webview 建出来、把 guest 登记给主进程、把页面状态显示给人看」。
+ * 主进程按 tabId 记账（registerTab / activateTab / unregisterTab，见 shared/contracts/browser.ts），
+ * 模型的每个浏览器工具都能指定作用于哪个标签。
  *
  * 为什么用 <webview> 而不是 iframe：绝大多数站点都设了 X-Frame-Options / CSP
  * frame-ancestors，塞进 iframe 会直接白屏；<webview> 是独立的 guest 进程，
@@ -26,9 +32,11 @@ import { PanelEmpty } from "./panel-view";
  * 与模型的关系：**页面可以由模型驱动**（打开网址、读页面、点击、输入、截图、看控制台）。
  * 但驱动不从这里走 —— guest 的 WebContents 由主进程在 did-attach-webview 时接管，
  * 之后的自动化全在那边完成（见 src/main/browser/service.ts 与 shared/contracts/browser.ts）。
- * 这个文件只负责两件事，缺一不可：
+ * 这个文件只负责三件事，缺一不可：
  *   1. **把 <webview> 元素建出来** —— 没有元素就没有 guest，自动化无从谈起；
- *   2. 订阅 browser:event，把「模型正在操作页面」显示出来，并让地址栏跟上模型的导航。
+ *   2. **把 guest 登记给主进程**（dom-ready 后 registerTab）—— 主进程靠它按 tabId 找到
+ *      这个 guest；模型的 open-request 也在这一步交回执；
+ *   3. 订阅 browser:event，把「模型正在操作页面」显示出来，并让地址栏跟上模型的导航。
  *
  * 为什么不让渲染层把 executeJavaScript 暴露给模型：那等于在 IPC 上开一个「任意页面代码
  * 执行」入口，任何拿到渲染进程执行权的东西都能借它读任意已登录站点。主进程本来就持有
@@ -74,10 +82,13 @@ interface WebviewElement extends HTMLElement {
   reload(): void;
   stop(): void;
   loadURL(url: string): Promise<void>;
+  /** guest 的 WebContents id；dom-ready 之前调用会抛，所以只在 dom-ready 后读 */
+  getWebContentsId(): number;
 }
 /** webview 事件对象里我们用到的字段（自定义元素的事件不带 TS 类型） */
 interface WebviewEventDetail {
   url?: string;
+  title?: string;
   errorCode?: number;
   errorDescription?: string;
   isMainFrame?: boolean;
@@ -89,21 +100,33 @@ interface WebviewEventDetail {
  * 页面状态（地址栏、加载中、失败）**不从这里取**：那些由 webview 元素自己的
  * did-navigate / did-start-loading 事件提供，而模型操作的正是同一个 guest，
  * 所以两条路径看到的状态本就一致。再叠一份主进程状态只会多一个可能不同步的来源。
+ *
+ * 事件带 tabId（模型在操作哪一个标签）：只有那个标签显示提示条，
+ * 否则开着的每一页都喊「Oint 正在操作这个页面」，而实际上只动了其中一个。
  */
-function useAgentActivity(): string | null {
+function useAgentActivity(tabId: string): string | null {
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
     return window.oint.browser.onEvent((event) => {
       if (event.type !== "agent") return;
+      if (event.tabId !== undefined && event.tabId !== tabId) return;
       setNote(event.active ? (event.note ?? "") : null);
     });
-  }, []);
+  }, [tabId]);
 
   return note;
 }
 
-export function BrowserPanel(): React.JSX.Element {
+export function BrowserPanel({
+  tabId,
+  active,
+}: {
+  /** 本标签的 id（由 ui-store 分配）：发给主进程的登记 / 激活 / 注销都带上它 */
+  tabId: string;
+  /** 是否当前标签：不活动的实例由 RightSidebar 用 hidden 藏起来，但不卸载 */
+  active: boolean;
+}): React.JSX.Element {
   const { t } = useTranslation();
 
   /** 地址栏内容：用户编辑期间是草稿，导航完成后回写成实际 URL */
@@ -123,20 +146,33 @@ export function BrowserPanel(): React.JSX.Element {
   const [failed, setFailed] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  /** 模型正在操作页面时的说明文案；为 null 表示模型没在动它 */
-  const agentNote = useAgentActivity();
+  /** 模型正在操作页面时的说明文案；为 null 表示模型没在动它（只认本标签的事件） */
+  const agentNote = useAgentActivity(tabId);
 
   /** webview 的宿主容器：元素自己创建后插进来 */
   const hostRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<WebviewElement | null>(null);
 
   /**
-   * 创建 webview 并挂事件。
+   * 用户切到这个标签：告诉主进程（status 里的 active 由它维护）。
+   *
+   * 新建的标签在 guest 就绪前就已经是「当前标签」，所以这一次上报会被主进程当作
+   * 未知标签丢掉 —— 不要紧，registerGuest 登记完成后会按当时的 activeTabId 补报一次。
+   */
+  useEffect(() => {
+    if (!active) return;
+    void window.oint.browser.activateTab(tabId).catch(() => {});
+  }, [active, tabId]);
+
+  /**
+   * 创建 webview、挂事件、并把 guest 登记给主进程。
    *
    * 只在挂载时跑一次（严格模式下会跑两次，所以卸载时要把元素一起摘掉，
    * 否则会留下一个仍在跑的 guest 进程）。
    *
-   * 依赖数组**必须为空**：一旦把 t 之类的值放进去，切换界面语言就会销毁并重建 webview，
+   * 依赖数组里只有 tabId：它由 RightSidebar 按标签 key 传入，一个实例活多久它就多久，
+   * 变化意味着换了一个标签，重建 webview 正是该做的事。
+   * **不要**把 t 之类的值放进来：切换界面语言就会销毁并重建 webview，
    * 页面的浏览状态（滚动位置、表单草稿、登录态）会整份丢掉。
    * 所以失败文案固定读一次，不做语言实时跟随 —— 代价只是一条错误文案在切语言后
    * 仍是旧语言，而重建 guest 的代价要大得多。
@@ -153,8 +189,66 @@ export function BrowserPanel(): React.JSX.Element {
     // 这里不写相当于不依赖「渲染层自觉」做安全
     element.className = "h-full w-full border-0";
     // 独立分区：内置浏览器的 cookie / 缓存与主窗口分开，
-    // 免得某个站点的存储污染应用自己的会话
+    // 免得某个站点的存储污染应用自己的会话。
+    // 所有浏览器标签共用这个分区：它们本就是同一个浏览器的多个标签页
     element.setAttribute("partition", "persist:oint-browser");
+
+    /**
+     * 页面标题与 URL 的最近值：给标签栏报名字用。
+     *
+     * 用闭包变量而不是 state：它们只在事件里读写，没必要让每次导航都重渲染；
+     * 而 onTitleUpdated 要拿「当前 URL」兜底时，state 在闭包里是过期的。
+     */
+    let lastUrl = "";
+    let lastTitle = "";
+
+    // 空标题（页面没写 <title>）时退回 URL：标签上宁可显示一串地址，
+    // 也不要一排分不清彼此的「浏览器」
+    const reportTitle = () => {
+      const label = lastTitle.trim() !== "" ? lastTitle : lastUrl;
+      if (label.trim() !== "") useUiStore.getState().setRightPanelTabTitle(tabId, label);
+    };
+
+    const onTitleUpdated = (event: Event) => {
+      lastTitle = (event as Event & WebviewEventDetail).title ?? "";
+      reportTitle();
+    };
+
+    /**
+     * 把 guest 交给主进程。
+     *
+     * 时机是 dom-ready：Electron 在 guest 建好之前调 getWebContentsId 会抛
+     *（「must be attached to the DOM and the dom-ready event emitted」），
+     * 而这个事件之后它一定可用。登记只做一次（重复登记没有意义）。
+     *
+     * requestId 只在「本标签正是模型这次 open-request 要的」时带上：
+     * 主进程靠这个回执才知道往哪个 guest 上导航（见 shared/contracts/browser.ts），
+     * 回执交回后立刻结算，避免它被下一个标签误领。
+     */
+    let registered = false;
+    const registerGuest = () => {
+      if (registered) return;
+      let webContentsId: number;
+      try {
+        webContentsId = element.getWebContentsId();
+      } catch {
+        // guest 还没建出来：事件顺序由 Electron 保证（dom-ready 在前），这里不轮询
+        return;
+      }
+      registered = true;
+      const pending = useUiStore.getState().pendingBrowserRequest;
+      const requestId = pending !== null && pending.tabId === tabId ? pending.requestId : undefined;
+      if (requestId !== undefined) useUiStore.getState().settleBrowserRequest();
+      void window.oint.browser
+        .registerTab(tabId, webContentsId, requestId)
+        .then(() => {
+          // 登记前那次 activateTab 会被主进程当作未知标签丢掉，这里按当前焦点补一次
+          if (useUiStore.getState().activeTabId === tabId) {
+            void window.oint.browser.activateTab(tabId).catch(() => {});
+          }
+        })
+        .catch(() => {});
+    };
 
     const onStart = () => {
       setLoading(true);
@@ -175,8 +269,12 @@ export function BrowserPanel(): React.JSX.Element {
         // 引导用的 about:blank 不算页面：它只是把 guest 拉起来的手段。
         // 收下它会让空态浮层消失、刷新按钮变亮，而那两件事在「还没导航」时都是错的。
         if (detail.url !== "" && detail.url !== "about:blank") {
+          lastUrl = detail.url;
           setUrl(detail.url);
           setAddress(detail.url);
+          // 新页面可能改标题（也可能不改）：先按当前已知的标题/地址刷新一次标签名，
+          // 页面随后发来 page-title-updated 再纠正 —— 与真实浏览器标签的行为一致
+          reportTitle();
         }
       }
       syncNavigation();
@@ -193,6 +291,8 @@ export function BrowserPanel(): React.JSX.Element {
       setFailed(true);
     };
 
+    element.addEventListener("dom-ready", registerGuest);
+    element.addEventListener("page-title-updated", onTitleUpdated);
     element.addEventListener("did-start-loading", onStart);
     element.addEventListener("did-stop-loading", syncNavigation);
     element.addEventListener("did-navigate", onNavigate);
@@ -214,6 +314,8 @@ export function BrowserPanel(): React.JSX.Element {
     webviewRef.current = element;
 
     return () => {
+      element.removeEventListener("dom-ready", registerGuest);
+      element.removeEventListener("page-title-updated", onTitleUpdated);
       element.removeEventListener("did-start-loading", onStart);
       element.removeEventListener("did-stop-loading", syncNavigation);
       element.removeEventListener("did-navigate", onNavigate);
@@ -221,10 +323,12 @@ export function BrowserPanel(): React.JSX.Element {
       element.removeEventListener("did-fail-load", onFail);
       element.remove();
       webviewRef.current = null;
+      // 卸载 = 标签没了：主进程要释放这个 guest 的引用与缓冲。
+      // fire-and-forget、吞掉错误：关窗时桥可能已经拆掉，这里没有能补救的事
+      void window.oint.browser.unregisterTab(tabId).catch(() => {});
     };
-    // 空依赖：只创建一次。这里已经不读 t 了（失败只存布尔），所以不需要任何豁免 ——
-    // 一旦把 t 加回来，切语言就会重建整个 guest，页面的浏览状态会整份丢掉。
-  }, []);
+    // tabId 是唯一依赖，理由见上面的说明。
+  }, [tabId]);
 
   /**
    * 导航到用户输入的地址。

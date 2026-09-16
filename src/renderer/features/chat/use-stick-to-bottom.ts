@@ -88,9 +88,16 @@ export function useStickToBottom(viewportRef: RefObject<HTMLDivElement | null>):
       resumeTimerRef.current = null;
     };
 
-    /** 跟随中：内容变高就把视口贴到底 */
+    /**
+     * 跟随中：内容变高就把视口贴到底。
+     *
+     * 已经贴底时**不写** scrollTop：跟随期间这个函数每帧都被内容增长唤醒，
+     * 每次赋值都会再派发一个 scroll 事件（又触发一次判定与布局读取），
+     * 而绝大多数帧内容增长并不足以离开底部 —— 免掉这次写入就免掉整条回环。
+     */
     const stick = () => {
       if (!followingRef.current) return;
+      if (distanceFromBottom(viewport) <= 1) return;
       viewport.scrollTop = viewport.scrollHeight;
       // 立刻回写：这次赋值自己会派发一个 scroll 事件，别让它被当成「用户滚动」
       lastScrollTopRef.current = viewport.scrollTop;

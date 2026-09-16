@@ -40,13 +40,18 @@ beforeEach(() => {
     },
     // RightSidebar 在挂载时订阅浏览器的「模型要用浏览器」事件；
     // onEvent 必须返回取消订阅函数，否则卸载时会 TypeError。
+    // 用例里点开「浏览器」会挂上 BrowserPanel：它在挂载时调 activateTab、
+    // 卸载时调 unregisterTab（都是 fire-and-forget），得先备好这几个方法。
     browser: {
       status: () => Promise.resolve(null),
+      registerTab: () => Promise.resolve(),
+      unregisterTab: () => Promise.resolve(),
+      activateTab: () => Promise.resolve(),
       onEvent: () => () => {},
     },
   });
-  // 每个用例都从「收起」出发
-  useUiStore.setState({ rightPanelOpen: false, rightPanelView: null });
+  // 每个用例都从「收起、没有标签」出发
+  useUiStore.setState({ rightPanelOpen: false, rightPanelTabs: [], activeTabId: null });
 });
 
 /** 布局根：顶栏与右侧栏的兄弟关系就是 App.tsx 里的那一层，这里照搬以测量真实结构 */
@@ -102,8 +107,8 @@ describe("窗口控制在顶栏与右侧栏之间的交接", () => {
 
     // 面板里没有任何收起/关闭面板的入口：那个动作只存在于顶栏那颗开关
     expect(within(aside).queryByLabelText("收起右侧面板")).toBeNull();
-    // 选择列表就是第一屏，此时没有「返回」可点（已经在这一屏了）
-    expect(within(aside).queryByLabelText("返回")).toBeNull();
+    // 选择列表就是第一屏，此时没有可关的标签
+    expect(within(aside).queryByLabelText("关闭标签")).toBeNull();
   });
 
   it("顶栏那颗开关切换展开态（唯一开合入口），并切到面板的选择列表", async () => {
@@ -122,21 +127,20 @@ describe("窗口控制在顶栏与右侧栏之间的交接", () => {
     expect(within(aside).getByText("终端")).toBeDefined();
   });
 
-  it("选择某个入口后头部显示该视图名，并按「返回」回到选择列表", async () => {
+  it("选择某个入口后出现对应标签，× 关掉标签又回到选择列表", async () => {
     useUiStore.setState({ rightPanelOpen: true });
     const { aside } = renderShell();
 
-    // 选择列表里点「浏览器」
+    // 选择列表里点「浏览器」：标签条上开出它的标签（名字 + 关闭按钮）
     within(aside).getByText("浏览器").click();
 
-    // 面板头部换成该视图名（没有重复的标题行）
-    expect(await within(aside).findByText("浏览器")).toBeDefined();
+    expect(await within(aside).findByLabelText("关闭标签")).toBeDefined();
     // 子智能体 / 终端 这些入口文案随之消失（已离开选择列表）。
-    // 用「子智能体」当哨兵而不是被点的「浏览器」：后者在面板头部也会出现，测不出「列表已离开」
+    // 用「子智能体」当哨兵而不是被点的「浏览器」：后者在标签条上也会出现，测不出「列表已离开」
     expect(within(aside).queryByText("子智能体")).toBeNull();
 
-    // 返回回到选择列表
-    within(aside).getByLabelText("返回").click();
+    // × 关掉标签 = 回到选择列表
+    within(aside).getByLabelText("关闭标签").click();
     expect(await within(aside).findByText("子智能体")).toBeDefined();
   });
 });

@@ -115,7 +115,7 @@ export const KEY_SPEC_EXAMPLES = [
  *
  * `"+"` 作为分隔符：`Control+Shift+A` 拆成三个部分、最后一个是键、前面都是修饰键。
  * 因此**无法表达「加号键本身」**（那是 `Plus`）；这个取舍是刻意的 ——
- * 组合键远比输入加号常见，而后者可以走 browser_type。
+ * 组合键远比输入加号常见，而后者可以走 browser_act 的 type 动作。
  */
 export function parseKeySpec(input: string): BrowserKeyStroke | null {
   const parts = input
@@ -167,7 +167,7 @@ export function parseKeySpec(input: string): BrowserKeyStroke | null {
   // "\n" 之类的字符塞进输入框（真实键盘不会这么干）。
   //
   // 两个显式例外都在别处处理，不在这里开口子：
-  //   · "Space" 想在输入框里打字应该走 browser_type（它按的是整段文本）；
+  //   · "Space" 想在输入框里打字应该走 browser_act 的 type 动作（它按的是整段文本）；
   //   · Enter 需要补 char 才能触发表单的隐式提交 —— 那是 Electron 的发送细节，
   //     留在 service.ts 的 sendKeyStroke 里（见那里的说明）。
   return {
@@ -297,7 +297,7 @@ const CDP_PUNCTUATION_KEYS: Record<string, CdpKeyDefinition> = {
   "!": { key: "!", code: "Digit1", keyCode: 49, impliedShift: true },
   "@": { key: "@", code: "Digit2", keyCode: 50, impliedShift: true },
   "#": { key: "#", code: "Digit3", keyCode: 51, impliedShift: true },
-  "$": { key: "$", code: "Digit4", keyCode: 52, impliedShift: true },
+  $: { key: "$", code: "Digit4", keyCode: 52, impliedShift: true },
   "%": { key: "%", code: "Digit5", keyCode: 53, impliedShift: true },
   "^": { key: "^", code: "Digit6", keyCode: 54, impliedShift: true },
   "&": { key: "&", code: "Digit7", keyCode: 55, impliedShift: true },

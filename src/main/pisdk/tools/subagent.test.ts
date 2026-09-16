@@ -20,6 +20,7 @@ import {
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
+import { BUILTIN_SUBAGENTS } from "../subagent-catalog";
 import {
   createSubagentTools,
   normalizeSubagentTools,
@@ -187,6 +188,17 @@ describe("normalizeSubagentTools", () => {
 });
 
 describe("Task", () => {
+  it("描述里列出内置子智能体的名字与用途：模型不必从报错里才知道有哪几个", () => {
+    const task = createSubagentTools(createDeps()).find(
+      (candidate) => candidate.name === SUBAGENT_TOOL_NAMES.task,
+    );
+
+    // 名字与用途从 BUILTIN_SUBAGENTS 生成：清单必须完整，改了内置定义描述这里自然跟着走
+    for (const builtin of BUILTIN_SUBAGENTS) {
+      expect(task?.description).toContain(`- ${builtin.name}：${builtin.description}`);
+    }
+  });
+
   it("未知 agent 名：返回失败回执，并把可用的名字告诉模型", async () => {
     const deps = createDeps();
 

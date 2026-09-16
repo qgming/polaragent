@@ -6,7 +6,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type * as React from "react";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { buildSlashCommands, expandSlashInput } from "@/renderer/features/chat/slash-commands";
 import { JobToolUIs, SubagentToolUIs } from "@/renderer/features/chat/ToolParts";
 import { resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
@@ -180,12 +180,20 @@ export function OintRuntimeProvider({
    *
    * 触发放在 provider 而不是 Task 卡片里：卡片只在当前视口挂载，而嵌套渲染取决于转换结果，
    * 用户不打开右侧面板、卡片没滚到可见处时这一步也得发生。store 动作只能在 effect 里调，
-   * 不能在渲染期调；messages 变化就是唯一触发条件（Task 调用只会随消息到达），
-   * loadChild 自身幂等，重复路过不会重复发 IPC。
+   * 不能在渲染期调。
+   *
+   * 依赖用**结构签名**而不是 messages 数组：流式期间数组每个 flush 都换引用，直接依赖会
+   * 让整表扫描跟着每个 token 跑。扫描本身的语义是「转录里有没有新的 Task 调用」，
+   * 那只在形状变化（新消息、新 part）时才可能变。loadChild 自身幂等，重复路过不会重复发 IPC。
    */
+  const structureKey = `${messages.length}:${messages.at(-1)?.id ?? ""}:${messages.at(-1)?.parts.length ?? -1}`;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 结构签名才是触发条件，messages 从 ref 读最新值
   useEffect(() => {
     const childSessionIds = new Set<string>();
-    for (const message of messages) {
+    for (const message of messagesRef.current) {
       for (const part of message.parts) {
         if (part.type !== "tool-call") continue;
         if (!SUBAGENT_TOOL_NAMES.includes(part.toolName)) continue;
@@ -198,7 +206,7 @@ export function OintRuntimeProvider({
       if (store.requestedChildren[childSessionId] === true) continue;
       void store.loadChild(childSessionId);
     }
-  }, [messages]);
+  }, [structureKey]);
 
   // ChatMessage 是自定义类型，必须显式提供 convertMessage
   const runtime = useExternalStoreRuntime<ChatMessage>({

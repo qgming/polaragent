@@ -1,14 +1,14 @@
 // 浏览器工具的行为测试：只覆盖**不依赖 Electron** 的那一层。
 //
-// 重点验两件容易写错的事：
-//   1. **串行化**。内核默认并行执行工具调用，而 click/type 是「移鼠标 → 按下 → 抬起」
-//      三步。若两次调用交错，坐标与按键会落到错误的元素上（表现为随机点错东西）。
-//      这条测试用「记录进出顺序」把串行保证钉死 —— 它一旦被删掉，问题只会在真机上
-//      偶发，且极难归因。
-//   2. **提示条计数**。并行时先结束的那个不该把「模型正在操作页面」清掉。
+// 重点验三件容易写错的事：
+//   1. **动作分发**。browser_act 把六个动作合并成一个工具，参数校验与「哪个动作需要哪些参数」
+//      全靠工具层把关 —— 少一个校验就会把 undefined 送进主进程，报出看不懂的错。
+//   2. **标签透传**。所有工具都有可选的 `tab`，必须原样传下去；漏传会让多标签场景下
+//      模型指着的那个标签被悄悄换掉（而人看到的是「它点错了页面」）。
+//   3. **提示条计数**。并行调用时先结束的那个不该把「模型正在操作」清掉。
 //
-// 真实的页面行为（快照内容、点击坐标）留给端到端验收：那是 Electron 里的时序，
-// 在这里假装测它只会制造「测试通过但功能坏了」的假象。
+// 真实的页面行为（快照内容、点击坐标、串行队列）留给主进程与端到端验收：那是 Electron
+// 里的时序，在这里假装测它只会制造「测试通过但功能坏了」的假象。
 
 import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
@@ -26,13 +26,13 @@ import type {
   BrowserOptionMatch,
   BrowserPressOutcome,
   BrowserSelectOutcome,
+  BrowserTabOperations,
 } from "../../browser/types";
 import { createBrowserTools } from "./browser";
 
-/** 一个可观测的假实现：记录每个操作的进出顺序与活跃标记的变化 */
+/** 一个可观测的假实现：记录操作顺序、活跃标记、以及每次请求的 tabId */
 function trackingAutomation(
   options: {
-    delayMs?: number;
     /** 覆盖 wait 的返回值：超时分文的用例要把它改成 matched: false */
     wait?: BrowserWaitResult;
     /** 覆盖 network 的返回值：空缓冲 / 无失败 / 有省略的用例按需给 */
@@ -44,45 +44,31 @@ function trackingAutomation(
   const events: string[] = [];
   let activeDepth = 0;
   const maxActiveDepth = { value: 0 };
+  /** 每次 tab() 收到的参数（多标签透传的判据） */
+  const requestedTabs: (string | undefined)[] = [];
+  /** 每个标签各自被标记的活跃次数（提示条按标签计数） */
+  const activeByTab = new Map<string, number>();
 
   /** 模拟一次耗时操作，并在期间标记「正在操作」 */
   async function act(name: string): Promise<void> {
     activeDepth += 1;
     maxActiveDepth.value = Math.max(maxActiveDepth.value, activeDepth);
     events.push(`enter:${name}`);
-    await new Promise((r) => setTimeout(r, options.delayMs ?? 5));
+    await new Promise((r) => setTimeout(r, 5));
     events.push(`exit:${name}`);
     activeDepth -= 1;
   }
 
-  const automation = {
-    setAgentActive: (active: boolean) => {
-      // 工具层应该「先加后减」：这里只看它有没有在计数归零前误报
-      if (!active && activeDepth > 0) events.push("cleared-while-busy");
+  const opsFor = (tabId: string): BrowserTabOperations => ({
+    tabId,
+    setAgentActive(active, note) {
+      activeByTab.set(tabId, (activeByTab.get(tabId) ?? 0) + (active ? 1 : -1));
+      events.push(
+        `active:${active ? "on" : "off"}:${tabId}${note === undefined ? "" : `:${note}`}`,
+      );
     },
-    status: () => ({
-      open: true,
-      state: {
-        url: "https://example.com/",
-        title: "Example",
-        loading: false,
-        canGoBack: false,
-        canGoForward: false,
-      },
-      agentActive: true,
-    }),
-    open: async () => {
-      await act("open");
-      return {
-        url: "https://example.com/",
-        title: "Example",
-        loading: false,
-        canGoBack: false,
-        canGoForward: false,
-      };
-    },
-    history: async () => {
-      await act("history");
+    history: async (action) => {
+      await act(`history:${action}`);
       return {
         url: "https://example.com/",
         title: "Example",
@@ -124,13 +110,22 @@ function trackingAutomation(
       return { name: "menu", navigated: false, effect: "hit" };
     },
     select: async (ref: string, match: BrowserOptionMatch): Promise<BrowserSelectOutcome> => {
-      await act(`select:${ref}`);
+      await act(`select:${ref}:${match.kind}`);
       return {
         name: "country",
         navigated: false,
         effect: "hit",
         value: match.kind === "value" ? match.value : "us",
         label: "United States",
+      };
+    },
+    scroll: async (deltaY: number, deltaX?: number): Promise<BrowserActionOutcome> => {
+      await act(`scroll:${deltaY}:${deltaX ?? 0}`);
+      return {
+        name: "(page)",
+        navigated: false,
+        effect: "hit",
+        detail: "window.scrollY: 0 → 600",
       };
     },
     wait: async () => {
@@ -183,8 +178,38 @@ function trackingAutomation(
       await act("evaluate");
       return { ok: true as const, value: '"x"' };
     },
+  });
+
+  const automation: BrowserAutomation = {
+    status: () => ({
+      open: true,
+      tabs: [
+        { tabId: "t1", active: true, url: "https://example.com/", title: "Example" },
+        { tabId: "t2", active: false, url: "https://docs.example.com/", title: "Docs" },
+      ],
+      agentActive: true,
+    }),
+    listTabs: () => [
+      { tabId: "t1", active: true, url: "https://example.com/", title: "Example" },
+      { tabId: "t2", active: false, url: "https://docs.example.com/", title: "Docs" },
+    ],
+    open: async () => {
+      await act("open");
+      return {
+        url: "https://example.com/",
+        title: "Example",
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+      };
+    },
+    tab: (tabId?: string) => {
+      requestedTabs.push(tabId);
+      return opsFor(tabId ?? "t1");
+    },
   };
-  return { automation: automation as unknown as BrowserAutomation, events, maxActiveDepth };
+
+  return { automation, events, maxActiveDepth, requestedTabs, activeByTab };
 }
 
 /** 调用一个工具并取回给模型看的文本（要断言文案的用例用它） */
@@ -252,180 +277,200 @@ function browserFailure(
   return error;
 }
 
-/** 假实现 + 按需让某个方法抛错（失败渲染的用例用它） */
-function automationThrowing(method: string, error: Error): BrowserAutomation {
+/** 假实现 + 按需让某个操作抛错（失败渲染的用例用它） */
+function automationThrowing(method: keyof BrowserTabOperations, error: Error): BrowserAutomation {
   const { automation } = trackingAutomation();
+  const originalTab = automation.tab.bind(automation);
   return {
-    ...(automation as unknown as Record<string, unknown>),
-    [method]: async () => {
-      throw error;
-    },
+    ...automation,
+    tab: (tabId?: string) => ({
+      ...originalTab(tabId),
+      [method]: async () => Promise.reject(error),
+    }),
   } as unknown as BrowserAutomation;
 }
 
-/** 假实现 + 覆盖某个方法的返回值（成功路径字段渲染的用例用它） */
-function automationReturning(method: string, value: unknown): BrowserAutomation {
+/** 假实现 + 覆盖某个操作的返回值（成功路径字段渲染的用例用它） */
+function automationReturning(
+  method: keyof BrowserTabOperations,
+  value: unknown,
+): BrowserAutomation {
   const { automation } = trackingAutomation();
+  const originalTab = automation.tab.bind(automation);
   return {
-    ...(automation as unknown as Record<string, unknown>),
-    [method]: async () => value,
+    ...automation,
+    tab: (tabId?: string) => ({ ...originalTab(tabId), [method]: async () => value }),
   } as unknown as BrowserAutomation;
 }
 
 describe("浏览器工具", () => {
-  it("并发调用被串行化：不会交错执行（否则鼠标事件会落到错误元素上）", async () => {
-    const { automation, events } = trackingAutomation({ delayMs: 10 });
+  it("工具集与 BROWSER_TOOL_NAMES 一致：九个名字一个不多一个不少", () => {
+    const { automation } = trackingAutomation();
     const tools = createBrowserTools(automation);
+    const names: readonly string[] = Object.values(BROWSER_TOOL_NAMES);
 
-    // 同时发起三个调用（内核默认就是并行执行工具调用）
-    await Promise.all([
-      call(tools, "browser_click", { ref: "e1" }),
-      call(tools, "browser_type", { ref: "e2", text: "hello" }),
-      call(tools, "browser_snapshot"),
-    ]);
-
-    // 串行的判据：进出严格成对交替，绝不出现 enter A → enter B → exit A
-    //（那正是「交错的鼠标序列」的形态）
-    let depth = 0;
-    for (const event of events) {
-      if (event.startsWith("enter:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(0);
-        depth += 1;
-      } else if (event.startsWith("exit:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(1);
-        depth -= 1;
-      }
-    }
-    expect(events).toHaveLength(6);
+    // 合并后的上限就是九个：再加工具要先说明「为什么它不能并进现有动作」
+    expect(names).toHaveLength(9);
+    expect(tools).toHaveLength(names.length);
+    const missing = names.filter((name) => tools.every((tool) => tool.name !== name));
+    expect(missing, `缺少这些工具：${missing.join("、")}`).toEqual([]);
+    // 反向也查一遍：名字写错（常量表里没有）或重复同样算失败
+    expect([...tools.map((tool) => tool.name)].sort()).toEqual([...names].sort());
   });
 
-  it("14 个工具全都在同一条串行链上（少包一个都要红）", async () => {
-    const { automation, events } = trackingAutomation({ delayMs: 5 });
+  it("每个工具都接受 tab 并原样透传（多标签下指错标签=点错页面）", async () => {
+    const { automation, requestedTabs } = trackingAutomation();
     const tools = createBrowserTools(automation);
 
-    // 每个工具的最小合法参数。这里刻意不看返回内容，只看**进出顺序** ——
-    // 「模型正在操作页面」的提示条与串行保证都是靠这一层，漏包一个工具就会让
-    // 两次点击序列有机会交错，而那在真机上表现为「随机点错东西」，极难归因。
     const args: Record<string, Record<string, unknown>> = {
-      browser_open: { url: "example.com" },
-      browser_history: { action: "back" },
-      browser_snapshot: {},
-      browser_click: { ref: "e1" },
-      browser_type: { ref: "e1", text: "hi" },
-      browser_press: { key: "Enter" },
-      browser_hover: { ref: "e1" },
-      browser_select: { ref: "e1", value: "us" },
-      browser_wait: { text: "done" },
-      browser_screenshot: {},
-      browser_console: {},
-      browser_network: {},
-      browser_dialog: { action: "dismiss" },
-      browser_evaluate: { code: "1" },
+      browser_open: { url: "example.com", tab: "t2" },
+      browser_history: { action: "back", tab: "t2" },
+      browser_snapshot: { tab: "t2" },
+      browser_act: { action: "click", ref: "e1", tab: "t2" },
+      browser_wait: { text: "done", tab: "t2" },
+      browser_screenshot: { tab: "t2" },
+      browser_logs: { type: "console", tab: "t2" },
+      browser_dialog: { action: "dismiss", tab: "t2" },
+      browser_evaluate: { code: "1", tab: "t2" },
     };
 
-    // 一起发出去（内核默认并行执行工具调用）；个别工具抛错也无所谓，
-    // 要看的是「无论成败，进出都不交错」。
-    await Promise.allSettled(tools.map((tool) => call(tools, tool.name, args[tool.name] ?? {})));
-
-    let depth = 0;
-    for (const event of events) {
-      if (event.startsWith("enter:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(0);
-        depth += 1;
-      } else if (event.startsWith("exit:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(1);
-        depth -= 1;
-      }
+    for (const name of Object.values(BROWSER_TOOL_NAMES)) {
+      await call(tools, name, args[name] ?? {});
     }
-    // 每个工具都留下了进与出：数量对不上说明有工具压根没走那条链（被静默跳过）
-    expect(events.filter((event) => event.startsWith("enter:"))).toHaveLength(tools.length);
-    expect(events.filter((event) => event.startsWith("exit:"))).toHaveLength(tools.length);
-    expect(events).not.toContain("cleared-while-busy");
+
+    // 除 browser_open 走 automation.open 的分支外，其余八个都必须带着 "t2" 去要句柄
+    expect(requestedTabs.filter((tabId) => tabId === "t2")).toHaveLength(8);
   });
 
-  it("并发的活跃标记不会在还有操作在跑时被清掉", async () => {
-    const { automation, events, maxActiveDepth } = trackingAutomation({ delayMs: 10 });
+  it("browser_act 按动作分派：六个动作各自打到对应的操作上", async () => {
+    const { automation, events } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    await call(tools, "browser_act", { action: "click", ref: "e1" });
+    await call(tools, "browser_act", { action: "type", ref: "e2", text: "hi", submit: true });
+    await call(tools, "browser_act", { action: "press", key: "Enter", ref: "e3" });
+    await call(tools, "browser_act", { action: "hover", ref: "e4" });
+    await call(tools, "browser_act", { action: "select", ref: "e5", value: "us" });
+    await call(tools, "browser_act", { action: "scroll", deltaY: 600 });
+
+    const entered = events.filter((event) => event.startsWith("enter:"));
+    expect(entered).toEqual([
+      "enter:click:e1",
+      "enter:type:e2",
+      "enter:press:Enter",
+      "enter:hover:e4",
+      "enter:select:e5:value",
+      "enter:scroll:600:0",
+    ]);
+  });
+
+  it("browser_act 的参数校验：缺参的动作必须当场拒绝，不能把 undefined 送进主进程", async () => {
+    const { automation } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    expect(await callError(tools, "browser_act", { action: "click" })).toContain("ref");
+    expect(await callError(tools, "browser_act", { action: "type", ref: "e1" })).toContain("text");
+    expect(await callError(tools, "browser_act", { action: "press" })).toContain("key");
+    expect(await callError(tools, "browser_act", { action: "hover" })).toContain("ref");
+    // select：value / label / index 恰好一个（0 个与 2 个都拒绝）
+    const none = await callError(tools, "browser_act", { action: "select", ref: "e1" });
+    expect(none).toContain("value");
+    expect(none).toContain("0 个");
+    const both = await callError(tools, "browser_act", {
+      action: "select",
+      ref: "e1",
+      value: "us",
+      label: "United States",
+    });
+    expect(both).toContain("2 个");
+    // scroll：deltaY 必须是非零有限数
+    expect(await callError(tools, "browser_act", { action: "scroll" })).toContain("deltaY");
+    expect(await callError(tools, "browser_act", { action: "scroll", deltaY: 0 })).toContain(
+      "deltaY",
+    );
+  });
+
+  it("browser_act 成功文案带标签行，并说明是否导航", async () => {
+    const { automation } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    const text = await callText(tools, "browser_act", {
+      action: "click",
+      ref: "e1",
+      tab: "t2",
+    });
+
+    // 标签行是后续 tab 参数的唯一来源：多标签时必须给出完整列表
+    expect(text).toContain("Tab: t2 (open tabs: t1, t2)");
+    expect(text).toContain('Clicked e1 ("button")');
+    expect(text).toContain("snapshot again");
+  });
+
+  it("browser_logs 两个视图：console 走增量读取，network 支持 failuresOnly / clear", async () => {
+    const { automation, events } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    await call(tools, "browser_logs", { type: "console" });
+    await call(tools, "browser_logs", { type: "network", failuresOnly: true, clear: true });
+
+    const entered = events.filter((event) => event.startsWith("enter:"));
+    expect(entered).toContain("enter:console");
+    expect(entered).toContain("enter:network");
+  });
+
+  it("browser_open 的 newTab 透传（开新标签而不是把当前页面顶掉），输出带标签身份", async () => {
+    const { automation } = trackingAutomation();
+    const opened: Array<{ url: string; newTab?: boolean }> = [];
+    const spy = {
+      ...automation,
+      open: async (url: string, options?: { newTab?: boolean }) => {
+        opened.push({ url, ...(options?.newTab === undefined ? {} : { newTab: options.newTab }) });
+        return {
+          url: "https://example.com/",
+          title: "Example",
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+        };
+      },
+    } as unknown as BrowserAutomation;
+
+    const tools = createBrowserTools(spy);
+    await call(tools, "browser_open", { url: "example.com", newTab: true });
+    expect(opened).toEqual([{ url: "example.com", newTab: true }]);
+
+    // 打开后的输出必须带标签身份，模型才有东西可引用
+    const text = await callText(tools, "browser_open", { url: "example.com" });
+    expect(text).toContain("Tab: t1");
+  });
+
+  it("并发的活跃标记按标签计数：不会在还有操作在跑时被清掉", async () => {
+    const { automation, events, activeByTab } = trackingAutomation();
     const tools = createBrowserTools(automation);
 
     await Promise.all([
       call(tools, "browser_snapshot"),
-      call(tools, "browser_click", { ref: "e1" }),
+      call(tools, "browser_act", { action: "click", ref: "e1" }),
     ]);
 
-    // 串行化之后同一时刻只有一个操作在跑：不该出现「还有人在忙却报了 cleared」
-    expect(events).not.toContain("cleared-while-busy");
-    expect(maxActiveDepth.value).toBe(1);
+    // 工具层是「先标记、后执行、finally 清掉」：两个并行调用之间不该互相清掉对方的标记
+    expect(events).toContain("active:on:t1:正在读取页面");
+    expect(events).toContain("active:on:t1:正在点击 e1");
+    expect(activeByTab.get("t1")).toBe(0);
   });
 
-  it("三个只读工具的 name 与 label 一致，且描述说清了「什么时候用 / 不要用」", () => {
-    const { automation } = trackingAutomation();
-    const tools = createBrowserTools(automation);
-
-    for (const name of ["browser_snapshot", "browser_console", "browser_screenshot"]) {
-      const tool = tools.find((candidate) => candidate.name === name);
-      expect(tool, `缺少工具 ${name}`).toBeTruthy();
-      expect(tool?.label).toBe(name);
-      expect(tool?.description).toContain("When to use it");
-      expect(tool?.description).toContain("When NOT to use it");
-    }
-  });
-
-  it("浏览器报错（如 ref 失效）原样抛给内核，由它转成错误结果", async () => {
-    const { automation } = trackingAutomation();
-    // 覆盖 click：让它在 ref 失效时抛错（服务侧的真实行为）
-    const failing = {
-      ...(automation as unknown as Record<string, unknown>),
-      click: async () => {
-        throw new Error("找不到元素 e9。ref 只在最近一次 snapshot 内有效");
-      },
-    } as unknown as BrowserAutomation;
-    const tools = createBrowserTools(failing);
-
-    // 抛出的错误必须带可读文案：内核会把它作为工具结果回给模型
-    await expect(call(tools, "browser_click", { ref: "e9" })).rejects.toThrow(/snapshot/);
-  });
-
-  it("press / select / hover 也走同一条串行队列：并发调用不会交错", async () => {
-    const { automation, events, maxActiveDepth } = trackingAutomation({ delayMs: 10 });
-    const tools = createBrowserTools(automation);
-
-    // 新工具和 click / type 一样是「真在页面上动手」，必须共享同一个队列：
-    // 把 withAgentActivity 从任意一个新工具上摘掉，下面两条断言就会红。
-    await Promise.all([
-      call(tools, "browser_press", { key: "Enter" }),
-      call(tools, "browser_press", { key: "Escape" }),
-      call(tools, "browser_select", { ref: "e3", value: "us" }),
-      call(tools, "browser_hover", { ref: "e4" }),
-    ]);
-
-    // 串行的判据与 click / type 的一致：进出严格成对交替
-    let depth = 0;
-    for (const event of events) {
-      if (event.startsWith("enter:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(0);
-        depth += 1;
-      } else if (event.startsWith("exit:")) {
-        expect(depth, `交错执行了：${events.join(" → ")}`).toBe(1);
-        depth -= 1;
-      }
-    }
-    expect(events).toHaveLength(8);
-    expect(events.indexOf("exit:press:Enter")).toBeLessThan(events.indexOf("enter:press:Escape"));
-    expect(events).not.toContain("cleared-while-busy");
-    expect(maxActiveDepth.value).toBe(1);
-  });
-
-  it("六个新工具的 name 与 label 一致，描述里都有「什么时候用 / 不要用」", () => {
+  it("只读工具的 name 与 label 一致，且描述说清了「什么时候用 / 不要用」", () => {
     const { automation } = trackingAutomation();
     const tools = createBrowserTools(automation);
 
     for (const name of [
-      "browser_press",
-      "browser_hover",
-      "browser_select",
-      "browser_wait",
-      "browser_network",
-      "browser_dialog",
+      BROWSER_TOOL_NAMES.snapshot,
+      BROWSER_TOOL_NAMES.logs,
+      BROWSER_TOOL_NAMES.screenshot,
+      BROWSER_TOOL_NAMES.wait,
+      BROWSER_TOOL_NAMES.open,
+      BROWSER_TOOL_NAMES.act,
+      BROWSER_TOOL_NAMES.dialog,
     ]) {
       const tool = tools.find((candidate) => candidate.name === name);
       expect(tool, `缺少工具 ${name}`).toBeTruthy();
@@ -435,17 +480,14 @@ describe("浏览器工具", () => {
     }
   });
 
-  it("工具集与 BROWSER_TOOL_NAMES 一致：14 个名字一个不多一个不少", () => {
+  it("每个工具的参数里都有 tab（模型学会多标签的唯一入口）", () => {
     const { automation } = trackingAutomation();
     const tools = createBrowserTools(automation);
-    const names: readonly string[] = Object.values(BROWSER_TOOL_NAMES);
 
-    expect(names).toHaveLength(14);
-    expect(tools).toHaveLength(names.length);
-    const missing = names.filter((name) => tools.every((tool) => tool.name !== name));
-    expect(missing, `缺少这些工具：${missing.join("、")}`).toEqual([]);
-    // 反向也查一遍：名字写错（常量表里没有）或重复同样算失败
-    expect([...tools.map((tool) => tool.name)].sort()).toEqual([...names].sort());
+    for (const tool of tools) {
+      const schema = tool.parameters as { properties?: Record<string, unknown> };
+      expect(schema.properties?.tab, `${tool.name} 缺 tab 参数`).toBeTruthy();
+    }
   });
 
   it("browser_wait 超时：文案里同时给出「超时了多久」与当前现状 detail", async () => {
@@ -463,35 +505,19 @@ describe("浏览器工具", () => {
     expect(text).toContain("Snapshot");
   });
 
-  it("browser_select 要求 value / label / index 恰好一个：0 个与 2 个都被拒绝", async () => {
-    const { automation } = trackingAutomation();
-    const tools = createBrowserTools(automation);
-
-    const none = await callError(tools, "browser_select", { ref: "e3" });
-    expect(none).toContain("value");
-    expect(none).toContain("label");
-    expect(none).toContain("0 个");
-
-    const both = await callError(tools, "browser_select", {
-      ref: "e3",
-      value: "us",
-      label: "United States",
-    });
-    expect(both).toContain("value");
-    expect(both).toContain("label");
-    expect(both).toContain("2 个");
-  });
-
-  it("browser_network 空记录时说清「还没有记录」，有记录时按 METHOD status url 列全", async () => {
+  it("browser_logs network：空记录如实说「还没有记录」", async () => {
     const empty = trackingAutomation({
       network: { entries: [], total: 0, omitted: 0, bufferEmpty: true, noFailures: false },
     });
-    const emptyText = await callText(createBrowserTools(empty.automation), "browser_network");
+    const emptyText = await callText(createBrowserTools(empty.automation), "browser_logs", {
+      type: "network",
+    });
     expect(emptyText).toContain("No network requests have been recorded yet.");
 
     const { automation } = trackingAutomation();
-    const tools = createBrowserTools(automation);
-    const text = await callText(tools, "browser_network");
+    const text = await callText(createBrowserTools(automation), "browser_logs", {
+      type: "network",
+    });
 
     expect(text).toContain("POST");
     expect(text).toContain("500");
@@ -499,9 +525,102 @@ describe("浏览器工具", () => {
     // status 为 0 = 没拿到响应：必须写成 failed，否则模型会把 0 当成状态码
     expect(text).toContain("failed");
     expect(text).toContain("net::ERR_CONNECTION_RESET");
+  });
 
-    const cleared = await callText(tools, "browser_network", { clear: true });
-    expect(cleared).toContain("Network log cleared before this read.");
+  it("noFailures：有记录但没有失败请求时不得说「还没有记录」，要报出条数", async () => {
+    const { automation } = trackingAutomation({
+      network: { entries: [], total: 23, omitted: 0, bufferEmpty: false, noFailures: true },
+    });
+
+    const text = await callText(createBrowserTools(automation), "browser_logs", {
+      type: "network",
+      failuresOnly: true,
+    });
+
+    expect(text).toContain("23");
+    expect(text).toContain("none failed");
+    expect(text).not.toContain("No network requests have been recorded yet.");
+  });
+
+  it("omitted：说明还有多少条记录没列出来（不给数字会让模型以为页面只发了这么多）", async () => {
+    const { automation } = trackingAutomation({
+      network: {
+        entries: [
+          {
+            url: "https://example.com/x",
+            method: "GET",
+            status: 200,
+            resourceType: "xhr",
+            durationMs: 9,
+            at: 1,
+          },
+        ],
+        total: 93,
+        omitted: 12,
+        bufferEmpty: false,
+        noFailures: false,
+      },
+    });
+
+    const text = await callText(createBrowserTools(automation), "browser_logs", {
+      type: "network",
+    });
+
+    expect(text).toContain("12 record(s) are not listed here");
+    expect(text).toContain("showing the last 1 of 93");
+  });
+
+  it("dropped：说明已过滤多少条 Electron 自身噪音，增量语义不变", async () => {
+    const noisy = trackingAutomation({
+      console: {
+        entries: [{ level: "error", text: "boom", source: "app.js", line: 3, at: 1 }],
+        dropped: 5,
+      },
+    });
+    const text = await callText(createBrowserTools(noisy.automation), "browser_logs", {
+      type: "console",
+    });
+    expect(text).toContain("[error] boom (app.js:3)");
+    expect(text).toContain("5 message(s) were filtered out");
+    expect(text).toContain("Electron");
+
+    // 一条新消息都没有、但噪音被过滤时：两条事实都要说
+    const quiet = trackingAutomation({ console: { entries: [], dropped: 2 } });
+    const quietText = await callText(createBrowserTools(quiet.automation), "browser_logs", {
+      type: "console",
+    });
+    expect(quietText).toContain("No new console messages since the last read.");
+    expect(quietText).toContain("2 message(s) were filtered out");
+  });
+
+  it("warnings / effect：unknown 明说「未做断言」，warnings 逐条列出，hit 不啰嗦", async () => {
+    const tools = createBrowserTools(
+      automationReturning("type", {
+        name: "field",
+        navigated: false,
+        effect: "unknown",
+        detail: "probe was not armed",
+        warnings: ["input truncated at maxlength 10", "a page key handler also ran"],
+      } satisfies BrowserActionOutcome),
+    );
+
+    const text = await callText(tools, "browser_act", { action: "type", ref: "e3", text: "hello" });
+
+    expect(text).toContain("Effect: unknown");
+    expect(text).toContain("NOT asserted to have landed");
+    expect(text).toContain("probe was not armed");
+    expect(text).toContain("Warning: input truncated at maxlength 10");
+    expect(text).toContain("Warning: a page key handler also ran");
+
+    // 默认的 hit 且没有告警时，成功文案保持原样（不加 Effect / Warning 行）
+    const plain = createBrowserTools(trackingAutomation().automation);
+    const plainText = await callText(plain, "browser_act", {
+      action: "type",
+      ref: "e3",
+      text: "hi",
+    });
+    expect(plainText).not.toContain("Effect:");
+    expect(plainText).not.toContain("Warning:");
   });
 
   it("STALE_REF：首行给出工具名与错误码，末句让模型重新 snapshot（不谎报成功）", async () => {
@@ -515,10 +634,10 @@ describe("浏览器工具", () => {
       ),
     );
 
-    const text = await callError(tools, "browser_click", { ref: "e9" });
+    const text = await callError(tools, "browser_act", { action: "click", ref: "e9" });
 
     // 首行是「工具名 失败（错误码）：原因」，模型据此一眼看出这是哪一类失败
-    expect(text).toContain("browser_click 失败（STALE_REF）：元素 e9 已从 DOM 移除");
+    expect(text).toContain("browser_act 失败（STALE_REF）：元素 e9 已从 DOM 移除");
     // detail 逐字段列出：ref / generation 都在
     expect(text).toContain("- ref: e9");
     expect(text).toContain("- generation: 3");
@@ -526,22 +645,19 @@ describe("浏览器工具", () => {
     expect(text).toContain("browser_snapshot");
   });
 
-  it("UNAVAILABLE：说明视口 0×0，并让用户展开右侧浏览器面板", async () => {
+  it("UNAVAILABLE：说明没就绪，并给出「先 browser_open」这条路", async () => {
     const tools = createBrowserTools(
       automationThrowing(
         "click",
-        browserFailure("UNAVAILABLE", "浏览器面板未布局（视口 0×0）：坐标输入无法投递。", {
-          viewport: { w: 0, h: 0 },
-        }),
+        browserFailure("UNAVAILABLE", "还没有打开任何浏览器标签。", { viewport: { w: 0, h: 0 } }),
       ),
     );
 
-    const text = await callError(tools, "browser_click", { ref: "e1" });
+    const text = await callError(tools, "browser_act", { action: "click", ref: "e1" });
 
-    expect(text).toContain("browser_click 失败（UNAVAILABLE）");
+    expect(text).toContain("browser_act 失败（UNAVAILABLE）");
     expect(text).toContain("- viewport: 0×0");
-    expect(text).toContain("展开浏览器面板");
-    // 还要给一条仍然可用的路：JS 通道不受零尺寸视口影响
+    expect(text).toContain("browser_open");
     expect(text).toContain("browser_evaluate");
   });
 
@@ -559,9 +675,9 @@ describe("浏览器工具", () => {
       ),
     );
 
-    const text = await callError(tools, "browser_click", { ref: "e5" });
+    const text = await callError(tools, "browser_act", { action: "click", ref: "e5" });
 
-    expect(text).toContain("browser_click 失败（WRONG_TARGET）");
+    expect(text).toContain("browser_act 失败（WRONG_TARGET）");
     expect(text).toContain("- ref: e5");
     expect(text).toContain("- hitRef: e7");
     expect(text).toContain("- elementAtPoint: div#modal.overlay.shadow");
@@ -571,81 +687,14 @@ describe("浏览器工具", () => {
     expect(text).toContain("browser_evaluate");
   });
 
-  it("noFailures：有记录但没有失败请求时不得说「还没有记录」，要报出条数", async () => {
-    const { automation } = trackingAutomation({
-      network: { entries: [], total: 23, omitted: 0, bufferEmpty: false, noFailures: true },
-    });
-
-    const text = await callText(createBrowserTools(automation), "browser_network", {
-      failuresOnly: true,
-    });
-
-    expect(text).toContain("23");
-    expect(text).toContain("none failed");
-    expect(text).not.toContain("No network requests have been recorded yet.");
-  });
-
-  it("omitted：说明还有多少条记录没列出来（不给数字会让模型以为页面只发了这么多）", async () => {
-    const { automation } = trackingAutomation({
-      network: {
-        entries: [
-          { url: "https://example.com/x", method: "GET", status: 200, resourceType: "xhr", durationMs: 9, at: 1 },
-        ],
-        total: 93,
-        omitted: 12,
-        bufferEmpty: false,
-        noFailures: false,
-      },
-    });
-
-    const text = await callText(createBrowserTools(automation), "browser_network");
-
-    expect(text).toContain("12 record(s) are not listed here");
-    expect(text).toContain("showing the last 1 of 93");
-  });
-
-  it("dropped：说明已过滤多少条 Electron 自身噪音，增量语义不变", async () => {
-    const noisy = trackingAutomation({
-      console: {
-        entries: [{ level: "error", text: "boom", source: "app.js", line: 3, at: 1 }],
-        dropped: 5,
-      },
-    });
-    const text = await callText(createBrowserTools(noisy.automation), "browser_console");
-    expect(text).toContain("[error] boom (app.js:3)");
-    expect(text).toContain("5 message(s) were filtered out");
-    expect(text).toContain("Electron");
-
-    // 一条新消息都没有、但噪音被过滤时：两条事实都要说
-    const quiet = trackingAutomation({ console: { entries: [], dropped: 2 } });
-    const quietText = await callText(createBrowserTools(quiet.automation), "browser_console");
-    expect(quietText).toContain("No new console messages since the last read.");
-    expect(quietText).toContain("2 message(s) were filtered out");
-  });
-
-  it("warnings / effect：unknown 明说「未做断言」，warnings 逐条列出，hit 不啰嗦", async () => {
+  it("标签不存在（NOT_FOUND）时的下一步：用 browser_open 打开或新建", async () => {
     const tools = createBrowserTools(
-      automationReturning("type", {
-        name: "field",
-        navigated: false,
-        effect: "unknown",
-        detail: "probe was not armed",
-        warnings: ["input truncated at maxlength 10", "a page key handler also ran"],
-      } satisfies BrowserActionOutcome),
+      automationThrowing("click", browserFailure("NOT_FOUND", "没有标签 t9。", { tabId: "t9" })),
     );
 
-    const text = await callText(tools, "browser_type", { ref: "e3", text: "hello" });
+    const text = await callError(tools, "browser_act", { action: "click", ref: "e1", tab: "t9" });
 
-    expect(text).toContain("Effect: unknown");
-    expect(text).toContain("NOT asserted to have landed");
-    expect(text).toContain("probe was not armed");
-    expect(text).toContain("Warning: input truncated at maxlength 10");
-    expect(text).toContain("Warning: a page key handler also ran");
-
-    // 默认的 hit 且没有告警时，成功文案保持原样（不加 Effect / Warning 行）
-    const plain = createBrowserTools(trackingAutomation().automation);
-    const plainText = await callText(plain, "browser_type", { ref: "e3", text: "hi" });
-    expect(plainText).not.toContain("Effect:");
-    expect(plainText).not.toContain("Warning:");
+    expect(text).toContain("NOT_FOUND");
+    expect(text).toContain("browser_open");
   });
 });

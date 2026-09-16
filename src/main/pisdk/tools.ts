@@ -18,7 +18,6 @@ import {
   type BashExecution,
   createBashTool,
   createEditTool,
-  createReadTool,
   createWriteTool,
   type ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
@@ -26,6 +25,7 @@ import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
 import type { BrowserAutomation } from "../browser/types";
 import { ASK_TOOL_NAME } from "./tools/ask";
 import { createBrowserTools } from "./tools/browser";
+import { createReadToolWithLineNumbers } from "./tools/read";
 import { createGlobTool, createGrepTool } from "./tools/search";
 import { createTodoTool, type TodoToolContext } from "./tools/todo";
 
@@ -53,13 +53,15 @@ export const TOOL_NAMES = {
   ...BROWSER_TOOL_NAMES,
 } as const;
 const BASH_DESCRIPTION =
-  "在当前工作目录执行一条 shell 命令，返回合并后的 stdout 与 stderr；超长输出只保留末尾 2000 行 / 50KB。\n\n" +
+  "在当前工作目录执行一条 shell 命令，返回合并后的 stdout 与 stderr；超长输出只保留末尾 2000 行 / 50KB。\n" +
+  "结果末尾总会带一行 [exited with code N]：命令成没成看它，**不需要**再跑一条 echo $?。\n\n" +
   "什么时候用：跑测试与构建、装依赖、看 git 状态（git status / git diff / git log）、执行项目脚本。\n" +
   "什么时候不要用：找文件用 glob，搜内容用 grep，读写文件用 read/write/edit —— 不要用 cat/sed/echo 去读改文件，" +
   "也不要在命令里拼 grep/find/rg，那些二进制在每台机器上不一定存在，遇到带空格的路径还会因为引号出错。";
 
 const READ_DESCRIPTION =
-  "读取一个文本文件，返回带行号的内容，可用 offset / limit 分页。\n\n" +
+  "读取一个文本文件，返回带行号的内容（`行号 + Tab + 原文`，行号是文件里的真实行号），可用 offset / limit 分页。\n" +
+  "行号是给你引用位置用的阅读辅助，**不是文件内容**：edit 的 oldText/newText 与 write 的正文都不要把它带上（见 edit 的说明）。\n\n" +
   "什么时候用：**修改任何文件之前先读它**；需要看完整实现或其上下文时。\n" +
   "什么时候不要用：只想定位某个符号或字符串在哪 → 用 grep；文件很大而只需要片段 → 先用 grep 拿到行号，" +
   "再带 offset/limit 读那一段；只是想确认文件存在或看目录结构 → 用 glob。";
@@ -71,7 +73,9 @@ const WRITE_DESCRIPTION =
   "整体覆盖会丢掉你没读到的改动，所以用之前先 read。";
 
 const EDIT_DESCRIPTION =
-  "对文件做字面替换：edits 里每处 oldText 必须在文件中唯一匹配，匹配不到或匹配到多处都会失败。\n\n" +
+  "对文件做字面替换：edits 里每处 oldText 必须在文件中唯一匹配，匹配不到或匹配到多处都会失败。\n" +
+  "**read 的输出带行号，但 oldText / newText 必须是文件原文**：匹配是逐字符的，" +
+  "把行号（含后面那个 Tab）复制进来会直接失配；newText 里混入行号则会把它写进文件。\n\n" +
   "什么时候用：定点修改 —— 改一个函数、一行配置、一个字符串。一次调用可以带多个 edits 批量改同一个文件。\n" +
   "什么时候不要用：不确定文件当前内容时（先 read）；需要跨多个文件大范围重构时逐个文件改。" +
   "oldText 里不要包含大段未改动的上下文 —— 只保留足以唯一定位的少量行，否则文件一动就会失配。";
@@ -79,6 +83,55 @@ const EDIT_DESCRIPTION =
 /** bash 的 prepare 回调：工作目录固定为会话 ExecutionEnv.cwd，不受进程 cwd 影响 */
 function prepareBash(execution: BashExecution, toolContext: ExecutionToolContext): void {
   execution.cwd = toolContext.env.cwd;
+}
+
+/**
+ * 内核 bash 非零退出时抛出的错误文本：`<输出>\n\nCommand exited with code N`（见内核 harness/tools/bash.js）。
+ *
+ * 为什么靠文案解析：内核只在**异常**里带退出码，成功时什么都不给（ToolResult 没有退出码字段），
+ * 而包装层拿不到它内部那次 env.exec 的结果 —— 除了这句固定文案没有别的来源。
+ */
+const BASH_EXIT_ERROR_PATTERN = /^([\s\S]*?)(?:\n\n)?Command exited with code (-?\d+)$/;
+
+/** 退出码统一成结果末尾的一行；输出自带的换行先收掉，别把退出码隔出两个空行 */
+function exitCodeLine(output: string, exitCode: number): string {
+  const body = output.replace(/\n+$/, "");
+  return body === ""
+    ? `[exited with code ${exitCode}]`
+    : `${body}\n\n[exited with code ${exitCode}]`;
+}
+
+/**
+ * 给 bash 结果补上退出码。
+ *
+ * 内核 bash 只在非 0 退出时用异常带出退出码，成功时只回输出 —— 模型想确认「命令到底成没成」
+ * 就得再跑一条 echo $?（多一次往返，而且 $? 是上一条命令的，很容易被夹在中间的命令吃掉）。
+ * 这里把退出码统一成结果文本的最后一行，非 0 时保持「抛错」：失败仍然以 isError 进入转录，
+ * 只是错误文本里也有同样的 [exited with code N] 行（词汇与作业工具的 exited / exit code 一致）。
+ *
+ * 超时、中止、起不来这些异常原样抛出：它们没有退出码，内核对它们的文案就是既有行为
+ *（如 "Command timed out after N seconds"），不能改写。合并 stderr 到 stdout 由内核负责，这里不碰。
+ */
+function withBashExitCode(
+  tool: AgentHarnessTool<AppToolContext>,
+): AgentHarnessTool<AppToolContext> {
+  const inner = tool.execute.bind(tool);
+  return {
+    ...tool,
+    async execute(toolCallId, params, onUpdate, toolContext, invocation, context) {
+      try {
+        const result = await inner(toolCallId, params, onUpdate, toolContext, invocation, context);
+        const only = result.content.length === 1 ? result.content[0] : undefined;
+        if (only === undefined || only.type !== "text") return result;
+        return { ...result, content: [{ ...only, text: exitCodeLine(only.text, 0) }] };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : undefined;
+        const match = message === undefined ? null : BASH_EXIT_ERROR_PATTERN.exec(message);
+        if (match === null || match[1] === undefined || match[2] === undefined) throw error;
+        throw new Error(exitCodeLine(match[1], Number(match[2])), { cause: error });
+      }
+    },
+  };
 }
 
 /**
@@ -111,8 +164,11 @@ export function buildTools(
   subagentTools: AgentHarnessTool<AppToolContext>[] = [],
 ): AgentHarnessTool<AppToolContext>[] {
   return [
-    { ...createBashTool<AppToolContext>({ prepare: prepareBash }), description: BASH_DESCRIPTION },
-    { ...createReadTool<AppToolContext>(), description: READ_DESCRIPTION },
+    {
+      ...withBashExitCode(createBashTool<AppToolContext>({ prepare: prepareBash })),
+      description: BASH_DESCRIPTION,
+    },
+    { ...createReadToolWithLineNumbers<AppToolContext>(), description: READ_DESCRIPTION },
     { ...createWriteTool<AppToolContext>(), description: WRITE_DESCRIPTION },
     { ...createEditTool<AppToolContext>(), description: EDIT_DESCRIPTION },
     createGrepTool<AppToolContext>(),

@@ -45,6 +45,7 @@ const api = {
     queue: (sessionId, text, mode) => ipcRenderer.invoke(IPC.chat.queue, { sessionId, text, mode }),
     compact: (sessionId, instructions) =>
       ipcRenderer.invoke(IPC.chat.compact, { sessionId, instructions }),
+    snapshot: (sessionId) => ipcRenderer.invoke(IPC.chat.snapshot, { sessionId }),
     onEvent: (callback) => {
       // 透传信封（事件 + 所属会话 id）：归属由主进程给出，渲染层不再靠「当前会话」猜
       const listener = (_event: Electron.IpcRendererEvent, payload: ChatEventEnvelope) =>
@@ -146,6 +147,10 @@ const api = {
   },
   browser: {
     status: () => ipcRenderer.invoke(IPC.browser.status),
+    registerTab: (tabId, webContentsId, requestId) =>
+      ipcRenderer.invoke(IPC.browser.registerTab, { tabId, webContentsId, requestId }),
+    unregisterTab: (tabId) => ipcRenderer.invoke(IPC.browser.unregisterTab, { tabId }),
+    activateTab: (tabId) => ipcRenderer.invoke(IPC.browser.activateTab, { tabId }),
     onEvent: (callback) => {
       // 与 chat.onEvent / terminal.onEvent 同一套：透传事件本体，归属由事件自己的字段给出
       const listener = (_event: Electron.IpcRendererEvent, payload: BrowserEvent) =>

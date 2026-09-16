@@ -5,7 +5,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { Bot, ChevronLeftIcon, Loader2Icon, Square } from "lucide-react";
-import { createContext, memo, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
 import {
@@ -81,11 +81,22 @@ export function SubagentPanel(): React.JSX.Element {
    *
    * 这是「重启后还能看到历史委派」的唯一来源，所以它挂在转录上而不是挂在事件上：
    * 事件只覆盖本进程正在跑的，转录覆盖全部（含早已跑完、不在内存里的那些）。
+   *
+   * 依赖用**结构签名**（条数 + 末条 id + 末条 parts 数）而不是 messages 数组本身：
+   * 流式期间数组每个 flush 都换引用，直接依赖会让这里跟着每个 token 全量重扫消息。
+   * 转录推导只关心形状变化（新消息、新 part），正文增长与它无关。
    */
+  const structureKey = `${messages?.length ?? -1}:${messages?.at(-1)?.id ?? ""}:${messages?.at(-1)?.parts.length ?? -1}`;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 结构签名才是触发条件，messages 从 ref 读最新值
   useEffect(() => {
-    if (activeSessionId === null || messages === undefined) return;
-    useSubagentStore.getState().setRunsFromTranscript(activeSessionId, messages);
-  }, [activeSessionId, messages]);
+    if (activeSessionId === null) return;
+    const current = messagesRef.current;
+    if (current === undefined) return;
+    useSubagentStore.getState().setRunsFromTranscript(activeSessionId, current);
+  }, [activeSessionId, structureKey]);
 
   // 转录只带当前加载的那一页，更早的委派要靠主进程的完整列表补齐（切会话再问一次）
   useEffect(() => {

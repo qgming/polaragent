@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   AgentHarness,
@@ -34,6 +35,7 @@ import type {
   ChatEvent,
   ChatEventEnvelope,
   ChatSendOptions,
+  ChatStreamSnapshot,
   QueuedMessage,
 } from "@/shared/contracts/chat";
 import type { ModelRef } from "@/shared/contracts/common";
@@ -59,6 +61,7 @@ import type { BrowserAutomation } from "../browser/types";
 import type { ApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
+import { buildJobResult } from "./job-delivery";
 import { createJobService, type JobService } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
 import {
@@ -68,9 +71,8 @@ import {
 } from "./permissions";
 import { buildProviders, resolveModel } from "./providers";
 import { buildSubagentResult } from "./report-delivery";
-import { buildJobResult } from "./job-delivery";
-import type { SessionStore } from "./session-store";
 import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import type { SessionStore } from "./session-store";
 import { loadSubagentCatalog } from "./subagent-catalog";
 // 循环依赖是刻意的：runner 需要 runtime 的 registerSubagentSession / getChatRuntime，
 // runtime 需要 runner 的运行管理。两边都只在函数体内互相调用，模块初始化期不取值，安全。
@@ -184,6 +186,13 @@ export interface ChatRuntime {
   stop(sessionId: string): Promise<void>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
   compact(sessionId: string, instructions?: string): Promise<void>;
+  /**
+   * 该会话当前流式消息的完整快照；没有在流的消息时为 null。
+   *
+   * 增量事件（part-delta）不带「从哪里开始」的信息，渲染层一旦发现缺口就必须整条补齐，
+   * 否则拼出来的文本是错的。这里返回的就是主进程累积中的那份原文（权威来源）。
+   */
+  streamSnapshot(sessionId: string): ChatStreamSnapshot | null;
   isRunning(sessionId: string): boolean;
   /**
    * 列出该会话的后台作业。
@@ -228,6 +237,8 @@ type SessionHandle = NonNullable<Awaited<ReturnType<SessionStore["open"]>>>["ses
 /** 流式 assistant 消息的累积状态 */
 interface AssistantStream {
   messageId: string;
+  /** 这条流式消息的创建时刻（快照补齐时渲染层要用，与 message-added 一致） */
+  createdAt: number;
   parts: ChatPart[];
   /** contentIndex → parts 下标，保证同一内容块增量合并 */
   partIndexByContent: Map<number, number>;
@@ -820,6 +831,20 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
     console.warn(`恢复待办清单失败，按空清单继续：${toErrorText(error)}`);
   }
 }
+/**
+ * 会话 ExecutionEnv 的允许根：工作目录 + 数据目录 + **系统临时目录**。
+ *
+ * 前两个是既有要求（技能/模板目录可能落在两者之下，见 createRuntime 里的说明）。
+ * 临时目录是 bash spill 的硬要求：超长输出由内核写到 os.tmpdir()/tmp-* 下，工具结果里
+ * 会附 "Full output: <path>" —— 那条路径不在允许根内时 read 会直接拒绝，
+ * 模型只能退回去用 bash cat（等于 spill 白落，还多一次工具往返）。
+ *
+ * 只放行这一个额外根：其余工作目录之外的路径照旧被路径守卫拒绝。
+ */
+export function sessionAllowedRoots(cwd: string): string[] {
+  return [cwd, dataDir(), tmpdir()];
+}
+
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   const runtimes = new Map<string, SessionRuntime>();
   const creations = new Map<string, Promise<SessionRuntime>>();
@@ -871,17 +896,41 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
   }
 
+  /**
+   * 流式增量：只发新增的那一小段，而不是整段累积文本。
+   *
+   * 逐 token 的全量下发在长回复上是 O(n²) 的 IPC 负载（序列化 + 结构化克隆），
+   * 渲染层还会被每条事件推着整篇重渲染。增量把两样都降成 O(n)：
+   * 权威校正由 part 的 start/end（走 part-upsert 全量）与渲染层的快照补齐负责。
+   */
+  function emitDelta(
+    runtime: SessionRuntime,
+    stream: AssistantStream,
+    partIndex: number,
+    kind: "text" | "reasoning" | "args",
+    delta: string,
+  ): void {
+    if (delta === "") return;
+    emitSafe(runtime.sessionId, {
+      type: "part-delta",
+      messageId: stream.messageId,
+      partIndex,
+      kind,
+      delta,
+    });
+  }
+
   /** 取或创建文本 / 推理 part，保证 contentIndex 与 parts 下标一一对应 */
   function partFor(
     stream: AssistantStream,
     contentIndex: number,
     kind: "text" | "reasoning",
-  ): { part: TextPart | ReasoningPart; index: number } {
+  ): { part: TextPart | ReasoningPart; index: number; created: boolean } {
     const existingIndex = stream.partIndexByContent.get(contentIndex);
     if (existingIndex !== undefined) {
       const existing = stream.parts[existingIndex];
       if (existing?.type === kind) {
-        return { part: existing as TextPart | ReasoningPart, index: existingIndex };
+        return { part: existing as TextPart | ReasoningPart, index: existingIndex, created: false };
       }
     }
     const created: TextPart | ReasoningPart =
@@ -889,7 +938,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     stream.parts.push(created);
     const index = stream.parts.length - 1;
     stream.partIndexByContent.set(contentIndex, index);
-    return { part: created, index };
+    return { part: created, index, created: true };
   }
 
   /** 取或创建工具调用 part；工具流式期间允许参数文本增量追加 */
@@ -897,14 +946,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     stream: AssistantStream,
     contentIndex: number,
     toolCall: { id: string; name: string; arguments: Record<string, unknown> },
-  ): { part: ToolCallPart; index: number } {
+  ): { part: ToolCallPart; index: number; created: boolean } {
     const existingIndex = stream.partIndexByContent.get(contentIndex);
     if (existingIndex !== undefined) {
       const existing = stream.parts[existingIndex];
       if (existing?.type === "tool-call") {
         if (toolCall.name !== "") existing.toolName = toolCall.name;
         if (toolCall.id !== "") existing.toolCallId = toolCall.id;
-        return { part: existing, index: existingIndex };
+        return { part: existing, index: existingIndex, created: false };
       }
     }
     const created: ToolCallPart = {
@@ -917,7 +966,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     stream.parts.push(created);
     const index = stream.parts.length - 1;
     stream.partIndexByContent.set(contentIndex, index);
-    return { part: created, index };
+    return { part: created, index, created: true };
   }
 
   function handleMessageStart(
@@ -928,7 +977,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // custom 消息（如作业结束通知）待链路层支持后再启用
     if (message.role === "assistant") {
       const messageId = randomUUID();
-      runtime.stream = { messageId, parts: [], partIndexByContent: new Map() };
+      const createdAt = Date.now();
+      runtime.stream = { messageId, createdAt, parts: [], partIndexByContent: new Map() };
       runtime.lastAssistantMessageId = messageId;
       // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
       runtime.pendingEntries.push({ messageId, role: "assistant" });
@@ -937,7 +987,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         message: {
           id: messageId,
           role: "assistant",
-          createdAt: Date.now(),
+          createdAt,
           parts: [],
           status: "streaming",
         },
@@ -951,12 +1001,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const messageId = reuseId ?? randomUUID();
       // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
       runtime.pendingEntries.push({ messageId, role: "user" });
+      // 作业唤醒产生的用户消息要标成系统来源；标记读一次即清，只影响这一条
+      const origin = runtime.pendingSynthetic === "job" ? "system" : undefined;
+      runtime.pendingSynthetic = undefined;
       emitSafe(runtime.sessionId, {
         type: "message-added",
         message: {
           id: messageId,
           role: "user",
-          origin: runtime.pendingSynthetic === "job" ? (runtime.pendingSynthetic = undefined, "system") : undefined,
+          origin,
           createdAt: Date.now(),
           parts: mapUserParts(message),
           status: "complete",
@@ -978,10 +1031,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       update.type === "text_delta" ||
       update.type === "text_end"
     ) {
-      const { part, index } = partFor(stream, update.contentIndex, "text");
+      const { part, index, created } = partFor(stream, update.contentIndex, "text");
       const textPart = part as TextPart;
-      if (update.type === "text_delta") textPart.text += update.delta;
-      else if (update.type === "text_end") textPart.text = update.content;
+      if (update.type === "text_delta") {
+        textPart.text += update.delta;
+        // 少了 start 的防御路径：增量落在新 part 上，先把创建事件补出去，渲染层才有落点
+        if (created) upsertPart(runtime, stream, index, textPart);
+        emitDelta(runtime, stream, index, "text", update.delta);
+        return;
+      }
+      // start 是结构事件（创建 part），end 带权威全文：两者都全量下发。
+      // end 的全量顺带校正渲染层可能丢掉的增量，所以增量协议始终是「可丢的优化通道」。
+      if (update.type === "text_end") textPart.text = update.content;
       upsertPart(runtime, stream, index, textPart);
       return;
     }
@@ -992,10 +1053,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       update.type === "thinking_delta" ||
       update.type === "thinking_end"
     ) {
-      const { part, index } = partFor(stream, update.contentIndex, "reasoning");
+      const { part, index, created } = partFor(stream, update.contentIndex, "reasoning");
       const reasoningPart = part as ReasoningPart;
-      if (update.type === "thinking_delta") reasoningPart.text += update.delta;
-      else if (update.type === "thinking_end") reasoningPart.text = update.content;
+      if (update.type === "thinking_delta") {
+        reasoningPart.text += update.delta;
+        if (created) upsertPart(runtime, stream, index, reasoningPart);
+        emitDelta(runtime, stream, index, "reasoning", update.delta);
+        return;
+      }
+      if (update.type === "thinking_end") reasoningPart.text = update.content;
       upsertPart(runtime, stream, index, reasoningPart);
       return;
     }
@@ -1003,13 +1069,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (update.type === "toolcall_start" || update.type === "toolcall_delta") {
       const content = update.partial.content[update.contentIndex];
       if (content?.type !== "toolCall") return;
-      const { part, index } = toolPartFor(stream, update.contentIndex, content);
-      if (update.type === "toolcall_delta") part.argsText += update.delta;
+      const { part, index, created } = toolPartFor(stream, update.contentIndex, content);
       runtime.toolParts.set(part.toolCallId, {
         messageId: stream.messageId,
         partIndex: index,
         part,
       });
+      if (update.type === "toolcall_delta") {
+        part.argsText += update.delta;
+        if (created) upsertPart(runtime, stream, index, part);
+        emitDelta(runtime, stream, index, "args", update.delta);
+        return;
+      }
       upsertPart(runtime, stream, index, part);
       return;
     }
@@ -1404,12 +1475,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 读不到就说明这不是子智能体会话，按主会话那一套来。
      */
     const spec = subagentSessions.get(sessionId);
-    // 技能/模板目录必然落在会话工作目录（.oint/*）或数据目录之下，两个根一起兜住路径守卫：
-    // 否则 loadSkills 的 listDir 会被 validatePathAccess 拒绝，表现为「目录明明存在却是 0 个技能」。
-    // （子智能体定义目录不在这一串里：它走普通 fs 读，不受守卫约束 —— 见 loadEnabledSubagents）
+    // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录，
+    // tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
     const env = await createExecEnv({
       cwd,
-      allowedRoots: [cwd, dataDir()],
+      allowedRoots: sessionAllowedRoots(cwd),
     });
 
     const loaded = await loadAgentResources(env, settings, cwd);
@@ -2124,6 +2194,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return runtimes.get(sessionId)?.running ?? false;
   }
 
+  /** 当前流式消息的快照；parts 复制一层数组，避免调用方拿到会被后续增量改写的引用 */
+  function streamSnapshot(sessionId: string): ChatStreamSnapshot | null {
+    const stream = runtimes.get(sessionId)?.stream;
+    if (!stream) return null;
+    return {
+      messageId: stream.messageId,
+      parts: [...stream.parts],
+      createdAt: stream.createdAt,
+    };
+  }
+
   /**
    * 列出该会话的后台作业。
    *
@@ -2196,6 +2277,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     stop,
     queue,
     compact,
+    streamSnapshot,
     isRunning,
     listJobs,
     killJob,
