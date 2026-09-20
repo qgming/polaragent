@@ -5,7 +5,7 @@
 // 抽出来之后至少能测：脚本是合法 JS、字符串转义正确、URL 归一符合预期，
 // 以及（见 dom-scripts.test.ts）它在真 DOM 上确实做了该做的事。
 //
-// ref 的权威位置（docs/browser-automation-refactor.md §3）：页面侧持有
+// ref 的权威位置：页面侧持有
 // `window.__ointRefSeq`（自增计数）、`window.__ointEls`（Map<ref, Element>）、
 // `window.__ointUid`（WeakMap<Element, ref>）。脚本之间只靠这三个东西互相认人：
 //   · 快照给元素发号（首次见到才发，DOM 稳时就复用同一个号）；
@@ -240,7 +240,7 @@ function metaLines(): string[] {
 /**
  * 在页面里求一段 JS（browser_evaluate 的逃生门）。
  *
- * 序列化刻意做了**降级**而不是静默丢内容（docs …refactor.md §6）：
+ * 序列化刻意做了**降级**而不是静默丢内容：
  * `JSON.stringify(document.querySelector('h1'))` 会得到 `{}` —— DOM 节点没有可枚举的自有属性，
  * 于是模型看到「{}」，既不知道拿到的是什么，也不知道为什么是空的。旧实现还有第二个坑：
  * 一旦 JSON.stringify 抛错（循环引用），它只回一句 `<unserializable: …>`，
@@ -683,7 +683,7 @@ export function buildSnapshotExpression(): string {
   ].join("\n");
 }
 
-/** 探针盯的动作类型（docs …refactor.md §4）：arm 时按它挂监听，判定时按它挑事件 */
+/** 探针盯的动作类型：arm 时按它挂监听，判定时按它挑事件 */
 export type ProbeKind = "click" | "input" | "key" | "hover";
 
 /**
@@ -769,7 +769,7 @@ export function buildArmProbeExpression(kind: ProbeKind, ref: string): string {
 }
 
 /**
- * 读走探针记录（动作**之后**调用，见 §4 的 arm → 派发 → 等 80ms → read）。
+ * 读走探针记录。
  *
  * 返回 `{ kind, ref, events, elementAtPoint, activeRef, activeTag, viewport }`：
  *   · `events[].targetRef` —— 事件按 ref 归属到哪个元素上（内层 span 会归到它的 ref 祖先）；
@@ -832,7 +832,7 @@ export function buildReadProbeExpression(): string {
 }
 
 /**
- * 读视口尺寸：坐标型动作执行前的守卫（docs …refactor.md §5）。
+ * 读视口尺寸：坐标型动作执行前的守卫。
  *
  * 实测（Electron 探针）：零尺寸视口下 `sendInputEvent` 与 CDP 的
  * `Input.dispatchMouseEvent` 都会**静默打空**，而 JS 通道（snapshot / evaluate / fill）

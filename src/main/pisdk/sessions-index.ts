@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { writeFileAtomic } from "@/main/storage/atomic-write";
 import type { ModelRef } from "@/shared/contracts/common";
 
 /**
@@ -52,9 +53,7 @@ export function createSessionsIndex(baseDir: string): SessionsIndexStore {
     const payload = `${JSON.stringify(index, null, 2)}\n`;
     await mkdir(path.dirname(filePath), { recursive: true });
     // 先写临时文件再 rename，避免中断时留下半截 JSON
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, payload, "utf8");
-    await rename(tempPath, filePath);
+    await writeFileAtomic(filePath, payload);
   }
 
   function enqueue(task: () => Promise<void>): Promise<void> {

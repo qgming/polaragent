@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { McpServerConfig } from "@/shared/contracts/mcp";
 import { createMcpClient } from "./client";
-import { encodeMessage, parseIncoming, type JsonRpcRequest } from "./jsonrpc";
+import { encodeMessage, type JsonRpcRequest, parseIncoming } from "./jsonrpc";
 import type { McpTransport } from "./transport";
 
 /** 一条最小可用的 server 配置（测试只用得到 id 与 transport） */
@@ -207,9 +207,7 @@ describe("createMcpClient", () => {
     await client.connect();
     transport.sent.length = 0;
 
-    transport.push(
-      '{"jsonrpc":"2.0","id":"srv-1","method":"sampling/createMessage","params":{}}',
-    );
+    transport.push('{"jsonrpc":"2.0","id":"srv-1","method":"sampling/createMessage","params":{}}');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(transport.sent).toHaveLength(1);

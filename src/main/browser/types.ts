@@ -22,7 +22,7 @@ export interface BrowserActionOutcome {
   /** 动作后页面是否发生了导航或加载 */
   navigated: boolean;
   /**
-   * 动作是否**真的**落地（见 docs/browser-automation-refactor.md §4）：
+   * 动作是否**真的**落地：
    *   hit —— 事件被目标元素收到，或读回值与输入一致；
    *   no-effect —— 发出去了但页面毫无反应（服务侧此时抛错，正常返回里不该出现）；
    *   unknown —— 页面侧探针不可用（注入失败等），此时不做任何断言。

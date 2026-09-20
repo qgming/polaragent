@@ -4,6 +4,7 @@
  *   子智能体的转录不进会话列表，是它「隐藏会话」语义的最后一道闸门；
  * - `create` 把整个 SessionCreateOptions（kind 与归属信息）原样交给 store ——
  *   「点开子智能体组件跳到它的记录」靠的是写入时就固定下来的关联，不能在这里丢字段。
+ * - `delete` **先关运行时再删库**（见下方 describe 的说明）。
  *
  * store 整体 mock：本文件验证的是 IPC 层的过滤与转发，不碰 SQLite。
  * runtime 也 mock：setModel 会热改 lane 配置，不在本文件的覆盖范围。
@@ -18,7 +19,14 @@ type IpcListener = (event: unknown, request?: unknown) => unknown;
 
 // vi.mock 工厂先于 import 执行，用 hoisted 容器接住 handler 与 store 替身
 const registered = vi.hoisted(() => ({ handlers: new Map<string, IpcListener>() }));
-const store = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn() }));
+const store = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), remove: vi.fn() }));
+/** 删除路径的调用顺序：先关运行时、再删库 */
+const order = vi.hoisted(() => ({ calls: [] as string[] }));
+const chatRuntime = vi.hoisted(() => ({
+  closeSession: vi.fn(async (id: string) => {
+    order.calls.push(`closeSession:${id}`);
+  }),
+}));
 
 vi.mock("electron", () => ({
   ipcMain: {
@@ -29,7 +37,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("@/main/pisdk/session-store", () => ({ getSessionStore: () => store }));
-vi.mock("@/main/pisdk/runtime", () => ({ getChatRuntime: vi.fn() }));
+vi.mock("@/main/pisdk/runtime", () => ({ getChatRuntime: () => chatRuntime }));
 
 /** 一条会话摘要：只填本文件会读的字段 */
 function summary(patch: Partial<SessionSummary> = {}): SessionSummary {
@@ -58,8 +66,12 @@ function invoke<TResponse>(channel: string, request?: unknown): Promise<TRespons
 beforeEach(() => {
   vi.clearAllMocks();
   registered.handlers.clear();
+  order.calls = [];
   store.list.mockResolvedValue([]);
   store.create.mockResolvedValue(summary());
+  store.remove.mockImplementation(async (id: string) => {
+    order.calls.push(`store.remove:${id}`);
+  });
   registerSessionsIpc();
 });
 
@@ -119,5 +131,27 @@ describe("sessions:create", () => {
     // 一个字段都不能少：kind / 归属信息是子智能体转录能被关联回父会话的唯一依据
     expect(store.create).toHaveBeenCalledWith(options);
     expect(result).toEqual(created);
+  });
+});
+
+/**
+ * 删除会话的收尾（P1-3）。
+ *
+ * `closeSession` 曾经**生产从不调用**：`sessions:delete` 直接删 SQLite 文件，
+ * 而 `AgentHarness` / `AgentLane` / `ExecutionEnv` 与一堆事件订阅全都还活着 ——
+ * 每删一个会话就漏一整套运行时资源（实测表现为 50 个会话留下 120 MB 的 `-wal`）。
+ */
+describe("sessions:delete", () => {
+  it("先关运行时、再删库（顺序反了，收尾就打在已删除的存储上）", async () => {
+    await invoke(IPC.sessions.delete, { id: "s1" });
+
+    expect(order.calls).toEqual(["closeSession:s1", "store.remove:s1"]);
+    expect(chatRuntime.closeSession).toHaveBeenCalledWith("s1");
+    expect(store.remove).toHaveBeenCalledWith("s1");
+  });
+
+  it("删除不存在的会话也照常走完（closeSession 对未知 id 是空操作）", async () => {
+    await expect(invoke(IPC.sessions.delete, { id: "missing" })).resolves.toBeUndefined();
+    expect(order.calls).toEqual(["closeSession:missing", "store.remove:missing"]);
   });
 });

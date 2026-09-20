@@ -44,6 +44,58 @@ afterEach(async () => {
 });
 
 describe("session-store", () => {
+  /**
+   * 元数据缓存（P2-1）。
+   *
+   * `repo.list()` 对每个会话文件做 readdir → realpath → open → query → close，
+   * 底层是同步 sqlite —— 本机 50 个会话实测每次约 220 ms 的主进程阻塞。
+   * 缓存之后「重复 list」不该再触发它。
+   */
+  describe("会话元数据缓存", () => {
+    it("连续两次 list 只扫盘一次", async () => {
+      await store.create({ title: "会话一" });
+      await store.list();
+      const spy = vi.spyOn(repo, "list");
+
+      await store.list();
+      await store.list();
+
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it("create 之后缓存失效：新建的会话立刻出现在列表里", async () => {
+      await store.list();
+      const created = await store.create({ title: "新的" });
+
+      const list = await store.list();
+      expect(list.map((item) => item.id)).toContain(created.id);
+    });
+
+    it("remove 之后缓存失效：被删的会话不再出现", async () => {
+      const created = await store.create({ title: "待删" });
+      await store.list();
+
+      await store.remove(created.id);
+
+      const list = await store.list();
+      expect(list.map((item) => item.id)).not.toContain(created.id);
+    });
+
+    it("fork 之后缓存失效：分支会话出现在列表里", async () => {
+      const source = await store.create({ title: "源" });
+      const opened = await store.open(source.id);
+      if (!opened) throw new Error("源会话应能打开");
+      const entry = await opened.branch.appendMessage(userMessage("一"), BACKGROUND_CONTEXT);
+      await store.list();
+
+      const forked = await store.fork(source.id, entry);
+
+      const list = await store.list();
+      expect(list.map((item) => item.id)).toContain(forked.id);
+    });
+  });
+
   it("create 两个会话后 list 按 updatedAt 降序并补齐字段", async () => {
     const first = await store.create({ title: "会话一", cwd: "D:\\workspace" });
     const second = await store.create({ title: "会话二" });

@@ -11,6 +11,13 @@ export interface ApprovalRequest {
   /** AI 预审是否已出结论；拒绝/失败时请求仍挂起，卡片转为等用户覆盖 */
   aiReviewed?: boolean;
   reason?: string;
+  /**
+   * 命令黑名单命中时的附加警示（「递归删除根目录」这类）。
+   *
+   * 黑名单**不再决定是否弹卡**（shell 工具一律要人确认），它只在这里给用户多一行上下文：
+   * 「这条命令看起来像什么」。缺省表示没命中。
+   */
+  warning?: string;
   /** 该会话实际使用的模型（AI 预审用的就是它）；缺省表示未记录 */
   modelRef?: ModelRef;
 }

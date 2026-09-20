@@ -1,4 +1,8 @@
-import { BACKGROUND_CONTEXT, type AgentToolResult, type ExecutionToolContext } from "@earendil-works/pi-agent-core";
+import {
+  type AgentToolResult,
+  BACKGROUND_CONTEXT,
+  type ExecutionToolContext,
+} from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
   buildMcpToolDescription,
@@ -106,7 +110,9 @@ describe("buildMcpToolDescription", () => {
 
 describe("createMcpTool", () => {
   it("工具名是限定名 mcp__<serverId>__<toolName>", () => {
-    const tool = createMcpTool(definition, { callTool: async () => ({ text: "", isError: false }) });
+    const tool = createMcpTool(definition, {
+      callTool: async () => ({ text: "", isError: false }),
+    });
     expect(tool.name).toBe("mcp__mcp-test__read_file");
     expect(tool.label).toBe("mcp__mcp-test__read_file");
   });

@@ -4,9 +4,10 @@
 // 所以这里没有会话侧状态，增删项目都只动这一个文件。
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
+import { writeFileAtomic } from "@/main/storage/atomic-write";
 import type { Project } from "@/shared/contracts/project";
 
 export interface ProjectsStore {
@@ -82,9 +83,7 @@ export function createProjectsStore(baseDir: string): ProjectsStore {
     const payload = `${JSON.stringify(projects, null, 2)}\n`;
     await mkdir(path.dirname(filePath), { recursive: true });
     // 先写临时文件再 rename，避免中断时留下半截 JSON
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, payload, "utf8");
-    await rename(tempPath, filePath);
+    await writeFileAtomic(filePath, payload);
   }
 
   function enqueue<T>(task: () => Promise<T>): Promise<T> {

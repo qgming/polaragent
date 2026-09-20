@@ -58,7 +58,13 @@ function SkillDetailDialog({
       onClose={onClose}
       footer={
         <>
-          <Button type="button" variant="outline" size="sm" className={secondaryButton} onClick={onRemove}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={secondaryButton}
+            onClick={onRemove}
+          >
             {t("common.delete")}
           </Button>
           <Button type="button" size="sm" onClick={onClose}>
@@ -198,16 +204,15 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
         </PanelToolbar>
         {notice === null ? null : (
           <p
-            className={cn(
-              "text-[13px]",
-              notice.tone === "ok" ? "text-ink-3" : "text-destructive",
-            )}
+            className={cn("text-[13px]", notice.tone === "ok" ? "text-ink-3" : "text-destructive")}
           >
             {notice.text}
           </p>
         )}
         {/* 打开详情失败（例如文件被手工删了）单独提示：列表还在，不能整个面板报错 */}
-        {detailError === null ? null : <p className="text-[13px] text-destructive">{detailError}</p>}
+        {detailError === null ? null : (
+          <p className="text-[13px] text-destructive">{detailError}</p>
+        )}
         {failed ? (
           <div className="flex items-center gap-2">
             <p className="text-[13px] text-destructive">{t("errors.loadFailed")}</p>

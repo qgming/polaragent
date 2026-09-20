@@ -2,7 +2,7 @@
 //
 // 两种判定放在同一个文件里，是因为它们是同一件事的两半：动作发出后页面有没有反应。
 //   · judgeInput / textLanded —— 输入类动作（type / select）的**读回值**判定；
-//   · judgeProbe             —— 鼠标 / 键盘动作的**事件探针**判定（docs …refactor.md §4）。
+//   · judgeProbe             —— 鼠标 / 键盘动作的**事件探针**判定。
 // 两者都必须能在 node 下单测：它们是「工具报成功、页面其实没动」这条假成功路径上
 // 唯一能被自动验证的关卡，而真机复现一次要开应用、开面板、点一遍。
 //
@@ -66,7 +66,7 @@ export interface InputContext {
 /**
  * 带上下文的输入落地判定：在 `textLanded` 的口径上再加两条「其实是成功」的放宽。
  *
- * 为什么需要放宽（docs …refactor.md §1「口径放宽」）：
+ * 为什么需要放宽：
  *   · **maxlength**：模型输入 20 个字、字段只收 5 个，值确实是这次输入的结果，
  *     只是被字段的上限切短了。判失败会让模型以为没填、再填一次（第二次会更短），
  *     而真相是「页面已经收到了、只是拒绝多余部分」—— 正确做法是落地 + 告警，
@@ -106,7 +106,8 @@ export function judgeInput(
   }
 
   const changed = typeof previous === "string" && previous.trim() !== actual;
-  if (changed && strippedWanted !== "" && strippedActual.includes(strippedWanted)) return { ok: true };
+  if (changed && strippedWanted !== "" && strippedActual.includes(strippedWanted))
+    return { ok: true };
 
   const truncated = truncatedByMaxLength(actual, wanted, context.maxLength);
   if (truncated !== null) return { ok: true, warning: truncated };
@@ -211,7 +212,7 @@ function clip(value: string): string {
   return value.length > 80 ? `${value.slice(0, 80)}…` : value;
 }
 
-/** 页面探针记下的一条事件：谁收到了它（docs …refactor.md §4） */
+/** 页面探针记下的一条事件：谁收到了它 */
 export interface ProbeEventRecord {
   /** 事件类型（click / input / keydown / mouseover …） */
   type: string;
@@ -254,7 +255,7 @@ export type ProbeVerdict =
   | { effect: "wrong-target"; message: string; detail: Record<string, unknown> };
 
 /**
- * 判定一次动作的后果（docs …refactor.md §4）。
+ * 判定一次动作的后果。
  *
  * 为什么必须有这一层：`sendInputEvent` 是**没有回执**的 —— 视口没布局、元素被浮层盖住、
  * 元素在按下与抬起之间被重渲染，这三种情况它都同样静默地什么都不做，而工具在旧实现里
@@ -266,7 +267,11 @@ export type ProbeVerdict =
  * 没收到事件时返回 unknown 让调用方用读回值兜底 —— 值确实落进去了就说明动作走通了，
  * 而值也没落进去时调用方本来就会报 NO_EFFECT。
  */
-export function judgeProbe(kind: ProbeKind, ref: string | null, report: ProbeReport | null): ProbeVerdict {
+export function judgeProbe(
+  kind: ProbeKind,
+  ref: string | null,
+  report: ProbeReport | null,
+): ProbeVerdict {
   if (report === null || report.armed !== true) {
     return {
       effect: "unknown",
@@ -279,7 +284,8 @@ export function judgeProbe(kind: ProbeKind, ref: string | null, report: ProbeRep
       return judgePointer(ref, events, report);
     case "hover": {
       const entered = events.filter(
-        (event) => event.type === "mouseover" || event.type === "mouseenter" || event.type === "pointerover",
+        (event) =>
+          event.type === "mouseover" || event.type === "mouseenter" || event.type === "pointerover",
       );
       if (entered.length === 0) {
         return {
@@ -306,7 +312,12 @@ export function judgeProbe(kind: ProbeKind, ref: string | null, report: ProbeRep
       const verdict = hitOrWrong(ref, downs, report);
       if (verdict.effect !== "hit") return verdict;
       // ref 场景额外校验焦点：键发出去了，但收下它的不是目标元素
-      if (ref !== null && report.activeRef !== undefined && report.activeRef !== null && report.activeRef !== ref) {
+      if (
+        ref !== null &&
+        report.activeRef !== undefined &&
+        report.activeRef !== null &&
+        report.activeRef !== ref
+      ) {
         verdict.warnings.push(
           `按键到达的是 ${describeEventTarget(downs.find((event) => event.targetRef === ref) ?? downs[0])}，` +
             `但焦点在 ${report.activeRef} 上：页面若按 activeElement 分发按键，这次按键会落到别处。`,
@@ -336,7 +347,11 @@ export function judgeProbe(kind: ProbeKind, ref: string | null, report: ProbeRep
 }
 
 /** 点击判定：完全没有事件 = 没生效；有事件但都不是目标收下的 = 打到了别的元素 */
-function judgePointer(ref: string | null, events: ProbeEventRecord[], report: ProbeReport): ProbeVerdict {
+function judgePointer(
+  ref: string | null,
+  events: ProbeEventRecord[],
+  report: ProbeReport,
+): ProbeVerdict {
   if (events.length === 0) {
     return {
       effect: "no-effect",
@@ -350,7 +365,11 @@ function judgePointer(ref: string | null, events: ProbeEventRecord[], report: Pr
 }
 
 /** 共同的那一步：事件里有目标收下的就算命中，一个都没有就是被别的元素收走了 */
-function hitOrWrong(ref: string | null, events: ProbeEventRecord[], report: ProbeReport): ProbeVerdict {
+function hitOrWrong(
+  ref: string | null,
+  events: ProbeEventRecord[],
+  report: ProbeReport,
+): ProbeVerdict {
   if (ref === null) return { effect: "hit", warnings: [] };
   const hits = events.filter((event) => event.targetRef === ref);
   if (hits.length === 0) {
@@ -378,9 +397,11 @@ function probeDetail(ref: string | null, report: ProbeReport): Record<string, un
 
 function describeEventTarget(event: ProbeEventRecord | undefined): string {
   if (event === undefined) return "另一个元素";
-  const tag = event.targetTag === undefined || event.targetTag === "" ? "另一个元素" : `<${event.targetTag}>`;
+  const tag =
+    event.targetTag === undefined || event.targetTag === "" ? "另一个元素" : `<${event.targetTag}>`;
   const byRef = event.targetRef === null ? "" : `（${event.targetRef}）`;
-  const role = event.targetRole === undefined || event.targetRole === "" ? "" : ` role=${event.targetRole}`;
+  const role =
+    event.targetRole === undefined || event.targetRole === "" ? "" : ` role=${event.targetRole}`;
   return `${tag}${byRef}${role}`;
 }
 

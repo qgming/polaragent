@@ -4,15 +4,15 @@
 // 「发现」这一层不解释技能格式 —— 技能内容的加载与注入由 pisdk runtime 负责
 //（runtime.ts 的 loadAgentResources），两侧都复用 resources.ts 的目录解析，保证面板显示与运行时同源。
 
-import { BACKGROUND_CONTEXT, loadSkills } from "@earendil-works/pi-agent-core";
-import { BrowserWindow, dialog, ipcMain } from "electron";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { BACKGROUND_CONTEXT, loadSkills } from "@earendil-works/pi-agent-core";
+import { BrowserWindow, dialog, ipcMain } from "electron";
 import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
 import { resolveSkillDirs } from "@/main/pisdk/resources";
-import { extractSkillZip } from "@/main/skills/zip-import";
 import { loadSettings } from "@/main/settings/store";
+import { extractSkillZip } from "@/main/skills/zip-import";
 import { IPC } from "@/shared/contracts/ipc";
 import type { SkillDetail, SkillImportResult, SkillInfo } from "@/shared/contracts/skills";
 import { handle } from "./handler";
@@ -114,7 +114,10 @@ export function registerSkillsIpc(): void {
     const root = path.resolve(globalSkillsDir());
     const skillDir = path.resolve(path.dirname(skill.filePath));
     // 只删数据目录下的**技能目录**：SKILL.md 直接躺在 skills 根下时删掉整个目录就等于清空全局技能
-    if (skillDir === root || !skillDir.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`)) {
+    if (
+      skillDir === root ||
+      !skillDir.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`)
+    ) {
       throw new Error(`只能删除数据目录 skills 子目录里的技能：${request.name}`);
     }
     await rm(skillDir, { recursive: true, force: true });

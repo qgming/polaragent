@@ -200,6 +200,9 @@ export const enUS = {
     // System notice row: system-generated messages like background job exit, rendered separately from user bubbles
     systemNotice: "System notice",
     systemNoticeLabel: "System notification row",
+    // In-place expand / collapse of a subagent report (pill aria-label and title)
+    showMore: "Show more",
+    showLess: "Show less",
   },
   sidebar: {
     today: "Today",

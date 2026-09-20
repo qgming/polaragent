@@ -8,7 +8,7 @@
 //
 // 这里刻意不调用 app.setPath("userData")：那会把浏览器状态一起搬走，反而把缓存带回数据目录。
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -67,4 +67,46 @@ export function ensureAppDirs(dir: string = dataDir()): void {
   for (const name of DATA_SUBDIRS) {
     mkdirSync(path.join(dir, name), { recursive: true, mode: DIR_MODE });
   }
+  purgeStaleTempFiles(dir);
+}
+
+/** 原子写临时文件的后缀（`<file>.<pid>.<ts>.tmp`），六处原子写共用这一套命名 */
+const TEMP_SUFFIX = ".tmp";
+/** 超过这个年龄的临时文件即视为遗留（正常写入是毫秒级，分钟级还没被 rename 就是中断残留） */
+const STALE_TEMP_MS = 10 * 60 * 1000;
+
+/**
+ * 清理数据根目录下遗留的原子写临时文件。
+ *
+ * 五处配置写入都走「写临时文件 → rename」：正常路径下临时文件会被 rename 掉，
+ * 但在 rename 之前失败（进程被杀、磁盘满、权限问题）就会留下 `<file>.<pid>.<ts>.tmp`。
+ * 实测本机数据根积了 7 个这样的文件（48~78 KB，最早两周前）—— 没有任何机制回收它们。
+ *
+ * 判据是**年龄**而不是 pid：pid 会被复用，而「十分钟前还没被 rename 掉」已经足够确定
+ * 它是一次中断残留 —— 正常写入从创建到 rename 只有毫秒级。
+ * 只看根目录的直接子级：临时文件只会出现在配置文件的旁边，不递归进 sessions/ 等子目录。
+ */
+export function purgeStaleTempFiles(dir: string, now: number = Date.now()): number {
+  let removed = 0;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    // 目录还不存在（首次启动）或不可读：清理只是卫生工作，失败不该阻断启动
+    return 0;
+  }
+  for (const name of names) {
+    if (!name.endsWith(TEMP_SUFFIX)) continue;
+    const target = path.join(dir, name);
+    try {
+      const info = statSync(target);
+      if (!info.isFile()) continue;
+      if (now - info.mtimeMs < STALE_TEMP_MS) continue;
+      rmSync(target, { force: true });
+      removed += 1;
+    } catch {
+      // 单个文件清理失败（被占用 / 刚好被删）：跳过，不影响其余文件
+    }
+  }
+  return removed;
 }

@@ -119,9 +119,7 @@ describe("skills:list", () => {
       skill("alpha", "/data-oint/skills"),
       skill("beta", "/data-oint/skills"),
     ]);
-    vi.mocked(loadSettings).mockResolvedValue(
-      settingsWithDisabled(["beta", "不存在的技能"]),
-    );
+    vi.mocked(loadSettings).mockResolvedValue(settingsWithDisabled(["beta", "不存在的技能"]));
 
     const list = await listSkills();
 

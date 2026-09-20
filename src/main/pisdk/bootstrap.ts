@@ -40,10 +40,15 @@ async function resolveWorkingDir(sessionId: string): Promise<string> {
   return bound ?? process.cwd();
 }
 
-/** 装配 pisdk 各服务并接线到窗口事件；返回幂等清理函数 */
+/**
+ * 装配 pisdk 各服务并接线到窗口事件。
+ *
+ * 返回**幂等的异步**清理函数：调用方（before-quit）必须 await 它，
+ * 否则进程会在会话与子进程收尾完成前退出。
+ */
 export function bootstrapPisdk(options: {
   emit: (payload: ChatEventEnvelope) => void;
-}): () => void {
+}): () => Promise<void> {
   const { emit } = options;
   const sessionStore = getSessionStore();
   // 「帮我审批」模式下由该审批器给出结论（模型取默认路由模型）；其余模式一律等用户确认
@@ -88,21 +93,27 @@ export function bootstrapPisdk(options: {
   });
 
   let disposed = false;
-  return () => {
+  /**
+   * 释放全部资源。
+   *
+   * **返回 Promise，调用方必须 await**：`dispose()` 要串行关闭每个会话的
+   * harness / 存储，并收掉 MCP 子进程 —— 早先这里是 fire-and-forget
+   *（`void Promise.resolve(...)`），而 `before-quit` 调完就返回，
+   * 进程可能在关闭中途退出：SQLite 没 flush、作业与 MCP 子进程变成孤儿。
+   *
+   * 幂等：重复调用只会跑一次（disposed 闸门），第二次立即 resolve。
+   */
+  return async () => {
     if (disposed) return;
     disposed = true;
     try {
-      void Promise.resolve(chatRuntime?.dispose()).catch((error: unknown) => {
-        console.warn(`关闭聊天运行时失败：${String(error)}`);
-      });
+      await chatRuntime?.dispose();
     } catch (error) {
       console.warn(`关闭聊天运行时失败：${String(error)}`);
     }
     try {
       // 退出前收掉 MCP 子进程，避免残留进程占着端口/文件句柄
-      void Promise.resolve(mcpServers.dispose()).catch((error: unknown) => {
-        console.warn(`关闭 MCP 连接失败：${String(error)}`);
-      });
+      await mcpServers.dispose();
     } catch (error) {
       console.warn(`关闭 MCP 连接失败：${String(error)}`);
     }

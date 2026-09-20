@@ -3,9 +3,9 @@
 // 面板只操作**数据目录**的 prompts/（项目级 .oint/prompts 跟着会话 cwd 走，由斜杠菜单侧消费）。
 // 目录来源与顺序统一由 resources.ts 解析，逐目录独立扫描，最后按 name 去重。
 
-import { BACKGROUND_CONTEXT, loadPromptTemplates } from "@earendil-works/pi-agent-core";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { BACKGROUND_CONTEXT, loadPromptTemplates } from "@earendil-works/pi-agent-core";
 import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
 import { resolvePromptTemplateDirs } from "@/main/pisdk/resources";
@@ -49,7 +49,11 @@ async function scanPromptDir(dir: string): Promise<PromptTemplateInfo[]> {
     // 每个目录一个 env：allowedRoots 必须已包含该目录，否则 listDir / readTextFile 会被
     // 路径守卫拒绝，而内核只把它记成 diagnostics 警告 —— 接口上看起来就是「这个目录没有模板」。
     const env = await createExecEnv({ cwd: dir, allowedRoots: [dir] });
-    const { promptTemplates, diagnostics } = await loadPromptTemplates(env, dir, BACKGROUND_CONTEXT);
+    const { promptTemplates, diagnostics } = await loadPromptTemplates(
+      env,
+      dir,
+      BACKGROUND_CONTEXT,
+    );
     for (const diagnostic of diagnostics) {
       console.warn(
         `提示模板加载警告（${diagnostic.code}）：${diagnostic.message}（${diagnostic.path}）`,

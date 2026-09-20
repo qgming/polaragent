@@ -646,7 +646,6 @@ export function createJobService(deps: JobServiceDeps): JobService {
     return jobs.get(id)?.toolCallId;
   }
 
-
   function peekTail(id: string, maxBytes = DEFAULT_TAIL_BYTES): string {
     const entry = jobs.get(id);
     if (entry === undefined) return "";
@@ -657,5 +656,16 @@ export function createJobService(deps: JobServiceDeps): JobService {
     return suppressedSessions.has(sessionId);
   }
 
-  return { start, list, get, read, kill, cancelSession, dispose, peekTail, isSuppressed, toolCallIdOf };
+  return {
+    start,
+    list,
+    get,
+    read,
+    kill,
+    cancelSession,
+    dispose,
+    peekTail,
+    isSuppressed,
+    toolCallIdOf,
+  };
 }

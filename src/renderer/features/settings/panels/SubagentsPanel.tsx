@@ -262,7 +262,9 @@ function SubagentEditor({
           </>
         ) : (
           <>
-            <span className="text-xs text-destructive">{saveFailed ? t("errors.generic") : ""}</span>
+            <span className="text-xs text-destructive">
+              {saveFailed ? t("errors.generic") : ""}
+            </span>
             <div className="flex items-center gap-2">
               <Button type="button" variant="ghost" size="sm" onClick={onClose}>
                 {t("settings.subagentCancel")}
@@ -375,7 +377,9 @@ function SubagentEditor({
               aria-label={t("settings.subagentThinking")}
               disabled={readOnly}
               onChange={(event) =>
-                setThinking(event.target.value === "" ? null : (event.target.value as ThinkingLevel))
+                setThinking(
+                  event.target.value === "" ? null : (event.target.value as ThinkingLevel),
+                )
               }
               className={cn(settingsInput, "w-full")}
             >
@@ -396,7 +400,9 @@ function SubagentEditor({
             max={MAX_SUBAGENT_MAX_TURNS}
             value={maxTurns}
             aria-label={t("settings.subagentMaxTurns")}
-            placeholder={t("settings.subagentMaxTurnsInherit", { count: DEFAULT_SUBAGENT_MAX_TURNS })}
+            placeholder={t("settings.subagentMaxTurnsInherit", {
+              count: DEFAULT_SUBAGENT_MAX_TURNS,
+            })}
             disabled={readOnly}
             onChange={(event) => setMaxTurns(event.target.value)}
             className={cn(settingsInput, "w-28 font-mono")}

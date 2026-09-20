@@ -27,9 +27,9 @@ import {
 
 // ==================== 配置 ====================
 // 密钥从环境变量读取，避免写入仓库；缺少时给出明确提示
-/** 探测用环境变量：新名优先，兼容改名前的 POLAR_PROBE_* */
+/** 探测用环境变量 */
 function probeEnv(suffix) {
-  return process.env[`OINT_PROBE_${suffix}`] ?? process.env[`POLAR_PROBE_${suffix}`];
+  return process.env[`OINT_PROBE_${suffix}`];
 }
 
 const BASE_URL = probeEnv("BASE_URL") ?? "https://ai.qgming.com/v1";

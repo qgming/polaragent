@@ -57,6 +57,64 @@ afterEach(async () => {
 });
 
 describe("loadSettings", () => {
+  /**
+   * 读缓存（P2-3）。
+   *
+   * `load()` 原本每次都读盘 + JSON.parse，而它在**每次工具调用**（权限门要看 permissionMode）、
+   * 每次发送（对齐模型与思考档位）、每次 AI 审批预审里都会被调到。
+   */
+  describe("读缓存", () => {
+    it("连续两次 load 只读盘一次", async () => {
+      await writeRawSettings(sampleSettings("sk-cache"));
+      const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+
+      const first = await store.load();
+      // 第一次读盘后删掉文件：若第二次仍去读盘，就会回退成默认值
+      await rm(settingsFile, { force: true });
+      const second = await store.load();
+
+      expect(second).toEqual(first);
+      expect(second.services[0]?.apiKey).toBe("sk-cache");
+    });
+
+    it("save 之后 load 返回新值（缓存跟着落盘结果走）", async () => {
+      const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+      await store.load();
+
+      await store.save(sampleSettings("sk-new"));
+
+      const reloaded = await store.load();
+      expect(reloaded.services[0]?.apiKey).toBe("sk-new");
+      expect(reloaded.theme).toBe("dark");
+    });
+
+    it("文件缺失时也缓存默认值：不会反复尝试读一个不存在的文件", async () => {
+      const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+      const first = await store.load();
+      // 读了一次之后补上文件；缓存生效的话第二次不会看到它
+      await writeRawSettings(sampleSettings("sk-late"));
+
+      const second = await store.load();
+      expect(second).toEqual(first);
+      expect(second.services).toHaveLength(0);
+    });
+
+    it("写失败时不更新缓存（内存态不该「看起来已经保存了」）", async () => {
+      const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+      await store.load();
+
+      // 让写临时文件失败：把数据目录设成一个已存在的**文件**
+      const blocked = path.join(baseDir, "blocked");
+      await writeFile(blocked, "x", "utf8");
+      const failing = createSettingsStore(blocked, { crypto: fakeCrypto, warn: () => {} });
+      await expect(failing.save(sampleSettings("sk-fail"))).rejects.toThrow();
+
+      // 再 load 仍是默认值（说明 save 失败没有污染缓存）
+      const reloaded = await failing.load();
+      expect(reloaded.services).toHaveLength(0);
+    });
+  });
+
   it("文件缺失时返回完整默认值", async () => {
     const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
     await expect(store.load()).resolves.toEqual(DEFAULT_SETTINGS);

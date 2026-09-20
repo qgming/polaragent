@@ -14,9 +14,9 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const electronPath = require("electron");
 
-/** 探测用环境变量：新名优先，兼容改名前的 POLAR_PROBE_* */
+/** 探测用环境变量 */
 function probeEnv(suffix) {
-  return process.env[`OINT_PROBE_${suffix}`] ?? process.env[`POLAR_PROBE_${suffix}`];
+  return process.env[`OINT_PROBE_${suffix}`];
 }
 
 const BASE_URL = probeEnv("BASE_URL") ?? "https://ai.qgming.com/v1";

@@ -83,7 +83,7 @@ export interface BrowserConsoleEntry {
 }
 
 /**
- * 浏览器工具的失败分类（详见 docs/browser-automation-refactor.md §2）。
+ * 浏览器工具的失败分类。
  * 工具层把 code 一起回给模型，让它能据此决策：重快照 / 重试 / 换目标。
  */
 export type BrowserErrorCode =
@@ -191,9 +191,6 @@ export const BROWSER_TOOL_NAMES = {
   dialog: "browser_dialog",
   evaluate: "browser_evaluate",
 } as const;
-
-/** 浏览器工具名集合：装配处与权限层复用 */
-export const BROWSER_TOOL_NAME_LIST = Object.values(BROWSER_TOOL_NAMES);
 
 /**
  * 只读的浏览器工具：读页面内容、读控制台 / 网络记录、截图、等页面就绪。

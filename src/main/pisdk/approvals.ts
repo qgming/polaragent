@@ -29,6 +29,8 @@ export interface ApprovalService {
     risk: "low" | "high";
     /** 会话工作目录：AI 预审据此判断操作是否越出项目范围 */
     workingDir?: string;
+    /** 命令黑名单命中的警示文案；只用于卡片展示，不参与任何判定 */
+    warning?: string;
     /** 会话实际使用的模型：AI 预审用它，缺省时审批器回落默认模型 */
     modelRef?: ModelRef;
   }): Promise<ApprovalDecision>;
@@ -147,6 +149,8 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     argsText: string;
     risk: "low" | "high";
     workingDir?: string;
+    /** 命令黑名单命中的警示文案；只用于卡片展示，不参与任何判定 */
+    warning?: string;
     /** 会话实际使用的模型；AI 预审据此选模型，缺省时审批器回落默认模型 */
     modelRef?: ModelRef;
   }): Promise<ApprovalDecision> {
@@ -180,6 +184,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
       argsText: input.argsText,
       risk: input.risk,
       source: aiApprover ? "ai" : "user",
+      ...(input.warning === undefined ? {} : { warning: input.warning }),
     };
     const entry: PendingApproval = {
       request,

@@ -73,6 +73,7 @@ export function ApprovalSection({ requests, onResolve }: ApprovalSectionProps) {
                 subtitle={`${request.toolName} · ${risk}${source}`}
                 command={request.argsText}
                 reason={request.reason}
+                warning={request.warning}
                 labels={{
                   allowOnce: t("approval.allowOnce"),
                   alwaysAllow: alwaysAllowLabel,

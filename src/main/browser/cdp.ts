@@ -1,16 +1,16 @@
-// CDP（Chrome DevTools Protocol）会话与白名单（docs/browser-automation-refactor.md §9.1–§9.3）。
+// CDP（Chrome DevTools Protocol）会话与白名单。
 //
 // 为什么要有这一层：
-//   1. **通道分工**。阶段 2 起，页面内的操作与观察一律走 CDP 的**同一个** session，
+//   1. **通道分工**。页面内的操作与观察一律走 CDP 的**同一个** session，
 //      而导航 / `webview` 生命周期 / 弹窗策略 / 权限 / 下载仍走 Electron —— 那些不是页面行为，
-//      CDP 要么管不到，要么会绕开已有的安全收敛（§9.1）。
+//      CDP 要么管不到，要么会绕开已有的安全收敛。
 //   2. **白名单是 deny-by-default 的**。旧实现里 `contents.debugger.sendCommand` 是"想发什么发什么"，
 //      而 CDP 里 `Cookie.*` / `Storage.*` / `IndexedDB.*` / `DOMStorage.*` 能**直接导出已登录站点的
-//      会话数据**，`Network.*` / `Target.*` 则会绕开网络与标签页的产品约束（§9.2）。
+//      会话数据**，`Network.*` / `Target.*` 则会绕开网络与标签页的产品约束。
 //      所以所有发送都必须先过 BROWSER_CDP_ALLOWED 这张表，拒绝的理由也如实回给调用方。
 //      这一层不是为了防外部攻击者，而是让「谁开的这个口子」在代码里一眼可查。
 //   3. **错误要有码**。CDP 的错误文本各不相同（"-32601"、"Execution context was destroyed"、
-//      "No node with given id"），而调用方需要的是 stage 1 的那套错误码（§2）。映射集中在这里，
+//      "No node with given id"），而调用方需要的是统一的那套错误码。映射集中在这里，
 //      免得每个通道各写一遍、各漏几种。
 //
 // 本文件**刻意不 import electron**：白名单、错误映射、协议数据的整形都是纯逻辑，
@@ -22,7 +22,7 @@ import { BrowserToolError } from "./errors";
 export const CDP_PROTOCOL_VERSION = "1.3";
 
 /**
- * 默认开放的方法（§9.2 的"默认开放"集合，逐条抄自规格，不增不减）。
+ * 默认开放的方法。
  *
  * 注意这里都是**方法与域**的名字，不是事件：事件订阅走 `on()`，不进白名单
  * （能收到什么由已经启用的域决定，而域的启用本身要过白名单）。
@@ -76,7 +76,7 @@ export const BROWSER_CDP_ALLOWED: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * 开关控制的方法（默认关，需要显式启用并留痕 —— §9.2）。
+ * 开关控制的方法。
  *
  * 本阶段没有任何一处会启用它们，所以它们与"未列入白名单"的处理**完全一致**：
  * 拒绝。分开列出来只有一个目的：下一个阶段要开口子时，改的是这张表而不是白名单，
@@ -90,7 +90,7 @@ export const BROWSER_CDP_GATED: ReadonlySet<string> = new Set([
 /** 开关控制的**域**：多标签（Target）、网络拦截与 mock（Network / Fetch） */
 export const BROWSER_CDP_GATED_PREFIXES: readonly string[] = ["Network.", "Fetch.", "Target."];
 
-/** 永不开放：它们能直接导出已登录站点的会话数据（§9.2） */
+/** 永不开放：它们能直接导出已登录站点的会话数据 */
 export const BROWSER_CDP_FORBIDDEN_PREFIXES: readonly string[] = [
   "Cookie.",
   "Storage.",
@@ -191,7 +191,7 @@ const CDP_INVALID_PARAMS =
   /Invalid parameters|Invalid params|Failed to deserialize params|Invalid value|is not a valid/i;
 
 /**
- * 把一次 CDP 失败映射成带错误码的 BrowserToolError（§2 的错误码）。
+ * 把一次 CDP 失败映射成带错误码的 BrowserToolError。
  *
  * 为什么需要它：调用方（service / 工具层）只能按 code 决定做什么 ——
  * UNAVAILABLE 要提示"面板没布局 / 页面正在导航"、INVALID_ARGUMENT 要提示"方法或参数不对"，
@@ -282,7 +282,7 @@ const CDP_PRE_ENABLE_DOMAINS: readonly string[] = [
 const CDP_REQUIRED_DOMAINS: ReadonlySet<string> = new Set(["Page", "Runtime"]);
 
 /**
- * 一个 CDP 会话（对应 §9.1 里"`contents.debugger` 的同一个 session"）。
+ * 一个 CDP 会话。
  *
  * 为什么不每次调用临时 attach：Electron 的 `WebContents.debugger` **同时只允许一个**
  * 调试器，attach/detach 会打断已经订阅的事件流（控制台日志会随机丢几条、弹窗可能没人应答）。
@@ -411,7 +411,7 @@ export class CdpSession {
         { method, reason: "SESSION_NOT_ATTACHED" },
       );
     }
-    if (this.targetRef !== null && this.targetRef.isDestroyed()) {
+    if (this.targetRef?.isDestroyed() === true) {
       throw new BrowserToolError("UNAVAILABLE", `CDP 会话不可用：guest 已被销毁（${method}）。`, {
         method,
         reason: "TARGET_DESTROYED",
@@ -456,7 +456,7 @@ export class CdpSession {
   detach(): void {
     const dbg = this.debuggerRef;
     this.dispose();
-    if (dbg !== null && dbg.isAttached()) {
+    if (dbg?.isAttached() === true) {
       try {
         dbg.detach();
       } catch (error) {
@@ -802,7 +802,7 @@ export function networkLoadingFailed(
 // ---------------------------------------------------------------------------
 
 /**
- * 截图宽度上限（§9.3）。
+ * 截图宽度上限。
  *
  * 为什么要有：截图是要进模型上下文的图片，宽度翻倍 = token 翻几倍。1280 够看清布局与文案，
  * 而超宽页面（或高 DPI 面板）不夹住的话，一张图就能吃掉一次调用的全部预算。
@@ -889,5 +889,5 @@ export function looksLikeBlankPng(base64: string, width: number, height: number)
   return bytes < pixels * BLANK_PNG_BYTES_PER_PIXEL;
 }
 
-/** 错误码在报告里的口径（与 errors.ts / §2 一致，仅供本文件的类型收窄使用） */
+/** 错误码在报告里的口径 */
 export type CdpErrorCode = BrowserErrorCode;

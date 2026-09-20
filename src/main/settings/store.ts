@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
+import { writeFileAtomic } from "@/main/storage/atomic-write";
 import { ALL_THINKING_LEVELS, type ThinkingLevel } from "@/shared/contracts/common";
 import { isValidMcpServerId, type McpServerConfig } from "@/shared/contracts/mcp";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
@@ -270,6 +271,20 @@ export function createSettingsStore(
   const warn = options.warn ?? ((message: string) => console.warn(message));
   const filePath = path.join(baseDir, "settings.json");
   let warnedFallback = false;
+  /**
+   * 解析结果缓存。
+   *
+   * 为什么必须有：`load()` 原本每次都读盘 + 解析，而它在**每次工具调用**（权限门要看
+   * permissionMode 与规则）、每次发送（对齐模型与思考档位）、每次审批预审里都会被调到。
+   * 十次工具调用就是十次磁盘读 + JSON.parse。
+   *
+   * 语义（有意选定的权衡）：**进程内以内存为准**。
+   * - `save()` 之后缓存立刻更新为新值，界面写入立即生效；
+   * - 用户手改 `settings.json` 不会在进程内被察觉，需要重启应用。
+   * 反向选择（每次校验 mtime）会让「读设置」重新变成一个系统调用，也就抵消了这次缓存 —— 而
+   * 手改配置文件后重启，本来就是本仓其它配置（AGENTS.md、技能目录）的既有约定。
+   */
+  let cache: { value: Settings; crypto: Crypto | null } | null = null;
 
   async function resolveCrypto(): Promise<Crypto | null> {
     const crypto = options.crypto ?? (await resolveSharedCrypto());
@@ -281,6 +296,7 @@ export function createSettingsStore(
   }
 
   async function load(): Promise<Settings> {
+    if (cache !== null) return cache.value;
     const crypto = await resolveCrypto();
     let raw: unknown;
     try {
@@ -289,9 +305,13 @@ export function createSettingsStore(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         warn(`读取设置失败，已回退默认值: ${String(error)}`);
       }
-      return cloneDefaults();
+      const value = cloneDefaults();
+      cache = { value, crypto };
+      return value;
     }
-    return mergeWithDefaults(raw, crypto, warn);
+    const value = mergeWithDefaults(raw, crypto, warn);
+    cache = { value, crypto };
+    return value;
   }
 
   async function save(next: Settings): Promise<void> {
@@ -299,9 +319,9 @@ export function createSettingsStore(
     const payload = `${JSON.stringify(toPersisted(next, crypto), null, 2)}\n`;
     await mkdir(path.dirname(filePath), { recursive: true });
     // 先写临时文件再 rename，避免中断时留下半截 JSON
-    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, payload, "utf8");
-    await rename(tempPath, filePath);
+    await writeFileAtomic(filePath, payload);
+    // 落盘成功后才更新缓存：写失败时内存态不该「看起来已经保存了」
+    cache = { value: next, crypto };
   }
 
   return { load, save };

@@ -183,8 +183,7 @@ function describeKey(modifiers: BrowserModifier[], key: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 阶段 2：把同一条 BrowserKeyStroke 翻译成 CDP `Input.dispatchKeyEvent` 的参数
-//（docs/browser-automation-refactor.md §9.3）。
+// 把同一条 BrowserKeyStroke 翻译成 CDP `Input.dispatchKeyEvent` 的参数。
 //
 // 为什么要另起一套：CDP 认的是**浏览器自己的**三件套（`KeyboardEvent.key` /
 // `.code` / `windowsVirtualKeyCode`），而 Electron 那边收的只是 Accelerator 名字。

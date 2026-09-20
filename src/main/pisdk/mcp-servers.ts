@@ -19,16 +19,17 @@ import {
 import { loadSettings } from "@/main/settings/store";
 import {
   isValidMcpServerId,
-  mcpServerLabel,
-  qualifyMcpToolName,
   type McpConnectionStatus,
   type McpProbeResult,
   type McpServerConfig,
   type McpServerState,
   type McpServerView,
   type McpToolInfo,
+  mcpServerLabel,
+  qualifyMcpToolName,
 } from "@/shared/contracts/mcp";
 import type { Settings } from "@/shared/contracts/settings";
+import { errorText } from "./error-text";
 import type { AppToolContext } from "./tools";
 import { createMcpTool } from "./tools/mcp";
 
@@ -61,7 +62,11 @@ export interface McpServers extends McpToolSource {
   /** 用一份草稿配置试连一次，不影响正在运行的连接 */
   probe(config: McpServerConfig): Promise<McpProbeResult>;
   /** 调用通道：工具包装层用它转发 tools/call */
-  callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<McpCallResult>;
+  callTool(
+    serverId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<McpCallResult>;
   dispose(): Promise<void>;
 }
 
@@ -84,10 +89,6 @@ export interface McpServersDeps {
   warn?: (message: string) => void;
   /** 注入客户端工厂（测试用） */
   createClient?: (config: McpServerConfig) => McpClient;
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** 连接相关的配置是否一致：只比会影响连接本身的字段，名字/启用状态不算 */
@@ -238,7 +239,6 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
     void attempt.then(clear, clear);
     return attempt;
   }
-
 
   function ensureConnected(config: McpServerConfig): Promise<void> {
     const existing = entries.get(config.id);

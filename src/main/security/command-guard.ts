@@ -37,11 +37,3 @@ export function assessCommand(command: string): CommandAssessment {
   }
   return { risk: "safe" };
 }
-
-/** 供"完全访问"以外的模式调用：命中黑名单直接抛错，由调用方转为错误响应 */
-export function assertCommandAllowed(command: string): void {
-  const { risk, matched } = assessCommand(command);
-  if (risk === "high") {
-    throw new Error(`命令被安全策略拦截：${matched?.description ?? "命中高危模式"}`);
-  }
-}

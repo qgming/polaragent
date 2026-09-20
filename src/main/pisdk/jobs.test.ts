@@ -432,7 +432,10 @@ describe("createJobService", () => {
     expect(service.list(SESSION)).toEqual([]);
     expect(service.get(job.id)).toBeUndefined();
     expect(service.isSuppressed(SESSION)).toBe(true); // 运行时据此不再往已关闭的会话发通知
-    expect(events).toContainEqual({ sessionId: SESSION, event: { type: "job-removed", id: job.id } });
+    expect(events).toContainEqual({
+      sessionId: SESSION,
+      event: { type: "job-removed", id: job.id },
+    });
 
     await waitFor("进程退出", () => !pidAlive(pid));
     const sizeAfterDeath = readFileSync(ticks, "utf8").length;

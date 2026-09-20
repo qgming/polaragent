@@ -105,7 +105,10 @@ export function parseInitializeResult(result: unknown): McpHandshake {
 }
 
 /** tools/list 结果解析：没有名字的条目直接丢掉（限定名需要它） */
-export function parseToolListResult(result: unknown): { tools: McpRemoteTool[]; nextCursor?: string } {
+export function parseToolListResult(result: unknown): {
+  tools: McpRemoteTool[];
+  nextCursor?: string;
+} {
   if (!isRecord(result)) return { tools: [] };
   const list = Array.isArray(result.tools) ? result.tools : [];
   const tools: McpRemoteTool[] = [];
@@ -116,7 +119,9 @@ export function parseToolListResult(result: unknown): { tools: McpRemoteTool[]; 
       name: item.name,
       description: typeof item.description === "string" ? item.description : "",
       inputSchema: item.inputSchema,
-      ...(typeof annotations.readOnlyHint === "boolean" ? { readOnly: annotations.readOnlyHint } : {}),
+      ...(typeof annotations.readOnlyHint === "boolean"
+        ? { readOnly: annotations.readOnlyHint }
+        : {}),
     });
   }
   const cursor = result.nextCursor;
@@ -168,10 +173,7 @@ export function formatCallResult(result: unknown): McpCallResult {
 }
 
 /** 按配置建传输 */
-function createTransport(
-  config: McpServerConfig,
-  warn: (message: string) => void,
-): McpTransport {
+function createTransport(config: McpServerConfig, warn: (message: string) => void): McpTransport {
   return config.transport === "http"
     ? createHttpTransport({ config })
     : createStdioTransport({ config, warn });

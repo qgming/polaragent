@@ -47,11 +47,3 @@ export interface JobReadResult {
   /** 读取这一刻进程是否仍在运行（waitMs 到点后常常还是 true） */
   running: boolean;
 }
-/**
- * 作业结束通知在 pi 会话里的 custom 消息类型。
- *
- * 为什么用 pi 的 custom 消息而不是普通 user 文本：custom 消息会被内核的 convertToLlm
- * 转成 role:"user" 喂给模型（模型感知与普通用户消息一致），同时 customType 随 entry 落盘，
- * 重启后 message-mapper 能据此把这条消息还原成 origin:"system"，而不是退化回用户气泡。
- */
-export const JOB_NOTICE_CUSTOM_TYPE = "oint.job-notice";

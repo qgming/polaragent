@@ -68,7 +68,9 @@ export async function extractSkillZip(
   try {
     entries = unzipSync(new Uint8Array(archive));
   } catch (error) {
-    throw new Error(`不是有效的 zip 压缩包：${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `不是有效的 zip 压缩包：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   const root = path.resolve(targetDir);

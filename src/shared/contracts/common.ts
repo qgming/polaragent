@@ -26,12 +26,3 @@ export interface ModelRef {
 export const ALL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 
 export type ThinkingLevel = (typeof ALL_THINKING_LEVELS)[number];
-
-export interface AppError {
-  code: string;
-  message: string;
-  detail?: string;
-}
-
-// 用判别联合表达成功/失败，避免 IPC 边界抛异常后丢失错误上下文。
-export type Result<T> = { ok: true; value: T } | { ok: false; error: AppError };

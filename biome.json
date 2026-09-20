@@ -89,7 +89,14 @@
           },
           "correctness": { "useExhaustiveDependencies": "off" },
           "style": { "noNonNullAssertion": "off" },
-          "complexity": { "noUselessFragments": "off" },
+          "complexity": { "noUselessFragments": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/renderer/components/assistant-ui/elements/mermaid-diagram.tsx"],
+      "linter": {
+        "rules": {
           "security": { "noDangerouslySetInnerHtml": "off" }
         }
       }

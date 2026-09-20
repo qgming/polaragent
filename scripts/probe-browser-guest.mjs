@@ -232,10 +232,17 @@ try {
   );
 
   const status = await evaluate(cdp, `window.oint.browser.status()`);
+  /**
+   * 多标签之后 `BrowserStatus` 不再有 `state` 字段：页面状态变成 per-tab，
+   * 通过 `browser:state` 事件按 tabId 推送（见 shared/contracts/browser.ts）。
+   * 这里改成看「当前标签的 url 是否仍是空」—— 空串 = 还没有打开任何页面，
+   * 与原来的断言意图一致（引导用的 about:blank 不该被当成页面）。
+   */
+  const activeTab = (status.tabs ?? [])[0];
   check(
     "页面状态是「空页面」而不是 about:blank",
-    status.state.url === "",
-    `state.url=${JSON.stringify(status.state.url)}`,
+    activeTab !== undefined && activeTab.url === "",
+    `tabs[0].url=${JSON.stringify(activeTab?.url)}`,
   );
 
   // 7) 真导航一次（走用户/模型的同一条路）：验证引导之后地址栏仍然可用，
@@ -262,10 +269,12 @@ try {
   const navDeadline = Date.now() + 10_000;
   while (Date.now() < navDeadline && !navigated) {
     await sleep(200);
+    // 同上：地址在多标签下由 status().tabs[].url 给出，不再有 status.state
     const now = await evaluate(cdp, `window.oint.browser.status()`);
-    navigated = now.state.url !== "" && now.state.url.endsWith("/page.html") === true;
+    const url = (now.tabs ?? [])[0]?.url ?? "";
+    navigated = url !== "" && url.endsWith("/page.html") === true;
   }
-  check("地址栏导航生效，主进程看到新地址", navigated, `state.url=${pageUrl}`);
+  check("地址栏导航生效，主进程看到新地址", navigated, `tabs[0].url 应为 ${pageUrl}`);
 
   // 再等一会儿让可能存在的第二次导航发生，然后数导航次数
   await sleep(1_500);
@@ -276,7 +285,11 @@ try {
     `did-navigate 触发 ${navCount} 次${navCount === 1 ? "" : "（>1 说明发生了重复导航）"}`,
   );
 
-  const title = await evaluate(cdp, `window.oint.browser.status().then((s) => s.state.title)`);
+  // 标题同样在 per-tab 的 tabs[] 上（多标签之后 status 不再有 state 字段）
+  const title = await evaluate(
+    cdp,
+    `window.oint.browser.status().then((s) => (s.tabs ?? [])[0]?.title ?? null)`,
+  );
   check("页面标题回填正确", title === "PROBE-PAGE", `title=${JSON.stringify(title)}`);
 
   // 8) JS 弹窗必须被自动应答，否则页面会永久卡死（外面那份报告里的 P1）。
@@ -303,7 +316,7 @@ try {
   while (Date.now() < dialogDeadline && !dialogCleared) {
     await sleep(200);
     const now = await evaluate(cdp, `window.oint.browser.status()`);
-    dialogCleared = now.state.title === "DIALOG-DISMISSED";
+    dialogCleared = (now.tabs ?? [])[0]?.title === "DIALOG-DISMISSED";
   }
   check(
     "alert() 被自动应答，页面没有卡死",

@@ -1,3 +1,4 @@
+import { getSessionStore } from "@/main/pisdk/session-store";
 import { IPC } from "@/shared/contracts/ipc";
 import { listDirectory, readFileContent } from "../files/service";
 import { handle } from "./handler";
@@ -5,14 +6,38 @@ import { handle } from "./handler";
 /**
  * 文件域通道：右侧面板「文件」用。
  *
- * 两个动作都要求传 root（会话工作目录），主进程据此做路径守卫 ——
- * 面板因此只能浏览会话自己的项目，不会退化成任意路径读取器。
+ * **根由主进程解析，渲染层给不了**：请求只带 sessionId，root 从会话索引里读出来。
+ * 早先的实现让渲染层传 root，而主进程用 `validatePathAccess(root, [root])` 校验它 ——
+ * 路径永远在它自己内部，那个判断恒真、等于没有校验，面板可以退化成任意路径读取器。
+ *
+ * 会话没绑定工作目录（或者 id 不存在）时直接拒绝：宁可面板空着，
+ * 也不要落到「进程当前目录」这种含糊的默认值上 —— 那会让边界随启动方式漂移。
  */
+async function resolveRoot(sessionId: unknown): Promise<string> {
+  if (typeof sessionId !== "string" || sessionId.trim() === "") {
+    throw new Error("缺少会话 id，无法确定文件面板的根目录");
+  }
+  const cwd = await getSessionStore().readCwd(sessionId);
+  if (cwd === null) {
+    throw new Error("该会话未绑定工作目录，文件面板不可用");
+  }
+  return cwd;
+}
+
 export function registerFilesIpc(): void {
-  handle(IPC.files.listDirectory, "列目录", (request: { root: string; path?: string }) =>
-    listDirectory(request),
+  handle(
+    IPC.files.listDirectory,
+    "列目录",
+    async (request: { sessionId: string; path?: string }) => {
+      const root = await resolveRoot(request?.sessionId);
+      return listDirectory({
+        root,
+        ...(request?.path === undefined ? {} : { path: request.path }),
+      });
+    },
   );
-  handle(IPC.files.readFile, "读取文件", (request: { root: string; path: string }) =>
-    readFileContent(request),
-  );
+  handle(IPC.files.readFile, "读取文件", async (request: { sessionId: string; path: string }) => {
+    const root = await resolveRoot(request?.sessionId);
+    return readFileContent({ root, path: request?.path });
+  });
 }

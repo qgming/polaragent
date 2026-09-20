@@ -13,8 +13,8 @@
       "description": "递归删除根目录或系统盘"
     },
     {
-      "pattern": "(shutdown|reboot|halt|poweroff|init\\s+0)\\b",
-      "flags": "i",
+      "pattern": "(^|[;&|]\\s*)(sudo\\s+)?(shutdown|reboot|halt|poweroff)\\b",
+      "flags": "im",
       "description": "关机/重启"
     },
     {

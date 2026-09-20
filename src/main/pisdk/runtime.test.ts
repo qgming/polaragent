@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { validatePathAccess } from "@/main/security/path-guard";
 import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { createApprovalService } from "./approvals";
@@ -17,6 +18,7 @@ import {
   deriveRulePattern,
   getChatRuntime,
   isLaneBusy,
+  keptToolCallIds,
   loadAgentResources,
   needsModelWrite,
   type PendingEntry,
@@ -123,7 +125,7 @@ describe("loadAgentResources", () => {
   });
 
   it("技能目录不在 allowedRoots 内时会被路径守卫拦掉，表现为 0 个技能", async () => {
-    // 这条测试是「为什么 runtime.ts 必须把 cwd 与 dataDir 加进 allowedRoots」的回归保护：
+    // 这条测试是「为什么 runtime.ts 必须把 cwd 与资源子目录加进 allowedRoots」的回归保护：
     // 守卫拒绝后内核只在 diagnostics 里报 list_failed，接口上看起来就是「这个技能不存在」
     const root = await makeSkillFixture();
     const elsewhere = path.join(root, "elsewhere");
@@ -147,12 +149,81 @@ describe("loadAgentResources", () => {
 });
 
 describe("sessionAllowedRoots", () => {
-  it("包含 cwd、数据目录与系统临时目录：bash spill 文件（Full output: <path>）必须能被 read 打开", () => {
-    expect(sessionAllowedRoots("D:\\work\\demo")).toEqual([
-      "D:\\work\\demo",
-      "/data-oint-unused", // 本文件把 dataDir mock 成固定路径
-      tmpdir(),
-    ]);
+  it("只放行数据目录下的资源子目录，不放行整个数据目录（settings.json 含 API Key）", () => {
+    const roots = sessionAllowedRoots("D:\\work\\demo");
+    // cwd 与 tmpdir 仍是必须的（技能/模板可能落在 cwd 下；spill 文件在 tmpdir）
+    expect(roots).toContain("D:\\work\\demo");
+    expect(roots).toContain(tmpdir());
+    // 三个资源子目录必须在（技能 / 魔法提示 / 子智能体定义要经守卫读取）
+    expect(roots).toContain(path.join("/data-oint-unused", "skills"));
+    expect(roots).toContain(path.join("/data-oint-unused", "prompts"));
+    expect(roots).toContain(path.join("/data-oint-unused", "subagents"));
+    // 数据根自身**不得**出现：settings.json / permission-rules.json / sessions/ 都在那里
+    expect(roots).not.toContain("/data-oint-unused");
+  });
+
+  it("凭据文件落在允许根之外：settings.json 与 permission-rules.json 都读不到", () => {
+    // 用真实的路径守卫判定，而不是只看数组内容 —— 这一条钉住的是「守卫的结论」
+    const roots = sessionAllowedRoots("D:\\work\\demo");
+    for (const secret of ["settings.json", "permission-rules.json", "sessions-index.json"]) {
+      const target = path.join("/data-oint-unused", secret);
+      expect(validatePathAccess(target, roots).ok, `${secret} 不该在允许根内`).toBe(false);
+    }
+  });
+
+  it("资源子目录之下的技能文件仍可读（收窄不能把技能一起挡掉）", () => {
+    const roots = sessionAllowedRoots("D:\\work\\demo");
+    const skill = path.join("/data-oint-unused", "skills", "demo", "SKILL.md");
+    expect(validatePathAccess(skill, roots).ok).toBe(true);
+  });
+});
+
+describe("keptToolCallIds（一轮结束时哪些 toolCall 必须保留）", () => {
+  it("仍在跑的作业必须保留：它的结论要等进程退出才回填", () => {
+    const keep = keptToolCallIds({
+      jobs: [{ status: "running", toolCallId: "call-a" }],
+      subagentRuns: [],
+    });
+    expect([...keep]).toEqual(["call-a"]);
+  });
+
+  it("已终态的作业可以回收（结论已经回写完了）", () => {
+    for (const status of ["exited", "failed", "killed"]) {
+      const keep = keptToolCallIds({
+        jobs: [{ status, toolCallId: "call-a" }],
+        subagentRuns: [],
+      });
+      expect(keep.size, `${status} 的作业不该占着 toolCall`).toBe(0);
+    }
+  });
+
+  it("未终结的子智能体委派必须保留，终态的可以回收", () => {
+    const keep = keptToolCallIds({
+      jobs: [],
+      subagentRuns: [
+        { status: "running", delegationId: "call-run" },
+        { status: "completed", delegationId: "call-done" },
+        { status: "interrupted", delegationId: "call-interrupted" },
+        { status: "aborted", delegationId: "call-aborted" },
+      ],
+    });
+    expect([...keep]).toEqual(["call-run"]);
+  });
+
+  it("没有 toolCallId 的作业（历史作业）不影响结果", () => {
+    const keep = keptToolCallIds({
+      jobs: [{ status: "running", toolCallId: undefined }],
+      subagentRuns: [],
+    });
+    expect(keep.size).toBe(0);
+  });
+
+  it("作业与委派同时存在时取并集", () => {
+    const keep = keptToolCallIds({
+      jobs: [{ status: "running", toolCallId: "call-job" }],
+      subagentRuns: [{ status: "running", delegationId: "call-task" }],
+    });
+    expect([...keep].sort()).toEqual(["call-job", "call-task"]);
   });
 });
 
@@ -162,10 +233,48 @@ describe("deriveRulePattern", () => {
     expect(deriveRulePattern("bash", {})).toBeUndefined();
   });
 
-  it("write/edit 取路径首段并跳过盘符", () => {
+  /**
+   * 解释器 / 包管理器**不派生规则**。
+   *
+   * 批准一次 `npm run build` 若记成「允许 npm」，连带放行的是
+   * `npm install evil-pkg` / `npm publish` / `npm config set ...:_authToken`；
+   * `node -e "..."` 更是任意执行。派生不出窄模式就不写规则 ——
+   * 代价是下次再点一次卡，而不是把 shell 永久交出去。
+   */
+  it("解释器与包管理器首词不派生规则（否则等于永久放行任意执行）", () => {
+    for (const command of [
+      "npm run build",
+      "node scripts/build.js",
+      "npx some-tool",
+      "pnpm install",
+      "python -c 'x'",
+      "bash -c 'x'",
+      "powershell -enc AAAA",
+      "go run .",
+    ]) {
+      expect(deriveRulePattern("bash", { command }), command).toBeUndefined();
+    }
+    // 非解释器的命令照常派生
+    expect(deriveRulePattern("bash", { command: "git status" })).toBe("git");
+    expect(deriveRulePattern("bash", { command: "ls -la" })).toBe("ls");
+  });
+
+  /**
+   * write/edit 只对**相对路径**派生首段。
+   *
+   * 绝对路径的首段是 `Users` / `home` / `dev` 这种盘符下第一层 ——
+   * 把它当授权范围等于放行整个用户目录（`C:\Users\me\.ssh\authorized_keys` 也会命中）。
+   */
+  it("write/edit 只对相对路径取首段；绝对路径不派生", () => {
     expect(deriveRulePattern("write", { path: "src/foo.ts" })).toBe("src");
-    expect(deriveRulePattern("edit", { path: "D:\\dev\\oint\\a.ts" })).toBe("dev");
+    expect(deriveRulePattern("edit", { path: "./src/a.ts" })).toBe("src");
     expect(deriveRulePattern("write", {})).toBeUndefined();
+    // 绝对路径：首段没有授权意义，宁可每次都问
+    expect(deriveRulePattern("edit", { path: "D:\\dev\\oint\\a.ts" })).toBeUndefined();
+    expect(deriveRulePattern("write", { path: "/home/u/a.ts" })).toBeUndefined();
+    expect(
+      deriveRulePattern("write", { path: "C:/Users/me/.ssh/authorized_keys" }),
+    ).toBeUndefined();
   });
 });
 

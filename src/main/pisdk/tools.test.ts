@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_TOOL_NAME_LIST } from "@/shared/contracts/browser";
+import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
 import type { BrowserAutomation } from "../browser/types";
 import { buildTools, TOOL_NAMES } from "./tools";
 
@@ -7,6 +7,13 @@ import { buildTools, TOOL_NAMES } from "./tools";
 const NATIVE_TOOLS = ["bash", "read", "write", "edit"];
 /** 自建工具（不含浏览器族，也不含按会话注入的 ask_user） */
 const CUSTOM_TOOLS = ["grep", "glob", "todo"];
+/**
+ * 浏览器工具名清单。
+ *
+ * 直接从契约的常量对象取（而不是消费一个专门的数组导出）：那份数组只被本测试用，
+ * 为它保留一个生产导出等于把「哪些名字算浏览器工具」变成公开 API。
+ */
+const BROWSER_TOOL_NAME_LIST = Object.values(BROWSER_TOOL_NAMES);
 
 /**
  * 浏览器工具的假实现：这个测试只关心**装配**（名字、数量、description 齐不齐），

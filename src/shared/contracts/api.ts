@@ -207,12 +207,17 @@ export interface OintApi {
     /** 订阅终端事件（输出 / 元信息变化 / 移除），返回取消订阅函数 */
     onEvent(callback: (event: TerminalEvent) => void): () => void;
   };
-  /** 右侧面板「文件」：列目录与读文件，根固定为传入的 root */
+  /**
+   * 右侧面板「文件」：列目录与读文件。
+   *
+   * 只传 sessionId，**不传 root** —— 根由主进程从会话索引解析。
+   * 让渲染层指定根等于把「能读哪个目录」的决定权交给渲染层，那是提权面。
+   */
   files: {
-    /** 列一层目录；path 缺省用 root */
-    listDirectory(request: { root: string; path?: string }): Promise<DirectoryListing>;
+    /** 列一层目录；path 缺省用会话工作目录 */
+    listDirectory(request: { sessionId: string; path?: string }): Promise<DirectoryListing>;
     /** 读一个文件（等宽预览用，超出上限会截断） */
-    readFile(request: { root: string; path: string }): Promise<FileContent>;
+    readFile(request: { sessionId: string; path: string }): Promise<FileContent>;
   };
   /** 右侧面板「审查」：本次会话改动过的文件与补丁 */
   review: {

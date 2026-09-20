@@ -139,6 +139,7 @@ const api = {
     },
   },
   files: {
+    // 只传 sessionId：根目录由主进程从会话索引解析，渲染层给不了路径
     listDirectory: (request) => ipcRenderer.invoke(IPC.files.listDirectory, request),
     readFile: (request) => ipcRenderer.invoke(IPC.files.readFile, request),
   },

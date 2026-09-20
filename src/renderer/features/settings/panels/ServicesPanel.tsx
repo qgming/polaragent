@@ -307,281 +307,281 @@ function ServiceEditor({
       }
     >
       <div className="space-y-4">
-          <FieldBlock label={t("settings.serviceName")}>
-            <Input
-              value={draft.name}
-              placeholder={t("settings.serviceName")}
-              aria-label={t("settings.serviceName")}
-              onChange={(e) => onChange({ ...draft, name: e.target.value })}
-              className={settingsInput}
-            />
-          </FieldBlock>
+        <FieldBlock label={t("settings.serviceName")}>
+          <Input
+            value={draft.name}
+            placeholder={t("settings.serviceName")}
+            aria-label={t("settings.serviceName")}
+            onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            className={settingsInput}
+          />
+        </FieldBlock>
 
-          <FieldBlock label={t("settings.baseUrl")} hint={t("settings.baseUrlHint")}>
-            <Input
-              value={draft.baseUrl}
-              placeholder="https://api.example.com/v1"
-              aria-label={t("settings.baseUrl")}
-              onChange={(e) => onChange({ ...draft, baseUrl: e.target.value })}
-              className={cn(settingsInput, "font-mono")}
-            />
-          </FieldBlock>
+        <FieldBlock label={t("settings.baseUrl")} hint={t("settings.baseUrlHint")}>
+          <Input
+            value={draft.baseUrl}
+            placeholder="https://api.example.com/v1"
+            aria-label={t("settings.baseUrl")}
+            onChange={(e) => onChange({ ...draft, baseUrl: e.target.value })}
+            className={cn(settingsInput, "font-mono")}
+          />
+        </FieldBlock>
 
-          <FieldBlock label={t("settings.apiKey")}>
-            <div className="relative">
-              {/* 已保存的 key 只用 placeholder 遮罩回显，用户输入新值才覆盖 */}
-              <Input
-                type={showApiKey ? "text" : "password"}
-                value={draft.apiKeyInput}
-                placeholder={draft.apiKey ? "••••••" : ""}
-                aria-label={t("settings.apiKey")}
-                autoComplete="off"
-                onChange={(e) => onChange({ ...draft, apiKeyInput: e.target.value })}
-                className={cn(settingsInput, "pr-9 font-mono")}
-              />
-              <button
-                type="button"
-                aria-label={t("settings.apiKey")}
-                onClick={() => setShowApiKey((value) => !value)}
-                className={cn(ghostButton, "absolute top-1/2 right-1 size-6 -translate-y-1/2")}
+        <FieldBlock label={t("settings.apiKey")}>
+          <div className="relative">
+            {/* 已保存的 key 只用 placeholder 遮罩回显，用户输入新值才覆盖 */}
+            <Input
+              type={showApiKey ? "text" : "password"}
+              value={draft.apiKeyInput}
+              placeholder={draft.apiKey ? "••••••" : ""}
+              aria-label={t("settings.apiKey")}
+              autoComplete="off"
+              onChange={(e) => onChange({ ...draft, apiKeyInput: e.target.value })}
+              className={cn(settingsInput, "pr-9 font-mono")}
+            />
+            <button
+              type="button"
+              aria-label={t("settings.apiKey")}
+              onClick={() => setShowApiKey((value) => !value)}
+              className={cn(ghostButton, "absolute top-1/2 right-1 size-6 -translate-y-1/2")}
+            >
+              {showApiKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            </button>
+          </div>
+        </FieldBlock>
+
+        <FieldBlock label={t("settings.wireFormat")}>
+          <SettingsSelect
+            ariaLabel={t("settings.wireFormat")}
+            value={draft.wireFormat}
+            onChange={(value) => onChange({ ...draft, wireFormat: value as WireFormat })}
+            className="w-full max-w-none"
+            items={[
+              { value: "openai-completions", label: t("settings.wireFormatCompletions") },
+              { value: "openai-responses", label: t("settings.wireFormatResponses") },
+            ]}
+          />
+        </FieldBlock>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className={typeEyebrow}>
+              {t("settings.models")} · {draft.models.length}
+            </span>
+            <Button type="button" variant="ghost" size="xs" onClick={addModel}>
+              <Plus className="size-3.5" />
+              {t("settings.addModel")}
+            </Button>
+          </div>
+
+          {draft.models.map((model, index) => {
+            // 与主进程装配保持一致：达到/超过上下文窗口视为误填，不会传递给服务端
+            const exceedsContext =
+              model.maxTokens !== undefined &&
+              model.contextWindow !== undefined &&
+              model.maxTokens >= model.contextWindow;
+            const note = matchNotes[model.key];
+            /**
+             * 图片支持：没配过（undefined）时按「不支持」显示 —— 这与 pi-ai 的缺省
+             * （只列 text）以及真实请求行为一致，不假装支持。
+             */
+            const imageEnabled = model.acceptsImages ?? false;
+            /**
+             * 思考档位：列出的与勾选的都必须与「内核真的会发什么」一致。
+             *
+             * supportedLevels 里 `reasoning !== true → 只有关闭`，所以即便配置里残留
+             * ["off","high"] 也只会显示「关闭」—— 与输入框 chip 的列表严格同源。
+             */
+            const levelOptions = supportedLevels(model);
+            const levelValue = (model.thinkingLevels ?? levelOptions).filter((level) =>
+              levelOptions.includes(level),
+            );
+            const canRestore =
+              model.acceptsImages !== undefined || model.thinkingLevels !== undefined;
+            return (
+              <div
+                key={model.key}
+                className="space-y-2 rounded-[10px] border border-border/60 p-2.5"
               >
-                {showApiKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-              </button>
-            </div>
-          </FieldBlock>
-
-          <FieldBlock label={t("settings.wireFormat")}>
-            <SettingsSelect
-              ariaLabel={t("settings.wireFormat")}
-              value={draft.wireFormat}
-              onChange={(value) => onChange({ ...draft, wireFormat: value as WireFormat })}
-              className="w-full max-w-none"
-              items={[
-                { value: "openai-completions", label: t("settings.wireFormatCompletions") },
-                { value: "openai-responses", label: t("settings.wireFormatResponses") },
-              ]}
-            />
-          </FieldBlock>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className={typeEyebrow}>
-                {t("settings.models")} · {draft.models.length}
-              </span>
-              <Button type="button" variant="ghost" size="xs" onClick={addModel}>
-                <Plus className="size-3.5" />
-                {t("settings.addModel")}
-              </Button>
-            </div>
-
-            {draft.models.map((model, index) => {
-              // 与主进程装配保持一致：达到/超过上下文窗口视为误填，不会传递给服务端
-              const exceedsContext =
-                model.maxTokens !== undefined &&
-                model.contextWindow !== undefined &&
-                model.maxTokens >= model.contextWindow;
-              const note = matchNotes[model.key];
-              /**
-               * 图片支持：没配过（undefined）时按「不支持」显示 —— 这与 pi-ai 的缺省
-               * （只列 text）以及真实请求行为一致，不假装支持。
-               */
-              const imageEnabled = model.acceptsImages ?? false;
-              /**
-               * 思考档位：列出的与勾选的都必须与「内核真的会发什么」一致。
-               *
-               * supportedLevels 里 `reasoning !== true → 只有关闭`，所以即便配置里残留
-               * ["off","high"] 也只会显示「关闭」—— 与输入框 chip 的列表严格同源。
-               */
-              const levelOptions = supportedLevels(model);
-              const levelValue = (model.thinkingLevels ?? levelOptions).filter((level) =>
-                levelOptions.includes(level),
-              );
-              const canRestore =
-                model.acceptsImages !== undefined || model.thinkingLevels !== undefined;
-              return (
-                <div
-                  key={model.key}
-                  className="space-y-2 rounded-[10px] border border-border/60 p-2.5"
-                >
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={model.id}
-                      placeholder={t("settings.modelId")}
-                      aria-label={t("settings.modelId")}
-                      onChange={(e) => patchModel(index, { id: e.target.value })}
-                      onBlur={() => void handleIdBlur(model.key)}
-                      className={cn(settingsInput, "flex-1 font-mono")}
-                    />
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label={t("settings.catalogMatch")}
-                          className={cn(ghostButton, "size-7 shrink-0")}
-                          onClick={() => void handleCatalogMatch(model.key)}
-                        >
-                          <WandSparkles className="size-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>{t("settings.catalogMatch")}</TooltipContent>
-                    </Tooltip>
-                    <button
-                      type="button"
-                      aria-label={t("common.delete")}
-                      className={cn(ghostButton, "size-7 shrink-0 hover:text-destructive")}
-                      onClick={() => removeModel(index)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
+                <div className="flex items-center gap-2">
                   <Input
-                    value={model.name ?? ""}
-                    placeholder={t("settings.modelName")}
-                    aria-label={t("settings.modelName")}
-                    onChange={(e) => patchModel(index, { name: e.target.value })}
-                    className={settingsInput}
+                    value={model.id}
+                    placeholder={t("settings.modelId")}
+                    aria-label={t("settings.modelId")}
+                    onChange={(e) => patchModel(index, { id: e.target.value })}
+                    onBlur={() => void handleIdBlur(model.key)}
+                    className={cn(settingsInput, "flex-1 font-mono")}
                   />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      type="number"
-                      value={model.contextWindow ?? ""}
-                      placeholder={t("settings.contextWindow")}
-                      aria-label={t("settings.contextWindow")}
-                      onChange={(e) =>
-                        patchModel(index, { contextWindow: parseOptionalNumber(e.target.value) })
-                      }
-                      className={cn(settingsInput, "font-mono")}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={t("settings.catalogMatch")}
+                        className={cn(ghostButton, "size-7 shrink-0")}
+                        onClick={() => void handleCatalogMatch(model.key)}
+                      >
+                        <WandSparkles className="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t("settings.catalogMatch")}</TooltipContent>
+                  </Tooltip>
+                  <button
+                    type="button"
+                    aria-label={t("common.delete")}
+                    className={cn(ghostButton, "size-7 shrink-0 hover:text-destructive")}
+                    onClick={() => removeModel(index)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+                <Input
+                  value={model.name ?? ""}
+                  placeholder={t("settings.modelName")}
+                  aria-label={t("settings.modelName")}
+                  onChange={(e) => patchModel(index, { name: e.target.value })}
+                  className={settingsInput}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    type="number"
+                    value={model.contextWindow ?? ""}
+                    placeholder={t("settings.contextWindow")}
+                    aria-label={t("settings.contextWindow")}
+                    onChange={(e) =>
+                      patchModel(index, { contextWindow: parseOptionalNumber(e.target.value) })
+                    }
+                    className={cn(settingsInput, "font-mono")}
+                  />
+                  <Input
+                    type="number"
+                    value={model.maxTokens ?? ""}
+                    placeholder={t("settings.maxTokens")}
+                    aria-label={t("settings.maxTokens")}
+                    aria-invalid={exceedsContext}
+                    onChange={(e) =>
+                      patchModel(index, { maxTokens: parseOptionalNumber(e.target.value) })
+                    }
+                    className={cn(
+                      settingsInput,
+                      "font-mono",
+                      exceedsContext && "border-destructive",
+                    )}
+                  />
+                </div>
+                {exceedsContext ? (
+                  <p className="text-[11px] text-destructive">
+                    {t("settings.maxTokensExceedsContext")}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-ink-4">{t("settings.maxTokensHint")}</p>
+                )}
+                <div className="flex flex-wrap items-center gap-4">
+                  <span className="flex items-center gap-1.5 text-xs text-ink-3">
+                    <Switch
+                      size="sm"
+                      aria-label={t("settings.reasoning")}
+                      checked={model.reasoning ?? false}
+                      onCheckedChange={(checked) => patchModel(index, { reasoning: checked })}
                     />
-                    <Input
-                      type="number"
-                      value={model.maxTokens ?? ""}
-                      placeholder={t("settings.maxTokens")}
-                      aria-label={t("settings.maxTokens")}
-                      aria-invalid={exceedsContext}
-                      onChange={(e) =>
-                        patchModel(index, { maxTokens: parseOptionalNumber(e.target.value) })
-                      }
-                      className={cn(
-                        settingsInput,
-                        "font-mono",
-                        exceedsContext && "border-destructive",
-                      )}
+                    {t("settings.reasoning")}
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs text-ink-3">
+                    <Switch
+                      size="sm"
+                      aria-label={t("settings.inputImage")}
+                      checked={imageEnabled}
+                      onCheckedChange={(checked) => patchModel(index, { acceptsImages: checked })}
                     />
-                  </div>
-                  {exceedsContext ? (
-                    <p className="text-[11px] text-destructive">
-                      {t("settings.maxTokensExceedsContext")}
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-ink-4">{t("settings.maxTokensHint")}</p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-4">
-                    <span className="flex items-center gap-1.5 text-xs text-ink-3">
-                      <Switch
-                        size="sm"
-                        aria-label={t("settings.reasoning")}
-                        checked={model.reasoning ?? false}
-                        onCheckedChange={(checked) => patchModel(index, { reasoning: checked })}
-                      />
-                      {t("settings.reasoning")}
-                    </span>
-                    <span className="flex items-center gap-1.5 text-xs text-ink-3">
-                      <Switch
-                        size="sm"
-                        aria-label={t("settings.inputImage")}
-                        checked={imageEnabled}
-                        onCheckedChange={(checked) => patchModel(index, { acceptsImages: checked })}
-                      />
-                      {t("settings.inputImage")}
-                    </span>
-                  </div>
-                  {/*
+                    {t("settings.inputImage")}
+                  </span>
+                </div>
+                {/*
                     思考档位多选：默认勾选「这个模型支持哪些」，用户可改。
                     形状取自 elements/reasoning-effort 的分段控件（那里是单选，这里是多选）。
                   */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-ink-3">{t("settings.thinkingLevels")}</span>
-                      {canRestore ? (
-                        <button
-                          type="button"
-                          className="text-[11px] text-ink-4 underline underline-offset-2 hover:text-ink-2"
-                          onClick={() =>
-                            patchModel(index, {
-                              acceptsImages: undefined,
-                              thinkingLevels: undefined,
-                            })
-                          }
-                        >
-                          {t("settings.restoreCatalogValues")}
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className={cn(field, "flex gap-0.5 rounded-full p-0.5")}>
-                      {ALL_THINKING_LEVELS.map((value) => {
-                        const active = levelValue.includes(value);
-                        // 模型实际用不上的档位（例如非推理模型的全部非 off 档）不给点：
-                        // 点了会被 chip 与主进程双双忽略，看起来像「点了没反应」
-                        const selectable = levelOptions.includes(value);
-                        return (
-                          <button
-                            key={value}
-                            type="button"
-                            aria-pressed={active}
-                            disabled={!selectable}
-                            className={cn(
-                              "flex-1 rounded-full py-1 text-center text-xs font-medium whitespace-nowrap outline-none",
-                              "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
-                              !selectable && "cursor-not-allowed opacity-30",
-                              selectable && active
-                                ? "bg-background text-foreground"
-                                : selectable
-                                  ? "text-ink-4 hover:bg-background/60"
-                                  : "text-ink-4",
-                            )}
-                            onClick={() => {
-                              // 至少留一档：全不勾等于「没有可选档位」，chip 会空成一片
-                              const next = active
-                                ? levelValue.filter((item) => item !== value)
-                                : ALL_THINKING_LEVELS.filter(
-                                    (item) => item === value || levelValue.includes(item),
-                                  );
-                              if (next.length === 0) return;
-                              patchModel(index, { thinkingLevels: [...next] });
-                            }}
-                          >
-                            {t(thinkingLabelKey(value))}
-                          </button>
-                        );
-                      })}
-                    </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-ink-3">{t("settings.thinkingLevels")}</span>
+                    {canRestore ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-ink-4 underline underline-offset-2 hover:text-ink-2"
+                        onClick={() =>
+                          patchModel(index, {
+                            acceptsImages: undefined,
+                            thinkingLevels: undefined,
+                          })
+                        }
+                      >
+                        {t("settings.restoreCatalogValues")}
+                      </button>
+                    ) : null}
                   </div>
-                  {note ? (
-                    <p
-                      className={cn(
-                        "text-[11px]",
-                        note.tone === "error" ? "text-destructive" : "text-ink-4",
-                      )}
-                    >
-                      {note.text}
-                    </p>
-                  ) : null}
+                  <div className={cn(field, "flex gap-0.5 rounded-full p-0.5")}>
+                    {ALL_THINKING_LEVELS.map((value) => {
+                      const active = levelValue.includes(value);
+                      // 模型实际用不上的档位（例如非推理模型的全部非 off 档）不给点：
+                      // 点了会被 chip 与主进程双双忽略，看起来像「点了没反应」
+                      const selectable = levelOptions.includes(value);
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          aria-pressed={active}
+                          disabled={!selectable}
+                          className={cn(
+                            "flex-1 rounded-full py-1 text-center text-xs font-medium whitespace-nowrap outline-none",
+                            "transition-[background-color,color,scale] duration-150 focus-visible:ring-1 focus-visible:ring-foreground/20 active:scale-[0.97] motion-reduce:transition-none",
+                            !selectable && "cursor-not-allowed opacity-30",
+                            selectable && active
+                              ? "bg-background text-foreground"
+                              : selectable
+                                ? "text-ink-4 hover:bg-background/60"
+                                : "text-ink-4",
+                          )}
+                          onClick={() => {
+                            // 至少留一档：全不勾等于「没有可选档位」，chip 会空成一片
+                            const next = active
+                              ? levelValue.filter((item) => item !== value)
+                              : ALL_THINKING_LEVELS.filter(
+                                  (item) => item === value || levelValue.includes(item),
+                                );
+                            if (next.length === 0) return;
+                            patchModel(index, { thinkingLevels: [...next] });
+                          }}
+                        >
+                          {t(thinkingLabelKey(value))}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              );
-            })}
+                {note ? (
+                  <p
+                    className={cn(
+                      "text-[11px]",
+                      note.tone === "error" ? "text-destructive" : "text-ink-4",
+                    )}
+                  >
+                    {note.text}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
 
-            {fetch.status !== "idle" ? (
-              <p
-                className={cn(
-                  "text-xs",
-                  fetch.status === "error" ? "text-destructive" : "text-ink-3",
-                )}
-              >
-                {fetch.status === "loading" ? t("common.loading") : fetch.message}
-              </p>
-            ) : null}
-          </div>
+          {fetch.status !== "idle" ? (
+            <p
+              className={cn(
+                "text-xs",
+                fetch.status === "error" ? "text-destructive" : "text-ink-3",
+              )}
+            >
+              {fetch.status === "loading" ? t("common.loading") : fetch.message}
+            </p>
+          ) : null}
         </div>
+      </div>
     </SettingsDialog>
   );
 }

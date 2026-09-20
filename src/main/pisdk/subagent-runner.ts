@@ -27,6 +27,7 @@ import {
   type SubagentRun,
   type SubagentRunFinishedStatus,
 } from "@/shared/contracts/subagent";
+import { errorText } from "./error-text";
 import { getChatRuntime, registerSubagentSession } from "./runtime";
 import { getSessionStore } from "./session-store";
 import {
@@ -154,16 +155,6 @@ export function subagentSlotHolders(sessionId: string): SubagentSlotHolder[] {
     holders.set(delegationId, { delegationId, agentName: reservation.agentName });
   }
   return [...holders.values()];
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message || error.name;
-  if (typeof error === "string") return error;
-  try {
-    return JSON.stringify(error) ?? String(error);
-  } catch {
-    return String(error);
-  }
 }
 
 /** 发出去的必须是快照：运行记录还会被继续改，活对象交给 IPC 之后拿到什么全看时机 */
@@ -403,13 +394,6 @@ export function listSubagentRuns(sessionId: string): SubagentRun[] {
     .filter((entry) => entry.run.sessionId === sessionId)
     .map((entry) => snapshot(entry.run))
     .sort((left, right) => left.startedAt - right.startedAt);
-}
-
-/** 取一条运行记录；不属于该会话（或不存在）时返回 undefined */
-export function findSubagentRun(sessionId: string, delegationId: string): SubagentRun | undefined {
-  const entry = liveRuns.get(delegationId);
-  if (entry === undefined || entry.run.sessionId !== sessionId) return undefined;
-  return snapshot(entry.run);
 }
 
 /**

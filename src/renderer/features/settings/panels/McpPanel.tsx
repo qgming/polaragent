@@ -147,119 +147,119 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
       }
     >
       <div className="space-y-4">
-          <FieldBlock label={t("settings.mcpServerName")} hint={t("settings.mcpServerNameHint")}>
-            <Input
-              value={draft.name}
-              className={settingsInput}
-              placeholder="filesystem"
-              onChange={(event) => patch({ name: event.target.value })}
-            />
-          </FieldBlock>
-
-          <SettingsField
-            label={t("settings.mcpTransport")}
-            description={t("settings.mcpTransportDesc")}
-            control={
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className={secondaryButton}
-                onClick={() => patch({ transport: stdio ? "http" : "stdio" })}
-              >
-                {stdio ? (
-                  <SquareTerminal className="size-3.5" aria-hidden="true" />
-                ) : (
-                  <Globe className="size-3.5" aria-hidden="true" />
-                )}
-                {t(stdio ? "settings.mcpTransportStdio" : "settings.mcpTransportHttp")}
-              </Button>
-            }
+        <FieldBlock label={t("settings.mcpServerName")} hint={t("settings.mcpServerNameHint")}>
+          <Input
+            value={draft.name}
+            className={settingsInput}
+            placeholder="filesystem"
+            onChange={(event) => patch({ name: event.target.value })}
           />
+        </FieldBlock>
 
-          {stdio ? (
-            <>
-              <FieldBlock label={t("settings.mcpCommand")} hint={t("settings.mcpCommandHint")}>
-                <Input
-                  value={draft.command}
-                  className={settingsInput}
-                  placeholder="npx"
-                  onChange={(event) => patch({ command: event.target.value })}
-                />
-              </FieldBlock>
-              <FieldBlock label={t("settings.mcpArgs")} hint={t("settings.mcpArgsHint")}>
-                <Textarea
-                  value={draft.argsText}
-                  className={settingsTextarea}
-                  rows={3}
-                  placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\work"}
-                  onChange={(event) => patch({ argsText: event.target.value })}
-                />
-              </FieldBlock>
-              <FieldBlock label={t("settings.mcpCwd")} hint={t("settings.mcpCwdHint")}>
-                <Input
-                  value={draft.cwd}
-                  className={settingsInput}
-                  placeholder={t("settings.mcpCwdPlaceholder")}
-                  onChange={(event) => patch({ cwd: event.target.value })}
-                />
-              </FieldBlock>
-              <FieldBlock label={t("settings.mcpEnv")} hint={t("settings.mcpEnvHint")}>
-                <Textarea
-                  value={draft.envText}
-                  className={settingsTextarea}
-                  rows={3}
-                  placeholder="GITHUB_TOKEN=ghp_..."
-                  onChange={(event) => patch({ envText: event.target.value })}
-                />
-              </FieldBlock>
-            </>
-          ) : (
-            <>
-              <FieldBlock label={t("settings.mcpUrl")} hint={t("settings.mcpUrlHint")}>
-                <Input
-                  value={draft.url}
-                  className={settingsInput}
-                  placeholder="https://example.com/mcp"
-                  onChange={(event) => patch({ url: event.target.value })}
-                />
-              </FieldBlock>
-              <FieldBlock label={t("settings.mcpHeaders")} hint={t("settings.mcpHeadersHint")}>
-                <Textarea
-                  value={draft.headersText}
-                  className={settingsTextarea}
-                  rows={3}
-                  placeholder="Authorization: Bearer ..."
-                  onChange={(event) => patch({ headersText: event.target.value })}
-                />
-              </FieldBlock>
-            </>
-          )}
+        <SettingsField
+          label={t("settings.mcpTransport")}
+          description={t("settings.mcpTransportDesc")}
+          control={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={secondaryButton}
+              onClick={() => patch({ transport: stdio ? "http" : "stdio" })}
+            >
+              {stdio ? (
+                <SquareTerminal className="size-3.5" aria-hidden="true" />
+              ) : (
+                <Globe className="size-3.5" aria-hidden="true" />
+              )}
+              {t(stdio ? "settings.mcpTransportStdio" : "settings.mcpTransportHttp")}
+            </Button>
+          }
+        />
 
-          <SettingsField
-            label={t("settings.mcpEnabled")}
-            description={t("settings.mcpEnabledDesc")}
-            control={
-              <Switch
-                size="sm"
-                checked={draft.enabled}
-                onCheckedChange={(checked) => patch({ enabled: checked })}
+        {stdio ? (
+          <>
+            <FieldBlock label={t("settings.mcpCommand")} hint={t("settings.mcpCommandHint")}>
+              <Input
+                value={draft.command}
+                className={settingsInput}
+                placeholder="npx"
+                onChange={(event) => patch({ command: event.target.value })}
               />
-            }
-          />
+            </FieldBlock>
+            <FieldBlock label={t("settings.mcpArgs")} hint={t("settings.mcpArgsHint")}>
+              <Textarea
+                value={draft.argsText}
+                className={settingsTextarea}
+                rows={3}
+                placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\work"}
+                onChange={(event) => patch({ argsText: event.target.value })}
+              />
+            </FieldBlock>
+            <FieldBlock label={t("settings.mcpCwd")} hint={t("settings.mcpCwdHint")}>
+              <Input
+                value={draft.cwd}
+                className={settingsInput}
+                placeholder={t("settings.mcpCwdPlaceholder")}
+                onChange={(event) => patch({ cwd: event.target.value })}
+              />
+            </FieldBlock>
+            <FieldBlock label={t("settings.mcpEnv")} hint={t("settings.mcpEnvHint")}>
+              <Textarea
+                value={draft.envText}
+                className={settingsTextarea}
+                rows={3}
+                placeholder="GITHUB_TOKEN=ghp_..."
+                onChange={(event) => patch({ envText: event.target.value })}
+              />
+            </FieldBlock>
+          </>
+        ) : (
+          <>
+            <FieldBlock label={t("settings.mcpUrl")} hint={t("settings.mcpUrlHint")}>
+              <Input
+                value={draft.url}
+                className={settingsInput}
+                placeholder="https://example.com/mcp"
+                onChange={(event) => patch({ url: event.target.value })}
+              />
+            </FieldBlock>
+            <FieldBlock label={t("settings.mcpHeaders")} hint={t("settings.mcpHeadersHint")}>
+              <Textarea
+                value={draft.headersText}
+                className={settingsTextarea}
+                rows={3}
+                placeholder="Authorization: Bearer ..."
+                onChange={(event) => patch({ headersText: event.target.value })}
+              />
+            </FieldBlock>
+          </>
+        )}
 
-          {/* 试连结果：成功给 server 名 + 工具数，失败给原因（含 stderr 尾巴） */}
-          {probe.result !== undefined ? (
-            <p className={cn("text-[13px]", probe.result.ok ? "text-ink-3" : "text-destructive")}>
-              {probe.result.ok
-                ? t("settings.mcpTestOk", {
-                    name: probe.result.serverName === "" ? draft.id : probe.result.serverName,
-                    tools: probe.result.tools.length,
-                  })
-                : t("settings.mcpTestFailed", { reason: probe.result.reason })}
-            </p>
-          ) : null}
-        </div>
+        <SettingsField
+          label={t("settings.mcpEnabled")}
+          description={t("settings.mcpEnabledDesc")}
+          control={
+            <Switch
+              size="sm"
+              checked={draft.enabled}
+              onCheckedChange={(checked) => patch({ enabled: checked })}
+            />
+          }
+        />
+
+        {/* 试连结果：成功给 server 名 + 工具数，失败给原因（含 stderr 尾巴） */}
+        {probe.result !== undefined ? (
+          <p className={cn("text-[13px]", probe.result.ok ? "text-ink-3" : "text-destructive")}>
+            {probe.result.ok
+              ? t("settings.mcpTestOk", {
+                  name: probe.result.serverName === "" ? draft.id : probe.result.serverName,
+                  tools: probe.result.tools.length,
+                })
+              : t("settings.mcpTestFailed", { reason: probe.result.reason })}
+          </p>
+        ) : null}
+      </div>
     </SettingsDialog>
   );
 }

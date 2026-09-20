@@ -99,7 +99,7 @@ describe("createSseSplitter", () => {
     const splitter = createSseSplitter((payload) => payloads.push(payload));
     splitter.push(": keep-alive\n\n");
     splitter.push("event: ping\n\n");
-    splitter.push("data: {\"c\":3}\n");
+    splitter.push('data: {"c":3}\n');
     expect(payloads).toEqual([]);
   });
 

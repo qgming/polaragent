@@ -24,7 +24,18 @@ export function registerSessionsIpc(): void {
   handle(IPC.sessions.rename, "重命名会话", (request: { id: string; title: string }) =>
     store.rename(request.id, request.title),
   );
-  handle(IPC.sessions.delete, "删除会话", (request: { id: string }) => store.remove(request.id));
+  /**
+   * 删除会话：**先关运行时再删库**。
+   *
+   * 顺序不能反：`store.remove` 会把 SQLite 文件删掉，而运行时还持有那个会话的
+   * `AgentHarness` / `AgentLane` / `ExecutionEnv` 与一堆事件订阅 —— 先删文件的话，
+   * 运行时就成了「指向已删除存储的活对象」，之后任何收尾（abort、close）都打在空处。
+   * 早先这里没接 closeSession，于是每删一个会话就漏一整套运行时资源。
+   */
+  handle(IPC.sessions.delete, "删除会话", async (request: { id: string }) => {
+    await getChatRuntime().closeSession(request.id);
+    await store.remove(request.id);
+  });
   handle(IPC.sessions.archive, "归档会话", (request: { id: string; archived: boolean }) =>
     store.setArchived(request.id, request.archived),
   );

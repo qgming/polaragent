@@ -50,6 +50,8 @@ type LocalIndexEntry = SessionIndexEntry & {
 
 /** sqlite 包未从入口导出 SqliteOpenSession 类型，这里从 repo 方法推导 */
 type SqliteOpenSession = Awaited<ReturnType<SqliteSessionRepo["open"]>>;
+/** repo.list() 的元素类型（带 path 等额外字段，比 SessionMetadata 更宽） */
+type SqliteSessionMetadata = Awaited<ReturnType<SqliteSessionRepo["list"]>>[number];
 
 type OpenedSession = { session: SqliteOpenSession; branch: Branch };
 
@@ -289,6 +291,32 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
   const index = createSessionsIndex(baseDir);
   // 同 id 复用打开结果，避免 repo 层重复 open 触发 "Session is already open"
   const handles = new Map<string, Promise<OpenedSession | undefined>>();
+  /**
+   * `activeRepo.list()` 的结果缓存。
+   *
+   * 为什么必须有：那次调用对**每个会话文件**做 readdir → realpath → open → query → close，
+   * 底层是同步 `node:sqlite`（`DatabaseSync`）。本机实测 50 个会话 = **每次约 220 ms 的主进程
+   * 阻塞**，而它在「列会话」「打开会话」「删会话」「fork」以及发送路径上都会被调到 ——
+   * 表现为每切一次会话 UI 卡一下，且随会话数线性变差。
+   *
+   * 失效策略：只在**会改变会话集合或元数据**的操作上置空，下次 list() 重新扫一遍。
+   * 逐条精确更新容易漏（`messageCount` 等字段由各处 touch 写入），而重扫一次
+   * 只在写操作后发生，代价可接受。
+   */
+  let metaCache: SqliteSessionMetadata[] | null = null;
+
+  /** 取会话元数据（带缓存）；调用方**不要**改写返回的数组 */
+  async function listMetas(): Promise<SqliteSessionMetadata[]> {
+    if (metaCache !== null) return metaCache;
+    const metas = await activeRepo.list(undefined, BACKGROUND_CONTEXT);
+    metaCache = metas;
+    return metas;
+  }
+
+  /** 让元数据缓存失效（任何可能改变会话集合/元数据的写入之后调用） */
+  function invalidateMetas(): void {
+    metaCache = null;
+  }
 
   function updateIndex(id: string, patch: LocalIndexEntry): Promise<void> {
     return index.update(id, patch).catch((error: unknown) => {
@@ -301,7 +329,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     if (cached) return cached;
     const opened = (async (): Promise<OpenedSession | undefined> => {
       try {
-        const metas = await activeRepo.list(undefined, BACKGROUND_CONTEXT);
+        const metas = await listMetas();
         const meta = metas.find((item) => item.id === id);
         if (!meta) {
           console.warn(`打开会话失败，元数据不存在: ${id}`);
@@ -343,7 +371,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
 
   async function list(): Promise<SessionSummary[]> {
     try {
-      const metas = await activeRepo.list(undefined, BACKGROUND_CONTEXT);
+      const metas = await listMetas();
       const entries = await index.read();
       return metas
         .map((meta) => toSummary(meta, entries[meta.id]))
@@ -367,6 +395,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
       const branch = await session.createBranch(MAIN_BRANCH, null, BACKGROUND_CONTEXT);
       if (options.title) await session.setName(options.title, BACKGROUND_CONTEXT);
       handles.set(session.metadata.id, Promise.resolve({ session, branch }));
+      // 会话集合变了：下次 list() 必须重新扫盘（否则新建的会话不会出现在列表里）
+      invalidateMetas();
 
       // 其余从属字段（kind / 工具调用 id / 子智能体名 / 运行 id）落在本地索引里：
       // SQLite 后端的 create 只收 { id, parentSessionId }，多出来的字段没有地方放
@@ -441,14 +471,14 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await closeHandle(id);
     let deleted = true;
     try {
-      const meta = (await activeRepo.list(undefined, BACKGROUND_CONTEXT)).find(
-        (item) => item.id === id,
-      );
+      const meta = (await listMetas()).find((item) => item.id === id);
       if (meta) await activeRepo.delete(meta, BACKGROUND_CONTEXT);
     } catch (error) {
       deleted = false;
       console.warn(`删除会话失败 ${id}: ${String(error)}`);
     }
+    // 无论删除成功与否都失效：失败的删除也可能已经动过文件
+    invalidateMetas();
     if (deleted) {
       try {
         await index.remove(id);
@@ -460,9 +490,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
 
   async function fork(id: string, entryId: string): Promise<SessionSummary> {
     try {
-      const meta = (await activeRepo.list(undefined, BACKGROUND_CONTEXT)).find(
-        (item) => item.id === id,
-      );
+      const meta = (await listMetas()).find((item) => item.id === id);
       if (!meta) throw new Error(`源会话不存在: ${id}`);
       const source = await openHandle(id);
       if (!source) throw new Error(`无法打开源会话: ${id}`);
@@ -513,6 +541,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
 
       if (!forked || !forkedBranch) throw new Error("分支会话创建结果不完整");
       handles.set(forked.metadata.id, Promise.resolve({ session: forked, branch: forkedBranch }));
+      // 分支是一个新会话：会话集合变了
+      invalidateMetas();
 
       const stats = await forked.getStats(BACKGROUND_CONTEXT);
       const sourceTitle = (await index.read())[id]?.title;

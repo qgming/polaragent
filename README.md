@@ -80,8 +80,8 @@ src/
 | 分区 | 内容 |
 | --- | --- |
 | 对话 | 流式回复、思考链折叠、工具调用分组、Markdown、停止/重试、图片附件、运行中排队与插话 |
-| 工具 | 内核原生 `bash`/`read`/`write`/`edit`（description 已覆盖，补「何时用/何时不要用」）+ 自建 `grep`/`glob`/`todo` + 浏览器十四件套 `browser_open`/`browser_history`/`browser_snapshot`/`browser_click`/`browser_type`/`browser_press`/`browser_hover`/`browser_select`/`browser_wait`/`browser_screenshot`/`browser_console`/`browser_network`/`browser_dialog`/`browser_evaluate` |
-| 内置浏览器 | 右侧面板的 `<webview>` 可供模型操作：导航、读页面（可见文本 + 带 ref 的可交互元素）、真实鼠标点击 / 悬停、按键与组合键、输入（**回读校验**，不再假报成功）、下拉选择、等待渲染落定、视口截图（图片进上下文）、控制台增量读取、网络请求记录、页面内求值。点击前会复核坐标上确实是目标元素，复核不过就报错而不是静默点空。JS 弹窗（alert / confirm / prompt）默认自动关闭，页面不会因无人应答而卡死。读类工具免审批，改页面 / 执行脚本走审批；**面板没开时模型会自己把它叫出来**（展开右侧栏并切到浏览器视图，然后等页面就绪） |
+| 工具 | 内核原生 `bash`/`read`/`write`/`edit`（description 已覆盖，补「何时用/何时不要用」）+ 自建 `grep`/`glob`/`todo` + 浏览器九件套 `browser_open`/`browser_history`/`browser_snapshot`/`browser_act`/`browser_wait`/`browser_screenshot`/`browser_logs`/`browser_dialog`/`browser_evaluate` |
+| 内置浏览器 | 右侧面板的 `<webview>` 可供模型操作：导航、读页面（可见文本 + 带 ref 的可交互元素）、真实鼠标点击 / 悬停、按键与组合键、输入（**回读校验**，不再假报成功）、下拉选择、等待渲染落定、视口截图（图片进上下文）、控制台与网络记录（`browser_logs` 两种视图）、页面内求值。点击前会复核坐标上确实是目标元素，复核不过就报错而不是静默点空。JS 弹窗（alert / confirm / prompt）默认自动关闭，页面不会因无人应答而卡死。读类工具免审批，改页面 / 执行脚本走审批；**面板没开时模型会自己把它叫出来**（展开右侧栏并切到浏览器视图，然后等页面就绪） |
 | 待办 | `todo` 工具维护会话级清单（整表替换语义）；对话区上方另有**独立可折叠面板**，重启后由会话记录恢复 |
 | 会话 | 新建/切换/重命名/归档/删除、**侧栏「置顶 / 项目 / 最近」分组**（绑定文件夹即为项目，会话按其工作目录自动归组）、标题索引、分页加载历史、**从任意消息分支**、SQLite 持久化 |
 | 权限 | 三模式（默认权限 / 帮我审批 / 完全访问）、审批卡（允许一次 / 始终允许 / 拒绝并说明理由）、「始终允许」规则库 |
@@ -121,6 +121,10 @@ Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（
 ├── subagents/              # 子智能体定义（*.md）
 └── cache/                  # 可再生成的缓存（models.dev 模型元数据）
 ```
+
+> ⚠️ `settings.json`（含 API Key）与 `permission-rules.json` 也在这个目录里，而该目录当前位于模型的
+> 可读/可写范围内 —— 审计发现这是一条提权链（模型可改写 `permissionMode` 关闭全部审批）。
+> 详见 `docs/audit-report.md` 的 C-1。
 
 技能、魔法提示与子智能体定义除了数据目录里的固定文件夹，还会扫描**会话工作目录下的 `.oint/` 同名子目录**
 （项目级，跟随会话的 cwd，同样无需配置）。
@@ -195,7 +199,7 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 
 ```bash
 OINT_PROBE_API_KEY=... node scripts/e2e-smoke.mjs
-# 可选：OINT_PROBE_BASE_URL / OINT_PROBE_MODEL（改名前的 POLAR_PROBE_* 仍然兼容）
+# 可选：OINT_PROBE_BASE_URL / OINT_PROBE_MODEL
 ```
 
 ### 首次配置

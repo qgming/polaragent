@@ -1,31 +1,14 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { ipcMain } from "electron";
 import { getChatRuntime } from "@/main/pisdk/runtime";
 import type { ChatSendOptions } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
+import { handle } from "./handler";
 
 /** 渲染层传入的图片附件：data 为 base64 或 dataUrl；这里补齐 pi 所需的 type 判别字段 */
 type ChatImage = { data: string; mimeType: string };
 
 function toImageContents(images: ChatImage[] | undefined): ImageContent[] | undefined {
   return images?.map((image) => ({ type: "image" as const, ...image }));
-}
-
-/** 注册单个处理器并统一包裹异常：Electron invoke 会把 message 原样传回渲染层 */
-function handle<TArgs extends unknown[], TResult>(
-  channel: string,
-  action: string,
-  run: (...args: TArgs) => Promise<TResult> | TResult,
-): void {
-  ipcMain.handle(channel, async (_event, ...args) => {
-    try {
-      return await run(...(args as TArgs));
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.warn(`${action}失败：${String(error)}`);
-      throw new Error(`${action}失败：${detail}`);
-    }
-  });
 }
 
 /** 注册聊天域通道；运行时惰性获取，避免注册早于 bootstrap 时误报未初始化 */

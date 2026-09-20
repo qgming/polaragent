@@ -1,12 +1,12 @@
-// paths 单测：数据根解析（默认 / OINT_HOME 覆盖 / 非法值回落）与子目录补建。
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+// paths 单测：数据根解析（默认 / OINT_HOME 覆盖 / 非法值回落）、子目录补建与遗留临时文件清理。
+import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPermissionRuleStore } from "@/main/pisdk/permissions";
 import { createSessionsIndex } from "@/main/pisdk/sessions-index";
 import { createSettingsStore, DEFAULT_SETTINGS } from "@/main/settings/store";
-import { DATA_DIR_ENV, dataDir, ensureAppDirs, resolveDataDir } from "./paths";
+import { DATA_DIR_ENV, dataDir, ensureAppDirs, purgeStaleTempFiles, resolveDataDir } from "./paths";
 
 /** 固定的假家目录：期望值全部用 path.join 拼，跨平台不受分隔符影响 */
 const HOME = path.resolve(path.sep, "home", "tester");
@@ -81,6 +81,73 @@ describe("ensureAppDirs", () => {
     ensureAppDirs(dir);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(path.join(dir, "sessions")).mode & 0o777).toBe(0o700);
+  });
+});
+
+/**
+ * 原子写临时文件的清理（P2-2）。
+ *
+ * 五处配置写入都走「写临时文件 → rename」。正常路径下临时文件会被 rename 掉，
+ * 但在 rename 之前失败（进程被杀、磁盘满）就会留下 `<file>.<pid>.<ts>.tmp`：
+ * 实测本机数据根积了 7 个（48~78 KB，最早两周前），此前没有任何机制回收它们。
+ */
+describe("purgeStaleTempFiles", () => {
+  /** 造一个临时文件并把 mtime 拨到指定年龄 */
+  function makeTempFile(dir: string, name: string, ageMs: number): string {
+    const file = path.join(dir, name);
+    writeFileSync(file, "{}", "utf8");
+    const when = (Date.now() - ageMs) / 1000;
+    utimesSync(file, when, when);
+    return file;
+  }
+
+  it("老临时文件被清掉，新鲜的留着（可能是正在进行的写入）", () => {
+    const dir = makeTempDir();
+    const stale = makeTempFile(dir, "sessions-index.json.123.456.tmp", 30 * 60 * 1000);
+    const fresh = makeTempFile(dir, "settings.json.999.111.tmp", 0);
+
+    const removed = purgeStaleTempFiles(dir);
+
+    expect(removed).toBe(1);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+  });
+
+  it("非 .tmp 文件一律不动（尤其不能碰 settings.json 本身）", () => {
+    const dir = makeTempDir();
+    const settings = makeTempFile(dir, "settings.json", 60 * 60 * 1000);
+    const other = makeTempFile(dir, "AGENTS.md", 60 * 60 * 1000);
+
+    purgeStaleTempFiles(dir);
+
+    expect(existsSync(settings)).toBe(true);
+    expect(existsSync(other)).toBe(true);
+  });
+
+  it("只看根目录直接子级，不递归进 sessions/", () => {
+    const dir = makeTempDir();
+    const sessions = path.join(dir, "sessions");
+    ensureAppDirs(dir);
+    const nested = makeTempFile(sessions, "x.sqlite.1.2.tmp", 60 * 60 * 1000);
+
+    purgeStaleTempFiles(dir);
+
+    expect(existsSync(nested)).toBe(true);
+  });
+
+  it("目录不存在时不抛错（首次启动）", () => {
+    const missing = path.join(makeTempDir(), "never-created");
+    expect(() => purgeStaleTempFiles(missing)).not.toThrow();
+    expect(purgeStaleTempFiles(missing)).toBe(0);
+  });
+
+  it("ensureAppDirs 会顺带清理遗留临时文件", () => {
+    const dir = makeTempDir();
+    const stale = makeTempFile(dir, "projects.json.42.43.tmp", 60 * 60 * 1000);
+
+    ensureAppDirs(dir);
+
+    expect(existsSync(stale)).toBe(false);
   });
 });
 

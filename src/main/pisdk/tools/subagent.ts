@@ -17,7 +17,7 @@
 // - 其余三个：{ runs: SubagentRun[] }。
 
 import type { AgentHarnessTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import { type Static, type TSchema, Type } from "typebox";
+import { type TSchema, Type } from "typebox";
 import {
   DEFAULT_SUBAGENT_TOOLS,
   MAX_CONCURRENT_SUBAGENT_RUNS,
@@ -236,10 +236,6 @@ const stopSchema = Type.Object({
     description: "Delegation ids to stop, e.g. the id returned by Task or listed by TaskList.",
   }),
 });
-
-export type SubagentTaskToolParams = Static<typeof taskSchema>;
-export type SubagentWaitToolParams = Static<typeof waitSchema>;
-export type SubagentStopToolParams = Static<typeof stopSchema>;
 
 const TASK_DESCRIPTION =
   "把一个独立任务派给子智能体执行：它有自己的会话与上下文，跑完后把报告交回来。" +

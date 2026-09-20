@@ -16,7 +16,7 @@
 // 状态刻意**不做持久化**：浏览器会话活在 guest 进程里，应用退出即消失；
 // 磁盘上留一份「上次打开的页面」只会制造「重启后它自己回来了」的困惑。
 
-// 阶段 1 的三道「不谎报」关卡（docs/browser-automation-refactor.md §3–§5）：
+// 三道「不谎报」关卡：
 //   1. **视口守卫**：确认 guest 布局过（视口非 0×0），坐标输入才可投递 —— 先查，再动手；
 //      注意「收起面板 / display:none」**不会**让已布局过的 guest 归零（实测保留最后一次
 //      布局尺寸），0×0 只可能出现在「从未可见地布局过」时，见 requireViewport 的说明；
@@ -129,7 +129,7 @@ const GUEST_READY_TIMEOUT_MS = 15_000;
 const GUEST_REQUEST_INTERVAL_MS = 500;
 
 /**
- * 动作发出后、读探针前的等待（docs …refactor.md §4 里的 80ms）。
+ * 动作发出后、读探针前的等待。
  *
  * 为什么必须等一下再读：`click` 之后浏览器还要把事件派完、框架还要跑完自己的处理
  *（React 的合成事件在微任务里、路由跳转在宏任务里）。立刻读会读到「还没有事件」，
@@ -890,7 +890,7 @@ const SCREENSHOT_TIMEOUT_MS = 4_000;
  * 抓一张 PNG，并把真实像素尺寸读回来。
  *
  * 三件事都在这里，缺一不可：
- *   · 视口尺寸优先取 `Page.getLayoutMetrics`（§9.3），读不到就退回视口守卫量到的 innerWidth/Height；
+ *   · 视口尺寸优先取 `Page.getLayoutMetrics`，读不到就退回视口守卫量到的 innerWidth/Height；
  *   · 宽度上限由 buildCaptureScreenshotParams 处理（clip + scale，超宽时缩到 1280）；
  *   · 尺寸从 PNG 的 IHDR 里读，不用"我以为的裁剪尺寸"去算 —— 高 DPI 面板上那会直接算错，
  *     而错报的尺寸会让模型以为截到了别的内容。拿到的不是 PNG 就返回 null，不编数字。

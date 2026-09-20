@@ -123,8 +123,21 @@ function outsideRootError(absolutePath: string, reason: string): FileError {
 
 /**
  * 创建受路径守卫约束的执行环境。
- * 路径类方法先校验目标是否落在 allowedRoots 内，越界返回 FileError；
- * exec 直接透传，命令风险由上层权限门判断。
+ *
+ * 两条边界，能力完全不同，不要混为一谈：
+ *
+ * 1. **路径类方法有守卫**：readFile / writeFile / listDir 等先校验目标落在 allowedRoots 内，
+ *    越界返回 FileError（见 guard）。
+ *
+ * 2. **`exec` 完全不受守卫约束**：它直接透传给 NodeExecutionEnv，可以跑任意命令、
+ *    读写任意路径 —— 路径守卫在这一层**不构成任何限制**。管住它的是上层权限门
+ *    （pisdk/permissions.ts）：shell 工具一律判为 high，必须用户点头。
+ *
+ * 另外**没有传 shellEnv**，所以子进程继承整个主进程环境（内核 getShellEnv 会展开
+ * `process.env`）—— 包括 OINT_HOME 与进程里存在的各类凭据。
+ * 这是当前的既成事实，不是有意设计：收紧成白名单需要先确认不影响依赖 env 的开发命令
+ *（npm registry token 等），见 docs/remediation-plan.md 的 P3-5。
+ * jobs.ts 里那条同样继承环境的注释与本处口径一致。
  */
 export async function createExecEnv(options: CreateExecEnvOptions): Promise<ExecutionEnv> {
   const cwd = normalizePath(options.cwd);

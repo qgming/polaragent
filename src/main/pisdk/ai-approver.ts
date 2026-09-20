@@ -5,6 +5,7 @@ import type { MutableModels } from "@earendil-works/pi-ai";
 import type { LanguageCode, ModelRef } from "@/shared/contracts/common";
 import type { Settings } from "@/shared/contracts/settings";
 import { AI_APPROVAL_SYSTEM_PROMPT, buildAiApprovalPrompt } from "@/shared/prompts/ai-approval";
+import { errorText } from "./error-text";
 import { buildProviders, resolveModel } from "./providers";
 export interface AiApproverInput {
   toolName: string;
@@ -75,16 +76,6 @@ const REASONS: Record<
   },
 };
 
-function toErrorText(error: unknown): string {
-  if (error instanceof Error) return error.message || error.name;
-  if (typeof error === "string") return error;
-  try {
-    return JSON.stringify(error) ?? String(error);
-  } catch {
-    return String(error);
-  }
-}
-
 /** 按码点截断（避免切在代理对中间） */
 function truncate(text: string, max: number): string {
   const chars = Array.from(text);
@@ -145,7 +136,7 @@ export function createAiApprover(deps: {
     } catch (error) {
       // 设置读不出来时无从得知界面语言：用中性（英文）兜底，避免英文用户收到中文理由
       const reasons = REASONS["en-US"];
-      return { allow: false, reason: `${reasons.settingsFailed}${toErrorText(error)}` };
+      return { allow: false, reason: `${reasons.settingsFailed}${errorText(error)}` };
     }
 
     const reasons = REASONS[settings.language];
@@ -181,7 +172,7 @@ export function createAiApprover(deps: {
       return parseDecision(text, settings.language);
     } catch (error) {
       if (isTimeout(error)) return { allow: false, reason: reasons.timedOut };
-      return { allow: false, reason: `${reasons.callFailed}${toErrorText(error)}` };
+      return { allow: false, reason: `${reasons.callFailed}${errorText(error)}` };
     }
   };
 }

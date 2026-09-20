@@ -52,6 +52,7 @@ import type {
 import type { Settings } from "@/shared/contracts/settings";
 import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
 import {
+  isSubagentRunFinished,
   type SubagentDefinition,
   type SubagentRun,
   subagentCanMutate,
@@ -59,6 +60,7 @@ import {
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import type { BrowserAutomation } from "../browser/types";
 import type { ApprovalService } from "./approvals";
+import { errorText } from "./error-text";
 import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
 import { buildJobResult } from "./job-delivery";
@@ -66,6 +68,7 @@ import { createJobService, type JobService } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
 import {
   assessToolRisk,
+  commandWarning,
   getSharedPermissionRuleStore,
   type PermissionRuleStore,
 } from "./permissions";
@@ -79,6 +82,7 @@ import { loadSubagentCatalog } from "./subagent-catalog";
 import {
   abortSubagentRunsForParent,
   forgetSubagentRuns,
+  listSubagentRuns,
   noteSubagentAssistantMessage,
   noteSubagentRunEnd,
   noteSubagentToolCall,
@@ -170,7 +174,7 @@ async function currentTip(
     const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
     return { known: true, tipId: info.tipId };
   } catch (error) {
-    console.warn(`读取当前 tip 失败：${toErrorText(error)}`);
+    console.warn(`读取当前 tip 失败：${errorText(error)}`);
     return { known: false, tipId: null };
   }
 }
@@ -282,8 +286,26 @@ interface SessionRuntime {
   model: Model<Api>;
   rules: PermissionRuleStore;
   running: boolean;
+  /**
+   * 本会话是否正有一次 send 走在「已进入、还没开跑」的窗口里。
+   *
+   * 为什么不能只看 `running`：`send` 要 await 两个异步步骤（对齐模型、对齐思考档位）
+   * 才把 running 置真，而并发进来的第二次 send 在这个窗口里看到的 running 仍是 false ——
+   * 两次都调 lane.prompt，第二个被内核以 LaneBusy 拒收，随后**重试分支会 abort 掉
+   * 第一个调用方的活跃运行**（一次用户消息静默杀死另一次）。
+   * 这个标志在**任何 await 之前**同步置位，把窗口关掉。
+   */
+  sending: boolean;
   /** 本次运行的本地 runId，保证 run-started 与 run-ended 对应 */
   runId?: string;
+  /**
+   * **内核**为当前这一轮生成的 runId（由 run_start 事件捕获）。
+   *
+   * 为什么单独存一份：run_end 事件带的是内核的 id，而 `runId` 是 send 自己生成的 ——
+   * 两套 id 没有关系。只有记下内核这个值，才能判断一条 run_end 是不是**上一轮的尾巴**
+   *（见 handleRunEnd）。用本地 runId 去比会导致每一条 run_end 都被误丢。
+   */
+  kernelRunId?: string;
   /** run_end 事件是否已处理，避免 prompt 异常时重复发 run-ended */
   runEnded: boolean;
   stream?: AssistantStream;
@@ -343,16 +365,6 @@ function getRuleStore(): PermissionRuleStore {
   return getSharedPermissionRuleStore(dataDir());
 }
 
-function toErrorText(error: unknown): string {
-  if (error instanceof Error) return error.message || error.name;
-  if (typeof error === "string") return error;
-  try {
-    return JSON.stringify(error) ?? String(error);
-  } catch {
-    return String(error);
-  }
-}
-
 /** 我们只用一条 lane：pi 侧固定叫 main */
 const LANE_NAME = "main";
 
@@ -406,10 +418,10 @@ export async function abortStaleOperation(lane: AgentLane, sessionId: string): P
   try {
     const result = await lane.abort(BACKGROUND_CONTEXT);
     if (result.ok) return true;
-    console.warn(`清理会话 ${sessionId} 的遗留操作失败：${toErrorText(result.error)}`);
+    console.warn(`清理会话 ${sessionId} 的遗留操作失败：${errorText(result.error)}`);
     return false;
   } catch (error) {
-    console.warn(`清理会话 ${sessionId} 的遗留操作异常：${toErrorText(error)}`);
+    console.warn(`清理会话 ${sessionId} 的遗留操作异常：${errorText(error)}`);
     return false;
   }
 }
@@ -535,8 +547,68 @@ export function applyToolEnd(
 }
 
 /**
- * always_allow 的规则模式：bash 取命令首词，write/edit 取路径首段（跳过盘符）；
- * 无法提取时返回 undefined，表示该工具全局放行。
+ * 能执行任意代码的「解释器 / 包管理器」首词。
+ *
+ * 对它们**不派生规则**：批准一次 `npm run build` 若记成「允许 npm」，
+ * 等于连带放行 `npm install evil-pkg`、`npm publish`、`npm config set ...:_authToken`；
+ * `node` / `python` 同理（`node -e "..."` 就是任意执行）。
+ * 这类命令每次都该问一次 —— 「始终允许」的便利性不值得把 shell 交出去。
+ *
+ * 注意这是一份**保守名单**，不是完备的「什么能执行代码」清单：
+ * 漏掉某个二进制时的后果是「多问一次」，而不是「少问一次」，方向是安全的。
+ */
+const INTERPRETER_FIRST_WORDS = new Set([
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "deno",
+  "python",
+  "python3",
+  "pip",
+  "pip3",
+  "uv",
+  "uvx",
+  "ruby",
+  "gem",
+  "perl",
+  "php",
+  "composer",
+  "go",
+  "cargo",
+  "rustc",
+  "java",
+  "javac",
+  "dotnet",
+  "bash",
+  "sh",
+  "zsh",
+  "fish",
+  "pwsh",
+  "powershell",
+  "cmd",
+  "wsl",
+  "env",
+  "xargs",
+  "eval",
+  "exec",
+  "source",
+]);
+
+/**
+ * always_allow 的规则模式：bash 取命令首词，write/edit 取路径首段。
+ *
+ * **派生不出「有意义且足够窄」的模式时返回 undefined**，调用方据此**不写规则**
+ *（见 gateTool 的 always_allow 分支）—— 后果是下次还得点一次卡，
+ * 而不是把门永久打开。两个刻意的收窄：
+ *
+ * 1. **解释器/包管理器不派生**（见 INTERPRETER_FIRST_WORDS）：
+ *    `npm run build` → 不写规则。否则一条「允许 npm」放行的东西远超用户批准的那一次。
+ * 2. **绝对路径不派生**：`C:\Users\me\.ssh\authorized_keys` 的首段是 `Users`，
+ *    `/home/u/...` 是 `home` —— 这种「作用域」宽到毫无意义（等于放行整个用户目录）。
+ *    只有**相对路径**（项目内，如 `src/foo.ts` → `src`）才是有意义的授权范围。
  */
 export function deriveRulePattern(
   toolName: string,
@@ -545,12 +617,21 @@ export function deriveRulePattern(
   if (toolName === TOOL_NAMES.bash) {
     const command = typeof args.command === "string" ? args.command.trim() : "";
     const first = command.split(/\s+/)[0];
-    return first === undefined || first === "" ? undefined : first;
+    if (first === undefined || first === "") return undefined;
+    // 解释器首词：不派生规则（详见常量说明）
+    if (INTERPRETER_FIRST_WORDS.has(first.toLowerCase())) return undefined;
+    return first;
   }
   if (toolName === TOOL_NAMES.write || toolName === TOOL_NAMES.edit) {
     const target = typeof args.path === "string" ? args.path.trim() : "";
     if (target === "") return undefined;
-    return target.split(/[\\/]+/).find((item) => item !== "" && !/^[a-zA-Z]:$/.test(item));
+    // 绝对路径的首段是盘符/根下的第一层（Users、home、tmp…），作为授权范围没有意义
+    if (path.isAbsolute(target)) return undefined;
+    // `./src/a.ts` 的首段是 `.` —— 同样没有授权意义，去掉前导 `./` 再取
+    const normalized = target.replace(/^\.[\\/]+/, "");
+    return normalized
+      .split(/[\\/]+/)
+      .find((item) => item !== "" && item !== "." && !/^[a-zA-Z]:$/.test(item));
   }
   return undefined;
 }
@@ -643,7 +724,7 @@ export async function loadAgentResources(
     // 缺 description 的技能会被内核静默丢弃，不报错 —— 所以上面必须把 diagnostics 打出来
     skills = result.skills.filter((skill) => !settings.disabledSkillNames.includes(skill.name));
   } catch (error) {
-    console.warn(`技能加载失败，按无技能继续：${toErrorText(error)}`);
+    console.warn(`技能加载失败，按无技能继续：${errorText(error)}`);
   }
 
   let promptTemplates: PromptTemplate[] = [];
@@ -658,7 +739,7 @@ export async function loadAgentResources(
     }
     promptTemplates = result.promptTemplates;
   } catch (error) {
-    console.warn(`提示模板加载失败，按无模板继续：${toErrorText(error)}`);
+    console.warn(`提示模板加载失败，按无模板继续：${errorText(error)}`);
   }
 
   return { skills, promptTemplates, skillsSection: formatSkillsForSystemPrompt(skills) };
@@ -712,7 +793,7 @@ async function loadEnabledSubagents(
     return definitions.filter((def) => !settings.disabledSubagentNames.includes(def.name));
   } catch (error) {
     // 委派只是增强：定义读不出来就当没有子智能体，绝不能因此让会话创建失败
-    console.warn(`读取子智能体定义失败，按无子智能体继续：${toErrorText(error)}`);
+    console.warn(`读取子智能体定义失败，按无子智能体继续：${errorText(error)}`);
     return [];
   }
 }
@@ -828,21 +909,65 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
       todo.revision = revision;
     }
   } catch (error) {
-    console.warn(`恢复待办清单失败，按空清单继续：${toErrorText(error)}`);
+    console.warn(`恢复待办清单失败，按空清单继续：${errorText(error)}`);
   }
 }
 /**
- * 会话 ExecutionEnv 的允许根：工作目录 + 数据目录 + **系统临时目录**。
+ * 会话 ExecutionEnv 的允许根：工作目录 + **数据目录下的资源子目录** + 系统临时目录。
  *
- * 前两个是既有要求（技能/模板目录可能落在两者之下，见 createRuntime 里的说明）。
- * 临时目录是 bash spill 的硬要求：超长输出由内核写到 os.tmpdir()/tmp-* 下，工具结果里
- * 会附 "Full output: <path>" —— 那条路径不在允许根内时 read 会直接拒绝，
- * 模型只能退回去用 bash cat（等于 spill 白落，还多一次工具往返）。
+ * 为什么不是整个数据目录（`dataDir()`）：那个目录里还住着 `settings.json`（含各服务的
+ * API Key）、`permission-rules.json`（审批规则）与 `sessions/`（全部会话转录）——
+ * 把数据根整个放行，等于让模型的 `read` 工具可以直接取走凭据、或改写自己的审批规则。
+ * 资源文件只住在三个固定子目录里（见 resources.ts 的目录解析），所以只放行这三个。
  *
- * 只放行这一个额外根：其余工作目录之外的路径照旧被路径守卫拒绝。
+ * 三个来源的必要性：
+ * - cwd：会话工作目录，技能/模板可能落在它下面的 `.oint/` 里；
+ * - skills / prompts / subagents：数据目录里的全局资源，`loadAgentResources` 要经守卫读取；
+ * - tmpdir：bash spill 的硬要求 —— 超长输出由内核写到 `os.tmpdir()/tmp-*` 下，
+ *   工具结果里会附 "Full output: <path>"，那条路径不在允许根内时 read 会直接拒绝，
+ *   模型只能退回去用 bash cat（等于 spill 白落，还多一次工具往返）。
+ *
+ * 注意：子目录此时可能还不存在（首次启动前）。`validatePathAccess` 是纯字符串判断、
+ * 不做文件系统访问，所以不存在的根不会报错，只是永远匹配不上。
  */
 export function sessionAllowedRoots(cwd: string): string[] {
-  return [cwd, dataDir(), tmpdir()];
+  const data = dataDir();
+  return [
+    cwd,
+    path.join(data, "skills"),
+    path.join(data, "prompts"),
+    path.join(data, "subagents"),
+    tmpdir(),
+  ];
+}
+
+/**
+ * 一轮结束时哪些 toolCallId 必须留在 `toolParts` 里。
+ *
+ * 唯一的判据是「结论还可能回填到这里吗」：
+ * - 作业（`bash_background`）**跨轮**：起完进程这一轮就结束了，结论要等进程退出才有，
+ *   那时才回写到启动它的那次调用上 —— 所以只要作业还在跑，它的 toolCallId 就得留；
+ * - 子智能体委派同理，且它的终态由子会话的 run_end 决定，可能晚于父会话这一轮很久。
+ *
+ * 其余条目（read / write / edit / bash / grep 这些当轮就出结论的）一律可以回收：
+ * 它们的结果在 emit 出去那一刻就已经写好，事件也发完了。
+ *
+ * 抽成纯函数是为了能直接单测这条判定 —— 它是「回收」与「回填」之间唯一的耦合点，
+ * 判错任何一侧都会静默出错（漏回收 = 内存泄漏；多回收 = 结论丢失）。
+ */
+export function keptToolCallIds(input: {
+  jobs: readonly { status: string; toolCallId: string | undefined }[];
+  subagentRuns: readonly { status: SubagentRun["status"]; delegationId: string }[];
+}): Set<string> {
+  const keep = new Set<string>();
+  for (const job of input.jobs) {
+    if (job.status !== "running") continue;
+    if (job.toolCallId !== undefined) keep.add(job.toolCallId);
+  }
+  for (const run of input.subagentRuns) {
+    if (!isSubagentRunFinished(run.status)) keep.add(run.delegationId);
+  }
+  return keep;
 }
 
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
@@ -862,7 +987,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     try {
       deps.emit({ sessionId, event });
     } catch (error) {
-      console.warn(`发送聊天事件失败：${toErrorText(error)}`);
+      console.warn(`发送聊天事件失败：${errorText(error)}`);
     }
   }
 
@@ -876,7 +1001,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         void Promise.resolve()
           .then(() => handler(event))
           .catch((error: unknown) => {
-            console.warn(`处理会话事件失败（${type}）：${toErrorText(error)}`);
+            console.warn(`处理会话事件失败（${type}）：${errorText(error)}`);
           });
       }),
     );
@@ -1196,6 +1321,26 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "run_end" }>,
   ): void {
+    /**
+     * 陈旧 run_end：丢掉，别拿它给**当前**这一轮盖章。
+     *
+     * 场景：用户点停止 → `stop()` 立刻把 running 置 false 并发出 run-ended，
+     * 然后 await 那次很慢的 `lane.abort()`（正在跑的工具没有中断通道）。
+     * 用户随即又发了一条 → 新的 send 起了一轮新运行。此时旧操作的 run_end 才到。
+     * 早先这里无条件 `running = false`，于是**新一轮刚跑起来就被翻成「未运行」**，
+     * UI 在流式中途停转（`:2212` 那句「runEnded 保证不会把状态翻回去」并没有实现）。
+     *
+     * 判据必须是**内核自己的 runId**（`kernelRunId`，由 run_start 捕获），
+     * 不能拿 send 里另生成的本地 runId 去比 —— 那是两套互不相干的 id 空间，
+     * 比出来的结果恒为「不相等」，正常收尾会被全部误丢（会话永远停在 running）。
+     *
+     * 宽松侧兜底：没捕获到 kernelRunId 时照常处理。宁可多收尾一次（幂等），
+     * 也不要因为缺少一个 id 就把这一轮永久挂住。
+     */
+    if (runtime.kernelRunId !== undefined && event.runId !== runtime.kernelRunId) {
+      return;
+    }
+    runtime.kernelRunId = undefined;
     const stream = runtime.stream;
     if (stream) {
       const failed = event.status === "failed";
@@ -1226,6 +1371,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
     runtime.runEnded = true;
     runtime.queue = [];
+    pruneToolParts(runtime);
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
     emitSafe(runtime.sessionId, {
       type: "run-ended",
@@ -1238,6 +1384,36 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 本轮跑动期间 MCP 工具集合变过：现在这一轮结束了，可以安全换工具（下一轮生效）
     if (runtime.mcpToolsStale === true && deps.mcp !== undefined) {
       void applyMcpTools(runtime, deps.mcp);
+    }
+  }
+
+  /**
+   * 一轮结束时回收 `toolParts` 里已经用不上的条目。
+   *
+   * 这张表按全局唯一的 toolCallId 累积，每个 part 带着 result / details / diff 全文；
+   * 不回收的话，长会话每轮几十次工具调用会一直挂在内存里直到进程退出。
+   *
+   * **不能无条件清空**：作业（`bash_background`）与子智能体委派都是**跨轮**的 ——
+   * 它们在这一轮结束后才到终态，而结论要回填到启动它的那次调用上
+   * （见 deliverJobResult / deliverSubagentReport）。清空等于让那些回填永远找不到落点。
+   * 保留集合由 `keptToolCallIds` 算出（纯函数，单测直接盖）。
+   *
+   * 历史消息的 part 由 `loadMessages` 从存储重建，不依赖这张内存表，
+   * 因此这里的回收不影响回读。
+   */
+  function pruneToolParts(runtime: SessionRuntime): void {
+    const keep = keptToolCallIds({
+      jobs: jobs.list(runtime.sessionId).map((job) => ({
+        status: job.status,
+        toolCallId: jobs.toolCallIdOf(job.id),
+      })),
+      subagentRuns: listSubagentRuns(runtime.sessionId).map((run) => ({
+        status: run.status,
+        delegationId: run.delegationId,
+      })),
+    });
+    for (const toolCallId of [...runtime.toolParts.keys()]) {
+      if (!keep.has(toolCallId)) runtime.toolParts.delete(toolCallId);
     }
   }
 
@@ -1290,7 +1466,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const stats = await runtime.session.getStats(BACKGROUND_CONTEXT);
       await deps.sessionStore.touch(runtime.sessionId, { messageCount: stats.messageCount });
     } catch (error) {
-      console.warn(`更新会话统计失败 ${runtime.sessionId}：${toErrorText(error)}`);
+      console.warn(`更新会话统计失败 ${runtime.sessionId}：${errorText(error)}`);
     }
   }
 
@@ -1328,7 +1504,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       if (title === null) return;
       emitSafe(runtime.sessionId, { type: "session-titled", sessionId: runtime.sessionId, title });
     } catch (error) {
-      console.warn(`会话自动命名失败，保留默认名称：${toErrorText(error)}`);
+      console.warn(`会话自动命名失败，保留默认名称：${errorText(error)}`);
     }
   }
 
@@ -1359,6 +1535,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "entry_added", (event) => handleEntryAdded(runtime, event));
     subscribe(runtime, "tool_start", (event) => handleToolStart(runtime, event));
     subscribe(runtime, "tool_end", (event) => handleToolEnd(runtime, event));
+    subscribe(runtime, "run_start", (event) => {
+      // 记下内核这一轮的 id：run_end 判「是不是上一轮的尾巴」全靠它（见 handleRunEnd）
+      runtime.kernelRunId = event.runId;
+    });
     subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
     subscribe(runtime, "usage", (event) => handleUsage(runtime, event));
     subscribe(runtime, "queue_update", (event) => handleQueueUpdate(runtime, event));
@@ -1394,7 +1574,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         BACKGROUND_CONTEXT,
       );
     } catch (error) {
-      console.warn(`刷新 MCP 工具失败：${toErrorText(error)}`);
+      console.warn(`刷新 MCP 工具失败：${errorText(error)}`);
     }
   }
 
@@ -1425,6 +1605,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       });
     }
 
+    // 黑名单命中时给审批卡带一行警示（它不再决定弹不弹卡，只是上下文）
+    const warning = commandWarning(args);
     const decision = await deps.approvals.request({
       sessionId: runtime.sessionId,
       toolCallId,
@@ -1433,6 +1615,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       risk,
       // 交给 AI 预审：它需要工作目录来判断操作是否越出项目范围
       workingDir: runtime.env.cwd,
+      ...(warning === undefined ? {} : { warning }),
       // 审批用「这个会话正在用的模型」：会话级绑定过模型时不该拿默认模型去审
       ...(runtime.modelRef === null ? {} : { modelRef: runtime.modelRef }),
     });
@@ -1449,16 +1632,31 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return { block: { reason: "用户拒绝了该操作" } };
     }
     if (decision === "always_allow") {
-      // MCP 工具名由 server 决定、数量不可预知：逐工具放行等于每次调用都弹卡，
-      // 所以「始终允许」在 MCP 上写的是 server 级前缀规则（mcp__<server>__*）
+      /**
+       * MCP 工具名由 server 决定、数量不可预知：逐工具放行等于每次调用都弹卡，
+       * 所以「始终允许」在 MCP 上写的是 server 级前缀规则（mcp__<server>__*）。
+       * 前缀规则**不带 pattern** 是刻意的，它只覆盖第三方 server 的工具。
+       */
       const mcp = parseMcpToolName(toolName);
-      const ruleToolName = mcp === null ? toolName : mcpServerRuleName(mcp.serverId);
-      const pattern = mcp === null ? deriveRulePattern(toolName, args) : undefined;
-      await runtime.rules.add({
-        toolName: ruleToolName,
-        ...(pattern === undefined ? {} : { pattern }),
-        createdAt: Date.now(),
-      });
+      if (mcp !== null) {
+        await runtime.rules.add({
+          toolName: mcpServerRuleName(mcp.serverId),
+          createdAt: Date.now(),
+        });
+      } else {
+        /**
+         * 内置工具：**派生不出 pattern 就不写规则**。
+         *
+         * 无 pattern 的规则等于把该工具永久全局放行（`matchesPermissionRule` 对空 pattern
+         * 直接返回 true）。派生失败说明这次调用的参数形态我们认不出来，
+         * 此时写一条宽规则就是在没有用户明确同意「这个工具以后都不用问」的前提下把门打开。
+         * 只放行这一次（函数末尾 return undefined 的效果），下次照常弹卡。
+         */
+        const pattern = deriveRulePattern(toolName, args);
+        if (pattern !== undefined && pattern !== "") {
+          await runtime.rules.add({ toolName, pattern, createdAt: Date.now() });
+        }
+      }
     }
     return undefined;
   }
@@ -1647,6 +1845,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       env,
       rules: getRuleStore(),
       running: false,
+      sending: false,
       runEnded: false,
       pendingEntries: [],
       toolParts: new Map(),
@@ -1664,7 +1863,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           return await gateTool(runtime, event.toolName, event.toolCallId, event.args);
         } catch (error) {
           // 任何异常都按安全侧默认拒绝
-          console.warn(`工具权限校验失败（${event.toolName}）：${toErrorText(error)}`);
+          console.warn(`工具权限校验失败（${event.toolName}）：${errorText(error)}`);
           return { block: { reason: "权限校验失败，已拒绝该操作" } };
         }
       }),
@@ -1719,7 +1918,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   /** prompt 异常/失败时收尾：错误消息 + run-ended，保证 UI 不会一直转圈 */
   function emitRunFailure(runtime: SessionRuntime, runId: string, cause: unknown): void {
     if (runtime.runEnded) return;
-    const text = toErrorText(cause);
+    const text = errorText(cause);
     const stream = runtime.stream;
     if (stream) {
       emitSafe(runtime.sessionId, {
@@ -1791,7 +1990,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         BACKGROUND_CONTEXT,
       );
     } catch (error) {
-      console.warn(`应用会话模型失败（沿用当前值）：${toErrorText(error)}`);
+      console.warn(`应用会话模型失败（沿用当前值）：${errorText(error)}`);
       return;
     }
     runtime.modelRef = ref;
@@ -1839,11 +2038,41 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const runtime = await ensureRuntime(sessionId);
     // 用户自己发起的消息清零作业唤醒预算；作业通知走 jobWake，不算用户发言（见 notifyJobExit）
     if (internal?.jobWake !== true) runtime.jobWakes = 0;
-    // 运行中再 send 等价于 followUp 排队
-    if (runtime.running) {
-      await queue(sessionId, text, "followUp");
+    /**
+     * 并发闸门：同步置位，**早于下面任何 await**。
+     *
+     * 只看 `running` 是不够的 —— 从进入本函数到 `running = true`（`:1917` 附近）之间隔着
+     * `applyModel` / `applyThinkingLevel` 两个 await，并发进来的第二次 send 在这个窗口里
+     * 看到的 running 仍是 false。两次都会走到 lane.prompt，第二个被内核以 LaneBusy 拒收，
+     * 而重试分支会 `abortStaleOperation` 再重发 —— 把**第一个调用方的活跃运行**中止掉。
+     *
+     * 运行中 / 启动中的重复 send 一律转为排队（followUp）：这与渲染层「运行中按回车
+     * 就是排队」的既有行为一致，只是判定从「await 之后」提前到了「await 之前」。
+     *
+     * 这里直接调 `enqueueToLane` 而不是 `queue`：`queue` 在空闲时会转回 `send`，
+     * 而此刻闸门已占、`running` 可能还是 false —— 走那条路会无限互相递归。
+     */
+    if (runtime.running || runtime.sending) {
+      await enqueueToLane(runtime, text, "followUp");
       return;
     }
+    runtime.sending = true;
+    try {
+      await sendLocked(runtime, text, images, messageId, options, internal);
+    } finally {
+      runtime.sending = false;
+    }
+  }
+
+  /** send 的临界区：闸门已在调用方置位，这里负责真正开跑一轮 */
+  async function sendLocked(
+    runtime: SessionRuntime,
+    text: string,
+    images: ImageContent[] | undefined,
+    messageId: string | undefined,
+    options: ChatSendOptions | undefined,
+    internal: { jobWake?: boolean; message?: CustomMessage } | undefined,
+  ): Promise<void> {
     // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
     const settings = await deps.getSettings();
@@ -1989,9 +2218,34 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 顺序有讲究：结论是必做的，唤醒只是提醒；反过来会让「到预算了就不写结论」成为可能
     deliverJobResult(job);
     const text = jobExitNotice(job);
-    if (runtime.running) {
-      void queue(runtime.sessionId, text, "steer").catch((error: unknown) => {
-        console.warn(`注入作业结束通知失败 ${job.id}：${toErrorText(error)}`);
+    /**
+     * 判定必须同时看 `sending`，不能只看 `running`。
+     *
+     * 两者之间有窗口：`sending` 在 send 一进入就置位，而 `running` 要等对齐模型/档位
+     * 之后才置真。只判 `running` 时，在这个窗口里结束的作业会走下面的 `send(...)` 分支 ——
+     * 而 send 见到闸门已占又把它转成 followUp，于是这条通知被排到**下一轮**才可能被消费，
+     * 而唤醒预算已经扣掉了。更糟的是 `stop()` 期间（running 已 false、sending 仍 true、
+     * abort 还在飞）走这条路，sendLocked 的 finally 会清空 queue，通知直接消失。
+     *
+     * 用 steer 是安全的：运行中它插进当前轮次；若这一轮其实正在收尾，lane 会把它
+     * 交给下一次边界（followUp 语义），比「丢掉」好。
+     */
+    if (runtime.running || runtime.sending) {
+      void queue(runtime.sessionId, text, "steer").catch(async (error: unknown) => {
+        /**
+         * steer 失败说明 lane 上其实没有可插入的操作（`sending` 为真但 prompt 还没被
+         * lane 受理——正是那个启动窗口）。这时退回 `send` 走正常唤醒路径：
+         * 此刻闸门可能已经放开，`send` 会起一轮真正的运行。
+         * 两次都失败才记日志 —— 通知本身不能因为一次路由判断失误就消失。
+         */
+        console.warn(`注入作业结束通知失败，改走唤醒：${job.id}：${errorText(error)}`);
+        if (runtime.jobWakes >= MAX_JOB_WAKES) return;
+        runtime.jobWakes += 1;
+        await send(runtime.sessionId, text, undefined, undefined, undefined, {
+          jobWake: true,
+        }).catch((retryError: unknown) => {
+          console.warn(`发送作业结束通知失败 ${job.id}：${errorText(retryError)}`);
+        });
       });
       return;
     }
@@ -2002,7 +2256,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.jobWakes += 1;
     void send(runtime.sessionId, text, undefined, undefined, undefined, { jobWake: true }).catch(
       (error: unknown) => {
-        console.warn(`发送作业结束通知失败 ${job.id}：${toErrorText(error)}`);
+        console.warn(`发送作业结束通知失败 ${job.id}：${errorText(error)}`);
       },
     );
   }
@@ -2060,7 +2314,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return info.current !== null;
     } catch (error) {
       // 读不出来按「没有」处理：宁可放行也不要因为一次读取失败把功能锁死
-      console.warn(`读取 lane 执行状态失败：${toErrorText(error)}`);
+      console.warn(`读取 lane 执行状态失败：${errorText(error)}`);
       return false;
     }
   }
@@ -2150,17 +2404,39 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     try {
       await runtime.lane.abort(BACKGROUND_CONTEXT);
     } catch (error) {
-      console.warn(`请求中止运行失败 ${sessionId}：${toErrorText(error)}`);
+      console.warn(`请求中止运行失败 ${sessionId}：${errorText(error)}`);
     }
   }
 
   async function queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
-    // 空闲时直接按发送处理，避免消息无声挂起
-    if (!runtime.running) {
+    /**
+     * 空闲时直接按发送处理，避免消息无声挂起。
+     *
+     * `sending` 也要判：那一刻有一轮 send 正走在「已进入、还没开跑」的窗口里
+     * （见 SessionRuntime.sending 的说明）。此时**不能**转回 send —— 那条路会立刻
+     * 走「闸门已占」的分支再调回本函数，形成 send ↔ queue 的无限互相递归。
+     * 交给 lane 入队才是对的：即将开始的那一轮会把它一起带出去。
+     */
+    if (!runtime.running && !runtime.sending) {
       await send(sessionId, text);
       return;
     }
+    await enqueueToLane(runtime, text, mode);
+  }
+
+  /**
+   * 真正把消息交给 lane 的队列入队。
+   *
+   * 从 `queue` 里抽出来，是为了让 `send` 的「闸门已占」分支能直接调它 ——
+   * 那条分支若走 `queue`，而 `queue` 在空闲时又转回 `send`，两者会无限递归。
+   * 本函数**不做任何路由判断**，只负责入队与占位项的生命周期。
+   */
+  async function enqueueToLane(
+    runtime: SessionRuntime,
+    text: string,
+    mode: "steer" | "followUp",
+  ): Promise<void> {
     const item: QueuedMessage = { id: randomUUID(), text, mode };
     runtime.queue = [...runtime.queue, item];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
@@ -2169,7 +2445,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         mode === "steer"
           ? await runtime.lane.steer(text, undefined, BACKGROUND_CONTEXT)
           : await runtime.lane.followUp(text, undefined, BACKGROUND_CONTEXT);
-      if (!result.ok) throw new Error(`消息入队失败：${toErrorText(result.error)}`);
+      if (!result.ok) throw new Error(`消息入队失败：${errorText(result.error)}`);
       // 已交给 lane：移除本地占位项，真实队列由 queue_update 事件同步
       runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
       emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
@@ -2187,7 +2463,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         ? undefined
         : { customInstructions: instructions };
     const result = await runtime.lane.compact(options, BACKGROUND_CONTEXT);
-    if (!result.ok) throw new Error(`压缩上下文失败：${toErrorText(result.error)}`);
+    if (!result.ok) throw new Error(`压缩上下文失败：${errorText(result.error)}`);
   }
 
   function isRunning(sessionId: string): boolean {
@@ -2222,12 +2498,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   async function closeSession(sessionId: string): Promise<void> {
-    // 子智能体子会话（或它的父会话）：注销定义登记与运行记录 —— 放在「有没有 runtime」之前，
-    // 因为登记表是模块级的，即便这个会话已经没有运行时也不该在里面留下条目
+    // 子智能体子会话（或它的父会话）：注销定义登记 —— 放在「有没有 runtime」之前，
+    // 因为登记表是模块级的，即便这个会话已经没有运行时也不该在里面留下条目。
     unregisterSubagentSession(sessionId);
-    forgetSubagentRuns(sessionId);
     const runtime = runtimes.get(sessionId);
-    if (!runtime) return;
+    if (!runtime) {
+      // 没有运行时的会话（没被打开过）也要清运行记录：登记表同样是模块级的
+      forgetSubagentRuns(sessionId);
+      return;
+    }
     runtimes.delete(sessionId);
     deps.approvals.cancelSession(sessionId);
     interactions.cancelSession(sessionId);
@@ -2238,7 +2517,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       try {
         unsubscribe();
       } catch (error) {
-        console.warn(`取消事件订阅失败 ${sessionId}：${toErrorText(error)}`);
+        console.warn(`取消事件订阅失败 ${sessionId}：${errorText(error)}`);
       }
     }
 
@@ -2247,15 +2526,24 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (runtime.running) {
       await abortStaleOperation(runtime.lane, runtime.sessionId);
     }
+    /**
+     * `forgetSubagentRuns` 必须在 abort **之后**。
+     *
+     * 它会把这次运行从 `liveByChild` 里摘掉，而 `noteSubagentRunEnd` 正是靠那张表
+     * 找到条目并写下终态 —— 早先放在 abort 之前，于是 aborted 的 run_end 到达时
+     * 查不到条目、直接 return，运行就**永远停在盘上的 running**，
+     * 只能等下次启动由 reconcile 纠正成 interrupted（用户看到一次假的「运行中」）。
+     */
+    forgetSubagentRuns(sessionId);
     try {
       await runtime.harness.close(BACKGROUND_CONTEXT);
     } catch (error) {
-      console.warn(`关闭 Agent 运行时失败 ${sessionId}：${toErrorText(error)}`);
+      console.warn(`关闭 Agent 运行时失败 ${sessionId}：${errorText(error)}`);
     }
     try {
       await runtime.session.close(BACKGROUND_CONTEXT);
     } catch (error) {
-      console.warn(`关闭会话失败 ${sessionId}：${toErrorText(error)}`);
+      console.warn(`关闭会话失败 ${sessionId}：${errorText(error)}`);
     }
   }
 
@@ -2265,11 +2553,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       try {
         await closeSession(sessionId);
       } catch (error) {
-        console.warn(`释放会话运行时失败 ${sessionId}：${toErrorText(error)}`);
+        console.warn(`释放会话运行时失败 ${sessionId}：${errorText(error)}`);
       }
     }
     // 兜底：作业是系统资源，会话循环覆盖不到的（理论上不该有）也在这里一并收掉
     await jobs.dispose();
+    /**
+     * 拆掉子智能体事件出口：它是模块级登记表，闭包里握着窗口广播函数。
+     * 不置空的话，退出后（或单测换一个 runtime 实例后）仍会往已销毁的窗口发消息。
+     * API 本身就提供了「传 null 取消」这条语义（见 subagent-runner 的说明）。
+     */
+    setSubagentEmitter(null);
     if (defaultRuntime === api) defaultRuntime = null;
   }
   const api: ChatRuntime = {

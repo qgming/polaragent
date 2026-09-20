@@ -96,7 +96,7 @@ function fakeTarget(debuggerRef: FakeDebugger, destroyed = false) {
   return { debugger: debuggerRef, isDestroyed: () => destroyed };
 }
 
-describe("CDP 白名单（§9.2 deny-by-default）", () => {
+describe("CDP 白名单", () => {
   it("默认开放的集合逐条放行（少一条就是某个通道在真机上静默失效）", () => {
     // 迁移到的每一个方法都必须在表里，否则对应通道发不出去
     for (const method of [

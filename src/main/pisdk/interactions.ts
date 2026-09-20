@@ -119,12 +119,7 @@ export function createInteractionService(deps: InteractionServiceDeps): Interact
     const timer = setTimeout(() => {
       // 超时 = 「用户没回应」：挂起项上留一句说明，模型侧据此按保守假设收尾，
       // 渲染层也能从 ask-resolved 的 outcome 看出这不是用户点出来的结果。
-      settle(
-        request.id,
-        "unanswered",
-        [],
-        `等待超时（${Math.round(waitMs / 1000)} 秒）未回应`,
-      );
+      settle(request.id, "unanswered", [], `等待超时（${Math.round(waitMs / 1000)} 秒）未回应`);
     }, waitMs);
     // 兜底定时器不保活进程：等待用户回应这件事没必要时时刻刻吊着事件循环
     timer.unref();

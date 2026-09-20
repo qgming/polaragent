@@ -199,6 +199,9 @@ export const zhCN = {
     // 系统通知行：后台作业结束等系统产生的消息，不在消息树里污染用户视角
     systemNotice: "系统通知",
     systemNoticeLabel: "系统通知行",
+    // 子智能体报告的就地展开 / 收起（pill 的 aria-label 与 title 都用它）
+    showMore: "展开显示",
+    showLess: "收起",
   },
   sidebar: {
     today: "今天",

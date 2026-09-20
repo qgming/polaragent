@@ -14,7 +14,6 @@
 // 渲染层 store 里那份 `jobsBySession` 始终是新的（重启后由 `jobs.list` 补拉）。
 // 也就是说界面这条路**不依赖回填** —— 回填只是为了让**模型**在下一轮上下文里看到结论。
 
-
 import type { JobInfo } from "@/shared/contracts/job";
 
 /**
@@ -125,7 +124,10 @@ export const MAX_JOB_NOTICE_CHARS = 1_500;
  * 差异只在输出段的上限更小（MAX_JOB_NOTICE_CHARS）—— 结论全文已在工具结果里，
  * 这里重复的只是给用户/模型在消息流里直接看到的一小段。
  */
-export function buildJobNotice(job: JobInfo, tail: string): { text: string; isError: boolean } | null {
+export function buildJobNotice(
+  job: JobInfo,
+  tail: string,
+): { text: string; isError: boolean } | null {
   if (job.status === "running") return null;
 
   const lines = [describeJobOutcome(job), `命令：${job.command}`, `工作目录：${job.cwd}`];

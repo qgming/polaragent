@@ -7,7 +7,12 @@
 
 import { describe, expect, it } from "vitest";
 import type { JobInfo, JobStatus } from "@/shared/contracts/job";
-import { buildJobResult, describeJobOutcome, jobIsError, MAX_JOB_RESULT_CHARS } from "./job-delivery";
+import {
+  buildJobResult,
+  describeJobOutcome,
+  jobIsError,
+  MAX_JOB_RESULT_CHARS,
+} from "./job-delivery";
 
 function makeJob(patch: Partial<JobInfo> = {}): JobInfo {
   return {
@@ -80,9 +85,9 @@ describe("describeJobOutcome", () => {
 
   it("有 endedAt 才报用时，跑着的作业不报一个假时长", () => {
     expect(describeJobOutcome(makeJob({ status: "running" }))).not.toContain("用时");
-    expect(describeJobOutcome(makeJob({ status: "exited", exitCode: 0, endedAt: 61_000 }))).toContain(
-      "用时 1m",
-    );
+    expect(
+      describeJobOutcome(makeJob({ status: "exited", exitCode: 0, endedAt: 61_000 })),
+    ).toContain("用时 1m");
   });
 });
 
@@ -110,7 +115,10 @@ describe("buildJobResult", () => {
   });
 
   it("非零退出码 → isError 为真（界面据此给红叉）", () => {
-    const result = buildJobResult(makeJob({ status: "exited", exitCode: 1, endedAt: 2_000 }), "boom");
+    const result = buildJobResult(
+      makeJob({ status: "exited", exitCode: 1, endedAt: 2_000 }),
+      "boom",
+    );
     expect(result?.isError).toBe(true);
   });
 

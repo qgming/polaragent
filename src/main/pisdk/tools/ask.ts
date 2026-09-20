@@ -8,7 +8,11 @@
 // 与审批的关系：ask_user 是低风险工具（permissions.ts 的 LOW_RISK_TOOLS），
 // 提问本身不该再先弹一张「批准提问」的审批卡 —— 否则用户要连点两次才能回答一个问题。
 
-import type { AgentHarnessTool, AgentToolResult, ExecutionToolContext } from "@earendil-works/pi-agent-core";
+import type {
+  AgentHarnessTool,
+  AgentToolResult,
+  ExecutionToolContext,
+} from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import type {
   AskAnswerItem,
@@ -138,10 +142,7 @@ export function createAskTool(
     label: ASK_TOOL_NAME,
     description: buildAskDescription(Math.round(deps.interactions.timeoutMs() / 1000)),
     parameters: askSchema,
-    async execute(
-      toolCallId,
-      params,
-    ): Promise<AgentToolResult<AskToolDetails>> {
+    async execute(toolCallId, params): Promise<AgentToolResult<AskToolDetails>> {
       const questions = params.questions as AskQuestion[];
       // schema 已限定 1~4 题，这里再兜一层：内核换了校验口径时也不能把空提问丢给用户
       if (questions.length < 1 || questions.length > MAX_QUESTIONS) {

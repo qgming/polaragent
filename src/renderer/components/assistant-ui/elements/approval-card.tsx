@@ -29,6 +29,7 @@ export function ApprovalCard({
   title,
   subtitle,
   reason,
+  warning,
   labels,
   onAllowOnce,
   onAlwaysAllow,
@@ -52,6 +53,13 @@ export function ApprovalCard({
   subtitle: string;
   /** 审批结论：AI 拒绝或调用失败时的理由，交回用户时展示 */
   reason?: string;
+  /**
+   * 命令黑名单命中的警示（「递归删除根目录」这类）。
+   *
+   * 黑名单不决定要不要弹卡（shell 工具一律要人确认），它只在这里给一行上下文。
+   * 视觉上比 reason 更醒目 —— 它是「这条命令看起来危险」，而不是「AI 说了什么」。
+   */
+  warning?: string;
   labels?: ApprovalCardLabels;
   onAllowOnce?: () => void;
   onAlwaysAllow?: () => void;
@@ -76,6 +84,13 @@ export function ApprovalCard({
       <div className={cn(field, "text-ink-2 rounded-xl px-3.5 py-2.5 font-mono text-xs")}>
         {command}
       </div>
+
+      {/* 黑名单命中：比 reason 更醒目 —— 它是「这条命令看起来危险」 */}
+      {warning !== undefined && warning !== "" ? (
+        <p className="text-[11.5px] leading-relaxed text-amber-600 dark:text-amber-400">
+          {warning}
+        </p>
+      ) : null}
 
       {/* 理由只在有结论时出现（AI 交回用户）；没有结论的普通请求不占位 */}
       {reason !== undefined && reason !== "" ? (

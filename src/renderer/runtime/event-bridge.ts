@@ -17,8 +17,3 @@ export function startEventBridge(
 ): () => void {
   return window.oint.chat.onEvent((payload) => dispatchEvent(onEvent, payload));
 }
-
-/** 订阅窗口最大化状态变化；返回取消订阅函数 */
-export function startWindowStateBridge(onChange: (maximized: boolean) => void): () => void {
-  return window.oint.window.onMaximizedChange(onChange);
-}

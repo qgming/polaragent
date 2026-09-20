@@ -35,7 +35,11 @@ export interface McpToolDefinition {
 
 /** 调用通道：由 mcp-servers.ts 提供（它才知道哪个 server 对应哪条连接） */
 export interface McpToolCaller {
-  callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<McpCallResult>;
+  callTool(
+    serverId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<McpCallResult>;
 }
 
 /** details：给日志与 UI 回填用，字段都是原始类型（要能过 IPC 的结构化克隆） */

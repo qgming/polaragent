@@ -28,6 +28,7 @@ import {
   type SubagentReadResult,
   type SubagentWriteRequest,
 } from "@/shared/contracts/subagent";
+import { errorText } from "./error-text";
 import { resolveSubagentDirs } from "./resources";
 
 const THINKING_LEVELS = new Set<string>(ALL_THINKING_LEVELS);
@@ -105,10 +106,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
 
 /** frontmatter 里一个键的原始值：单个字符串，或 `- item` 收集出来的列表 */
 type FrontmatterValue = string | string[];
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** 折叠所有空白为单个空格：description / promptPreview 都要求单行 */
 function singleLine(value: string): string {
@@ -386,7 +383,9 @@ export async function loadSubagentCatalog(
   // 上限：含内置一起截断，并明确指出丢了多少 —— 静默截断会让用户以为文件坏了
   if (definitions.length > MAX_SUBAGENT_DEFINITIONS) {
     const dropped = definitions.length - MAX_SUBAGENT_DEFINITIONS;
-    diagnostics.push(`子智能体定义过多，已丢弃 ${dropped} 个（上限 ${MAX_SUBAGENT_DEFINITIONS} 个）`);
+    diagnostics.push(
+      `子智能体定义过多，已丢弃 ${dropped} 个（上限 ${MAX_SUBAGENT_DEFINITIONS} 个）`,
+    );
     definitions.length = MAX_SUBAGENT_DEFINITIONS;
   }
 

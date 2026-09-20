@@ -29,36 +29,39 @@ const MAX_PREVIEW_LINES = 4000;
 export function FilesPanel(): React.JSX.Element {
   const { t } = useTranslation();
 
-  /** 浏览的根：当前会话绑定的工作目录；没有绑定就没有根 */
+  /**
+   * 当前会话 id：面板只把它交给主进程，根目录由主进程从会话索引解析。
+   * 这里同时用它判断「有没有会话」来决定空态 —— cwd 只用于展示，不再作为请求参数。
+   */
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
   const sessionCwd = useChatStore((s) =>
     s.activeSessionId !== null
       ? s.sessions.find((item) => item.id === s.activeSessionId)?.cwd
       : undefined,
   );
-  const root = sessionCwd;
 
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [preview, setPreview] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** 当前列出的目录；null = 用 root */
+  /** 当前列出的目录；null = 用会话工作目录 */
   const [currentPath, setCurrentPath] = useState<string | null>(null);
 
   /**
    * 拉一层目录。
    *
-   * 依赖里带 currentPath 与 root：切换目录、切换会话（root 变了）都要重取。
+   * 依赖里带 currentPath 与 sessionId：切换目录、切换会话都要重取。
    * 用 useCallback 包一层是为了让「刷新」按钮能复用同一段逻辑，而不是把
    * 上面的状态更新抄第二遍。
    */
   const load = useCallback(
     async (path: string | null) => {
-      if (root === undefined) return;
+      if (activeSessionId === null) return;
       setLoading(true);
       setError(null);
       try {
         const result = await window.oint.files.listDirectory(
-          path === null ? { root } : { root, path },
+          path === null ? { sessionId: activeSessionId } : { sessionId: activeSessionId, path },
         );
         setListing(result);
       } catch (failure) {
@@ -67,10 +70,10 @@ export function FilesPanel(): React.JSX.Element {
         setLoading(false);
       }
     },
-    [root],
+    [activeSessionId],
   );
 
-  // 根变化（切会话 / 改默认目录）时回到根并重取
+  // 会话变化时回到根并重取
   useEffect(() => {
     setCurrentPath(null);
     setPreview(null);
@@ -78,11 +81,13 @@ export function FilesPanel(): React.JSX.Element {
   }, [load]);
 
   const openFile = async (entry: FileTreeEntry) => {
-    if (root === undefined) return;
+    if (activeSessionId === null) return;
     setLoading(true);
     setError(null);
     try {
-      setPreview(await window.oint.files.readFile({ root, path: entry.path }));
+      setPreview(
+        await window.oint.files.readFile({ sessionId: activeSessionId, path: entry.path }),
+      );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -90,7 +95,7 @@ export function FilesPanel(): React.JSX.Element {
     }
   };
 
-  if (root === undefined) {
+  if (activeSessionId === null || sessionCwd === undefined) {
     // 空态直接铺满：面板头部已经写着「文件」，这里不再重复一行标题
     return <PanelEmpty icon={FileText} title={t("rightPanel.filesPickRoot")} />;
   }
@@ -144,10 +149,11 @@ export function FilesPanel(): React.JSX.Element {
   }
 
   // —— 列表模式 ——
-  // 标题显示相对路径（root 内），比绝对路径短得多；已经在根时显示 root 的最后一段
+  // 标题显示相对路径（root 内），比绝对路径短得多；已经在根时显示 root 的最后一段。
+  // root 取自主进程回的 listing（渲染层不再自己算根），首帧还没拿到时退回会话 cwd。
   const displayPath =
     listing === null
-      ? root
+      ? sessionCwd
       : listing.path === listing.root
         ? (listing.root.split(/[/\\]/).filter(Boolean).pop() ?? listing.root)
         : listing.path
