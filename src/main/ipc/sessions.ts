@@ -52,10 +52,21 @@ export function registerSessionsIpc(): void {
   handle(IPC.sessions.setModel, "切换会话模型", (request: { id: string; model: ModelRef | null }) =>
     getChatRuntime().setModel(request.id, request.model),
   );
+  /**
+   * 加载消息：顺带把该会话持久化的用量快照带回去。
+   *
+   * 合在一条 IPC 里而不是单开一条：渲染层打开会话必然拉消息，底栏要的数据同源同刻，
+   * 分两次请求只是多一条可能失败的路径（失败时底栏空着，看起来就像「功能坏了」）。
+   */
   handle(
     IPC.sessions.loadMessages,
     "加载会话消息",
-    (request: { id: string; options?: LoadSessionMessagesOptions }) =>
-      store.loadMessages(request.id, request.options),
+    async (request: { id: string; options?: LoadSessionMessagesOptions }) => {
+      const [page, usage] = await Promise.all([
+        store.loadMessages(request.id, request.options),
+        store.readUsage(request.id),
+      ]);
+      return usage === undefined ? page : { ...page, usage };
+    },
   );
 }

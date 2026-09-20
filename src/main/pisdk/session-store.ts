@@ -19,6 +19,7 @@ import type {
   SessionCreateOptions,
   SessionKind,
   SessionSummary,
+  SessionUsageRecord,
 } from "@/shared/contracts/session";
 import type { SubagentRun, SubagentRunStatus, SubagentSource } from "@/shared/contracts/subagent";
 import { mapEntriesToMessages } from "./message-mapper";
@@ -97,6 +98,20 @@ export interface SessionStore {
   /** 在指定条目处创建分支会话（scope:"branch", position:"at"） */
   fork(id: string, entryId: string): Promise<SessionSummary>;
   loadMessages(id: string, options?: LoadMessagesOptions): Promise<LoadMessagesResult>;
+  /**
+   * 读会话的用量快照（统计 / Token 合计 / 上下文分解）。
+   *
+   * 没有记录（新会话，或升级前建的旧会话）时返回 undefined —— 调用方据此
+   * 显示空状态，而不是渲染一份全 0 的假数据。
+   */
+  readUsage(id: string): Promise<SessionUsageRecord | undefined>;
+  /**
+   * 写会话的用量快照。
+   *
+   * **不刷新 updatedAt**：这是展示派生数据的更新，不该让会话在侧栏里跳到最前
+   * （那条排序属于「有新消息」这个语义，见 touch 的默认行为）。
+   */
+  writeUsage(id: string, usage: SessionUsageRecord): Promise<void>;
   /** 运行结束等场景更新索引（默认刷新 updatedAt） */
   touch(id: string, patch?: SessionIndexEntry): Promise<void>;
   /**
@@ -278,6 +293,86 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
   const resumedFrom = text(record.resumedFrom);
   if (resumedFrom !== undefined) run.resumedFrom = resumedFrom;
   return run;
+}
+
+/** 非负有限数：统计/用量字段的通用守卫（缺项或坏值 → undefined） */
+function nonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * 索引里的用量快照同样是外部 JSON：只认自己写得出来的形状。
+ *
+ * 三段（统计 / Token 合计 / 分解）**必须全部有效**才返回记录 ——
+ * 缺一段就让整条作废，好过让底栏半个胶囊有数、半个显示 0。
+ */
+function parseUsageRecord(raw: unknown): SessionUsageRecord | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+
+  const statsRaw = record.stats;
+  const usageRaw = record.tokenUsage;
+  const breakdownRaw = record.breakdown;
+  if (
+    typeof statsRaw !== "object" ||
+    statsRaw === null ||
+    typeof usageRaw !== "object" ||
+    usageRaw === null ||
+    typeof breakdownRaw !== "object" ||
+    breakdownRaw === null
+  ) {
+    return undefined;
+  }
+
+  const stats = statsRaw as Record<string, unknown>;
+  const turns = nonNegative(stats.turns);
+  const steps = nonNegative(stats.steps);
+  const llmMs = nonNegative(stats.llmMs);
+  const toolMs = nonNegative(stats.toolMs);
+  const ttftMs = nonNegative(stats.ttftMs);
+  const ttftSteps = nonNegative(stats.ttftSteps);
+  const decodeMs = nonNegative(stats.decodeMs);
+  const decodeTokens = nonNegative(stats.decodeTokens);
+  if (
+    turns === undefined ||
+    steps === undefined ||
+    llmMs === undefined ||
+    toolMs === undefined ||
+    ttftMs === undefined ||
+    ttftSteps === undefined ||
+    decodeMs === undefined ||
+    decodeTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const usage = usageRaw as Record<string, unknown>;
+  const uncachedInputTokens = nonNegative(usage.uncachedInputTokens);
+  const outputTokens = nonNegative(usage.outputTokens);
+  const cacheReadTokens = nonNegative(usage.cacheReadTokens);
+  const cacheWriteTokens = nonNegative(usage.cacheWriteTokens);
+  if (
+    uncachedInputTokens === undefined ||
+    outputTokens === undefined ||
+    cacheReadTokens === undefined ||
+    cacheWriteTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const breakdown = breakdownRaw as Record<string, unknown>;
+  const systemTokens = nonNegative(breakdown.systemTokens);
+  const toolsTokens = nonNegative(breakdown.toolsTokens);
+  const messageTokens = nonNegative(breakdown.messageTokens);
+  if (systemTokens === undefined || toolsTokens === undefined || messageTokens === undefined) {
+    return undefined;
+  }
+
+  return {
+    stats: { turns, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens },
+    tokenUsage: { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+    breakdown: { systemTokens, toolsTokens, messageTokens },
+  };
 }
 
 /** 创建会话存储；测试可注入临时目录与自定义 repo（如控制时钟） */
@@ -612,6 +707,20 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(id, { ...patch, updatedAt: patch.updatedAt ?? Date.now() });
   }
 
+  /**
+   * 读用量快照。索引是外部 JSON，读回来必须校验形状 ——
+   * 半截写入、手改、旧版本字段缺失都不该让底栏渲染出 NaN。
+   */
+  async function readUsage(id: string): Promise<SessionUsageRecord | undefined> {
+    const entry = (await index.read())[id];
+    return parseUsageRecord(entry?.usage);
+  }
+
+  /** 写用量快照；刻意不经过 touch，因此不会刷新 updatedAt（见接口注释） */
+  async function writeUsage(id: string, usage: SessionUsageRecord): Promise<void> {
+    await updateIndex(id, { usage });
+  }
+
   async function saveSubagentRun(childSessionId: string, run: SubagentRun): Promise<void> {
     // 失败只记录：运行记录是「给下一个进程看的账」，写不进去不该让正在跑的运行失败（见接口注释）
     await updateIndex(childSessionId, { subagentRun: run });
@@ -648,6 +757,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     remove,
     fork,
     loadMessages,
+    readUsage,
+    writeUsage,
     touch,
     saveSubagentRun,
     listSubagentRunsFor,

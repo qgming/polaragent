@@ -252,6 +252,85 @@ describe("session-store", () => {
     warn.mockRestore();
   });
 
+  describe("用量快照持久化", () => {
+    const RECORD = {
+      stats: {
+        turns: 3,
+        steps: 25,
+        llmMs: 351_000,
+        toolMs: 12_500,
+        ttftMs: 13_700,
+        ttftSteps: 1,
+        decodeMs: 8_000,
+        decodeTokens: 13_184,
+      },
+      tokenUsage: {
+        uncachedInputTokens: 72_388,
+        outputTokens: 14_153,
+        cacheReadTokens: 1_054_208,
+        cacheWriteTokens: 0,
+      },
+      breakdown: { systemTokens: 1_800, toolsTokens: 7_100, messageTokens: 63_800 },
+    };
+
+    it("写入后能原样读回", async () => {
+      const session = await store.create({ title: "有用量" });
+      await store.writeUsage(session.id, RECORD);
+      await expect(store.readUsage(session.id)).resolves.toEqual(RECORD);
+    });
+
+    it("没有记录时返回 undefined（新会话不编造全 0 数据）", async () => {
+      const session = await store.create();
+      await expect(store.readUsage(session.id)).resolves.toBeUndefined();
+    });
+
+    it("写用量不刷新 updatedAt（不该把会话顶到侧栏最前）", async () => {
+      const session = await store.create({ title: "排序不受影响" });
+      const before = (await store.list()).find((item) => item.id === session.id)?.updatedAt;
+      await store.writeUsage(session.id, RECORD);
+      const after = (await store.list()).find((item) => item.id === session.id)?.updatedAt;
+      expect(after).toBe(before);
+    });
+
+    it("后写入整体替换前一次（不是字段合并）", async () => {
+      const session = await store.create();
+      await store.writeUsage(session.id, RECORD);
+      const second = {
+        ...RECORD,
+        stats: { ...RECORD.stats, steps: 40 },
+        breakdown: { systemTokens: 2_000, toolsTokens: 7_000, messageTokens: 90_000 },
+      };
+      await store.writeUsage(session.id, second);
+      const read = await store.readUsage(session.id);
+      expect(read?.stats.steps).toBe(40);
+      expect(read?.breakdown).toEqual(second.breakdown);
+    });
+
+    it("坏数据整条作废（缺一段 / 负数 / 非数）", async () => {
+      const session = await store.create();
+      const index = createSessionsIndex(baseDir);
+      const cases: unknown[] = [
+        { stats: RECORD.stats, tokenUsage: RECORD.tokenUsage }, // 缺 breakdown
+        { ...RECORD, breakdown: { systemTokens: -1, toolsTokens: 0, messageTokens: 0 } },
+        { ...RECORD, tokenUsage: { ...RECORD.tokenUsage, outputTokens: "很多" } },
+        { ...RECORD, stats: { ...RECORD.stats, steps: null } },
+        "不是对象",
+        null,
+      ];
+      for (const bad of cases) {
+        await index.update(session.id, { usage: bad as never });
+        await expect(store.readUsage(session.id)).resolves.toBeUndefined();
+      }
+    });
+
+    it("会话删除后用量随之消失", async () => {
+      const session = await store.create();
+      await store.writeUsage(session.id, RECORD);
+      await store.remove(session.id);
+      await expect(store.readUsage(session.id)).resolves.toBeUndefined();
+    });
+  });
+
   it("setPinned 写索引并能从 list 读回", async () => {
     const target = await store.create({ title: "置顶目标" });
     const other = await store.create({ title: "不受影响" });

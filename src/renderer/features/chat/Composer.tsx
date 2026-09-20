@@ -16,7 +16,7 @@ import {
 import type { KeyboardEvent } from "react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ContextDisplayRing } from "@/renderer/components/assistant-ui/elements/context-display";
+import { ContextMeter } from "@/renderer/components/assistant-ui/elements/context-meter";
 import {
   collapsePanel,
   field,
@@ -68,7 +68,19 @@ const QUEUE_PREVIEW = 3;
 /** 稳定空引用：避免 zustand selector 每次返回新数组导致多余渲染 */
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
-/** 模型未配上下文窗口时的缺省值，与主进程 providers.ts 的 DEFAULT_CONTEXT_WINDOW 对齐 */
+/**
+ * 提示侧压力：未缓存输入 + 缓存读取 + 缓存写入（不含输出）。
+ *
+ * 与 DSH token-meter 的 pressureFrom 同一口径：输出 token 不在「上下文占用」里，
+ * 它是这一轮产生的量，不是下一次请求要带上的量。
+ */
+function pressureTokens(usage: ChatMessageUsage): number {
+  return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+}
+
+/**
+ * 模型未配上下文窗口时的缺省值，与主进程 providers.ts 的 DEFAULT_CONTEXT_WINDOW 对齐
+ */
 const FALLBACK_CONTEXT_WINDOW = 128_000;
 
 /**
@@ -521,6 +533,10 @@ export function Composer() {
   const canSend = useAuiState((s) => s.composer.canSend);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const sessionUsage = useChatStore(selectSessionUsage);
+  /** 主进程推来的三段分解；没有（尚未跑过一轮）时环退化为单段总占用 */
+  const sessionBreakdown = useChatStore((s) =>
+    s.activeSessionId === null ? undefined : s.breakdownBySession[s.activeSessionId],
+  );
 
   const permissionMode = settings?.permissionMode ?? "default";
   const thinkingLevel = settings?.thinkingLevel ?? "medium";
@@ -559,13 +575,13 @@ export function Composer() {
    */
   const thinking = resolveThinking(thinkingLevel, currentModel?.model);
 
-  // 发送键左侧的用量环：无 usage（新会话 / 供应商不上报）时组件自身返回 null
+  // 发送键左侧的上下文用量环：无 usage（新会话 / 供应商不上报）时组件自身返回 null
   const usageRing = (
-    <ContextDisplayRing
-      modelContextWindow={currentModel?.model.contextWindow ?? FALLBACK_CONTEXT_WINDOW}
-      usage={sessionUsage ?? undefined}
+    <ContextMeter
+      usedTokens={sessionUsage === null ? 0 : pressureTokens(sessionUsage)}
+      contextWindow={currentModel?.model.contextWindow ?? FALLBACK_CONTEXT_WINDOW}
+      breakdown={sessionBreakdown}
       resetKey={activeSessionId ?? undefined}
-      className="h-8"
     />
   );
 
@@ -696,7 +712,9 @@ export function Composer() {
   };
 
   return (
-    <div className="px-4 pb-4">
+    // 底部不留内边距：输入框以下的间距交给 Thread 的底栏（状态条上下各 3px，
+    // 且那条底栏是不透明的，消息不再从输入框下方透出来）
+    <div className="px-4">
       <ComposerPrimitive.Root
         compact={false}
         className={cn(

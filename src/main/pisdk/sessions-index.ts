@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeFileAtomic } from "@/main/storage/atomic-write";
 import type { ModelRef } from "@/shared/contracts/common";
+import type { SessionUsageRecord } from "@/shared/contracts/session";
 
 /**
  * 会话索引条目：补齐 pi 元数据缺失的应用层字段。
@@ -17,6 +18,14 @@ export interface SessionIndexEntry {
   cwd?: string;
   /** 该会话自己指定的模型；null = 跟随设置里的默认模型（写 null 即清除绑定） */
   model?: ModelRef | null;
+  /**
+   * 随会话持久化的用量快照（会话统计 / Token 合计 / 上下文分解）。
+   *
+   * 为什么落在索引而不是 pi 会话里：这三样都是**应用层的展示派生数据**，
+   * 内核不需要、也不该进模型上下文；而索引本就按会话 id 存储应用层字段，
+   * 读一次列表就能把侧栏与底栏一起喂饱。
+   */
+  usage?: SessionUsageRecord;
 }
 
 export interface SessionsIndex {

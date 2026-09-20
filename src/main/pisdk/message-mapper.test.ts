@@ -105,6 +105,9 @@ describe("mapEntriesToMessages", () => {
       outputTokens: 5,
       reasoningTokens: 3,
       totalTokens: 15,
+      uncachedInputTokens: 10,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     });
   });
 

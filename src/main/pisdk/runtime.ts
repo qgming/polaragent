@@ -44,7 +44,9 @@ import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
 import type {
   ChatMessageUsage,
   ChatPart,
+  ContextBreakdown,
   ReasoningPart,
+  SessionTokenUsage,
   SetSessionModelResult,
   TextPart,
   ToolCallPart,
@@ -75,6 +77,21 @@ import {
 import { buildProviders, resolveModel } from "./providers";
 import { buildSubagentResult } from "./report-delivery";
 import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import {
+  deriveContextBreakdown,
+  estimateTokens,
+  estimateToolsTokens,
+  initSessionStatsState,
+  onFirstToken,
+  onMessageEnd,
+  onMessageStart,
+  onRunEnd,
+  onToolEnd,
+  onToolStart,
+  onTurnStart,
+  type SessionStatsState,
+  sessionStatsView,
+} from "./session-stats";
 import type { SessionStore } from "./session-store";
 import { loadSubagentCatalog } from "./subagent-catalog";
 // 循环依赖是刻意的：runner 需要 runtime 的 registerSubagentSession / getChatRuntime，
@@ -344,6 +361,28 @@ interface SessionRuntime {
   jobWakes: number;
   /** 下一条从该会话发出的用户消息是否由系统内部产生（如作业结束通知）。由 notifyJobExit 在调用 send/queue 前设置；handleMessageStart user 分支消费后清空。 */
   pendingSynthetic?: "job";
+  /**
+   * 会话级统计折叠状态：turn/step 计数与 LLM/工具/TTFT/解码耗时。
+   * 由 session-stats.ts 的纯函数增量维护，变化时经 emitSessionStats 推送渲染层。
+   */
+  stats: SessionStatsState;
+  /**
+   * 会话级 Token 用量合计：未缓存输入 / 缓存读取 / 缓存写入 / 输出。
+   * 每次 assistant message_end 携带 usage 时累加，变化时经 emitTokenUsage 推送。
+   */
+  tokenUsage: SessionTokenUsage;
+  /**
+   * 上下文占用分解的固定项（系统提示词 / 工具定义，按请求装配时的估算值）。
+   * messageTokens 由每次 usage 样本经 deriveContextBreakdown 倒推。
+   */
+  contextBreakdown: Omit<ContextBreakdown, "messageTokens">;
+  /**
+   * 最近一次的 usage 样本（未缓存输入 / 缓存读取 / 缓存写入）。
+   *
+   * 留着它是为了落盘：run_end 时索引里要存**已用**上下文（含对话消息段），
+   * 而那个数只有从最近一次请求的 usage 才推得出来（见 persistUsage）。
+   */
+  lastUsage?: { input: number; cacheRead?: number; cacheWrite?: number };
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -440,6 +479,9 @@ function mapUsage(usage: Usage): ChatMessageUsage {
     outputTokens: usage.output,
     ...(usage.reasoning === undefined ? {} : { reasoningTokens: usage.reasoning }),
     totalTokens: usage.totalTokens,
+    uncachedInputTokens: usage.input,
+    cacheReadTokens: usage.cacheRead,
+    cacheWriteTokens: usage.cacheWrite,
   };
 }
 
@@ -991,6 +1033,36 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
+  function emitSessionStats(runtime: SessionRuntime): void {
+    emitSafe(runtime.sessionId, {
+      type: "session-stats",
+      stats: sessionStatsView(runtime.stats),
+    });
+  }
+
+  function emitTokenUsage(runtime: SessionRuntime): void {
+    emitSafe(runtime.sessionId, {
+      type: "token-usage",
+      usage: runtime.tokenUsage,
+    });
+  }
+
+  /** 按最近一次 usage 样本推导三段分解并推送（无 usage 时只推固定项） */
+  function emitContextBreakdown(
+    runtime: SessionRuntime,
+    usage?: { input: number; cacheRead?: number; cacheWrite?: number },
+  ): void {
+    const breakdown =
+      usage === undefined
+        ? { ...runtime.contextBreakdown, messageTokens: 0 }
+        : deriveContextBreakdown(runtime.contextBreakdown, {
+            inputTokens: usage.input,
+            cacheReadTokens: usage.cacheRead,
+            cacheWriteTokens: usage.cacheWrite,
+          });
+    emitSafe(runtime.sessionId, { type: "context-breakdown", breakdown });
+  }
+
   function subscribe<T extends HarnessEventType>(
     runtime: SessionRuntime,
     type: T,
@@ -1105,6 +1177,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const createdAt = Date.now();
       runtime.stream = { messageId, createdAt, parts: [], partIndexByContent: new Map() };
       runtime.lastAssistantMessageId = messageId;
+      // 会话统计：assistant 消息开始计时（message_start → message_end 为一步）
+      runtime.stats = onMessageStart(runtime.stats, messageId, createdAt);
       // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
       runtime.pendingEntries.push({ messageId, role: "assistant" });
       emitSafe(runtime.sessionId, {
@@ -1159,6 +1233,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const { part, index, created } = partFor(stream, update.contentIndex, "text");
       const textPart = part as TextPart;
       if (update.type === "text_delta") {
+        // 会话统计：首个非空正文增量的到达时间即 TTFT 的第一 token
+        runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
         textPart.text += update.delta;
         // 少了 start 的防御路径：增量落在新 part 上，先把创建事件补出去，渲染层才有落点
         if (created) upsertPart(runtime, stream, index, textPart);
@@ -1181,6 +1257,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const { part, index, created } = partFor(stream, update.contentIndex, "reasoning");
       const reasoningPart = part as ReasoningPart;
       if (update.type === "thinking_delta") {
+        // 会话统计：推理 delta 也算首 token（模型先吐思考再吐正文时 TTFT 应含思考）
+        runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
         reasoningPart.text += update.delta;
         if (created) upsertPart(runtime, stream, index, reasoningPart);
         emitDelta(runtime, stream, index, "reasoning", update.delta);
@@ -1243,6 +1321,24 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         ...(failed ? { error: message.errorMessage ?? "模型返回错误" } : {}),
       },
     });
+    // 会话统计：折叠这一步的 LLM 耗时 / TTFT / 解码速度与 step 计数
+    const now = Date.now();
+    runtime.stats = onMessageEnd(runtime.stats, stream.messageId, now, message.usage?.output ?? 0);
+    emitSessionStats(runtime);
+    // 会话 Token 总量：累加本条消息的四个计费桶（usage 缺失时跳过）
+    if (message.usage !== undefined) {
+      const usage = message.usage;
+      // 留一份样本给 run_end 落盘用（已用上下文要含对话消息段）
+      runtime.lastUsage = usage;
+      runtime.tokenUsage = {
+        uncachedInputTokens: runtime.tokenUsage.uncachedInputTokens + usage.input,
+        outputTokens: runtime.tokenUsage.outputTokens + usage.output,
+        cacheReadTokens: runtime.tokenUsage.cacheReadTokens + usage.cacheRead,
+        cacheWriteTokens: runtime.tokenUsage.cacheWriteTokens + usage.cacheWrite,
+      };
+      emitTokenUsage(runtime);
+      emitContextBreakdown(runtime, usage);
+    }
     /**
      * 子智能体进度的唯一计数点：轮次按「一条助手消息」算，报告取最后一条非空文本。
      *
@@ -1261,6 +1357,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "tool_start" }>,
   ): void {
+    // 会话统计：工具调用开始计时
+    runtime.stats = onToolStart(runtime.stats, event.toolCallId, Date.now());
     const ref = runtime.toolParts.get(event.toolCallId);
     if (ref) {
       ref.part.toolName = event.toolName;
@@ -1306,6 +1404,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): void {
     // 计数要在早退之前：part 缺失只是渲染层的防御分支，这次工具调用确实发生过
     noteSubagentToolCall(runtime.sessionId);
+    // 会话统计：工具调用结束，累加 toolMs
+    runtime.stats = onToolEnd(runtime.stats, event.toolCallId, Date.now());
+    emitSessionStats(runtime);
     const ref = runtime.toolParts.get(event.toolCallId);
     if (!ref) return;
     applyToolEnd(ref.part, event.result, event.isError);
@@ -1362,6 +1463,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       });
     }
     runtime.running = false;
+    // 会话统计：run 结束，清理 pending calls
+    runtime.stats = onRunEnd(runtime.stats);
+    emitSessionStats(runtime);
+    // 用量快照随会话落盘：下一轮或重启后打开这个会话时，底栏不必重算就有数
+    void persistUsage(runtime);
     // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出，
     // 「truncated」不在这里 —— 它由 maxTurns 判定在计数时先落（见 subagent-runner）
     noteSubagentRunEnd(runtime.sessionId, {
@@ -1428,6 +1534,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       messageId,
       patch: { usage: mapUsage(event.row.usage) },
     });
+    // 流式尾部的 usage 样本同样可用于上下文分解（message_end 会再推一次，幂等覆盖）
+    runtime.lastUsage = event.row.usage;
+    emitContextBreakdown(runtime, event.row.usage);
   }
 
   /** queue_update 是 lane 的真实队列，直接映射为 UI 队列项 */
@@ -1467,6 +1576,33 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       await deps.sessionStore.touch(runtime.sessionId, { messageCount: stats.messageCount });
     } catch (error) {
       console.warn(`更新会话统计失败 ${runtime.sessionId}：${errorText(error)}`);
+    }
+  }
+
+  /**
+   * 把用量快照写回会话索引。
+   *
+   * 触发点是 run_end（一轮结束时落一次）：流式期间每个 step 都写盘会把索引打成一堆
+   * 无谓的原子写，而这一轮结束时的值已经是完整的。
+   * 写失败只告警：它是展示派生数据，坏了不该影响正在进行的对话。
+   */
+  async function persistUsage(runtime: SessionRuntime): Promise<void> {
+    try {
+      const sample = runtime.lastUsage;
+      await deps.sessionStore.writeUsage(runtime.sessionId, {
+        stats: sessionStatsView(runtime.stats),
+        tokenUsage: runtime.tokenUsage,
+        breakdown:
+          sample === undefined
+            ? { ...runtime.contextBreakdown, messageTokens: 0 }
+            : deriveContextBreakdown(runtime.contextBreakdown, {
+                inputTokens: sample.input,
+                cacheReadTokens: sample.cacheRead,
+                cacheWriteTokens: sample.cacheWrite,
+              }),
+      });
+    } catch (error) {
+      console.warn(`保存会话用量失败 ${runtime.sessionId}：${errorText(error)}`);
     }
   }
 
@@ -1538,6 +1674,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "run_start", (event) => {
       // 记下内核这一轮的 id：run_end 判「是不是上一轮的尾巴」全靠它（见 handleRunEnd）
       runtime.kernelRunId = event.runId;
+    });
+    subscribe(runtime, "turn_start", (event) => {
+      // 会话统计：轮次计数（同 turnId 只计一次，见 session-stats 的 onTurnStart）
+      runtime.stats = onTurnStart(runtime.stats, event.turnId);
+      emitSessionStats(runtime);
     });
     subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
     subscribe(runtime, "usage", (event) => handleUsage(runtime, event));
@@ -1768,36 +1909,40 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     } else {
       systemPrompt = buildSubagentSystemPrompt(spec.definition, cwd);
     }
+    /**
+     * 工具表：
+     * - 主会话：全套（子智能体工具由第 5 个参数传入 —— 它们需要会话 id 与运行管理器）；
+     * - 子智能体：**同一批工具对象**按定义里的 tools 过滤（restrictTools），
+     *   于是「定义里写了 bash」与「子智能体拿到的是 bash」不可能漂移；ask_user / 作业 / 浏览器 /
+     *   MCP / Task 系列都不在可分配名单里，过滤后自然拿不到（见 tools.ts 的注释）。
+     */
+    const tools =
+      spec === undefined
+        ? buildTools(
+            deps.mcp?.tools() ?? [],
+            createAskTool({ sessionId, interactions }),
+            jobToolsFor(sessionId),
+            deps.browser,
+            subagentTools,
+          )
+        : restrictTools(
+            buildTools(
+              deps.mcp?.tools() ?? [],
+              createAskTool({ sessionId, interactions }),
+              jobToolsFor(sessionId),
+              deps.browser,
+            ),
+            spec.definition.tools,
+          );
+    // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
+    const systemTokens = estimateTokens(systemPrompt);
+    const toolsTokens = estimateToolsTokens(tools);
     const created = await AgentHarness.create(
       {
         session: opened.session,
         models,
         model,
-        /**
-         * 工具表：
-         * - 主会话：全套（子智能体工具由第 5 个参数传入 —— 它们需要会话 id 与运行管理器）；
-         * - 子智能体：**同一批工具对象**按定义里的 tools 过滤（restrictTools），
-         *   于是「定义里写了 bash」与「子智能体拿到的是 bash」不可能漂移；ask_user / 作业 / 浏览器 /
-         *   MCP / Task 系列都不在可分配名单里，过滤后自然拿不到（见 tools.ts 的注释）。
-         */
-        tools:
-          spec === undefined
-            ? buildTools(
-                deps.mcp?.tools() ?? [],
-                createAskTool({ sessionId, interactions }),
-                jobToolsFor(sessionId),
-                deps.browser,
-                subagentTools,
-              )
-            : restrictTools(
-                buildTools(
-                  deps.mcp?.tools() ?? [],
-                  createAskTool({ sessionId, interactions }),
-                  jobToolsFor(sessionId),
-                  deps.browser,
-                ),
-                spec.definition.tools,
-              ),
+        tools,
         toolContext: {
           env,
           todo,
@@ -1854,6 +1999,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       jobWakes: 0,
       // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
       subagentTools,
+      stats: initSessionStatsState(),
+      tokenUsage: {
+        uncachedInputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      contextBreakdown: { systemTokens, toolsTokens },
     };
     // 供子智能体工具的依赖读取「本会话现在用哪个模型 / 哪一档」（装配时 runtime 还不存在）
     runtimeRef = runtime;

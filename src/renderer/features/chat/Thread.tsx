@@ -22,6 +22,7 @@ import {
   EmptyState,
   EmptyStateGreeting,
 } from "@/renderer/components/assistant-ui/elements/empty-state";
+import { StatusBar } from "@/renderer/components/assistant-ui/elements/stats-pills";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { dayOffset, formatDayDate, isSameDay } from "@/renderer/lib/format";
@@ -323,6 +324,13 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
   useStickToBottom(viewportRef);
 
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  /** 会话统计与 Token 用量：状态条的两个胶囊各取一份（缺失时不渲染对应胶囊） */
+  const sessionStats = useChatStore((s) =>
+    s.activeSessionId === null ? undefined : s.statsBySession[s.activeSessionId],
+  );
+  const sessionTokenUsage = useChatStore((s) =>
+    s.activeSessionId === null ? undefined : s.tokenUsageBySession[s.activeSessionId],
+  );
   const searchJump = useUiStore((s) => s.searchJump);
   const clearSearchJump = useUiStore((s) => s.clearSearchJump);
   /** 属于当前会话的跳转目标；别的会话的目标（切换过程中可能残留）一律忽略 */
@@ -560,14 +568,15 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
           <ApprovalSection requests={approvals} onResolve={onResolve} />
 
           {/*
-            脚注带是**透明**的：消息会从 Composer 身下滚过，衬在它四周，
-            靠 Composer 自己的不透明面 + --composer-shadow 把它抬起来（见 index.css）。
-            这里不铺 bg-background —— 铺了就成一条把内容盖掉的横带，输入框也就不浮了。
+            脚注容器本身不铺底色（它包含提问卡与输入框上方那段，仍要让消息透出）；
+            **底栏**（下方那个 div）才是不透明的，见它的注释。
+            pb-0：底部不再留白 —— 底栏自己带 3px，且必须一直铺到窗口底边，
+            否则那条白边底下又会露出滚动的消息。
           */}
           <ThreadPrimitive.ViewportFooter
             // data-slot 供消息地图测量脚注高度（刻度条要避开输入框，见 MessageRail）
             data-slot="aui_thread-viewport-footer"
-            className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-4"
+            className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-0"
           >
             <ScrollToBottom />
             {/*
@@ -580,7 +589,24 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
                 <AskSection requests={asks} onRespond={onRespond} />
               </div>
             )}
-            <Composer />
+            {/*
+              输入框 + 其下方的会话状态条合成一条**不透明底栏**：输入框到底是窗口底边的
+              这段区域不再让消息透出来（原先脚注带是透明的，消息会从输入框身下滚过）。
+              底栏铺页底色并与窗口底边齐平；输入框自己仍是浮起的 card 面 + 阴影，
+              分层靠面与阴影表达，**不画分割线**（输入区上方保持干净）。
+              -mx-4 是为了盖住外层容器的 16px 内边距 —— 水平内缩由 Composer 与
+              StatusBar 各自的 px-4 提供，这里不再叠加。
+              纵向 py-[3px]：状态条与输入框之间 3px、与窗口底边之间 3px。
+            */}
+            <div className="bg-background -mx-4 py-[3px]">
+              <Composer />
+              <StatusBar
+                stats={sessionStats}
+                tokenUsage={sessionTokenUsage}
+                resetKey={activeSessionId ?? undefined}
+                className="mt-[3px]"
+              />
+            </div>
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>

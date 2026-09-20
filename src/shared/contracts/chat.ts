@@ -1,7 +1,13 @@
 import type { ApprovalDecision, ApprovalRequest } from "./approval";
 import type { AskOutcome, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
-import type { ChatMessage, ChatPart } from "./session";
+import type {
+  ChatMessage,
+  ChatPart,
+  ContextBreakdown,
+  SessionStats,
+  SessionTokenUsage,
+} from "./session";
 
 /** 待发送队列项：steer 立即插入当前轮次，followUp 在当前轮结束后发送 */
 export interface QueuedMessage {
@@ -84,6 +90,21 @@ export type ChatEvent =
   | { type: "job-removed"; id: string }
   | { type: "compaction-started" }
   | { type: "compaction-ended"; summaryPreview: string }
+  /**
+   * 会话级统计更新：turn/step 计数与 LLM/工具/TTFT/解码耗时。
+   * 渲染层据此刷新输入框下方的状态条与「会话统计」弹层。
+   */
+  | { type: "session-stats"; stats: SessionStats }
+  /**
+   * 会话级 Token 用量合计更新：未缓存输入 / 缓存读取 / 缓存写入 / 输出。
+   * 渲染层据此刷新「Token 用量」弹层与缓存命中率。
+   */
+  | { type: "token-usage"; usage: SessionTokenUsage }
+  /**
+   * 上下文占用分解更新：系统提示词 / 工具定义 / 对话消息三段的启发式估算。
+   * 渲染层据此绘制输入框旁「上下文已用」环的展开面板。
+   */
+  | { type: "context-breakdown"; breakdown: ContextBreakdown }
   | { type: "run-ended"; runId: string; reason: string };
 
 /**

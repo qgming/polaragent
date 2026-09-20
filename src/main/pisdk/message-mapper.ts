@@ -31,6 +31,9 @@ function mapUsage(message: AssistantMessage): ChatMessageUsage | undefined {
     outputTokens: usage.output,
     ...(usage.reasoning === undefined ? {} : { reasoningTokens: usage.reasoning }),
     totalTokens: usage.totalTokens,
+    uncachedInputTokens: usage.input,
+    cacheReadTokens: usage.cacheRead,
+    cacheWriteTokens: usage.cacheWrite,
   };
 }
 

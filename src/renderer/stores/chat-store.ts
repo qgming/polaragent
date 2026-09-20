@@ -8,10 +8,13 @@ import type {
   ChatMessage,
   ChatPart,
   ChatStreamSnapshot,
+  ContextBreakdown,
   JobInfo,
   ModelRef,
   QueuedMessage,
+  SessionStats,
   SessionSummary,
+  SessionTokenUsage,
   SetSessionModelResult,
 } from "@/shared/contracts";
 
@@ -339,6 +342,12 @@ interface ChatState {
   runningBySession: Record<string, boolean>;
   /** 各会话的待发送队列 */
   queueBySession: Record<string, QueuedMessage[]>;
+  /** 各会话的会话级统计（轮次/步数/耗时），见 session-stats 事件 */
+  statsBySession: Record<string, SessionStats>;
+  /** 各会话的 Token 用量合计（缓存/未缓存输入/输出），见 token-usage 事件 */
+  tokenUsageBySession: Record<string, SessionTokenUsage>;
+  /** 各会话的上下文占用分解（系统提示/工具定义/对话消息），见 context-breakdown 事件 */
+  breakdownBySession: Record<string, ContextBreakdown>;
   pendingApprovals: ApprovalRequest[];
   /** 各会话的未决提问（模型运行中途提出的问题，按事件到达顺序） */
   pendingAsks: AskRequest[];
@@ -545,6 +554,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   loadingOlderBySession: {},
   runningBySession: {},
   queueBySession: {},
+  statsBySession: {},
+  tokenUsageBySession: {},
+  breakdownBySession: {},
   pendingApprovals: [],
   pendingAsks: [],
   jobsBySession: {},
@@ -591,6 +603,13 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         beforeSeq,
       });
       const cursor = page.nextCursor;
+      /**
+       * 持久化的用量快照：只在**首页**落地。
+       *
+       * 向上翻页返回的是更早的批次，带上的是同一份索引记录 —— 每次翻页都覆盖一遍
+       * 只会把「本轮刚跑出来的实时数据」用旧快照盖掉（翻页可能发生在运行中）。
+       */
+      const usage = before ? undefined : page.usage;
       set((state) => {
         const existing = state.messagesBySession[id] ?? [];
         // 首页：磁盘历史 + 事件累积的尾部（见 mergeLoadedPage）；向上翻页时更早的消息前插
@@ -602,6 +621,13 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           loadedSessions: before ? state.loadedSessions : { ...state.loadedSessions, [id]: true },
           pageCursorBySession: { ...state.pageCursorBySession, [id]: cursor },
           hasMoreBySession: { ...state.hasMoreBySession, [id]: cursor !== undefined },
+          ...(usage === undefined
+            ? {}
+            : {
+                statsBySession: { ...state.statsBySession, [id]: usage.stats },
+                tokenUsageBySession: { ...state.tokenUsageBySession, [id]: usage.tokenUsage },
+                breakdownBySession: { ...state.breakdownBySession, [id]: usage.breakdown },
+              }),
         };
       });
     } finally {
@@ -672,6 +698,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       loadingOlderBySession: omitSession(state.loadingOlderBySession, id),
       runningBySession: omitSession(state.runningBySession, id),
       queueBySession: omitSession(state.queueBySession, id),
+      statsBySession: omitSession(state.statsBySession, id),
+      tokenUsageBySession: omitSession(state.tokenUsageBySession, id),
+      breakdownBySession: omitSession(state.breakdownBySession, id),
       jobsBySession: omitSession(state.jobsBySession, id),
       compactionNotices: omitSession(state.compactionNotices, id),
       pendingApprovals: state.pendingApprovals.filter((item) => item.sessionId !== id),
@@ -926,6 +955,21 @@ export const useChatStore = create<ChatState>()((set, get) => ({
               console.warn(`刷新会话列表失败：${String(error)}`);
             });
         }
+        break;
+      case "session-stats":
+        set((state) => ({
+          statsBySession: { ...state.statsBySession, [sessionId]: event.stats },
+        }));
+        break;
+      case "token-usage":
+        set((state) => ({
+          tokenUsageBySession: { ...state.tokenUsageBySession, [sessionId]: event.usage },
+        }));
+        break;
+      case "context-breakdown":
+        set((state) => ({
+          breakdownBySession: { ...state.breakdownBySession, [sessionId]: event.breakdown },
+        }));
         break;
       default:
         // 未知事件类型：忽略，向前兼容

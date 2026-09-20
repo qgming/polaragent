@@ -111,6 +111,55 @@ export interface ChatMessageUsage {
   outputTokens: number;
   reasoningTokens?: number;
   totalTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * 会话级统计视图：全量 turn/step 计数与 LLM/工具/首 token/解码耗时。
+ * 对标 DSH 的 sessionStats 投影（dsh-session-stats）。
+ */
+export interface SessionStats {
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftMs: number;
+  ttftSteps: number;
+  decodeMs: number;
+  decodeTokens: number;
+}
+
+/** 会话级 Token 用量合计：全量全品类的累加桶。对标 DSH 的 tokenUsage 投影。 */
+export interface SessionTokenUsage {
+  uncachedInputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * 上下文占用分解：系统提示词 / 工具定义 / 对话消息三段的启发式 token 估算。
+ * 对标 DSH 的 contextBreakdown 投影（dsh-token-meter）。
+ */
+export interface ContextBreakdown {
+  systemTokens: number;
+  toolsTokens: number;
+  messageTokens: number;
+}
+
+/**
+ * 随会话持久化的用量快照：统计 + Token 合计 + 上下文分解。
+ *
+ * 为什么整体持久化而不是运行中重算：统计的耗时字段（LLM/TTFT/解码）依赖真实事件时间戳，
+ * 磁盘日志里没有，事后无法重建 —— 不落盘就只能在「进程内跑过的那一轮」里显示，
+ * 重启或打开历史会话时底部永远是空的。
+ */
+export interface SessionUsageRecord {
+  stats: SessionStats;
+  tokenUsage: SessionTokenUsage;
+  breakdown: ContextBreakdown;
 }
 
 export interface ChatMessage {
@@ -147,6 +196,14 @@ export interface SessionMessagesPage {
   messages: ChatMessage[];
   compactionSummaries: string[];
   nextCursor?: number;
+  /**
+   * 该会话持久化的用量快照（统计 / Token 合计 / 上下文分解）。
+   *
+   * 搭在分页结果里一起返回，而不是单开一条 IPC：渲染层打开会话时必然要拉消息，
+   * 底栏需要的数据同源同刻 —— 分两次请求只会多一条可能失败的路径。
+   * 没有记录（新会话 / 升级前的旧会话）时缺省，渲染层显示空状态。
+   */
+  usage?: SessionUsageRecord;
 }
 
 export interface LoadSessionMessagesOptions {
