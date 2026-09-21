@@ -1,41 +1,21 @@
 import type { Attachment } from "@assistant-ui/react";
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react";
-import {
-  ArrowUp,
-  Bot,
-  Brain,
-  Check,
-  ChevronDown,
-  FileText,
-  ListOrdered,
-  Pencil,
-  Plus,
-  Square,
-  X,
-} from "lucide-react";
+import { ArrowUp, Bot, Brain, Check, ChevronDown, FileText, Plus, Square, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContextMeter } from "@/renderer/components/assistant-ui/elements/context-meter";
 import {
-  collapsePanel,
   field,
   fieldInteractive,
   floating,
   ghostButton,
   inkButton,
-  mono,
 } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
 import { typeEyebrow, typePackage } from "@/renderer/components/assistant-ui/type";
 import { Button } from "@/renderer/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/renderer/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/renderer/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
@@ -52,6 +32,7 @@ import type {
   SetSessionModeResult,
 } from "@/shared/contracts";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
+import { ComposerDock, QueueDock, TodoDock } from "./ComposerDock";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import {
   expandSlashInput,
@@ -65,8 +46,6 @@ import {
 import { type ResolvedThinking, resolveThinking, thinkingLabelKey } from "./thinking";
 import { useActiveWorkingDir, useSlashCommands } from "./use-slash-commands";
 
-/** 队列面板默认展示的条数，超出以 +N 表示 */
-const QUEUE_PREVIEW = 3;
 /** 稳定空引用：避免 zustand selector 每次返回新数组导致多余渲染 */
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -575,76 +554,14 @@ function ThinkingChip({ resolved }: { resolved: ResolvedThinking }) {
   );
 }
 
-/** 队列面板：可折叠只读列表；编辑/移除 API 缺失，编辑以禁用态 + 说明呈现 */
-function QueuePanel({ items }: { items: QueuedMessage[] }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="border-b border-border/60">
-      <CollapsibleTrigger
-        className={cn(
-          "flex w-full items-center gap-2 px-2.5 py-1.5 text-start outline-none transition-colors",
-          "hover:bg-foreground/[0.04] focus-visible:ring-1 focus-visible:ring-foreground/20",
-          typeEyebrow,
-        )}
-      >
-        <ListOrdered className="size-3.5 shrink-0" />
-        <span>{t("chat.queueCount", { count: items.length })}</span>
-        <ChevronDown
-          className={cn(
-            "ms-auto size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
-            open && "rotate-180",
-          )}
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
-        <ol className="flex flex-col gap-0.5 px-2.5 pb-2">
-          {items.slice(0, QUEUE_PREVIEW).map((item, index) => (
-            <li key={item.id} className="flex items-center gap-2">
-              <span className={cn(typeEyebrow, "w-3 shrink-0 text-end tabular-nums")}>
-                {index + 1}.
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink-3">{item.text}</span>
-              {item.mode === "steer" && (
-                <span className={cn(field, mono, "shrink-0 rounded px-1.5 py-px text-ink-2")}>
-                  {t("chat.steer")}
-                </span>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  {/* 禁用按钮不触发指针事件，说明挂在包裹的 span 上才不会丢 */}
-                  <span className="inline-flex shrink-0">
-                    <button
-                      type="button"
-                      disabled
-                      className={cn(ghostButton, "size-5 opacity-40")}
-                      aria-label={t("chat.queueEdit")}
-                    >
-                      <Pencil className="size-3" />
-                    </button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("chat.queueEdit")} · {t("common.disabled")}
-                </TooltipContent>
-              </Tooltip>
-            </li>
-          ))}
-          {items.length > QUEUE_PREVIEW && (
-            <li className={cn(typeEyebrow, "ps-5")}>+{items.length - QUEUE_PREVIEW}</li>
-          )}
-        </ol>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 /**
  * Composer：自绘外壳（--composer-bg 面 + 24px 圆角 + --composer-shadow 抬高）
- * + 附件（选择/拖拽/粘贴）+ 权限/模型/思考 chip + 发送/停止 + 队列面板与队列提示。
+ * + 附件（选择/拖拽/粘贴）+ 权限/模型/思考 chip + 发送/停止。
  * 发送走 ComposerPrimitive.Send（runtime 原生）；运行中 Enter 走 store.queue（见下）。
  * store 状态按会话分片：running / queue 均需以 activeSessionId 读取。
+ *
+ * 输入框**上方**是停靠区（ComposerDock）：任务清单与待发送队列贴在外壳之外，
+ * 与它共用一个宽度、圆角只在顶部 —— 见该文件顶部对位置与形态的说明。
  */
 export function Composer() {
   const { t } = useTranslation();
@@ -853,6 +770,18 @@ export function Composer() {
     // 底部不留内边距：输入框以下的间距交给 Thread 的底栏（状态条上下各 3px，
     // 且那条底栏是不透明的，消息不再从输入框下方透出来）
     <div className="px-4">
+      {/*
+        停靠区（任务清单 + 待发送队列）挂在**输入框上方、外壳之外**：
+        它俩与输入框共用同一个宽度与面，圆角只在顶部、下沿与输入框无缝相接 ——
+        读起来是「输入框长出来的一截」。放进 Root 内部会与外层的 24px 圆角打架
+        （内层的方角会在圆角里露出来）。
+        外轮廓（边框 + 圆角 + 两块之间的分隔线）由 ComposerDock 一处画，
+        里面两块只是它的段 —— 于是「有清单没队列」「两个都有」这些组合都不用传位置。
+      */}
+      <ComposerDock>
+        <TodoDock />
+        <QueueDock items={queue} />
+      </ComposerDock>
       <ComposerPrimitive.Root
         compact={false}
         className={cn(
@@ -871,9 +800,7 @@ export function Composer() {
             "data-[dragging=true]:outline-1 data-[dragging=true]:-outline-offset-1 data-[dragging=true]:outline-dashed data-[dragging=true]:outline-blue-500/40",
           )}
         >
-          {/* 待办与后台作业已迁到顶栏的会话面板（见 app/TitleBar 的 SessionPanel）：
-              输入框上方不再挂这两条，队列面板留在原位。 */}
-          {queue.length > 0 && <QueuePanel items={queue} />}
+          {/* 待办与待发送队列已移到输入框上方的停靠区（见文件头的容器说明） */}
           {/* Attachments 渲染的是片段，横向排布靠这层容器；空时不留出 gap */}
           <div className="flex flex-wrap gap-2 empty:hidden">
             <ComposerPrimitive.Attachments>

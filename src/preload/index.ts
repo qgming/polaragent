@@ -44,6 +44,8 @@ const api = {
       ipcRenderer.invoke(IPC.chat.send, { sessionId, text, images, messageId, options }),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chat.stop, { sessionId }),
     queue: (sessionId, text, mode) => ipcRenderer.invoke(IPC.chat.queue, { sessionId, text, mode }),
+    cancelQueued: (sessionId, entryId) =>
+      ipcRenderer.invoke(IPC.chat.cancelQueued, { sessionId, entryId }),
     compact: (sessionId, instructions) =>
       ipcRenderer.invoke(IPC.chat.compact, { sessionId, instructions }),
     snapshot: (sessionId) => ipcRenderer.invoke(IPC.chat.snapshot, { sessionId }),

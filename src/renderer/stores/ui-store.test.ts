@@ -15,6 +15,8 @@ function resetPanel(): void {
     activeTabId: null,
     pendingBrowserRequest: null,
     subagentPanelTarget: null,
+    filePanelTarget: null,
+    browserOpenRequest: null,
   });
 }
 
@@ -239,5 +241,102 @@ describe("右侧面板的标签", () => {
     const id = useUiStore.getState().activeTabId;
     useUiStore.getState().activateRightPanelTab("t-does-not-exist");
     expect(useUiStore.getState().activeTabId).toBe(id);
+  });
+});
+
+/**
+ * 文件查看器与「用浏览器打开一个文件」这两个动作。
+ *
+ * 它们与 openRightPanel 的关键差别是**复用规则**：openRightPanel("browser") 每次都是
+ * 新标签（多开是特性），而从文件卡片点出去是「看这一个文件」—— 点三次不该开出三个标签。
+ * 这一条没有类型信号，只能靠断言钉住。
+ */
+describe("文件查看器（openFilePanel）", () => {
+  beforeEach(resetPanel);
+
+  it("首次打开建一个 file 标签并聚焦到该文件", () => {
+    useUiStore.getState().openFilePanel("D:/p/a.md");
+
+    const state = useUiStore.getState();
+    expect(state.rightPanelOpen).toBe(true);
+    expect(state.rightPanelTabs).toHaveLength(1);
+    expect(state.rightPanelTabs[0]?.view).toBe("file");
+    expect(state.filePanelTarget).toBe("D:/p/a.md");
+  });
+
+  it("再点别的文件复用同一个标签（不是每文件一个标签）", () => {
+    useUiStore.getState().openFilePanel("D:/p/a.md");
+    const firstTabId = useUiStore.getState().activeTabId;
+    useUiStore.getState().openFilePanel("D:/p/b.md");
+
+    const state = useUiStore.getState();
+    expect(state.rightPanelTabs).toHaveLength(1);
+    expect(state.activeTabId).toBe(firstTabId);
+    expect(state.filePanelTarget).toBe("D:/p/b.md");
+  });
+
+  it("已经有别的视图标签时另开一个 file 标签，不动原来那个", () => {
+    useUiStore.getState().openRightPanel("review");
+    useUiStore.getState().openFilePanel("D:/p/a.md");
+
+    const state = useUiStore.getState();
+    expect(state.rightPanelTabs).toHaveLength(2);
+    expect(state.rightPanelTabs.map((tab) => tab.view)).toEqual(["review", "file"]);
+  });
+
+  it("file 不在选择列表里：它不是用户挑出来的视图，而是点卡片的结果", async () => {
+    const { RIGHT_PANEL_VIEWS } = await import("./ui-store");
+    expect(RIGHT_PANEL_VIEWS).not.toContain("file");
+  });
+});
+
+describe("用内置浏览器打开地址（openInBrowser）", () => {
+  beforeEach(resetPanel);
+
+  it("没有浏览器标签时新建一个，并把标签名先按文件名写上", () => {
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/page.html", title: "page.html" });
+
+    const state = useUiStore.getState();
+    expect(state.rightPanelOpen).toBe(true);
+    expect(state.rightPanelTabs).toHaveLength(1);
+    expect(state.rightPanelTabs[0]?.view).toBe("browser");
+    expect(state.rightPanelTabs[0]?.title).toBe("page.html");
+    expect(state.browserOpenRequest?.url).toBe("file:///D:/p/page.html");
+  });
+
+  it("已有浏览器标签时复用它而不是再开一个（与「+」的新建语义相反）", () => {
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    const tabId = useUiStore.getState().activeTabId;
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/b.html", title: "b.html" });
+
+    const state = useUiStore.getState();
+    expect(state.rightPanelTabs).toHaveLength(1);
+    expect(state.activeTabId).toBe(tabId);
+    expect(state.browserOpenRequest?.url).toBe("file:///D:/p/b.html");
+  });
+
+  it("连续两次请求的 token 递增：同一个地址点两次也要能再次触发导航", () => {
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    const first = useUiStore.getState().browserOpenRequest?.token;
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    const second = useUiStore.getState().browserOpenRequest?.token;
+
+    expect(second).not.toBe(first);
+    expect(second).toBeGreaterThan(first ?? 0);
+  });
+
+  /**
+   * 请求**不是**消费一次就清掉的事件。
+   *
+   * 早先的实现让 BrowserPanel 读到就结算，结果是 StrictMode 下第二次挂载拿不到请求、
+   * 留在 DOM 里的 webview 永远停在 about:blank（实测，见 BrowserPanel 那段注释）。
+   * 现在它是一份**持续状态**：由 (元素, token) 决定要不要应用，所以这里钉住
+   * 「重复调用只会换 token，不会把请求清掉」。
+   */
+  it("请求保持在 store 里（不清空），由消费方按 token 判重", () => {
+    useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+
+    expect(useUiStore.getState().browserOpenRequest).not.toBeNull();
+    expect(useUiStore.getState().browserOpenRequest?.token).toBeGreaterThan(0);
   });
 });

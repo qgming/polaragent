@@ -10,16 +10,18 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/renderer/components/u
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { JobPanel } from "../chat/JobPanel";
-import { TodoPanel } from "../chat/TodoPanel";
 import { EnvironmentSection } from "./environment-section";
 import { ArtifactsSection, ReferencesSection } from "./files-section";
 
 /**
  * 会话面板：内容区顶栏右侧、窗口控制左边的那颗图标按钮 + 它的浮层。
  *
- * 浮层里从上到下是可折叠的区块：环境信息 / 任务清单 / 后台作业 / 产物 / 参考。
- * 「任务清单」与「后台作业」就是从 Composer 上方迁过来的那两条（原 TodoPanel / JobPanel），
- * 内容与取数一字未改，只是换了容器与外壳 —— 迁移后 Composer 里不再有它们。
+ * 浮层里从上到下是可折叠的区块：环境信息 / 后台作业 / 产物 / 参考。
+ *
+ * **「任务清单」不在这里**：它回到了输入框上方的停靠区（见 ComposerDock 的说明）。
+ * 清单是「这一轮正在做什么」的实时进度，用户在盯着输入框时最需要一眼看到；
+ * 藏进浮层等于每次都要主动点开。后台作业留在本面板：它是「起过的进程」这种回顾性信息，
+ * 与「现在要做什么」不是一回事。
  *
  * 没有活动会话时**不渲染按钮**（不是禁用态）：这些区块全都以「当前会话」为口径，
  * 没有会话时它们没有主语；顶栏此时显示的是「新建对话」，多一颗按钮只会让人点开一个空壳。
@@ -71,7 +73,6 @@ export function SessionPanel() {
             {t("sessionPanel.title")}
           </p>
           <EnvironmentSection />
-          <TodoPanel />
           <JobPanel />
           <ArtifactsSection />
           <ReferencesSection />

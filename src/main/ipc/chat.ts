@@ -44,6 +44,13 @@ export function registerChatIpc(): void {
     },
   );
   handle(
+    IPC.chat.cancelQueued,
+    "撤销排队消息",
+    async (request: { sessionId: string; entryId: string }) => {
+      await getChatRuntime().cancelQueued(request.sessionId, request.entryId);
+    },
+  );
+  handle(
     IPC.chat.compact,
     "压缩上下文",
     async (request: { sessionId: string; instructions?: string }) => {

@@ -109,12 +109,22 @@ describe("latestTodo", () => {
     expect(latestTodo(messages)?.items[0]?.text).toBe("读一遍现有实现");
   });
 
-  it("最后一次调用失败（isError）→ null，不退回更早那份", () => {
+  /**
+   * **口径在「失败不给详情」这条上改了**（见 resolveToolDetail 的说明）。
+   *
+   * 旧行为：失败一律 null，于是失败的 todo 调用让整块清单消失 —— 而「最后一次调用失败了、
+   * 清单还是上一次那份」这种状态，在界面上应该看得见（模型以为改了、其实没改成）。
+   * 现在失败也给详情：清单来自 details / 参数，那是这次调用真实的入参。
+   */
+  it("最后一次调用失败（isError）时仍然给出清单，而不是整块消失", () => {
     const messages = [
       message(todoCall({ artifact: FIRST_DETAIL })),
       message(todoCall({ isError: true, artifact: SECOND_DETAIL })),
     ];
-    expect(latestTodo(messages)).toBeNull();
+    // 拿到的必须是**第二次**那份（最后一次调用说了什么就是什么）：
+    // revision 2 是 SECOND_DETAIL 的标志，FIRST_DETAIL 是 rev 1 且只有两条
+    expect(latestTodo(messages)?.revision).toBe(2);
+    expect(latestTodo(messages)?.items).toHaveLength(3);
   });
 
   it("结果非法（非对象 / todos 缺失或非数组 / 状态非法 / 文本为空）→ null 且不抛", () => {

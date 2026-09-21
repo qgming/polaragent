@@ -148,6 +148,13 @@ export function BrowserPanel({
   const [canGoForward, setCanGoForward] = useState(false);
   /** 模型正在操作页面时的说明文案；为 null 表示模型没在动它（只认本标签的事件） */
   const agentNote = useAgentActivity(tabId);
+  /**
+   * 用户点 HTML 卡片产生的「打开这个地址」请求。
+   *
+   * 订阅整个对象（引用稳定）：请求不变时 useUiStore 按 Object.is 判等，不会引起重渲染；
+   * 变了才重渲染一次，正好驱动下面那个 effect 去导航。
+   */
+  const browserOpenRequest = useUiStore((s) => s.browserOpenRequest);
 
   /** webview 的宿主容器：元素自己创建后插进来 */
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -329,6 +336,52 @@ export function BrowserPanel({
     };
     // tabId 是唯一依赖，理由见上面的说明。
   }, [tabId]);
+
+  /**
+   * 用户点了 HTML 文件卡片：把这个地址加载到本标签。
+   *
+   * ## 为什么不是「消费一次就清掉请求」
+   *
+   * 第一版把请求当成一次性事件：读到就 settle，然后写 src。**实测不行** ——
+   * StrictMode 下这个组件会挂载两次，第一次建出的元素随后被清理 effect 摘掉，
+   * 请求却已经在第一次被结算，第二次挂载时拿到的是 null，于是在 DOM 里留下的那个
+   * webview 永远停在 about:blank。表现是「点了 HTML 卡片，浏览器打开了、标签也在，
+   * 但页面是白的」——只在 dev 下出现，生产构建看不到，必须靠真实 Electron 里的探针抓
+   *（scripts/probe-turn-files.mjs 就是为它写的）。
+   *
+   * 现在的判据是 **(元素, token)**：请求留在 store 里当「最后一次要求打开的地址」，
+   * 每个元素各自记住自己已经应用过哪个 token。于是：
+   *   · 换了个元素（StrictMode 的第二次挂载、关掉标签再开）→ 元素不同 → 会重新应用；
+   *   · 同一个元素、同一个 token（普通重渲染、切走再切回）→ 跳过，不会自己刷新；
+   *   · 又点一次同一个文件 → token 变了 → 重新加载（这正是「再点一次 = 刷新」）。
+   *
+   * 只有**当前活动的标签**响应：请求进 store 时 openInBrowser 已经把目标标签设为当前，
+   * 所以真正的目标一定会看到它；其余标签也响应的话，同一份文件会被加载两次。
+   *
+   * 用 setAttribute 而不是 loadURL，理由与 navigate 里那段一字不差（guest 未就绪时
+   * loadURL 会同步抛）。本地 file:// 地址不做任何补全：它就是最终地址。
+   */
+  const appliedRef = useRef<{ element: HTMLElement | null; token: number }>({
+    element: null,
+    token: 0,
+  });
+
+  useEffect(() => {
+    if (!active || browserOpenRequest === null) return;
+    const element = webviewRef.current;
+    if (element === null) return;
+    // 已经在这个元素上应用过这一条请求：不重复导航（否则每次重渲染都刷新一遍）
+    if (
+      appliedRef.current.element === element &&
+      appliedRef.current.token === browserOpenRequest.token
+    ) {
+      return;
+    }
+    appliedRef.current = { element, token: browserOpenRequest.token };
+    setFailed(false);
+    setLoading(true);
+    element.setAttribute("src", browserOpenRequest.url);
+  }, [active, browserOpenRequest]);
 
   /**
    * 导航到用户输入的地址。

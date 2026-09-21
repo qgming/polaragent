@@ -15,7 +15,7 @@
 //   2. **模型操作提示只出现在事件指定的标签上**（agent 事件带 tabId 时）。
 // 隐藏/常驻（display:none 而不是卸载）由 RightSidebar 负责，见 RightSidebar.test.tsx。
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel } from "@/renderer/features/right-panel/BrowserPanel";
 import i18n from "@/renderer/i18n";
@@ -118,6 +118,7 @@ afterEach(() => {
     rightPanelTabs: [],
     activeTabId: null,
     pendingBrowserRequest: null,
+    browserOpenRequest: null,
   });
 });
 
@@ -130,6 +131,7 @@ beforeEach(() => {
     rightPanelTabs: [],
     activeTabId: null,
     pendingBrowserRequest: null,
+    browserOpenRequest: null,
   });
 });
 
@@ -169,6 +171,109 @@ describe("BrowserPanel 的 webview 引导", () => {
 
     const address = screen.getByLabelText("输入网址，回车打开") as HTMLInputElement;
     expect(address.value).toBe("");
+  });
+});
+
+/**
+ * 点 HTML 文件卡片 → 用内置浏览器打开那个本地地址。
+ *
+ * **这一组是为一个只在 dev 下出现的缺陷写的**（实测，见 BrowserPanel 里那段说明）：
+ * 第一版把「打开这个地址」当成一次性事件，BrowserPanel 读到就结算。StrictMode 下组件
+ * 挂载两次，第一次的元素随后被清理 effect 摘掉、请求却已经结算，于是**留在 DOM 里的**
+ * 那个 webview 永远停在 about:blank —— 浏览器打开了、标签也在，页面是白的。
+ *
+ * 这里用 `<StrictMode>` 渲染来复现那个双挂载，断言的是「最后留在 DOM 里的元素拿到了地址」。
+ * 注意不能断言「某个元素拿到过」：第一次挂载那个也确实拿到过，只是马上被摘掉了。
+ */
+describe("用浏览器打开本地文件（HTML 卡片）", () => {
+  /**
+   * **核心回归**：请求不能是「谁先读到谁清掉」的一次性事件。
+   *
+   * 这个用例的写法是被逼出来的，值得说明为什么不能写成「挂载两次」：
+   * jsdom 里 `render(<StrictMode>…)` 的两次 effect 调用发生在**同一个 act 批次**内，
+   * 中间那次 `setState` 还没被 React 处理，于是旧的一次性实现也能「碰巧」通过 ——
+   * 我实测确认过这一点（把旧实现放回去，那个写法依然全绿）。
+   *
+   * 所以改成**显式地先卸载再挂载**：卸载是一次 act 边界，store 的写入在那之前就已经
+   * 落地了。这时旧实现必然失败（请求被上一个面板消费掉了，新面板拿到 null），
+   * 新实现通过（请求留在 store 里，由 (元素, token) 判重）。
+   *
+   * 它对应两条真实路径：StrictMode 的双挂载，以及**关掉浏览器标签再打开**。
+   */
+  it("后挂载的面板也能领到请求（请求不是一次性的）", () => {
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+
+    useUiStore.setState({
+      rightPanelOpen: true,
+      rightPanelTabs: [{ id: "t1", view: "browser", title: "page.html" }],
+      activeTabId: "t1",
+      browserOpenRequest: { url: "file:///D:/p/page.html", title: "page.html", token: 1 },
+    });
+
+    const first = render(<BrowserPanel tabId="t1" active />);
+    // 第一个元素确实拿到了地址（这一步两种实现都对）
+    expect(webviews[0]?.getAttribute("src")).toBe("file:///D:/p/page.html");
+
+    // 卸载再挂载（= 关掉标签再打开，也是 StrictMode 双挂载的实质）
+    first.unmount();
+    render(<BrowserPanel tabId="t1" active />);
+
+    const live = webviews.filter((element) => element.isConnected);
+    expect(live.length, "重新挂载后应当只有一个 webview 留在文档里").toBe(1);
+    expect(
+      live[0]?.getAttribute("src"),
+      "新面板拿到的地址是 about:blank：说明请求被上一个面板消费掉了（旧的「读一次就清掉」实现）",
+    ).toBe("file:///D:/p/page.html");
+  });
+
+  it("同一个 token 不重复导航（重渲染不会让页面自己刷新）", () => {
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    const { rerender } = render(<BrowserPanel tabId="t1" active />);
+
+    act(() => {
+      useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    });
+    const element = webviews[0];
+    // 用户此时在页面里点了个链接（直接改属性，模拟页面自己导航走了）
+    element?.setAttribute("src", "file:///D:/p/other.html");
+
+    // 一次无关的重渲染：请求没变，不该把地址写回去
+    rerender(<BrowserPanel tabId="t1" active />);
+
+    expect(element?.getAttribute("src")).toBe("file:///D:/p/other.html");
+  });
+
+  it("再点一次同一个文件（新 token）会重新加载", () => {
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    act(() => {
+      useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    });
+    const element = webviews[0];
+    element?.setAttribute("src", "file:///D:/p/other.html");
+
+    act(() => {
+      useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    });
+
+    // token 变了 → 重新导航（这就是「再点一次 = 刷新」）
+    expect(element?.getAttribute("src")).toBe("file:///D:/p/a.html");
+  });
+
+  it("非活动标签不响应：同一份文件不会被加载两次", () => {
+    stubBrowserBridge();
+    const { webviews } = stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active={false} />);
+
+    act(() => {
+      useUiStore.getState().openInBrowser({ url: "file:///D:/p/a.html", title: "a.html" });
+    });
+
+    expect(webviews[0]?.getAttribute("src")).toBe("about:blank");
   });
 });
 

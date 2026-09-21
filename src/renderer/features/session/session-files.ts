@@ -14,15 +14,20 @@
 
 import type { ChatMessage, ChatPart } from "@/shared/contracts/session";
 
-/** 一次工具调用是否真的落到文件上了：否认 / 报错 / 还在等审批的都不算 */
-function applied(part: Extract<ChatPart, { type: "tool-call" }>): boolean {
+/**
+ * 一次工具调用是否真的落到文件上了：否认 / 报错 / 还在等审批的都不算。
+ *
+ * **导出**供 turn-files.ts 复用：那条路径要判断的是同一件事（「这轮到底改没改」），
+ * 各写一份迟早会在「running 算不算」这类边界上漂移。
+ */
+export function applied(part: Extract<ChatPart, { type: "tool-call" }>): boolean {
   if (part.isError === true) return false;
   // pending-approval 与 denied 都还没执行；error 是执行了但没成功。running 已经发出去了，算。
   return part.status !== "pending-approval" && part.status !== "denied" && part.status !== "error";
 }
 
 /** 工具参数里的路径：与 tool-presentation 的 toolChip 同一个取键顺序（path 优先，其次 file） */
-function callPath(part: ChatPart): string | null {
+export function callPath(part: ChatPart): string | null {
   if (part.type !== "tool-call") return null;
   const args = part.args;
   if (typeof args !== "object" || args === null) return null;

@@ -102,9 +102,17 @@ export function ToolTimeline({
                 >
                   {step.verb}
                 </ShimmerLabel>
-                <span className="bg-foreground/[0.06] text-ink-2 min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-[11px]">
-                  {step.chip}
-                </span>
+                {/*
+                  参数 chip：**没有主参数时不渲染**。
+                  ask_user 的参数是 questions 数组（里面没有一个字符串），
+                  无条件渲染会在行上留下一枚只有 padding 的空灰胶囊 —— 看起来像渲染 bug。
+                  与 ToolCall 的触发行同一口径（那边也有同样的判断）。
+                */}
+                {step.chip !== "" && (
+                  <span className="bg-foreground/[0.06] text-ink-2 min-w-0 truncate rounded-md px-1.5 py-0.5 font-mono text-[11px]">
+                    {step.chip}
+                  </span>
+                )}
                 {stepDetail !== undefined && (
                   <ChevronRightIcon className="size-3 shrink-0 opacity-60 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-open/step-trigger:rotate-90 motion-reduce:transition-none" />
                 )}

@@ -38,6 +38,8 @@ export const IPC = {
     send: "chat:send",
     stop: "chat:stop",
     queue: "chat:queue",
+    /** 撤销一条还没被消费的排队消息（用户点队列行上的 ×） */
+    cancelQueued: "chat:cancel-queued",
     compact: "chat:compact",
     event: "chat:event",
     /** 拉取某会话当前流式消息的完整快照（增量缺口时整条补齐，见 ChatStreamSnapshot） */

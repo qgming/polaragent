@@ -3,10 +3,14 @@
  *
  * 盯住三件事：
  * 1. 按钮的出现条件 —— 没有活动会话时不渲染（这些区块全都以「当前会话」为口径）；
- * 2. 浮层里五个区块都在（环境信息 / 任务清单 / 后台作业 / 产物 / 参考）；
+ * 2. 浮层里四个区块都在（环境信息 / 后台作业 / 产物 / 参考）；
  * 3. **动态** —— 徽标与列表跟着 store 走，不是打开时的快照。
  *
- * 待办与作业两块的行为细节由 TodoPanel.test.tsx / JobPanel.test.tsx 覆盖，这里只验容器。
+ * **任务清单不在这里**：它回到了输入框上方的停靠区（见 ComposerDock.tsx，由
+ * ComposerDock.test.tsx 覆盖）。下面有一条断言专门钉住这个迁移，免得将来有人又把它加回浮层 ——
+ * 那样会出现两块任务清单，而它们取的是同一份数据。
+ *
+ * 作业那块的行为细节由 JobPanel.test.tsx 覆盖，这里只验容器。
  */
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -62,18 +66,21 @@ describe("SessionPanel", () => {
     expect(trigger()).toBeNull();
   });
 
-  it("打开浮层：五个区块标题都在，空态与徽标口径正确", async () => {
+  it("打开浮层：四个区块标题都在，空态与徽标口径正确", async () => {
     useChatStore.setState({ activeSessionId: "s1" });
     render(<SessionPanel />);
 
     expect(trigger()).not.toBeNull();
     fireEvent.click(trigger() as HTMLElement);
 
-    for (const title of ["环境信息", "任务清单", "后台作业", "产物", "参考"]) {
+    for (const title of ["环境信息", "后台作业", "产物", "参考"]) {
       expect(await screen.findByText(title)).toBeTruthy();
     }
 
-    // 区块默认收起（与设计图一致：只有任务清单在有内容时自动展开），展开后才看得到内容
+    // 任务清单已经迁到输入框上方的停靠区：浮层里不该再有第二份
+    expect(screen.queryByText("任务清单")).toBeNull();
+
+    // 区块默认收起（与设计图一致），展开后才看得到内容
     fireEvent.click(await screen.findByRole("button", { name: "展开或收起后台作业" }));
 
     // 空态：区块仍然在，只是给一句话；没有可数的东西就不摆一个「0」

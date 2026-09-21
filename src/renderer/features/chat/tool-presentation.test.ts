@@ -246,9 +246,32 @@ describe("toEditDiff", () => {
 });
 
 describe("resolveToolDetail", () => {
-  it("失败优先于一切：有 patch 的 edit 也不给详情", () => {
-    expect(resolveToolDetail("bash", undefined, true)).toBeNull();
-    expect(resolveToolDetail("edit", { patch: PATCH }, true)).toBeNull();
+  /**
+   * **失败不再一律取消详情**（这次改动最要紧的一处）。
+   *
+   * 旧口径是第一行 `if (isError) return null`，于是失败的工具恰恰没有详情 ——
+   * 而失败输出多行特征最强（栈、编译错误、命中列表），落到那个不保留换行的面板上
+   * 就被压成一整行。现在失败退回**文本详情**：报错原文本身就是内容。
+   */
+  it("失败时退回文本详情，把报错原文交给 TextDetail（不再返回 null）", () => {
+    const bash = resolveToolDetail("bash", undefined, true, undefined, "boom\nline2");
+    // bash 是终端详情，与失败无关（它一直有自己的渲染）
+    expect(bash).toEqual({ kind: "terminal" });
+
+    // edit 有 patch 但失败了：不给 diff（那次改动没落地），给文本
+    const edit = resolveToolDetail("edit", { patch: PATCH }, true, undefined, "Error: 没找到");
+    expect(edit?.kind).toBe("text");
+    expect(edit?.kind === "text" && edit.body).toBe("Error: 没找到");
+
+    // 子智能体失败：不给 pill（会显示成「运行中」），给文本
+    const task = resolveToolDetail(
+      "Task",
+      { error: "没有这个子智能体" },
+      true,
+      undefined,
+      "Error: 没有这个子智能体",
+    );
+    expect(task?.kind).toBe("text");
   });
 
   it("bash 给终端详情", () => {
@@ -268,17 +291,55 @@ describe("resolveToolDetail", () => {
     ]);
   });
 
-  it("edit 缺 patch 或 patch 不可解析时不给详情（落回内置面板）", () => {
-    expect(resolveToolDetail("edit", undefined)).toBeNull();
-    expect(resolveToolDetail("edit", { diff: "@@ -1 +1 @@" })).toBeNull();
-    expect(resolveToolDetail("edit", { patch: "   " })).toBeNull();
-    expect(resolveToolDetail("edit", { patch: "这不是补丁" })).toBeNull();
+  it("edit 缺 patch 或 patch 不可解析时退回文本详情（结果文本里写着为什么）", () => {
+    for (const details of [
+      undefined,
+      { diff: "@@ -1 +1 @@" },
+      { patch: "   " },
+      { patch: "这不是补丁" },
+    ]) {
+      const detail = resolveToolDetail(
+        "edit",
+        details,
+        false,
+        undefined,
+        "Could not find the text",
+      );
+      expect(detail?.kind).toBe("text");
+      expect(detail?.kind === "text" && detail.body).toBe("Could not find the text");
+    }
   });
 
-  it("其余工具不给详情，即使带了 details", () => {
-    expect(resolveToolDetail("read", { truncation: { lines: 5 } })).toBeNull();
-    expect(resolveToolDetail("write", undefined)).toBeNull();
-    expect(resolveToolDetail("未知工具", undefined)).toBeNull();
+  /**
+   * **其余工具也给详情**（这次改动的另一半）。
+   *
+   * 旧口径是 `if (toolName !== "edit") return null`，除 edit 之外的一切都落回那个
+   * Request/Result 面板 —— 而那个面板已经被删掉了。现在兜底是文本详情：
+   * 认不出形状的工具也能看到原文，而不是一个把换行压平的转储框。
+   */
+  it("read / write / 未知工具都有详情，不再落回空面板", () => {
+    const read = resolveToolDetail(
+      "read",
+      { truncation: { lines: 5 } },
+      false,
+      undefined,
+      "  1\tconst a = 1;",
+    );
+    expect(read?.kind).toBe("text");
+    expect(read?.kind === "text" && read.body).toBe("  1\tconst a = 1;");
+
+    // write 从**参数**里取路径与正文（details 是 undefined）
+    const write = resolveToolDetail("write", undefined, false, {
+      path: "a.ts",
+      content: "export {}\n",
+    });
+    expect(write?.kind).toBe("write");
+    expect(write?.kind === "write" && write.path).toBe("a.ts");
+
+    // 完全未知的工具也给文本（这是兜底的全部意义）
+    const unknown = resolveToolDetail("未知工具", undefined, false, undefined, "some output");
+    expect(unknown?.kind).toBe("text");
+    expect(unknown?.kind === "text" && unknown.body).toBe("some output");
   });
 });
 
@@ -377,13 +438,32 @@ describe("resolveToolDetail · todo", () => {
     expect(resolveToolDetail("todo", undefined)).toBeNull();
   });
 
-  it("错误态优先：失败时即使有清单也不给 todo 详情", () => {
-    expect(resolveToolDetail("todo", { todos: TODOS }, true, { todos: TODOS })).toBeNull();
+  it("失败时也给 todo 详情：清单是这次调用真实的参数，报错不该把它藏起来", () => {
+    const detail = resolveToolDetail("todo", { todos: TODOS }, true, { todos: TODOS });
+    expect(detail?.kind).toBe("todo");
   });
 
-  it("grep / glob 保持通用面板（结果本身就是文本）", () => {
-    expect(resolveToolDetail("grep", { pattern: "foo" })).toBeNull();
-    expect(resolveToolDetail("glob", undefined, false, { pattern: "**/*.ts" })).toBeNull();
+  it("grep / glob 走文本详情（结果本身就是文本，但要有换行与等宽）", () => {
+    const grep = resolveToolDetail("grep", { pattern: "foo" }, false, undefined, "src/a.ts:1:foo");
+    expect(grep?.kind).toBe("text");
+    expect(grep?.kind === "text" && grep.body).toBe("src/a.ts:1:foo");
+
+    // 多行结果**一行都不少**：早先的写法把首行当「身份行」摘出去，
+    // 而 glob 的首行是第一个路径 —— 那等于吞掉一条结果（见 splitToolText 的说明）
+    const glob = resolveToolDetail("glob", undefined, false, { pattern: "**/*.ts" }, "a.ts\nb.ts");
+    expect(glob?.kind).toBe("text");
+    expect(glob?.kind === "text" && glob.body).toBe("a.ts\nb.ts");
+
+    // 尾注与正文分开：方括号整行是元信息（limit 说明、分页提示），不是内容
+    const limited = resolveToolDetail(
+      "glob",
+      undefined,
+      false,
+      undefined,
+      "a.ts\n[Limit 200 reached]",
+    );
+    expect(limited?.kind === "text" && limited.body).toBe("a.ts");
+    expect(limited?.kind === "text" && limited.footer).toBe("[Limit 200 reached]");
   });
 });
 
@@ -640,10 +720,12 @@ describe("resolveToolDetail · 后台作业", () => {
     expect(jobs?.batch).toEqual([good]);
   });
 
-  it("失败闸门仍然生效：一次报错的作业调用不给作业卡片", () => {
-    // resolveToolDetail 的第一道判断：isError 一律 null。调用侧（ToolCallPart）对作业另开一条
-    // 分支直接读 details，正是为了绕开它 —— 作业失败本身就是要显示成「失败」的状态 pill
-    expect(resolveToolDetail("bash_background", { job: jobInfo() }, true)).toBeNull();
+  it("失败时作业仍然给作业卡片（失败正是它要显示的结论）", () => {
+    // 作业在 resolveToolDetail 里**不看失败闸门**：作业失败本身就是这颗 pill 要显示的结论，
+    // 藏起来反而看不出「它跑挂了」。调用侧（ToolCallPart）另有一条分支直接读 details，
+    // 正是为了确保失败态也能显示成「失败」而不是红叉工具行。
+    const detail = resolveToolDetail("bash_background", { job: jobInfo() }, true);
+    expect(detail?.kind).toBe("job");
   });
 });
 

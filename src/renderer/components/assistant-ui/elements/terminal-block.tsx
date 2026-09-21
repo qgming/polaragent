@@ -27,6 +27,9 @@ export function TerminalBlock({
   const ink = variant === "ink";
 
   return (
+    // paper 面 + rounded-2xl 是**工具详情的标准外壳**，其余详情组件照这个来
+    //（见 tool-call.tsx 展开区与各详情组件的同款说明）。
+    // variant="ink" 是自带深色底的特例（会话面板里给终端用）。
     <div
       data-slot="terminal-block"
       className={cn(

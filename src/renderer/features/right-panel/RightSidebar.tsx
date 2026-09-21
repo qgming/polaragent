@@ -7,6 +7,7 @@ import { cn } from "@/renderer/lib/utils";
 import { type RightPanelTab, type RightPanelView, useUiStore } from "@/renderer/stores/ui-store";
 import { BrowserPanel } from "./BrowserPanel";
 import { FilesPanel } from "./FilesPanel";
+import { FileViewPanel } from "./FileViewPanel";
 import { RIGHT_PANEL_VIEW_META } from "./panel-meta";
 import { ReviewPanel } from "./ReviewPanel";
 import { RightPanelChooser } from "./RightPanelChooser";
@@ -261,6 +262,8 @@ function TransientPanel({ view }: { view: Exclude<RightPanelView, "browser"> }):
       return <ReviewPanel />;
     case "files":
       return <FilesPanel />;
+    case "file":
+      return <FileViewPanel />;
     case "subagent":
       return <SubagentPanel />;
     case "terminal":

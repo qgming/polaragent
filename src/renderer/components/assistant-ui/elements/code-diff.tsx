@@ -38,7 +38,9 @@ export function CodeDiff({
   return (
     <div
       data-slot="code-diff"
-      // 相对正文缩放（12/14 基准）：diff 正文跟随对话字号
+      // 相对正文缩放（12/14 基准）：diff 正文跟随对话字号。
+      // paper 面 + rounded-2xl 是**工具详情的标准外壳**，其余详情组件照这个来
+      //（见 tool-call.tsx 展开区与各详情组件的同款说明）。
       className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]", className)}
       {...props}
     >

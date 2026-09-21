@@ -42,6 +42,8 @@ import {
   UserMessageParts,
 } from "./message-parts";
 import { isMessageSequenceSynced } from "./message-seq";
+import { TurnFiles } from "./TurnFiles";
+import { turnFileSummaries } from "./turn-files";
 import { useStickToBottom } from "./use-stick-to-bottom";
 
 /**
@@ -351,6 +353,16 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
   const sessionMessages = useChatStore((s) =>
     s.activeSessionId === null ? undefined : s.messagesBySession[s.activeSessionId],
   );
+  /**
+   * 会话工作目录：只用来把工具参数里的相对路径拼成绝对路径（点卡片时要交给主进程的是
+   * 绝对路径）。选字符串而不是整个 session 对象 —— zustand 按引用比较，返回对象会让
+   * 每次 sessions 变化都重渲染整个 Thread。
+   */
+  const sessionCwd = useChatStore((s) =>
+    s.activeSessionId === null
+      ? undefined
+      : s.sessions.find((item) => item.id === s.activeSessionId)?.cwd,
+  );
 
   /**
    * 向上滚到顶就看更早的消息：不要求用户去点按钮。
@@ -435,6 +447,35 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
     if (messages[i]?.role !== "assistant") break;
     activeRunStart = i;
   }
+
+  /**
+   * 当前会话是否还在跑（主进程 run-started / run-ended 写的权威信号）。
+   *
+   * 用来决定「本轮文件改动」什么时候出块：**整轮结束才出**（见 turn-files 的说明）。
+   * 不用 aui 的 `thread.isRunning`：那个表达的是「渲染层的线程在流式」，
+   * 而这里要的是主进程那一侧「这一轮运行结束了没有」—— 两者在等审批 / 等提问
+   * 这类挂起态上并不一致，而正是那些中间态造成了「中途闪一下」。
+   */
+  const runRunning = useChatStore(
+    (s) => s.activeSessionId !== null && s.runningBySession[s.activeSessionId] === true,
+  );
+
+  /**
+   * 逐回合的文件改动，按「回合最后一条消息 id」索引（见 turn-files 的说明）。
+   *
+   * 真值取自 store 的 `sessionMessages` 而不是渲染用的 `messages`：两者在流式期可能
+   * 差一条尾部乐观消息，而**算文件改动要以工具结果为准** —— 乐观消息里还没有工具调用，
+   * 用它对结果没有影响，但用 store 那份能与右栏审查面板看到的是同一份数据。
+   *
+   * 依赖整个消息数组：一次工具调用落地（新消息、或最后一条消息多出 tool-call）都要重算。
+   * memo 的键是数组引用，而 store 在流式期每个 flush 都会换引用 —— 代价是这条纯函数
+   * 每 flush 跑一次。它只遍历 parts 且不看 result 正文（只看 details.patch），
+   * 在一次几十条消息的会话里是微秒级，不值得为它再造一层「结构签名」的缓存。
+   */
+  const turnFilesByMessage = useMemo(
+    () => turnFileSummaries(sessionMessages ?? [], sessionCwd, !runRunning),
+    [sessionMessages, sessionCwd, runRunning],
+  );
 
   return (
     <ThreadPrimitive.Root
@@ -523,6 +564,8 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
               const isRunEnd = next?.role !== "assistant";
               // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
               const isRunStart = index === activeRunStart;
+              // 本回合的文件改动挂在这一回合**最后一条**消息下面（见 turn-files 的说明）
+              const turnFiles = turnFilesByMessage.get(message.id);
               return (
                 <Fragment key={message.id}>
                   {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
@@ -546,6 +589,12 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
                         />
                       </IsRunStartContext.Provider>
                     </IsRunEndContext.Provider>
+                    {/*
+                      「本轮文件改动」挂在消息**之外**（同级的下一块），不在消息根里面：
+                      消息根带着 hover 操作栏与消息操作（复制/重试/分支）的语义，
+                      把这一块塞进去会让「复制这条消息」把它也算作消息内容。
+                    */}
+                    {turnFiles !== undefined && <TurnFiles summary={turnFiles} />}
                   </div>
                 </Fragment>
               );

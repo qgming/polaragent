@@ -411,6 +411,8 @@ interface ChatState {
   editUserMessage(messageId: string, text: string): Promise<void>;
   stop(): Promise<void>;
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
+  /** 撤销一条还没被消费的排队消息（entryId 即 QueuedMessage.id）；失败只记日志 */
+  cancelQueued(entryId: string): Promise<void>;
   compact(instructions?: string): Promise<void>;
   /** 重新生成最后一条助手回复：截断到最后一条用户消息并重发 */
   reload(): Promise<void>;
@@ -810,6 +812,25 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
     await window.oint.chat.queue(sessionId, text, mode);
+  },
+
+  /**
+   * 撤销一条还没被消费的排队消息。
+   *
+   * **不在这里本地删**：队列的真值来自主进程的 `queue-updated` 事件（它映射内核的
+   * queue_update）。本地先删一次会在「那条恰好已经被 lane 取走」时造成界面与真相对不上
+   *（消息其实发出去了，行却先消失了，随后事件又把它带回列表 —— 视觉上是闪一下）。
+   * 所以这里只发命令，界面等事件收正；失败也**不弹错**（already_consumed / not_found
+   * 都是正常竞态，见主进程的说明）。
+   */
+  async cancelQueued(entryId) {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return;
+    try {
+      await window.oint.chat.cancelQueued(sessionId, entryId);
+    } catch (failure) {
+      console.warn(`撤销排队消息失败：${String(failure)}`);
+    }
   },
 
   async compact(instructions) {

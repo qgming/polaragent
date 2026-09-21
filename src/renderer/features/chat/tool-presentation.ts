@@ -15,6 +15,8 @@ import {
   SUBAGENT_TOOL_NAMES,
   subagentRunsFromDetails,
 } from "@/renderer/stores/subagent-store";
+import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
+import type { AskAnswerItem, AskOutcome, AskQuestion } from "@/shared/contracts/interaction";
 import type { JobInfo } from "@/shared/contracts/job";
 import {
   isSubagentRunFinished,
@@ -35,6 +37,24 @@ export const JOB_TOOL_NAMES = ["bash_background", "job_output", "job_list", "job
 
 /** chip 里主参数的展示上限：完整请求在展开面板里，这里只做客串 */
 export const CHIP_LIMIT = 64;
+
+/**
+ * 空结果时的一句话。
+ *
+ * 「没有匹配」「文件是空的」本身就是答案 —— 给一个纯白面板会让人以为界面坏了。
+ */
+const EMPTY_RESULT_HINT = "（没有内容）";
+
+/**
+ * 浏览器工具名的取值集合。
+ *
+ * 从 `BROWSER_TOOL_NAMES` 的对象值里推出来（那个常量是工具名与权限表共用的唯一来源），
+ * 而不是在渲染层再抄一份字面量数组 —— 抄一份就会在加工具时漏改。
+ */
+const BROWSER_TOOL_NAMES_VALUES: readonly string[] = Object.values(BROWSER_TOOL_NAMES);
+
+/** 提问的工具名。与主进程 tools/ask.ts 的 ASK_TOOL_NAME 同一个字面量（渲染层不 import 主进程） */
+const ASK_TOOL_NAME = "ask_user";
 
 /** bash 只留末尾这么多行：关键结论（报错、统计、列表）通常在结尾 */
 export const BASH_TAIL_LINES = 30;
@@ -428,7 +448,75 @@ export type ToolDetail =
       truncated: boolean;
       answer?: string;
     }
-  | { kind: "web-fetch"; url: string; statusCode: number; title?: string };
+  | { kind: "web-fetch"; url: string; statusCode: number; title?: string }
+  /** 提问：模型问了什么、用户答了什么（见 parseAskDetail） */
+  | AskDetailData
+  /** 文本类工具（read / grep / glob / 报错 / 兜底）：正文原样展示 */
+  | TextDetailData
+  /** 写入：文件路径 + 规模 + 正文预览（write 的 details 是 undefined） */
+  | WriteDetailData
+  /** 浏览器工具的通用结果：tab 身份 + 读数行 + 条目列表 */
+  | BrowserDetailData;
+
+/**
+ * 提问详情：一次 ask_user 调用的问题与答案。
+ *
+ * `questions` 与 `answers` 按 `questionId` 配对后交给界面渲染 —— 配对放在这里而不是组件里，
+ * 是因为「哪道题答了什么」是纯逻辑，而组件里做配对会让它没法被单测覆盖。
+ */
+export interface AskDetailData {
+  kind: "ask";
+  outcome: AskOutcome;
+  questions: AskQuestion[];
+  /** 每题的作答；未作答的题也会有一条（selected 为空数组） */
+  answers: AskAnswerItem[];
+}
+
+/**
+ * 文本类详情：工具的正文就是内容。
+ *
+ * `header` 是工具自己拼在结果首行的那句（如 `tab t2` 或检索根），`footer` 是尾注
+ * （分页提示、省略说明）—— 两者都要与正文分开渲染：尾注是**元信息**不是内容，
+ * 混在正文里会让用户以为文件真的长那样（read 的 `[Showing lines …]` 就是典型）。
+ */
+export interface TextDetailData {
+  kind: "text";
+  body: string;
+  /**
+   * 尾注（分页提示、省略说明、`[exited with code N]`）。
+   *
+   * 与正文分开渲染：它是**元信息**不是内容 —— 混在正文里会让人以为文件真的长那样
+   *（read 的 `[Showing lines …]` 就是典型）。
+   */
+  footer?: string;
+  /** 结果为空（没有匹配、空文件）时给一句说明，避免渲染一个空白面板 */
+  emptyText?: string;
+}
+
+/** 写入详情：write 的 details 是 undefined，只能从参数与结果里取 */
+export interface WriteDetailData {
+  kind: "write";
+  path: string;
+  /** 写入的字符数；拿不到时 undefined（不编造一个 0） */
+  bytes?: number;
+  /** 写入的正文预览（前若干行，给「我到底写了什么」一个落点） */
+  preview?: string;
+}
+
+/** 浏览器工具的详情：tab 身份 + 键值行 + 可选的条目列表 */
+export interface BrowserDetailData {
+  kind: "browser";
+  /** 形如 "t2"；缺省表示这次调用没有指定标签（工具会在正文里说明） */
+  tabId?: string;
+  /** 摘要行：角色 + 名字（如 `button · 提交`），或状态、数量这类读数 */
+  fields: { label: string; value: string }[];
+  /** 逐条内容（快照的元素清单、控制台日志、网络记录） */
+  entries?: { kind?: "info" | "error"; text: string }[];
+  /** 列表被截断时的一句说明 */
+  omittedText?: string;
+  /** 结果正文（浏览器工具的结果本身就是给人看的文本，原样保留一份） */
+  body?: string;
+}
 
 /** WebSource 的逐项校验：details 从主进程过来是 unknown，必须自己验 */
 function parseWebSources(value: unknown): WebSource[] | null {
@@ -485,73 +573,448 @@ export function parseWebFetchDetail(
   const title = typeof value.title === "string" && value.title !== "" ? value.title : undefined;
   return { kind: "web-fetch", url, statusCode, ...(title === undefined ? {} : { title }) };
 }
+
+/**
+ * ask_user 的 details → 提问详情。
+ *
+ * 这是**唯一**一次把「模型问了什么、用户答了什么」拿出来给人看的地方：提问卡在提交后
+ * 就从消息流里撤掉了（见 chat-store 的 ask-resolved），会话里只剩这条工具行。
+ * 所以解析必须宽容到「哪怕 outcome 缺失也要能显示出题面」—— 出题是用户最想回看的东西，
+ * 不该因为一个字段的类型不对就整块不显示。
+ *
+ * `questions` 是必需项（没有题面就没有可显示的内容）；`answers` 缺失时按「全都没作答」处理，
+ * 而不是返回 null：超时 / 取消两种收尾本来就没有作答。
+ */
+export function parseAskDetail(value: unknown): AskDetailData | null {
+  if (!isRecord(value)) return null;
+
+  const rawQuestions = value.questions;
+  if (!Array.isArray(rawQuestions)) return null;
+
+  const questions: AskQuestion[] = [];
+  for (const item of rawQuestions) {
+    if (!isRecord(item)) continue;
+    const { id, header, question, options, multiSelect } = item;
+    if (typeof id !== "string" || id === "") continue;
+    if (typeof question !== "string" || question === "") continue;
+    const label = typeof header === "string" && header !== "" ? header : question;
+    const list =
+      Array.isArray(options) && options.every((option) => typeof option === "string")
+        ? (options as string[])
+        : undefined;
+    questions.push({
+      id,
+      header: label,
+      question,
+      ...(list === undefined ? {} : { options: list }),
+      ...(multiSelect === true ? { multiSelect: true } : {}),
+    });
+  }
+  // 一道题都没解析出来：没有可显示的内容，让调用方退回通用文本面板
+  if (questions.length === 0) return null;
+
+  const answers: AskAnswerItem[] = [];
+  if (Array.isArray(value.answers)) {
+    for (const item of value.answers) {
+      if (!isRecord(item)) continue;
+      const { questionId, selected, text } = item;
+      if (typeof questionId !== "string" || questionId === "") continue;
+      const picked = Array.isArray(selected)
+        ? selected.filter((option): option is string => typeof option === "string")
+        : [];
+      const free = typeof text === "string" && text.trim() !== "" ? text : undefined;
+      answers.push({
+        questionId,
+        selected: picked,
+        ...(free === undefined ? {} : { text: free }),
+      });
+    }
+  }
+
+  const outcome: AskOutcome =
+    value.outcome === "answered" || value.outcome === "unanswered" || value.outcome === "cancelled"
+      ? value.outcome
+      : "answered";
+
+  return { kind: "ask", outcome, questions, answers };
+}
+
+/**
+ * 把工具结果文本拆成 body / footer 两段。
+ *
+ * 依据是**本仓库所有文本类工具共同的结果形状**：正文若干行，末尾是可选的方括号尾注
+ *（`[Showing lines 1-50 of 200. Use offset=51 …]`、`[exited with code 0]`）。
+ *
+ * 判据取「以 `[` 开头且以 `]` 结尾的整行」而不是正则匹配具体文案：尾注的措辞由内核与
+ * 各工具自己写（read 的两种、grep/glob 的 limit 说明、bash 的 fullOutputPath），
+ * 逐条匹配文案会在内核改一个字之后静默失效。方括号整行是它们共同的形态。
+ *
+ * **刻意不切「首行当 header」**。那是第一版的写法，判据是「多行结果的首行是身份行」——
+ * 实测下它错得离谱：read 的首行是第一个行号行、grep 的是第一条命中、glob 的是第一个路径，
+ * 全都被当成身份行从正文里摘了出去。真正有身份行的只有浏览器工具（`tab t2`），
+ * 而它们现在走 BrowserDetail（tabId 从 details 里结构化取），不需要这条通用启发式。
+ */
+export function splitToolText(text: string): { body: string; footer?: string } {
+  const trimmed = text.replace(/\n+$/, "");
+  if (trimmed === "") return { body: "" };
+
+  const lines = trimmed.split("\n");
+
+  // 尾注：从末尾往前收集连续的方括号行（有的结果会连写两行）
+  let end = lines.length;
+  const footer: string[] = [];
+  while (end > 0) {
+    const line = (lines[end - 1] ?? "").trim();
+    if (line.startsWith("[") && line.endsWith("]")) {
+      footer.unshift(lines[end - 1] ?? "");
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    // 收掉尾注前那个空行：内核统一用 "\n\n[…]" 分隔正文与尾注，
+    // 留着会在正文末尾多出一条空白（正文与尾注之间本来就有分隔线）
+    body: lines.slice(0, end).join("\n").replace(/\n+$/, ""),
+    ...(footer.length === 0 ? {} : { footer: footer.join("\n") }),
+  };
+}
+
+/**
+ * 文本类工具的详情：结果文本拆成正文与尾注。
+ *
+ * 失败态也会走到这里（见 resolveToolDetail）：报错文本本身就是内容，
+ * 而 `Error: …` 那一行常常多行成段 —— 旧的 Request/Result 面板把换行压平之后，
+ * 最需要读的那段反而糊成了一整行。
+ */
+export function parseTextDetail(result: unknown, emptyText?: string): TextDetailData | null {
+  const text = toolResultText(result);
+  if (text === "") {
+    return emptyText === undefined ? null : { kind: "text", body: "", emptyText };
+  }
+  const split = splitToolText(text);
+  return {
+    kind: "text",
+    body: split.body,
+    ...(split.footer === undefined ? {} : { footer: split.footer }),
+    ...(emptyText === undefined ? {} : { emptyText }),
+  };
+}
+
+/**
+ * write 的参数 → 详情：路径是必填，正文从参数里取。
+ *
+ * **刻意不接收 result**：内核对 write 只回一句 `Successfully wrote to <path>`（没有字节数），
+ * 唯一有内容的来源就是参数里的 `content`。多收一个用不上的参数只会让调用方以为它在起作用。
+ */
+export function parseWriteDetail(args: unknown): WriteDetailData | null {
+  if (!isRecord(args)) return null;
+  const path = typeof args.path === "string" && args.path !== "" ? args.path : null;
+  if (path === null) return null;
+
+  const content = typeof args.content === "string" ? args.content : undefined;
+  // 结果里的字节数：内核对 write 只回 "Successfully wrote to <path>"（没有数字），
+  // 所以这里按**参数的正文长度**给规模，并明确它是字符数而不是磁盘字节数
+  const bytes = content === undefined ? undefined : content.length;
+
+  return {
+    kind: "write",
+    path,
+    ...(bytes === undefined ? {} : { bytes }),
+    ...(content === undefined ? {} : { preview: content.slice(0, 4000) }),
+  };
+}
+
+/**
+ * 浏览器工具的详情：把 details 里的结构化读数摊平成「标签 + 值」行。
+ *
+ * 每个工具的 details 形状都不同（open 给页面状态、snapshot 给快照、logs 给日志报告……），
+ * 逐个写一套组件会让这九个工具各有一张卡，而它们的**共同点**是「这次调用读到了什么」。
+ * 所以这里做一次通用摊平：已知形状给专门的字段名，其余按原字段名直出 ——
+ * 结果是「至少不会什么都没显示」，而不是「认不出就什么都不显示」（这正是当前的毛病）。
+ *
+ * 快照的元素清单、控制台日志、网络记录这三类**有列表价值**的进 entries，
+ * 其余进 fields。列表上限与对话流里的其它详情一致：长了内部滚动，不把消息撑爆。
+ */
+export function parseBrowserDetail(
+  toolName: string,
+  details: unknown,
+  result: unknown,
+): BrowserDetailData | null {
+  const fields: BrowserDetailData["fields"] = [];
+  const entries: BrowserDetailData["entries"] = [];
+  let omittedText: string | undefined;
+  let tabId: string | undefined;
+
+  const record = isRecord(details) ? details : null;
+
+  // tab 身份：九个浏览器的 details 都带 tabId（或 state.tabId）
+  if (record !== null) {
+    if (typeof record.tabId === "string" && record.tabId !== "") tabId = record.tabId;
+  }
+
+  if (toolName === BROWSER_TOOL_NAMES.snapshot && record !== null) {
+    // 快照：可见文本 + 可交互元素清单
+    if (typeof record.url === "string" && record.url !== "") {
+      fields.push({ label: "url", value: record.url });
+    }
+    if (typeof record.title === "string" && record.title !== "") {
+      fields.push({ label: "title", value: record.title });
+    }
+    if (Array.isArray(record.elements)) {
+      for (const element of record.elements) {
+        if (!isRecord(element)) continue;
+        const ref = typeof element.ref === "string" ? element.ref : "";
+        const role = typeof element.role === "string" ? element.role : "";
+        const name = typeof element.name === "string" ? element.name : "";
+        const value = typeof element.value === "string" ? element.value : "";
+        const head = [ref, role].filter((piece) => piece !== "").join(" ");
+        const tail = value === "" ? name : `${name} = ${value}`;
+        entries.push({ text: [head, tail].filter((piece) => piece !== "").join("  ") });
+      }
+    }
+    // 被截断的条数必须说出来：不说的话「页面就这么多」是错误的结论
+    if (isRecord(record.omitted)) {
+      const parts: string[] = [];
+      if (typeof record.omitted.elements === "number" && record.omitted.elements > 0) {
+        parts.push(`${record.omitted.elements} elements`);
+      }
+      if (typeof record.omitted.textChars === "number" && record.omitted.textChars > 0) {
+        parts.push(`${record.omitted.textChars} chars`);
+      }
+      if (parts.length > 0) omittedText = `omitted: ${parts.join(", ")}`;
+    }
+    if (typeof record.text === "string" && record.text.trim() !== "") {
+      // 可见文本进 body（它是大段正文，不适合按「标签: 值」渲染）
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.logs && record !== null) {
+    if (Array.isArray(record.entries)) {
+      for (const entry of record.entries) {
+        if (!isRecord(entry)) continue;
+        const level = typeof entry.level === "string" ? entry.level : "";
+        const text = typeof entry.text === "string" ? entry.text : "";
+        const source = typeof entry.source === "string" ? entry.source : "";
+        const line = typeof entry.line === "number" ? `:${entry.line}` : "";
+        const where = source === "" ? "" : ` (${source}${line})`;
+        entries.push({
+          kind: level === "error" ? "error" : "info",
+          text: `${level} ${text}${where}`.trim(),
+        });
+      }
+    }
+    if (typeof record.dropped === "number" && record.dropped > 0) {
+      omittedText = `${record.dropped} filtered out`;
+    }
+    if (typeof record.total === "number")
+      fields.push({ label: "total", value: String(record.total) });
+    if (typeof record.truncated === "boolean") {
+      fields.push({ label: "truncated", value: String(record.truncated) });
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.evaluate && record !== null) {
+    if (record.ok === true) {
+      const value = typeof record.value === "string" ? record.value : "";
+      fields.push({ label: "result", value: value === "" ? "(no value)" : value });
+    } else if (typeof record.error === "string") {
+      entries.push({ kind: "error", text: record.error });
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.screenshot && record !== null) {
+    if (typeof record.width === "number" && typeof record.height === "number") {
+      fields.push({ label: "viewport", value: `${record.width}×${record.height}` });
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.wait && record !== null) {
+    if (typeof record.matched === "boolean") {
+      fields.push({ label: "matched", value: String(record.matched) });
+    }
+    if (typeof record.waitedMs === "number") {
+      fields.push({ label: "waited", value: `${record.waitedMs}ms` });
+    }
+    if (typeof record.detail === "string" && record.detail !== "") {
+      fields.push({ label: "detail", value: record.detail });
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.act && record !== null) {
+    // 动作回执：点了哪个元素、名字是什么、页面有没有跳走
+    if (typeof record.ref === "string" && record.ref !== "") {
+      fields.push({ label: "ref", value: record.ref });
+    }
+    if (typeof record.name === "string" && record.name !== "") {
+      fields.push({ label: "name", value: record.name });
+    }
+    if (typeof record.navigated === "boolean") {
+      fields.push({ label: "navigated", value: String(record.navigated) });
+    }
+    if (typeof record.effect === "string" && record.effect !== "") {
+      fields.push({ label: "effect", value: record.effect });
+    }
+  } else if (toolName === BROWSER_TOOL_NAMES.dialog && record !== null) {
+    if (isRecord(record.policy) && typeof record.policy.action === "string") {
+      fields.push({ label: "policy", value: record.policy.action });
+    }
+    if (typeof record.handledSinceLastRead === "number") {
+      fields.push({ label: "handled", value: String(record.handledSinceLastRead) });
+    }
+  } else if (record !== null) {
+    /**
+     * 剩下的（open / history，以及将来新增的浏览器工具）：按原字段名直出。
+     * 通用兜底在这儿是**刻意**的 —— 认不出的形状也要显示出来，
+     * 而不是像现在这样落回一个「Request/Result」的空壳。
+     * `state` 是 open/history 的嵌套对象，摊平一层（值是原始类型才收）。
+     */
+    const source = isRecord(record.state) ? { ...record, ...record.state } : record;
+    for (const [key, value] of Object.entries(source)) {
+      if (key === "state" || key === "tabId") continue;
+      if (value === undefined || value === null) continue;
+      if (typeof value === "object") continue;
+      fields.push({ label: key, value: String(value) });
+    }
+  }
+
+  /**
+   * 结果正文：浏览器工具的结果本身就是给人看的（tab 行 + 格式化正文），
+   * 详情里已经有结构化读数时它仍然值得留一份 —— 两份是**互补**的，
+   * 读数答「发生了什么」，正文答「原文长什么样」。
+   */
+  const body = toolResultText(result);
+
+  /**
+   * 四样里任何一样有内容就给详情。
+   *
+   * `omittedText` **必须算进来**：一份「元素全被截断、正文也被截断」的快照可能
+   * 一个字段一个条目都没有，只剩这句「省略了多少」—— 而那句话恰恰是唯一的信息
+   *（不说的话，读到的就是「页面就这么多」这个错误结论）。
+   */
+  if (fields.length === 0 && entries.length === 0 && body === "" && omittedText === undefined) {
+    return null;
+  }
+
+  return {
+    kind: "browser",
+    ...(tabId === undefined ? {} : { tabId }),
+    fields,
+    ...(entries.length === 0 ? {} : { entries }),
+    ...(omittedText === undefined ? {} : { omittedText }),
+    ...(body === "" ? {} : { body }),
+  };
+}
 /**
  * 选展开面板的渲染方式，并把要用的数据一并解析好。
  *
- * - 失败一律不给详情：`ToolCall` 的收尾标记只有绿勾，报错会被读成成功，改由调用侧走 `ToolFallback`。
- * - Task 系列（委派 / 等待 / 列表 / 停止）的 details 里挂的是那条运行记录：有记录就给子智能体卡片，
- *   没记录（比如「等全部结束」这种不带具体运行的调用）落回内置文本面板。**这道判断必须在
- *   失败闸门之后**：一次启动失败的委派不该显示成一张成功的卡片。
- * - edit 要有能解析出内容的 patch 才算数；解析不出来就当没有详情，让它落回内置的文本面板，
- *   而不是给一个空块。
- * - bash 的输出本身就是内容，直接给终端渲染。
- * - todo 有清单就给 TodoList：优先 details；流式期 details 还没到，退回工具参数里的清单。
- * - grep / glob 的输出本身就是纯文本，交给内置的 Request/Result 面板。
- * - 其余（read / write / 未知工具）没有更贴的组件，保持内置面板。
+ * ## 失败不再一律取消详情（这条是这次改动最要紧的一处）
+ *
+ * 早先第一行是 `if (isError) return null`，于是**失败的工具恰恰没有详情** ——
+ * 而失败输出的多行特征最强（栈、编译错误、命中列表），落到那个不保留换行的文本面板上
+ * 就被压成一整行。现在失败走「文本详情」这条路：报错文本本身就是内容，
+ * 交给 TextDetail 按原文渲染（保留换行、等宽）。
+ *
+ * 少数工具失败时仍然没有结构化读数可给（比如 edit 没有 patch），于是退回文本详情 ——
+ * 那正是想要的兜底，而不再是「什么都没有」。
+ *
+ * ## 顺序
+ *
+ * 1. 子智能体四件套 → 状态 pill（形状与工具行差太远，连 ToolCall 都不进）
+ * 2. 后台作业四件套 → 状态 pill（同上）
+ * 3. ask_user → 问题与作答（会话里唯一还能回看答案的地方）
+ * 4. bash / edit / todo / web_* → 各自的专属详情
+ * 5. 浏览器九件套 → 通用「读数 + 条目」详情
+ * 6. read / write / grep / glob / 及其余 → 文本详情（read 额外给文件头）
+ *
+ * 最后那条兜底是这次改动的另一半：**未知工具也给文本详情**，不再落回那个
+ * Request/Result 面板。那个面板已经被删掉了（见 tool-call.tsx）。
  */
 export function resolveToolDetail(
   toolName: string,
   details: unknown,
   isError?: boolean,
   args?: unknown,
+  result?: unknown,
 ): ToolDetail | null {
-  if (isError === true) return null;
+  const failed = isError === true;
+
   if (SUBAGENT_TOOL_NAMES.includes(toolName)) {
     /**
      * 两种 details 形状都要认：Task 给一条运行记录，TaskWait / TaskList / TaskStop 给一批
-     * （{ runs: [...] }）。只认前一种的话后三个永远解析不出来，卡片会静默落回内置文本面板 ——
-     * 那正是这段注释最初想避免的结果。
+     * （{ runs: [...] }）。只认前一种的话后三个永远解析不出来，卡片会静默落回文本面板。
+     * 失败态不给卡片：一次启动失败的委派显示成「运行中」比显示成错误更糟。
      */
+    if (failed) return parseTextDetail(result);
     const single = parseSubagentRun(details);
     if (single !== null) return { kind: "subagent", ...toSubagentDetail(single) };
     const batch = subagentRunsFromDetails(details);
     // 取第一条当主体：上面已经排除了空批量，这里只为满足「下标可能越界」的类型约束
     const first = batch?.[0];
-    if (first === undefined) return null;
+    if (first === undefined) return parseTextDetail(result);
     return { kind: "subagent", ...toSubagentDetail(first), batchSize: batch?.length ?? 1 };
   }
+
   /**
    * 后台作业四件套：details 里是 `{ job }`（起 / 读 / 杀）或 `{ jobs }`（列表）。
    *
-   * 放在子智能体之后、bash 之前：作业的呈现方式与子智能体同形（状态 pill + 可展开输出），
-   * 而与 bash 的关系只是「都能跑命令」—— bash 是同步等待的、结果是文本，
-   * 作业是后台跑完的、结果是状态。混用同一张卡片会让「这个到底跑完了没」读不出来。
+   * 作业的详情**不看失败闸门**：作业失败本身就是这颗 pill 要显示的结论，
+   * 藏起来反而看不出「它跑挂了」。调用侧（ToolCallPart）对作业另开一条分支取它。
    */
   if (JOB_TOOL_NAMES.includes(toolName)) {
     const job = parseJobDetail(details);
     return job === null ? null : { kind: "job", ...job };
   }
-  if (toolName === "bash") return { kind: "terminal" };
-  // details 要等结果回来才有（message-converter 把它映射到 artifact）；工具参数在调用抵达时就有了
-  if (toolName === "todo") {
-    const todo = parseTodoDetail(details) ?? parseTodoArgs(args);
-    return todo === null ? null : { kind: "todo", ...todo };
-  }
-  /**
-   * 网络工具：results 是结构化来源列表（details 里带），比纯文本更适合做卡片 ——
-   * 标题可点、hostname 可见、snippet 折叠。
-   *
-   * 放在 `toolName !== "edit"` 那道硬门**之前**（见下面那行的注释：
-   * 新分支必须插在它之前，否则永远走不到）。
-   */
-  if (toolName === WEB_TOOL_NAMES.search) return parseWebSearchDetail(details);
-  if (toolName === WEB_TOOL_NAMES.fetch) return parseWebFetchDetail(details);
-  if (toolName !== "edit") return null;
 
-  const patch = detailsPatch(details);
-  if (patch === null) return null;
-  const diff = toEditDiff(patch);
-  return diff === null ? null : { kind: "diff", diff };
+  /**
+   * 提问：**失败也要给**。ask_user 一般不会失败（超时/取消都走成功结果 + outcome），
+   * 但真的出错时至少要能看到问的是什么 —— 那是用户唯一能回看题面的地方。
+   */
+  if (toolName === ASK_TOOL_NAME) {
+    const ask = parseAskDetail(details);
+    if (ask !== null) return ask;
+    return parseTextDetail(result);
+  }
+
+  if (toolName === "bash") return { kind: "terminal" };
+
+  if (toolName === "todo") {
+    // details 要等结果回来才有；工具参数在调用抵达时就有了（流式期靠它兜底）
+    const todo = parseTodoDetail(details) ?? parseTodoArgs(args);
+    return todo === null ? parseTextDetail(result) : { kind: "todo", ...todo };
+  }
+
+  if (toolName === WEB_TOOL_NAMES.search) {
+    return failed ? parseTextDetail(result) : parseWebSearchDetail(details);
+  }
+  if (toolName === WEB_TOOL_NAMES.fetch) {
+    return failed ? parseTextDetail(result) : parseWebFetchDetail(details);
+  }
+
+  if (toolName === "edit") {
+    const patch = failed ? null : detailsPatch(details);
+    const diff = patch === null ? null : toEditDiff(patch);
+    // 失败、或补丁解析不出来：退回文本详情（结果文本里写着为什么失败）
+    return diff === null ? parseTextDetail(result) : { kind: "diff", diff };
+  }
+
+  /**
+   * 浏览器九件套：通用读数 + 条目。
+   *
+   * 放在文本详情**之前**：这些工具的 details 里有 tab 身份、元素清单、日志条目这类
+   * 比纯文本更好读的东西。放在通用兜底之后它们就永远走不到了。
+   */
+  if (BROWSER_TOOL_NAMES_VALUES.includes(toolName)) {
+    const browser = parseBrowserDetail(toolName, details, result);
+    return browser ?? parseTextDetail(result);
+  }
+
+  // write：details 是 undefined，只能从参数里取路径与正文
+  if (toolName === "write") {
+    const write = parseWriteDetail(args);
+    if (write !== null) return write;
+    return parseTextDetail(result);
+  }
+
+  /**
+   * 兜底：read / grep / glob / MCP 工具 / 将来新增的一切。
+   *
+   * 这就是「不再有 Request/Result 面板」的落点 —— 认不出形状的工具也能看到**原文**，
+   * 而不是一个把换行压平的转储框。`emptyText` 给空结果一句说明，
+   * 免得渲染一个纯白面板（「没有匹配」本身就是答案，值得说出来）。
+   */
+  return parseTextDetail(result, EMPTY_RESULT_HINT);
 }
 
 /** 组内每一步在汇总快照里的形状 */

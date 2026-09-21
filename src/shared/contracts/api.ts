@@ -92,6 +92,14 @@ export interface OintApi {
     ): Promise<void>;
     stop(sessionId: string): Promise<void>;
     queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
+    /**
+     * 撤销一条还没被消费的排队消息。
+     *
+     * `entryId` 就是 `QueuedMessage.id`（主进程把它映射自内核 `queue_update` 的 entryId）。
+     * 已经开跑（被消费）或已经不存在的条目是**无操作**，不抛错 —— 用户点「移除」时那条
+     * 恰好被取走是正常竞态，为它弹一个错误只会让人以为操作失败。
+     */
+    cancelQueued(sessionId: string, entryId: string): Promise<void>;
     compact(sessionId: string, instructions?: string): Promise<void>;
     /**
      * 当前流式消息的完整快照（没有在流时为 null）。

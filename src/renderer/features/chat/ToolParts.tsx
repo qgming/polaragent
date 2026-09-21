@@ -32,11 +32,11 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  type AgentState,
-  AgentStatusList,
-  type StatusStep,
+import type {
+  AgentState,
+  StatusStep,
 } from "@/renderer/components/assistant-ui/elements/agent-status";
+import { AgentStatusList } from "@/renderer/components/assistant-ui/elements/agent-status";
 import { CodeDiff } from "@/renderer/components/assistant-ui/elements/code-diff";
 import { MarkdownBlock } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import { mono, paper } from "@/renderer/components/assistant-ui/elements/surfaces";
@@ -192,6 +192,243 @@ function TerminalDetail({
   );
 }
 
+/**
+ * 一段纯文本（read / grep / glob / 报错 / 未知工具的兜底）。
+ *
+ * 外壳与 CodeDiff / TerminalBlock 一致（paper 面 + rounded-2xl + 等宽小字）——
+ * 那是本仓工具详情的标准外观，展开哪一类工具都该长得像同一族。
+ *
+ * 三处细节都是为可读性定的：
+ *   · `whitespace-pre-wrap`（由 `pre` + `w-max min-w-full` 保证）—— 保住换行。
+ *     行号列、命中列表、栈全都靠它；旧面板缺这一条，多行结果被压成一整行。
+ *   · 等宽 —— read 的输出是 `行号 + Tab + 原文`，比例字体下行号列对不齐。
+ *   · 尾注单独一行 —— 它是元信息（分页提示、省略说明），不是文件内容。
+ */
+function TextDetail({ detail }: { detail: Extract<ToolDetail, { kind: "text" }> }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]")}>
+      {detail.body === "" ? (
+        // 空结果也要说一句：「没有匹配」本身就是答案，纯白面板看起来像界面坏了
+        <p className={cn(mono, "text-ink-4 px-3.5 py-2.5")}>
+          {detail.emptyText ?? t("tools.emptyResult")}
+        </p>
+      ) : (
+        <div className="app-scrollbar max-h-96 overflow-x-auto overflow-y-auto">
+          <pre className={cn(mono, "w-max min-w-full px-3.5 py-2.5 leading-relaxed")} dir="ltr">
+            {detail.body}
+          </pre>
+        </div>
+      )}
+      {detail.footer !== undefined && (
+        <p className={cn(mono, "text-ink-4 border-border/50 border-t px-3.5 py-1.5")}>
+          {detail.footer}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * write 的详情：路径 + 规模 + 正文预览。
+ *
+ * 外壳与 CodeDiff 同款（它本质就是「一次文件写入」的另一种呈现）。
+ *
+ * 为什么值得单独一档（而不是当纯文本）：write 的 results 只有一句
+ * 「Successfully wrote to <path>」，而用户真正想知道的是「写了什么」——
+ * 正文在**参数**里（details 是 undefined，内核没给补丁）。这里把它摊开，
+ * 于是「模型说写了 A、其实写了 B」这类事在会话里看得见。
+ */
+function WriteDetail({ detail }: { detail: Extract<ToolDetail, { kind: "write" }> }) {
+  const { t } = useTranslation();
+  const lines = detail.preview === undefined ? [] : detail.preview.split("\n");
+
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]")}>
+      <div className="border-border/50 flex items-center gap-2 border-b px-3.5 py-2">
+        <span className={cn(mono, "text-ink-2 min-w-0 flex-1 truncate")} dir="ltr">
+          {detail.path}
+        </span>
+        {detail.bytes !== undefined && (
+          <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>
+            {t("tools.writeChars", { count: detail.bytes })}
+          </span>
+        )}
+      </div>
+      {lines.length === 0 ? (
+        <p className={cn(mono, "text-ink-4 px-3.5 py-2.5")}>{t("tools.writeNoContent")}</p>
+      ) : (
+        <div className="app-scrollbar max-h-96 overflow-x-auto overflow-y-auto">
+          {/* 行号：与 read 的输出同一套阅读辅助，让人能把「写了第几行」对上 */}
+          <pre className={cn(mono, "w-max min-w-full px-3.5 py-2.5 leading-relaxed")} dir="ltr">
+            {lines.map((line, index) => `${index + 1}\t${line}`).join("\n")}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 提问详情：**每道题一行**，题面 + 用户选了什么。
+ *
+ * 外壳与 CodeDiff 同款。这是提问卡撤下之后会话里唯一还能回看答案的地方
+ *（见 chat-store 的 ask-resolved），所以要一次把全部问题与作答都摊开：
+ * 只显示第一题、或只显示一句「已回答」，都等于把用户最想回看的东西丢掉。
+ *
+ * 三种收尾各有各的说法：
+ *   · answered   —— 逐题列出选中项与自由输入；某题没作答就写「未作答」；
+ *   · unanswered —— 一行说明「超时未回应」（题面照常列出来，用户仍能回看问了什么）；
+ *   · cancelled  —— 一行说明「运行已停止」。
+ */
+function AskDetail({ detail }: { detail: Extract<ToolDetail, { kind: "ask" }> }) {
+  const { t } = useTranslation();
+  const byQuestion = useMemo(
+    () => new Map(detail.answers.map((answer) => [answer.questionId, answer])),
+    [detail.answers],
+  );
+
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl text-[0.86em]")}>
+      <div className="border-border/50 flex items-center gap-2 border-b px-3.5 py-2">
+        <span className={cn(mono, "text-ink-4 shrink-0")}>
+          {t("tools.askOutcome", { count: detail.questions.length })}
+        </span>
+        {detail.outcome !== "answered" && (
+          <span className={cn(mono, "text-ink-4 min-w-0 flex-1 truncate")}>
+            {t(detail.outcome === "unanswered" ? "tools.askUnanswered" : "tools.askCancelled")}
+          </span>
+        )}
+      </div>
+
+      <ul className="flex flex-col">
+        {detail.questions.map((question) => {
+          const answer = byQuestion.get(question.id);
+          const selected = answer?.selected ?? [];
+          const free = answer?.text?.trim() ?? "";
+          const answered = selected.length > 0 || free !== "";
+
+          return (
+            <li
+              key={question.id}
+              className="border-border/50 flex flex-col gap-1.5 border-b px-3.5 py-2.5 last:border-b-0"
+            >
+              {/* 题面：header 是短标签，question 是正文 —— 两行都留着，
+                  只给 header 会看不懂问的是什么，只给 question 会丢掉分组信息 */}
+              <div className="flex items-baseline gap-2">
+                <span className={cn(mono, "text-ink-4 shrink-0")}>{question.header}</span>
+                {question.multiSelect === true && (
+                  <span className={cn(mono, "text-ink-4 shrink-0")}>{t("ask.multiSelect")}</span>
+                )}
+              </div>
+              <p className="text-ink-2 text-[13px] leading-5 break-words">{question.question}</p>
+
+              {/* 作答：选中项做成胶囊（与提问卡上的选项同一手法），自由输入另起一行 */}
+              {answered ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {selected.map((option) => (
+                    <span
+                      key={option}
+                      className="bg-foreground/[0.06] text-foreground rounded-md px-2 py-0.5 text-xs"
+                    >
+                      {option}
+                    </span>
+                  ))}
+                  {free !== "" && (
+                    <span className="text-ink-2 min-w-0 text-xs break-words">{free}</span>
+                  )}
+                </div>
+              ) : (
+                <p className={cn(mono, "text-ink-4")}>{t("tools.askNoAnswer")}</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * 浏览器工具的详情：tab 身份 + 读数行 + 条目列表 + 原文。
+ *
+ * 外壳与 CodeDiff 同款（paper 面 + rounded-2xl）。
+ *
+ * 与 TextDetail 的分工：那个只管纯文本，而这个把 details 里的结构化读数摆出来
+ *（点了哪个元素、匹配到没有、快照里有哪些元素、控制台报了什么）——
+ * 那正是「读取了页面内容」这类调用最该回答的问题，而旧实现里它们点开什么都没有。
+ */
+function BrowserDetail({ detail }: { detail: Extract<ToolDetail, { kind: "browser" }> }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl font-mono text-[0.86em]")}>
+      {(detail.tabId !== undefined || detail.fields.length > 0) && (
+        <dl className="border-border/50 flex flex-col gap-1 border-b px-3.5 py-2">
+          {detail.tabId !== undefined && (
+            <div className="flex items-baseline gap-2">
+              <dt className={cn(mono, "text-ink-4 w-20 shrink-0")}>{t("tools.tab")}</dt>
+              <dd className={cn(mono, "text-ink-2 min-w-0 flex-1 truncate")}>{detail.tabId}</dd>
+            </div>
+          )}
+          {detail.fields.map((field) => (
+            <div key={field.label} className="flex items-baseline gap-2">
+              <dt className={cn(mono, "text-ink-4 w-20 shrink-0 truncate")}>{field.label}</dt>
+              {/* 值不截断换行显示：URL 与求值结果常常很长，截掉就没了信息 */}
+              <dd className={cn(mono, "text-ink-2 min-w-0 flex-1 break-all")} dir="ltr">
+                {field.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {detail.entries !== undefined && detail.entries.length > 0 && (
+        <ul className="app-scrollbar max-h-80 overflow-y-auto">
+          {detail.entries.map((entry) => (
+            <li
+              // key 用内容本身：条目来自 DOM 快照与控制台日志，没有稳定 id，
+              // 而带下标的 key 会在列表前插时错位复用节点（biome 的 noArrayIndexKey 也是这条）。
+              // 同一份详情里重复文本会被 React 警告两次 —— 那比错位复用安全。
+              key={entry.text}
+              className={cn(
+                mono,
+                "border-border/40 flex gap-2 border-b px-3.5 py-1.5 last:border-b-0",
+                entry.kind === "error" ? "text-red-600 dark:text-red-400" : "text-ink-2",
+              )}
+            >
+              <span className="min-w-0 flex-1 break-words">{entry.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {detail.omittedText !== undefined && (
+        <p className={cn(mono, "text-ink-4 border-border/50 border-t px-3.5 py-1.5")}>
+          {detail.omittedText}
+        </p>
+      )}
+
+      {detail.body !== undefined && detail.body !== "" && (
+        <details className="border-border/50 border-t">
+          <summary className={cn(mono, "text-ink-4 cursor-pointer px-3.5 py-1.5")}>
+            {t("tools.browserRaw")}
+          </summary>
+          <div className="app-scrollbar max-h-72 overflow-x-auto overflow-y-auto">
+            <pre
+              className={cn(mono, "w-max min-w-full px-3.5 pt-1 pb-2.5 leading-relaxed")}
+              dir="ltr"
+            >
+              {detail.body}
+            </pre>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /** edit 的详情：文件名 + 增减行数 + 逐行 diff */
 function DiffDetail({ diff }: { diff: EditDiff }) {
   const { t } = useTranslation();
@@ -220,11 +457,18 @@ function DiffDetail({ diff }: { diff: EditDiff }) {
   );
 }
 
-/** todo 清单：与 TerminalBlock / CodeDiff 一样自带 paper 面与圆角，工具流里各详情外观保持一致 */
+/**
+ * todo 清单。
+ *
+ * 外壳与 CodeDiff / TerminalBlock 一致（paper 面 + rounded-2xl）——
+ * 那是本仓工具详情的标准外观，展开哪一类工具都该长得像同一族。
+ * （这里曾经写着「外层由 ToolCall 统一给」，但那个统一容器已经撤销：
+ * 外壳属于各详情自己，理由见 tool-call.tsx 的展开区说明。）
+ */
 function TodoDetail({ items, revision }: { items: TodoItem[]; revision?: number }) {
   const { t } = useTranslation();
   return (
-    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3 text-[0.86em]")}>
       <TodoList items={items} revision={revision} title={t("chat.todos")} />
     </div>
   );
@@ -233,10 +477,11 @@ function TodoDetail({ items, revision }: { items: TodoItem[]; revision?: number 
 /**
  * web_search 的来源列表卡片。
  *
- * 为什么值得一张专门的卡（而不是落回内置的 request/result 文本面板）：
- * 搜索结果的价值在**标题 + 域名 + 摘要**这三者的对应关系上，
- * 纯文本里它们被拼成一行 markdown 链接，用户要自己从 URL 里读域名去判断可信度。
- * 这里把 hostname 单独提出来（`text-ink-4` 的小字），点标题即外链。
+ * 结果的价值在**标题 + 域名 + 摘要**这三者的对应关系上：纯文本里它们被拼成一行
+ * markdown 链接，用户要自己从 URL 里读域名去判断可信度。这里把 hostname 单独提出来
+ * （`text-ink-4` 的小字），点标题即外链。
+ *
+ * 外壳与 CodeDiff / TerminalBlock 一致（paper 面 + rounded-2xl）。
  *
  * 外链交给系统浏览器：`app/window.ts` 的导航守卫会把外链 openExternal，
  * 所以这里**不要**自己 window.open（那会被守卫拒掉）。
@@ -244,7 +489,7 @@ function TodoDetail({ items, revision }: { items: TodoItem[]; revision?: number 
 function WebSearchDetail({ detail }: { detail: Extract<ToolDetail, { kind: "web-search" }> }) {
   const { t } = useTranslation();
   return (
-    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3 text-[0.86em]")}>
       <div className="flex items-center justify-between gap-2">
         <span className={cn(mono, "text-ink-4")}>
           {detail.provider}
@@ -287,31 +532,59 @@ function WebSearchDetail({ detail }: { detail: Extract<ToolDetail, { kind: "web-
 /**
  * web_fetch 的结果卡片。
  *
- * 只显示「取了哪个 URL、返回什么状态」——**正文不在这里**：
- * 它已经在工具结果文本里（模型看的就是那份），重复渲染会让长页面在界面上再铺一遍。
- * 展开区仍然是内置的 request/result 面板。
+ * 顶部一行状态（状态码 + hostname + 标题），**正文折叠在下面**。
+ *
+ * 早先这里只有那一行，配的注释说「正文已经在工具结果文本里，展开区仍是内置的
+ * request/result 面板」—— 但 detail 一旦存在，那个面板根本不会渲染（见旧版
+ * tool-call.tsx 的三元），于是页面正文在界面上彻底不可见。
+ * 现在正文就在这张卡里，折起来不占地方，想看时展开。
  */
-function WebFetchDetail({ detail }: { detail: Extract<ToolDetail, { kind: "web-fetch" }> }) {
+function WebFetchDetail({
+  detail,
+  result,
+}: {
+  detail: Extract<ToolDetail, { kind: "web-fetch" }>;
+  result: unknown;
+}) {
   const { t } = useTranslation();
   // 非 2xx 不是错误（见工具描述），但界面上要一眼看出「这个页面没取到内容」
   const failed = detail.statusCode < 200 || detail.statusCode >= 300;
+  const body = toolResultText(result);
+
   return (
-    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(mono, failed ? "text-destructive" : "text-ink-4")}
-          title={String(detail.statusCode)}
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl text-[0.86em]")}>
+      <div className="p-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(mono, failed ? "text-destructive" : "text-ink-4")}
+            title={String(detail.statusCode)}
+          >
+            {t("chat.webStatus", { status: detail.statusCode })}
+          </span>
+          <span className={cn(mono, "truncate text-ink-4")}>{hostnameOf(detail.url)}</span>
+        </div>
+        <a
+          href={detail.url}
+          className="mt-1 block text-[13.5px] leading-5 break-words text-primary hover:text-primary/80 hover:underline"
         >
-          {t("chat.webStatus", { status: detail.statusCode })}
-        </span>
-        <span className={cn(mono, "truncate text-ink-4")}>{hostnameOf(detail.url)}</span>
+          {detail.title ?? detail.url}
+        </a>
       </div>
-      <a
-        href={detail.url}
-        className="mt-1 block text-[13.5px] leading-5 break-words text-primary hover:text-primary/80 hover:underline"
-      >
-        {detail.title ?? detail.url}
-      </a>
+      {body !== "" && (
+        <details className="border-border/50 border-t">
+          <summary className={cn(mono, "text-ink-4 cursor-pointer px-3.5 py-1.5")}>
+            {t("tools.webFetchBody")}
+          </summary>
+          <div className="app-scrollbar max-h-96 overflow-x-auto overflow-y-auto">
+            <pre
+              className={cn(mono, "w-max min-w-full px-3.5 pt-1 pb-2.5 leading-relaxed")}
+              dir="ltr"
+            >
+              {body}
+            </pre>
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -864,19 +1137,24 @@ function ResolvedDetail({
   if (detail.kind === "todo") {
     return <TodoDetail items={detail.items} revision={detail.revision} />;
   }
+  // 提问：每道题一行，题面 + 用户选了什么（会话里唯一能回看答案的地方）
+  if (detail.kind === "ask") return <AskDetail detail={detail} />;
+  // 文本类（read / grep / glob / MCP / 兜底）：保留换行与等宽，header/footer 分开
+  if (detail.kind === "text") return <TextDetail detail={detail} />;
+  // 写入：路径 + 规模 + 带行号的正文预览
+  if (detail.kind === "write") return <WriteDetail detail={detail} />;
+  // 浏览器九件套：tab 身份 + 读数行 + 条目列表 + 可折叠原文
+  if (detail.kind === "browser") return <BrowserDetail detail={detail} />;
   // 委派在时间线里也是 pill：这一步可能是被折进 ToolTimeline 的 Task，展开后拿到的
   // 同样必须是状态而不是终端块（那条分支只服务 bash）
   if (detail.kind === "subagent") {
     return <SubagentStatus toolName={toolName} detail={detail} running={running} />;
   }
-  // 后台作业同样是状态 pill（与子智能体同形）：它「跑完没有」才是要害，
-  // 落到终端块里会被读成「一条命令的输出」
-  // 后台作业同样是状态 pill（与子智能体同形）：它「跑完没有」才是要害，
-  // 落到终端块里会被读成「一条命令的输出」。结果文本要传下去 —— 作业 pill 的展开区就是它
+  // 后台作业同样是状态 pill：它「跑完没有」才是要害。结果文本要传下去 ——
+  // 作业 pill 的展开区就是它
   if (detail.kind === "job") return <JobStatus detail={detail} result={result} />;
-  // 网络工具：搜索给来源列表、抓取给状态摘要；正文都留在展开区的内置文本面板里
   if (detail.kind === "web-search") return <WebSearchDetail detail={detail} />;
-  if (detail.kind === "web-fetch") return <WebFetchDetail detail={detail} />;
+  if (detail.kind === "web-fetch") return <WebFetchDetail detail={detail} result={result} />;
   return <TerminalDetail args={args} result={result} running={running} />;
 }
 
@@ -897,8 +1175,8 @@ function PartDetail({
   running: boolean;
 }) {
   const detail = useMemo(
-    () => resolveToolDetail(toolName, details, isError, args),
-    [toolName, details, isError, args],
+    () => resolveToolDetail(toolName, details, isError, args, result),
+    [toolName, details, isError, args, result],
   );
   if (detail === null) return null;
   return (
@@ -917,6 +1195,12 @@ function PartDetail({
  *
  * 订阅以展开状态为闸门：未展开时选择器恒返回 undefined，流式期间既不重渲染也不读 part。
  * bash 输出上限 256KB，若每一步都无条件订阅，一次工具输出之后的每个 token 都会把整段输出再读一遍。
+ *
+ * **返回 null 时要把 detail 一起撤掉**：`ToolTimeline` 只按 `detail !== undefined`
+ * 决定画不画展开箭头，而 `ToolRunGroup` 给每一步都挂了 detail 函数。这里返回 null
+ * 会在时间线里留下一个「点了没反应的箭头」（实测：展开区是一个只有 padding 的空 div）。
+ * 现在 PartDetail 恒有内容（兜底是文本详情），所以 null 只可能出现在 part 还没读到时 ——
+ * 那一帧由 ToolTimeline 的 `detail` 判空处理，调用侧见 ToolRunGroup。
  */
 function StepDetail({ index, open }: { index: number; open: boolean }) {
   const part = useAuiState((s) => (open ? s.message.parts[index] : undefined));
@@ -936,25 +1220,27 @@ function StepDetail({ index, open }: { index: number; open: boolean }) {
 
 /**
  * 单个工具调用：折叠行**统一**走官方 ToolCall，成功与失败的差别只体现在它的收尾标记与行色上
- * （`isError` → 红叉 + 整行转红）。rich 组件只作为它的 `detail` 出现在展开的面板里：
+ * （`isError` → 红叉 + 整行转红）。展开区的内容由 `resolveToolDetail` 决定：
  *
- * - edit 有可解析的 patch → detail 用 CodeDiff
- * - bash → detail 用 TerminalBlock
- * - todo 有清单 → detail 用 TodoList（details 未到时用工具参数里的清单兜底）
- * - **Task 系列是这条规则的例外**：一次委派不是一次工具调用，所以连 ToolCall 都不进 ——
- *   整条交给 SubagentStatus 的 agent-status 状态 pill，工具行那套（动词 / 参数 chip /
- *   展开看 request+result）一点不出现；details 为 null（记录缺失或调用失败）时照旧落回
- *   下面这条通用行
- * - 失败、以及其余（read / write / grep / glob / 未知）→ 不给 detail，保留内置的
- *   Request/Result 文本面板 —— 工具的错误文案本来就在 result 里，展开就能看到
+ * - edit 有可解析的 patch → CodeDiff；解析不出来 → 文本详情（报错原文）
+ * - bash → TerminalBlock
+ * - todo → TodoList（details 未到时用工具参数里的清单兜底）
+ * - ask_user → 逐题列出题面与作答
+ * - read / write / grep / glob / MCP / 未知 → 各自的文本类详情
+ * - 浏览器九件套 → tab 身份 + 读数 + 条目
+ * - **Task 与作业系列是例外**：它们连 ToolCall 都不进，整条交给状态 pill
+ *
+ * **展开区不再有「没有详情」这一档**：`resolveToolDetail` 的兜底是文本详情，
+ * 所以 detail 恒非空 —— 旧的 Request/Result 面板已随之下线（见 tool-call.tsx）。
+ * 这条是「点开却没有内容」那类问题的根治点：以前解析不出来就是 null，然后由那个面板
+ * 把多行结果压成一整行显示。
  *
  * 之前失败态是整行走 vendored ToolFallback：它的标记由 part 的 status 决定，而 aui 的 status
  * 只表达「跑没跑完」，于是失败也会渲染成绿勾 —— 读起来就是成功。失败标记现在由 ToolCall 的
  * isError 承担，不依赖 aui 的状态推导。
  *
  * edit 的补丁、todo 的清单与子智能体的运行记录都走 assistant-ui 的 `artifact` 槽位
- * （见 message-converter 的映射）：委派的运行记录仍然从 artifact 解析（resolveToolDetail →
- * SubagentDetailData），只是不再作为 ToolCall 的 detail 渲染。
+ * （见 message-converter 的映射）。
  */
 export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
   const { t } = useTranslation();
@@ -962,19 +1248,19 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
 
   const isError = props.isError === true;
   const detail = useMemo(
-    () => resolveToolDetail(props.toolName, props.artifact, isError, props.args),
-    [props.toolName, props.artifact, isError, props.args],
+    () => resolveToolDetail(props.toolName, props.artifact, isError, props.args, props.result),
+    [props.toolName, props.artifact, isError, props.args, props.result],
   );
 
   const labels = toolLabelKeys(props.toolName);
 
   /**
    * 委派 / 记账调用不套工具行：整条让给状态 pill。走的这条路不经过 ToolCall，于是
-   * 「动词 + 参数 chip + 折叠展开看 request/result」那层外壳一概不出现 ——
+   * 「动词 + 参数 chip + 折叠展开」那层外壳一概不出现 ——
    * 「不要是普通工具样式」指的就是这件事。
    *
-   * 只有 details 解析得出运行记录、且这次调用没失败（失败闸门在 resolveToolDetail 里）
-   * 才走这条分支；detail 为 null 时落回下面的通用行 —— 绝不给一枚编出来的状态：
+   * 只有 details 解析得出运行记录、且这次调用没失败（resolveToolDetail 在失败时改给文本详情）
+   * 才走这条分支；否则落回下面的通用行 —— 绝不给一枚编出来的状态：
    * 一次启动失败的委派显示成「运行中」，比显示成一条工具错误更糟。
    */
   if (detail !== null && detail.kind === "subagent") {
@@ -990,7 +1276,7 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
    * 后台作业同理，但**额外要一道过**：作业的成败由主进程回填成 isError（见 job-delivery），
    * 而失败态的作业仍然是一颗有结论的状态 pill（「失败」而不是红叉工具行）——
    * 那是这次调用的结果本身，藏进折叠行反而看不出「它跑挂了」。
-   * 所以这里不看 resolveToolDetail 那道失败闸门给的 null，直接从 details 取作业详情：
+   * 所以这里不看 resolveToolDetail 给的 null，直接从 details 取作业详情：
    * 作业的 details 在启动那一刻就带着完整快照，失败态也还在。
    */
   if (JOB_TOOL_NAMES.includes(props.toolName)) {
@@ -1002,22 +1288,18 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
       label={t(labels.resting)}
       activeLabel={t(labels.active)}
       query={toolChip(props.args)}
-      request={props.argsText}
-      result={toolResultText(props.result)}
       running={props.status.type === "running"}
       isError={isError}
       open={open}
       onOpenChange={setOpen}
       detail={
-        detail === null ? undefined : (
-          <ResolvedDetail
-            toolName={props.toolName}
-            detail={detail}
-            args={props.args}
-            result={props.result}
-            running={props.status.type === "running"}
-          />
-        )
+        <ResolvedDetail
+          toolName={props.toolName}
+          detail={detail ?? { kind: "text", body: toolResultText(props.result) }}
+          args={props.args}
+          result={props.result}
+          running={props.status.type === "running"}
+        />
       }
     />
   );

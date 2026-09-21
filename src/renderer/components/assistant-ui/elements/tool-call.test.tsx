@@ -1,9 +1,14 @@
 /**
- * ToolCall 的标记测试（ui project / jsdom）。
+ * ToolCall 的标记与触发行测试（ui project / jsdom）。
  *
- * 这一条是针对一个真实缺陷的回归保护：失败的工具调用曾经走 vendored ToolFallback，而它的标记
- * 由 part 的 status 决定 —— aui 的 status 只表达「跑没跑完」，于是**失败也渲染成绿勾**，
- * 读起来就是成功。现在成功/失败都由本组件的 isError 表达。
+ * 两个回归点：
+ *   1. **失败态不能是绿勾**。失败的工具调用曾经走 vendored ToolFallback，而它的标记由 part 的
+ *      status 决定 —— aui 的 status 只表达「跑没跑完」，于是失败也渲染成绿勾，读起来就是成功。
+ *      现在成功/失败由本组件的 isError 表达。
+ *   2. **没有主参数时不渲染空 chip**。ask_user 的参数里没有一个字符串，旧实现会留下一枚
+ *      只有 padding 的空灰胶囊（看起来像渲染 bug）。
+ *
+ * 展开区现在由调用方给（`detail` 必填），所以这里只断言触发行与展开区的可见性。
  */
 
 import { cleanup, render, screen } from "@testing-library/react";
@@ -16,8 +21,7 @@ const BASE: ToolCallProps = {
   label: "编辑了",
   activeLabel: "正在编辑",
   query: ".oint-tool-probe.tmp.md",
-  request: '{"path":"…"}',
-  result: "Could not find the exact text in .oint-tool-probe.tmp.md.",
+  detail: <p>详情内容</p>,
   running: false,
   open: false,
   onOpenChange: () => {},
@@ -65,5 +69,26 @@ describe("ToolCall 的收尾标记", () => {
 
     expect(screen.getByText("编辑了")).toBeTruthy();
     expect(screen.getByText(".oint-tool-probe.tmp.md")).toBeTruthy();
+  });
+});
+
+describe("触发行上的参数 chip", () => {
+  /** 参数 chip 是触发行里那枚等宽小胶囊 */
+  function chip(container: HTMLElement): Element | null {
+    return container.querySelector(
+      '[data-slot="tool-call"] button > span.bg-foreground\\/\\[0\\.06\\]',
+    );
+  }
+
+  it("有主参数时照常显示", () => {
+    const { container } = render(<ToolCall {...BASE} />);
+    expect(chip(container)?.textContent).toBe(".oint-tool-probe.tmp.md");
+  });
+
+  it("没有主参数（空串）时不渲染那枚空胶囊", () => {
+    // ask_user 的参数是 questions 数组，toolChip 解析不出任何字符串 →
+    // 旧实现在行上留一枚只有 padding 的空灰胶囊，看起来像渲染 bug
+    const { container } = render(<ToolCall {...BASE} query="" />);
+    expect(chip(container)).toBeNull();
   });
 });

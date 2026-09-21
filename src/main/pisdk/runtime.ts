@@ -128,7 +128,7 @@ import {
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { type AppToolContext, buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { createAskTool } from "./tools/ask";
-import { createJobTools, JOB_OUTPUT_TOOL_NAME } from "./tools/jobs";
+import { createJobTools } from "./tools/jobs";
 import { createSubagentTools } from "./tools/subagent";
 import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
@@ -202,17 +202,6 @@ export interface ChatRuntimeDeps {
 }
 
 /**
- * 每个会话连续被作业退出唤醒的上限。
- *
- * 没有它就会出现自激：「作业结束 → 唤醒模型 → 模型又起一个作业 → 又结束 → 再唤醒」，
- * 用户看到的是永远停不下来的运行。到上限后只发 job-changed 事件，模型下一次被用户
- * 叫起来时仍能从 job_list / job_output 看到结果 —— 信息不丢，只是不再自动开口。
- *
- * 计数在**用户自己发消息**时清零（见 send 的 internal 参数）。
- */
-const MAX_JOB_WAKES = 3;
-
-/**
  * 当前 lane 的 tip（条目 id，可能为 null 表示空会话）。
  *
  * `known: false` 表示读取失败 —— 与「tip 是 null」是两回事，调用方必须能区分：
@@ -240,6 +229,13 @@ export interface ChatRuntime {
   ): Promise<void>;
   stop(sessionId: string): Promise<void>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
+  /**
+   * 撤销一条还没被消费的排队消息（entryId = 内核队列项的 entryId）。
+   *
+   * 已经开跑或已经不存在的条目是**无操作**：这是用户点「移除」与 lane 取走那条消息之间
+   * 的正常竞态，为它抛错只会让界面弹一个没有意义的失败提示。
+   */
+  cancelQueued(sessionId: string, entryId: string): Promise<void>;
   compact(sessionId: string, instructions?: string): Promise<void>;
   /**
    * 该会话当前流式消息的完整快照；没有在流的消息时为 null。
@@ -391,10 +387,6 @@ interface SessionRuntime {
    * 于是先记下，等 run_end 再一次性应用（下一轮就带新工具）。
    */
   mcpToolsStale?: boolean;
-  /** 本会话已被作业退出唤醒几次（上限 MAX_JOB_WAKES）；用户自己发消息时清零 */
-  jobWakes: number;
-  /** 下一条从该会话发出的用户消息是否由系统内部产生（如作业结束通知）。由 notifyJobExit 在调用 send/queue 前设置；handleMessageStart user 分支消费后清空。 */
-  pendingSynthetic?: "job";
   /**
    * 会话级统计折叠状态：turn/step 计数与 LLM/工具/TTFT/解码耗时。
    * 由 session-stats.ts 的纯函数增量维护，变化时经 emitSessionStats 推送渲染层。
@@ -1262,15 +1254,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const messageId = reuseId ?? randomUUID();
       // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
       runtime.pendingEntries.push({ messageId, role: "user" });
-      // 作业唤醒产生的用户消息要标成系统来源；标记读一次即清，只影响这一条
-      const origin = runtime.pendingSynthetic === "job" ? "system" : undefined;
-      runtime.pendingSynthetic = undefined;
       emitSafe(runtime.sessionId, {
         type: "message-added",
         message: {
           id: messageId,
           role: "user",
-          origin,
           createdAt: Date.now(),
           parts: mapUserParts(message),
           status: "complete",
@@ -2105,7 +2093,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       toolParts: new Map(),
       queue: [],
       unsubscribers: [],
-      jobWakes: 0,
       // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
       subagentTools,
       repeatChain: createRepeatChain(),
@@ -2375,11 +2362,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     images?: ImageContent[],
     messageId?: string,
     options?: ChatSendOptions,
-    internal?: { jobWake?: boolean; message?: CustomMessage },
+    internal?: { message?: CustomMessage },
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
-    // 用户自己发起的消息清零作业唤醒预算；作业通知走 jobWake，不算用户发言（见 notifyJobExit）
-    if (internal?.jobWake !== true) runtime.jobWakes = 0;
     /**
      * 并发闸门：同步置位，**早于下面任何 await**。
      *
@@ -2413,7 +2398,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     images: ImageContent[] | undefined,
     messageId: string | undefined,
     options: ChatSendOptions | undefined,
-    internal: { jobWake?: boolean; message?: CustomMessage } | undefined,
+    internal: { message?: CustomMessage } | undefined,
   ): Promise<void> {
     // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
@@ -2429,10 +2414,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 全新指令意味着前提变了 —— 模型接下来重复上一轮的调用完全可能是对的
      * （「再跑一次那个测试」），把它算作循环就是误报。
      *
-     * 只在**用户真的说话**时清（`internal` 是系统内部消息：作业唤醒、子智能体报告投递），
-     * 那两类不是用户意图，不该顺手洗白一条已经形成的循环。
+     * 只在**用户真的说话**时清（`internal` 是系统内部消息，如重复调用提醒），
+     * 那不是用户意图，不该顺手洗白一条已经形成的循环。
      */
-    if (internal?.message === undefined && internal?.jobWake !== true) {
+    if (internal?.message === undefined) {
       runtime.repeatChain = createRepeatChain();
     }
     // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期项：新一次运行先清空
@@ -2535,84 +2520,30 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   /**
-   * 作业退出后的**提醒**（不再是「结论」）。
+   * 作业退出后的投递：**只回填结论，不再推一条用户消息**（与子智能体一致）。
    *
-   * 结论已经在这一刻被 deliverJobResult 回填到那次调用上了（那是转录的一部分，
-   * 模型下一轮看得到），所以这条推给对话的消息只做一件事：**让模型现在就醒来看一眼**。
-   * 因此它不再复制尾部输出 —— 那会与工具结果里那份重复一遍，
-   * 而重复的长文本正是要避免的（构建日志可以很长）。
+   * 早先这里在回填之外还会往对话里发一条「作业已结束」的通知，并配套一整套唤醒机制
+   *（空闲就 send 起一轮、运行中就 steer 插进去、外加一个每会话 3 次的唤醒预算，
+   * 以及把那条消息标成系统来源的标记）。那套东西**整体删掉了**，理由有三条：
    *
-   * 唤醒决策一律保持不变（正在跑就 steer、空闲就 send 且受 MAX_JOB_WAKES 约束）：
-   * 作业在会话空闲时结束，模型确实需要被叫起来，去掉它等于悄悄砍掉一个已有特性。
-   * 这条通知不消耗 job_output 的 drain 游标，所以模型照着提示去读仍能读到那些内容。
-   */
-  function jobExitNotice(job: JobInfo): string {
-    const code = job.exitCode === undefined ? "" : `，退出码 ${job.exitCode}`;
-    return (
-      `后台作业 ${job.id} 已结束（状态 ${job.status}${code}）：${job.command}\n` +
-      `它的输出与结论已经写在上面那次调用的结果里；` +
-      `要读还没看过的输出就调用 ${JOB_OUTPUT_TOOL_NAME} {"id":"${job.id}"}。`
-    );
-  }
-
-  /**
-   * 作业退出后的唤醒决策（**本特性的关键**，别省）：
-   * - 该会话正在运行 → 用 steer 把通知插进当前轮次，**不计**唤醒次数（这次唤醒本来就要发生）；
-   * - 空闲 → 用 send 起一轮新运行，但要过唤醒预算：连续唤醒超过 MAX_JOB_WAKES 就只留事件，
-   *   不再自动开口，避免「作业结束 → 唤醒 → 模型又起作业」的自激；
-   * - cancelSession / dispose 清理导致的退出由服务侧拦下（不会调到这里的回调），这里不必再判。
+   * 1. **用户明确要求**：结论不该以用户消息的形态出现在对话里 —— 那看起来像用户自己
+   *    说了一句话，而实际上它只是「那次调用的结果」。子智能体早先也踩过同一个坑，
+   *    改法就是现在这个：把结果写回**启动它的那次调用**（见 deliverSubagentReport）。
+   * 2. **模型本来就看得到**：deliverJobResult 把结论写进那条 part 的 result / details，
+   *    而 part 是会话转录的一部分 —— 模型下一次发言时它就在上下文里。
+   * 3. **自激问题随之消失**：唤醒预算本来是为了抑制「作业结束 → 唤醒 → 模型又起作业」
+   *    的循环。不再主动开口就不需要这个计数器，也顺带消掉了「预算用完后连结论都不写」
+   *    那个隐患（现在结论是必写的）。
+   *
+   * 作业与子智能体的差别只剩一处：作业状态由主进程持续推 `job-changed`，
+   * 渲染层那份 `jobsBySession` 始终是最新的，所以**界面这条路根本不依赖回填** ——
+   * 回填只服务模型（让它在下一轮上下文里读到结论）。
    */
   function notifyJobExit(job: JobInfo): void {
     const runtime = runtimes.get(job.sessionId);
-    // 会话已经关掉（或还没建起来）时没有可通知的对象
+    // 会话已经关掉（或还没建起来）时没有可回填的对象
     if (!runtime || jobs.isSuppressed(job.sessionId)) return;
-    // 先落结论（界面与模型都在那次调用上看到它），再决定要不要叫醒模型 ——
-    // 标记下一条 user 消息是系统产生的（见 pendingSynthetic 说明）
-    runtime.pendingSynthetic = "job";
-    // 顺序有讲究：结论是必做的，唤醒只是提醒；反过来会让「到预算了就不写结论」成为可能
     deliverJobResult(job);
-    const text = jobExitNotice(job);
-    /**
-     * 判定必须同时看 `sending`，不能只看 `running`。
-     *
-     * 两者之间有窗口：`sending` 在 send 一进入就置位，而 `running` 要等对齐模型/档位
-     * 之后才置真。只判 `running` 时，在这个窗口里结束的作业会走下面的 `send(...)` 分支 ——
-     * 而 send 见到闸门已占又把它转成 followUp，于是这条通知被排到**下一轮**才可能被消费，
-     * 而唤醒预算已经扣掉了。更糟的是 `stop()` 期间（running 已 false、sending 仍 true、
-     * abort 还在飞）走这条路，sendLocked 的 finally 会清空 queue，通知直接消失。
-     *
-     * 用 steer 是安全的：运行中它插进当前轮次；若这一轮其实正在收尾，lane 会把它
-     * 交给下一次边界（followUp 语义），比「丢掉」好。
-     */
-    if (runtime.running || runtime.sending) {
-      void queue(runtime.sessionId, text, "steer").catch(async (error: unknown) => {
-        /**
-         * steer 失败说明 lane 上其实没有可插入的操作（`sending` 为真但 prompt 还没被
-         * lane 受理——正是那个启动窗口）。这时退回 `send` 走正常唤醒路径：
-         * 此刻闸门可能已经放开，`send` 会起一轮真正的运行。
-         * 两次都失败才记日志 —— 通知本身不能因为一次路由判断失误就消失。
-         */
-        console.warn(`注入作业结束通知失败，改走唤醒：${job.id}：${errorText(error)}`);
-        if (runtime.jobWakes >= MAX_JOB_WAKES) return;
-        runtime.jobWakes += 1;
-        await send(runtime.sessionId, text, undefined, undefined, undefined, {
-          jobWake: true,
-        }).catch((retryError: unknown) => {
-          console.warn(`发送作业结束通知失败 ${job.id}：${errorText(retryError)}`);
-        });
-      });
-      return;
-    }
-    if (runtime.jobWakes >= MAX_JOB_WAKES) {
-      // 到预算了：不发消息，只留下已经发过的 job-changed 事件；用户下次说话时模型再看 job_list
-      return;
-    }
-    runtime.jobWakes += 1;
-    void send(runtime.sessionId, text, undefined, undefined, undefined, { jobWake: true }).catch(
-      (error: unknown) => {
-        console.warn(`发送作业结束通知失败 ${job.id}：${errorText(error)}`);
-      },
-    );
   }
   /**
    * 子智能体到达终态：把结果**回填到那次 Task 调用的 part 上**（本次修复的核心形状）。
@@ -2818,6 +2749,34 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
+  /**
+   * 撤销一条还没被消费的排队消息。
+   *
+   * 内核的 `cancelQueued` 已经处理了三种结局（cancelled / already_consumed / not_found），
+   * 这里**只做路由**：`already_consumed` 与 `not_found` 都不算失败 —— 前者是用户点下
+   * 「移除」的同时 lane 正好把它取走了（消息照常发出去，界面随即由 queue_update 收正），
+   * 后者是重复点击。为这两种情况抛错会让界面弹一个「移除失败」，而实际上没有任何东西需要修。
+   *
+   * 不在这里本地删 `runtime.queue`：真实队列由 `queue_update` 事件同步（见 handleQueueUpdate），
+   * 本地再删一次只会多一处可能与内核不一致的状态。
+   *
+   * `ensureRuntime` 用**不创建**的那条路（`runtimes.get`）：移除一条排队消息是「对既有运行
+   * 做减法」，会话根本没打开时无事可做，不该为它把存储与 harness 拉起来。
+   */
+  async function cancelQueued(sessionId: string, entryId: string): Promise<void> {
+    const runtime = runtimes.get(sessionId);
+    if (runtime === undefined) return;
+    const result = await runtime.lane.cancelQueued(entryId, BACKGROUND_CONTEXT);
+    if (!result.ok) {
+      // 会话已关闭（Closed）：队列随会话一起没了，用户的意图已经达成，不报错
+      console.warn(`撤销排队消息失败 ${sessionId}：${errorText(result.error)}`);
+      return;
+    }
+    if (result.value.kind === "cancelled") return;
+    // 已经被取走 / 找不到：都不是错误，见上面的说明
+    console.info(`排队消息未撤销（${result.value.kind}）：${entryId}`);
+  }
+
   async function compact(sessionId: string, instructions?: string): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
     const options =
@@ -2932,6 +2891,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     send,
     stop,
     queue,
+    cancelQueued,
     compact,
     streamSnapshot,
     isRunning,
