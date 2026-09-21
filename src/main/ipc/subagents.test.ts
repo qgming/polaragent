@@ -64,6 +64,7 @@ const BASE_SETTINGS: Settings = {
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
+  agentMode: "standard",
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
@@ -89,7 +90,6 @@ function runFixture(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    maxTurns: 30,
     tools: ["read", "grep", "glob"],
     turns: 1,
     toolCalls: 2,
@@ -106,7 +106,6 @@ function writeRequest(patch: Partial<SubagentWriteRequest> = {}): SubagentWriteR
     tools: ["read", "write"],
     model: null,
     thinkingLevel: null,
-    maxTurns: null,
     ...patch,
   };
 }
@@ -153,7 +152,6 @@ describe("subagents:list", () => {
       source: "builtin",
       model: null,
       thinkingLevel: null,
-      maxTurns: 30,
       tools: ["read", "grep", "glob"],
       enabled: true,
     });

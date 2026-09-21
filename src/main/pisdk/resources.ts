@@ -7,28 +7,69 @@
 // 目录只由文件夹约定决定，没有用户可配置的目录列表：技能、提示模板、子智能体定义与 MCP
 // 一样各自住在自己的文件夹里（数据目录下的 skills/ prompts/ subagents/，以及会话工作目录
 // 下的 .oint/ 同名子目录）。再给一份用户配置的目录列表，等于给「资源到底从哪来」多造一处
-// 需要同步的真相 —— 目录选择器因此被移除，扫描范围只有下面两种来源。
+// 需要同步的真相 —— 目录选择器因此被移除，扫描范围只有下面几种来源。
 
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { dataDir } from "@/main/app/paths";
 
 /**
- * 解析技能目录清单，顺序固定为：
+ * 解析技能目录清单，**顺序即优先级**（同名先出现者胜）：
  * 1. `${dataDir()}/skills` —— 数据目录下的全局位置，始终参与扫描；
- * 2. `${workingDir}/.oint/skills` —— 会话工作目录下的项目级技能，workingDir 缺失时跳过。
+ * 2. `${workingDir}/.oint/skills` —— 会话工作目录下的项目级技能，workingDir 缺失时跳过；
+ * 3. `${appPath}/resources/skills` —— **随包分发的内置技能**，appPath 缺失时跳过。
  *
  * 本函数是 ipc/skills.ts（设置面板的技能列表）与 pisdk runtime（把技能目录注入
  * harness / 系统提示词）共用的唯一解析入口——抽它出来就是为了让「面板看到的」与
  * 「运行时注入的」同源，两处不要再各写一份。
  *
- * 边界处理：workingDir 为 undefined 或空串时不追加项目目录；不做相对路径归一化，
- * 数据目录与项目目录沿用 `${...}/skills`、`${...}/.oint/skills` 的拼接写法，不换 path.join。
+ * **内置技能排在最后**：这样用户永远能用同名技能覆盖内置的（与子智能体目录
+ * 「同名用户定义优先」同一条原则）。而它**不拷贝到数据目录**，所以升级应用时
+ * 整包替换就完成了更新，不存在「用户改过的旧副本」需要迁移 —— 这也是为什么
+ * 这里不需要 omo 那套 manifest / 暂存机制。
+ *
+ * 边界处理：workingDir 为 undefined 或空串时不追加项目目录。
  */
-export function resolveSkillDirs(workingDir?: string): string[] {
+export function resolveSkillDirs(workingDir?: string, appPath?: string): string[] {
   const dirs = [`${dataDir()}/skills`];
   if (workingDir !== undefined && workingDir !== "") {
     dirs.push(`${workingDir}/.oint/skills`);
   }
+  if (appPath !== undefined && appPath !== "") {
+    dirs.push(resolveBuiltinSkillDir(appPath));
+  }
   return dirs;
+}
+
+/**
+ * 内置技能目录：`${appPath}/resources/skills`。
+ *
+ * **不 import electron**：`app.getAppPath()` 由调用方注入（与 kernel-deps.ts 同一手法），
+ * 单测可以直接喂临时目录。产出路径在开发期是仓库根，打包后是 asar 根 —— 两种情况下
+ * `resources/` 都在它下面（见 electron-builder.yml 的 `files:`）。
+ *
+ * ⚠️ **打包配置必须包含 `resources/**` 才会生效**：`electron-builder.yml` 的 `files:`
+ * 漏了这一行时，症状是「开发模式一切正常、打包后内置技能为 0」——
+ * 因为 asar 里根本没有这个目录（不是代码出错，是文件没进包）。
+ *
+ * ## 打包后为什么返回 `app.asar.unpacked` 那一份
+ *
+ * asar 是一个**归档文件**，只有 Electron 自己的 fs 补丁认得它。模型用 bash 起的
+ * `node` / `python` 是独立进程 —— 对它们来说 `app.asar` 就是个文件，
+ * 打开里面的路径一律 ENOENT（实测确认）。
+ *
+ * 而内置技能自带的 `scripts/` **正是要被外部解释器执行的**，所以留在 asar 里等于
+ * 永远跑不了。因此 `electron-builder.yml` 把 `resources/**` 整个 `asarUnpack` 出来，
+ * 这里优先返回那个真实路径：
+ *
+ * - 索引里的 `<location>` 因此是**外部进程可用的路径**，`read` 与 `bash` 两条路一致；
+ * - 开发期没有 `.unpacked` 目录，于是回落到普通路径 —— 逻辑只有一条分支。
+ */
+export function resolveBuiltinSkillDir(appPath: string): string {
+  const packed = path.join(appPath, "resources", "skills");
+  // 打包后 appPath 形如 `.../app.asar`；解包目录是它的兄弟 `app.asar.unpacked`
+  const unpacked = path.join(`${appPath}.unpacked`, "resources", "skills");
+  return existsSync(unpacked) ? unpacked : packed;
 }
 
 /**

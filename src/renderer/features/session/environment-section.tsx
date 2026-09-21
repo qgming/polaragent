@@ -7,7 +7,7 @@ import { typePackage } from "@/renderer/components/assistant-ui/type";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { PermissionMode } from "@/shared/contracts";
+import type { AgentMode, PermissionMode } from "@/shared/contracts";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { useActiveWorkingDir } from "../chat/use-slash-commands";
 import { CopyValueButton, SessionSection } from "./session-section";
@@ -17,6 +17,12 @@ const PERMISSION_KEYS: Record<PermissionMode, string> = {
   default: "chat.permissionDefault",
   ai_review: "chat.permissionAiReview",
   full: "chat.permissionFull",
+};
+
+/** 智能体模式的词条同理沿用 composer 的模式 chip */
+const AGENT_MODE_KEYS: Record<AgentMode, string> = {
+  standard: "chat.agentModeStandard",
+  orchestrate: "chat.agentModeOrchestrate",
 };
 
 /**
@@ -55,6 +61,20 @@ export function EnvironmentSection() {
 
   const permission = settings?.permissionMode ?? "default";
 
+  /**
+   * 会话绑定的智能体模式（null = 跟随设置默认）；与 Composer 的模式 chip 读同一个字段。
+   *
+   * 显示的是**生效值**：主进程装配系统提示时的判定正是
+   * `readAgentMode(id) ?? settings.agentMode`（runtime 的 composeMainPrompt），
+   * 所以这一行也能用来核对「我以为在编排模式，实际发出去的是哪个」。
+   */
+  const boundAgentMode = useChatStore((state) =>
+    state.activeSessionId === null
+      ? undefined
+      : state.sessions.find((session) => session.id === state.activeSessionId)?.agentMode,
+  );
+  const agentMode: AgentMode = boundAgentMode ?? settings?.agentMode ?? "standard";
+
   return (
     <SessionSection
       slot="environment-panel"
@@ -74,6 +94,7 @@ export function EnvironmentSection() {
           copyLabel={t("sessionPanel.copyValue")}
         />
         <ValueRow label={t("sessionPanel.permission")} value={t(PERMISSION_KEYS[permission])} />
+        <ValueRow label={t("sessionPanel.agentMode")} value={t(AGENT_MODE_KEYS[agentMode])} />
         <ValueRow
           label={t("sessionPanel.sessionId")}
           value={activeSessionId}

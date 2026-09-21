@@ -169,7 +169,6 @@ export function parseSubagentRun(value: unknown): SubagentRun | null {
     model: asModelRef(value.model),
     modelId: asString(value.modelId, ""),
     thinkingLevel: asThinkingLevel(value.thinkingLevel),
-    maxTurns: asNumber(value.maxTurns, 0),
     tools: asStringArray(value.tools),
     turns: asNumber(value.turns, 0),
     toolCalls: asNumber(value.toolCalls, 0),
@@ -273,7 +272,6 @@ function sameRun(a: SubagentRun, b: SubagentRun): boolean {
     a.resumedFrom === b.resumedFrom &&
     a.modelId === b.modelId &&
     a.thinkingLevel === b.thinkingLevel &&
-    a.maxTurns === b.maxTurns &&
     a.turns === b.turns &&
     a.toolCalls === b.toolCalls &&
     a.report === b.report &&

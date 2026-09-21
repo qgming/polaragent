@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
@@ -80,6 +80,8 @@ export function bootstrapPisdk(options: {
     },
     sessionTitles,
     resolveWorkingDir,
+    // 应用根目录：内置技能住在 <appPath>/resources/skills（随包分发、只读、升级即更新）
+    appPath: app.getAppPath(),
     mcp: mcpServers,
     // 内置浏览器自动化：与 IPC 域共用主进程单例，否则面板看到的与工具操作的会是两份状态。
     // 传的是实现对象而不是让 runtime 自己 import —— runtime 要能在 node 单测里跑（见其 deps 说明）。

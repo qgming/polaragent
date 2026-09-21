@@ -177,6 +177,15 @@ export const enUS = {
     permissionDefault: "Default permissions",
     permissionAiReview: "AI review",
     permissionFull: "Full access",
+    // Agent mode chip: both modes have identical tool access, so each option says what it changes.
+    // Both names are **nouns** (Agent / Orchestrator) — they answer "who am I talking to",
+    // not "how strong is it" (that's the permission chip's axis).
+    agentMode: "Agent mode",
+    agentModeStandard: "Agent",
+    agentModeStandardDesc: "Works out the task type and does the work itself",
+    agentModeOrchestrate: "Orchestrator",
+    agentModeOrchestrateDesc: "Delegates to subagents first, keeps planning and verification",
+    agentModeRunning: "Can't switch modes while running — wait for this turn to finish",
     model: "Model",
     thinkingLevel: "Thinking level",
     loadingOlder: "Loading…",
@@ -347,6 +356,8 @@ export const enUS = {
       'Delete skill "{{name}}"? Its folder is removed together with all files in it.',
     skillDisabled: "Disabled",
     skillEnabled: "Enabled",
+    skillBuiltinHint:
+      "Built-in skills ship with the app and update with it; disable one if you don't need it",
     // Subagents section
     subagentsList: "Available subagents",
     subagentsListDesc:
@@ -380,8 +391,6 @@ export const enUS = {
     subagentThinking: "Thinking level",
     // The thinking select needs its own "inherit" line: subagentModelInherit is about the model
     subagentThinkingInherit: "Follow the main session",
-    subagentMaxTurns: "Turn limit",
-    subagentMaxTurnsInherit: "Default ({{count}} turns)",
     subagentSave: "Save",
     subagentCancel: "Cancel",
     subagentDeleteConfirm: 'Delete subagent "{{name}}"? This cannot be undone.',
@@ -415,13 +424,22 @@ export const enUS = {
     fetchFailed: "Fetch failed",
     agentsMd: "AGENTS.md",
     agentsMdDesc:
-      "Injected as a system prompt on every turn; write the rules the agent should always follow",
+      "Injected as a system prompt on every turn; write the rules the agent should always follow. An AGENTS.md in the project directory applies alongside this file",
     agentsMdPlaceholder: "e.g. Reply in English; read related files before editing code…",
     agentsMdSaved: "Saved",
     aboutName: "Name",
     aboutVersion: "Version",
     aboutKernel: "Kernel",
     appearanceSection: "Appearance & language",
+
+    // Agent mode: the default for new sessions; any session can override it from the chip.
+    // The section title carries "mode" so it doesn't read as "Agent › Default mode › Agent".
+    agentSection: "Agent mode",
+    agentMode: "Default mode",
+    agentModeDesc:
+      "Which mode new sessions start in. Any session can pick its own from the mode button at the left of the composer. Both modes have identical tool access — only the system prompt differs",
+    agentModeStandard: "Agent",
+    agentModeOrchestrate: "Orchestrator",
 
     // —— MCP: external tool sources (own settings section) ——
     mcp: "MCP",
@@ -542,6 +560,7 @@ export const enUS = {
     workingDir: "Working dir",
     model: "Model",
     permission: "Permission",
+    agentMode: "Mode",
     sessionId: "Session ID",
     unset: "Not set",
     copyValue: "Copy",

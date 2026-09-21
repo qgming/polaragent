@@ -87,7 +87,15 @@ describe("bash 退出码", () => {
     expect(outcome.error.message).toBe("boom\n\n[exited with code 3]");
   });
 
-  it("超时的既有文案原样保留（没有退出码可报的异常不加工）", async () => {
+  /**
+   * 显式给足超时（默认 5 秒在这个用例上偏紧）。
+   *
+   * 这里真的起了 `sleep 5` 再等它被 1 秒的超时杀掉，所以本身就要花掉 1–2 秒；
+   * 而全量跑时 vitest 会并行起几十个 worker、每个都要 spawn 真实 shell，
+   * 机器一忙这个用例就会顶穿默认的 5 秒 —— 那是**测试环境的负载**，
+   * 不是被测行为的问题。断言本身仍然严格（文案必须逐字一致）。
+   */
+  it("超时的既有文案原样保留（没有退出码可报的异常不加工）", { timeout: 20_000 }, async () => {
     const outcome = await runBash("sleep 5", 1);
     if (skipIfNoShell(outcome)) return;
     if (outcome.ok) throw new Error(`应当超时，却得到：${outcome.text}`);

@@ -45,10 +45,19 @@ function SkillDetailDialog({
   detail,
   onClose,
   onRemove,
+  removable,
 }: {
   detail: SkillDetail;
   onClose: () => void;
   onRemove: () => void;
+  /**
+   * 能不能删。
+   *
+   * 内置技能**随应用分发**（住在应用目录里），删掉它只会在下次升级时又冒出来 ——
+   * 用户真正的诉求通常是「别用它」，那是禁用。所以内置行不给删除按钮，
+   * 与主进程那边的「内置技能不可删除」呼应（两处都要挡：UI 不给入口，IPC 也要拒绝）。
+   */
+  removable: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -58,15 +67,19 @@ function SkillDetailDialog({
       onClose={onClose}
       footer={
         <>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={secondaryButton}
-            onClick={onRemove}
-          >
-            {t("common.delete")}
-          </Button>
+          {removable ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={secondaryButton}
+              onClick={onRemove}
+            >
+              {t("common.delete")}
+            </Button>
+          ) : (
+            <span className="text-xs text-ink-3">{t("settings.skillBuiltinHint")}</span>
+          )}
           <Button type="button" size="sm" onClick={onClose}>
             {t("common.close")}
           </Button>
@@ -276,6 +289,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
       {detail === null ? null : (
         <SkillDetailDialog
           detail={detail}
+          removable={(skills ?? []).find((item) => item.name === detail.name)?.source !== "builtin"}
           onClose={() => setDetail(null)}
           onRemove={() => {
             const row = (skills ?? []).find((item) => item.name === detail.name);

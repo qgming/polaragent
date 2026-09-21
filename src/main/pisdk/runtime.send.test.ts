@@ -8,15 +8,24 @@
 //
 // 这里把 AgentHarness 整体换成一个可观察的假实现：只关心
 // 「prompt 被调用了几次」「abort 有没有在别人的运行上被触发」。
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@/shared/contracts/settings";
 
 /** 记录假 lane 上的每一次调用 */
 const harness = vi.hoisted(() => ({
-  calls: { prompts: [], aborts: 0, promptResults: [] } as {
+  calls: { prompts: [], aborts: 0, promptResults: [], createOptions: [] } as {
     prompts: string[];
     aborts: number;
     promptResults: unknown[];
+    /**
+     * 每次 `AgentHarness.create` 收到的 options。
+     *
+     * 记下来是为了钉住一件曾经真的坏过的事：**系统提示算出来但没传进内核**。
+     * 内核在 `systemPrompt` 缺省时直接返回空串（`generation.js` 的 resolveSystemPrompt），
+     * 也就是「模型完全没有系统提示」——而假 harness 早期只关心 lane 的调用，
+     * 于是这个缺口在测试里完全隐形。见下面「系统提示必须真的交给内核」那组用例。
+     */
+    createOptions: unknown[];
   },
   /** 让 prompt 停在原地，用来制造「第一个 send 还在飞」的窗口 */
   gate: { release: null as null | (() => void), wait: null as null | Promise<void> },
@@ -32,6 +41,18 @@ const harness = vi.hoisted(() => ({
   listeners: new Map<string, ((event: unknown) => void)[]>(),
   /** 向运行时投递 harness 事件 */
   emit: (_type: string, _event: unknown) => undefined as undefined,
+  /**
+   * 钩子登记表：`hooks.on(type, handler)` 收下来的处理器。
+   *
+   * 早期这里是 `hooks: { on: () => () => undefined }` —— 处理器被直接丢掉，
+   * 于是**守卫这类挂在钩子上的逻辑在测试里完全跑不到**。
+   * 「重复调用守卫」正是这种代码：纯逻辑（repeat-guard.ts）有测试，
+   * 但「它到底有没有被接上」没有 —— 而后者才是容易错的地方
+   *（系统提示「算出来没传下去」就是同一类事故）。
+   */
+  hooks: new Map<string, ((event: unknown) => unknown)[]>(),
+  /** 触发某个钩子；返回所有处理器的返回值（取最后一个非 undefined 的） */
+  fireHook: async (_type: string, _event: unknown): Promise<unknown> => undefined,
 }));
 
 vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
@@ -64,6 +85,8 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
   };
   /** 事件订阅表：测试可以据此向运行时投递任意 harness 事件（如陈旧的 run_end） */
   const listeners = harness.listeners;
+  /** 钩子登记表：与事件表同一手法，让测试能真的触发守卫这类挂在钩子上的逻辑 */
+  const hooks = harness.hooks;
   const harnessInstance = {
     lane: async () => lane,
     close: async () => undefined,
@@ -75,15 +98,38 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
         return () => undefined;
       },
     },
-    hooks: { on: () => () => undefined },
+    hooks: {
+      on: (type: string, handler: (event: unknown) => unknown) => {
+        const list = hooks.get(type) ?? [];
+        list.push(handler);
+        hooks.set(type, list);
+        return () => undefined;
+      },
+    },
     setTools: async () => undefined,
+  };
+  harness.emit = (type, event) => {
+    for (const handler of listeners.get(type) ?? []) handler(event);
+  };
+  harness.fireHook = async (type, event) => {
+    let result: unknown;
+    for (const handler of harness.hooks.get(type) ?? []) {
+      const value = await handler(event);
+      if (value !== undefined) result = value;
+    }
+    return result;
   };
   harness.emit = (type, event) => {
     for (const handler of listeners.get(type) ?? []) handler(event);
   };
   return {
     ...actual,
-    AgentHarness: { create: async () => ({ harness: harnessInstance, open: [] }) },
+    AgentHarness: {
+      create: async (options: unknown) => {
+        harness.calls.createOptions.push(options);
+        return { harness: harnessInstance, open: [] };
+      },
+    },
     loadSkills: async () => ({ skills: [], diagnostics: [] }),
     loadPromptTemplates: async () => ({ promptTemplates: [], diagnostics: [] }),
     formatSkillsForSystemPrompt: () => "",
@@ -116,6 +162,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: { serviceId: "svc", modelId: "m1" },
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
@@ -124,7 +171,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
 }
 
 /** 会话存储替身：open 返回一份够 createRuntime 走完的最小句柄 */
-function makeSessionStore(): SessionStore {
+function makeSessionStore(sessionMode: "standard" | "orchestrate" | null = null): SessionStore {
   const session = {
     metadata: { id: "s1", createdAt: 1, cwd: process.cwd() },
     createBranch: async () => ({}),
@@ -141,16 +188,27 @@ function makeSessionStore(): SessionStore {
     open: async () => ({ session, branch: { findEntries: async () => [], id: "main" } }),
     readCwd: async () => process.cwd(),
     readModel: async () => null,
+    // 会话未绑定模式 → 跟随设置里的默认（与真实 store 的语义一致）
+    readAgentMode: async () => sessionMode,
     readTitle: async () => null,
     touch: async () => undefined,
     setModel: async () => undefined,
+    setAgentMode: async () => undefined,
   } as unknown as SessionStore;
 }
 
 function makeRuntime(
-  options: { onEvent?: (sessionId: string, event: { type: string; runId?: string }) => void } = {},
+  options: {
+    onEvent?: (sessionId: string, event: { type: string; runId?: string }) => void;
+    /** 会话级模式绑定；null = 跟随设置里的默认 */
+    sessionMode?: "standard" | "orchestrate" | null;
+    /** 设置里的默认模式 */
+    defaultMode?: "standard" | "orchestrate";
+  } = {},
 ): ChatRuntime {
-  const settings = makeSettings();
+  const settings = makeSettings(
+    options.defaultMode === undefined ? {} : { agentMode: options.defaultMode },
+  );
   return createChatRuntime({
     getSettings: async () => {
       harness.settingsCalls += 1;
@@ -158,7 +216,7 @@ function makeRuntime(
       if (harness.settingsGate.wait !== null) await harness.settingsGate.wait;
       return settings;
     },
-    sessionStore: makeSessionStore(),
+    sessionStore: makeSessionStore(options.sessionMode ?? null),
     emit: (payload) => {
       options.onEvent?.(payload.sessionId, payload.event as { type: string; runId?: string });
     },
@@ -171,6 +229,7 @@ function resetHarness(): void {
   harness.calls.prompts = [];
   harness.calls.aborts = 0;
   harness.calls.promptResults = [];
+  harness.calls.createOptions = [];
   harness.gate.release = null;
   harness.gate.wait = null;
   harness.settingsGate.release = null;
@@ -179,6 +238,18 @@ function resetHarness(): void {
   harness.abortGate.release = null;
   harness.abortGate.wait = null;
   harness.listeners.clear();
+  harness.hooks.clear();
+}
+
+/** 取最近一次 create 里传下去的 systemPrompt，并把它求值成字符串 */
+async function resolveSystemPrompt(): Promise<string> {
+  const last = harness.calls.createOptions.at(-1) as { systemPrompt?: unknown } | undefined;
+  const prompt = last?.systemPrompt;
+  if (typeof prompt === "function") {
+    return await (prompt as () => Promise<string>)();
+  }
+  if (typeof prompt === "string") return prompt;
+  return "";
 }
 
 /**
@@ -429,6 +500,268 @@ describe("stop 与 send 的窗口", () => {
     harness.gate.wait = null;
     releasePrompt();
     await first;
+    await runtime.dispose();
+  });
+});
+
+/**
+ * 系统提示必须**真的交给内核**，以及模式切换怎么影响它。
+ *
+ * 为什么单独一组：这里曾经有一个完全不报错的缺口 —— `buildSystemPrompt` 算出了
+ * 整段提示（身份 / 工具指导 / 技能索引 / AGENTS.md / 子智能体清单 / 委派规则），
+ * 但 `AgentHarness.create` 从没收到 `systemPrompt`，那段字符串只被拿去估了个 token 数。
+ * 内核在缺省时返回空串，于是**模型没有任何系统提示**，而所有既有测试都绿 ——
+ * 因为它们只测 `buildSystemPrompt` 的返回值，没人检查它有没有被传下去。
+ *
+ * 所以这一组的第一个用例断言的是「**传下去了**」，而不是「内容对」。
+ */
+describe("系统提示的投递与模式", () => {
+  beforeEach(() => {
+    resetHarness();
+  });
+
+  it("create 收到的是函数形式的 systemPrompt，且求值出真实内容", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    const last = harness.calls.createOptions.at(-1) as { systemPrompt?: unknown } | undefined;
+    // 函数形式是刻意的：内核每个 generation 现算，于是切模式下一轮就生效
+    expect(typeof last?.systemPrompt).toBe("function");
+
+    const prompt = await resolveSystemPrompt();
+    expect(prompt).toContain("Oint");
+    expect(prompt.length).toBeGreaterThan(100);
+
+    await runtime.dispose();
+  });
+
+  it("智能体模式（设置默认）：不注入委派路由段，但仍有子智能体索引", async () => {
+    const runtime = makeRuntime({ defaultMode: "standard" });
+    await runtime.send("s1", "嗨");
+
+    const prompt = await resolveSystemPrompt();
+
+    expect(prompt).toContain("通用助手");
+    expect(prompt).not.toContain("## 委派（子智能体）");
+
+    await runtime.dispose();
+  });
+
+  it("编排者模式（会话级绑定）：注入委派路由段", async () => {
+    const runtime = makeRuntime({ defaultMode: "standard", sessionMode: "orchestrate" });
+    await runtime.send("s1", "嗨");
+
+    const prompt = await resolveSystemPrompt();
+
+    expect(prompt).toContain("编排者");
+    expect(prompt).toContain("## 委派（子智能体）");
+
+    await runtime.dispose();
+  });
+
+  it("会话级绑定优先于设置里的默认", async () => {
+    // 设置默认编排，但会话显式绑定了标准 → 用标准
+    const runtime = makeRuntime({ defaultMode: "orchestrate", sessionMode: "standard" });
+    await runtime.send("s1", "嗨");
+
+    const prompt = await resolveSystemPrompt();
+
+    expect(prompt).toContain("通用助手");
+    expect(prompt).not.toContain("编排者");
+
+    await runtime.dispose();
+  });
+
+  /**
+   * 函数形式的意义就在这条：**不必重建 harness**，下一次求值就是新模式。
+   *
+   * 这里直接换掉存储替身背后的值再求值一次 —— 真实路径上那是
+   * `sessions:set-mode` 写索引，发生在两次 send 之间。
+   */
+  it("切换模式后同一个 harness 的提示跟着变（下一次请求即生效）", async () => {
+    let mode: "standard" | "orchestrate" = "standard";
+    const settings = makeSettings({ agentMode: "standard" });
+    const runtime = createChatRuntime({
+      getSettings: async () => settings,
+      sessionStore: {
+        ...(makeSessionStore() as object),
+        readAgentMode: async () => mode,
+      } as unknown as SessionStore,
+      emit: () => undefined,
+      approvals: createApprovalService({
+        getSettings: async () => settings,
+        emit: () => undefined,
+      }),
+      resolveWorkingDir: async () => process.cwd(),
+    });
+
+    await runtime.send("s1", "嗨");
+    const before = await resolveSystemPrompt();
+    expect(before).not.toContain("## 委派（子智能体）");
+
+    // 用户在 chip 上切到编排者模式（真实路径：sessions:set-mode 写会话索引）
+    mode = "orchestrate";
+    const after = await resolveSystemPrompt();
+
+    expect(after).toContain("## 委派（子智能体）");
+    // 同一个 harness：create 只发生过一次
+    expect(harness.calls.createOptions).toHaveLength(1);
+
+    await runtime.dispose();
+  });
+});
+
+/**
+ * 重复调用守卫的**接线**（P0.5）。
+ *
+ * `repeat-guard.test.ts` 测的是纯逻辑（阈值、键排序、排除名单），
+ * 但「它有没有被挂上、结果有没有真的进上下文」是另一回事 ——
+ * 这一类「算出来了但没接上」的缺口在本仓真实发生过（系统提示没传给内核），
+ * 而且两者都不会报错。所以这里直接触发钩子，断言端到端的效果。
+ */
+describe("重复调用守卫的接线", () => {
+  beforeEach(() => {
+    resetHarness();
+  });
+
+  /** 连续用同一组参数触发 after_tool，返回最后一次的判定 */
+  async function repeatCall(times: number, tool = "read", args: Record<string, unknown> = {}) {
+    let last: unknown;
+    for (let index = 0; index < times; index += 1) {
+      last = await harness.fireHook("after_tool", {
+        toolCallId: `c${index}`,
+        toolName: tool,
+        args,
+        isError: false,
+      });
+    }
+    return last;
+  }
+
+  it("守卫真的挂上了 after_tool 与 transform_context", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    // 三个钩子：权限门（before_tool）+ 守卫的两半
+    expect([...harness.hooks.keys()].sort()).toEqual([
+      "after_tool",
+      "before_tool",
+      "transform_context",
+    ]);
+
+    await runtime.dispose();
+  });
+
+  it("连续 3 次相同调用后，纠正消息真的进了下一次请求", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    await repeatCall(3, "read", { path: "a.ts" });
+
+    const result = (await harness.fireHook("transform_context", {
+      messages: [{ role: "user", content: "原始消息" }],
+      systemPrompt: "s",
+    })) as { messages: { role: string; customType?: string; content: unknown }[] } | undefined;
+
+    expect(result).toBeDefined();
+    // 原有的消息保留，纠正消息追加在最后
+    expect(result?.messages).toHaveLength(2);
+    expect(result?.messages[0]).toMatchObject({ role: "user", content: "原始消息" });
+    const injected = result?.messages[1];
+    // custom 会被内核转成 user 角色（模型看得见），而 message-mapper 忽略它（用户看不见）
+    expect(injected?.role).toBe("custom");
+    expect(injected?.customType).toBe("repeat-notice");
+    expect(JSON.stringify(injected?.content)).toContain("read");
+
+    await runtime.dispose();
+  });
+
+  it("第 3 次之前不注入任何东西（不打扰正常会话）", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    await repeatCall(2, "read", { path: "a.ts" });
+
+    const result = await harness.fireHook("transform_context", {
+      messages: [{ role: "user", content: "原始消息" }],
+      systemPrompt: "s",
+    });
+    // 处理器没暂存任何东西时应当什么都不返回（内核据此保持原样）
+    expect(result).toBeUndefined();
+
+    await runtime.dispose();
+  });
+
+  it("注入一次之后槽位清空：提醒不会跟着整段历史一直重复", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    await repeatCall(3, "read", { path: "a.ts" });
+    const first = await harness.fireHook("transform_context", {
+      messages: [],
+      systemPrompt: "s",
+    });
+    const second = await harness.fireHook("transform_context", {
+      messages: [],
+      systemPrompt: "s",
+    });
+
+    expect(first).toBeDefined();
+    expect(second).toBeUndefined();
+
+    await runtime.dispose();
+  });
+
+  /** 计划里的验收项：「用户新消息归零」——前提变了，重复旧调用可能是对的 */
+  it("用户发新消息后链归零：同样的调用要重新数 3 次", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "第一轮");
+    await repeatCall(2, "read", { path: "a.ts" });
+
+    // 用户说了新话 → 链清空（否则上一轮的 2 次会算进来，第 3 次就误报）
+    await runtime.send("s1", "第二轮");
+    await repeatCall(2, "read", { path: "a.ts" });
+
+    const result = await harness.fireHook("transform_context", {
+      messages: [],
+      systemPrompt: "s",
+    });
+    expect(result).toBeUndefined();
+
+    // 再补一次才到 3
+    await repeatCall(1, "read", { path: "a.ts" });
+    const after = await harness.fireHook("transform_context", { messages: [], systemPrompt: "s" });
+    expect(after).toBeDefined();
+
+    await runtime.dispose();
+  });
+
+  it("穿插 todo 不打断链（整表替换会合法地反复调用）", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    await repeatCall(1, "read", { path: "a.ts" });
+    await repeatCall(2, "todo", { todos: [] });
+    await repeatCall(1, "read", { path: "a.ts" });
+    await repeatCall(3, "todo", { todos: [] });
+    await repeatCall(1, "read", { path: "a.ts" });
+
+    const result = await harness.fireHook("transform_context", { messages: [], systemPrompt: "s" });
+    expect(result).toBeDefined();
+
+    await runtime.dispose();
+  });
+
+  /** 硬档：终止这次运行，并把原因写在运行记录上（让终态能说清「这是异常」） */
+  it("连续 5 次相同调用会终止运行", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    await repeatCall(5, "read", { path: "a.ts" });
+
+    // stop 是 fire-and-forget 的，等它落定
+    await vi.waitFor(() => expect(runtime.isRunning("s1")).toBe(false));
+
     await runtime.dispose();
   });
 });

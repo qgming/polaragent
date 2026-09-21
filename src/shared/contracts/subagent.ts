@@ -51,16 +51,36 @@ export function subagentCanMutate(tools: readonly string[]): boolean {
   return tools.some((tool) => (SUBAGENT_MUTATING_TOOLS as readonly string[]).includes(tool));
 }
 
-/** maxTurns 的上限：防止一个定义把子智能体设成无限轮次把自己跑爆 */
-export const MAX_SUBAGENT_MAX_TURNS = 80;
-/** maxTurns 缺省值：够完成一次调研或一次小改动，又不至于失控 */
-export const DEFAULT_SUBAGENT_MAX_TURNS = 30;
-/** 目录里最多合并多少个定义（含内置）；超出部分被丢弃并在 diagnostics 里说明 */
+/**
+ * 目录里最多合并多少个定义（含内置）；超出部分被丢弃并在 diagnostics 里说明。
+ *
+ * 内置 7 个 + 用户 9 个是常见上限；再多的定义也只会让系统提示里的
+ * `<available_subagents>` 索引变长，而索引是每轮都付 token 的。
+ */
 export const MAX_SUBAGENT_DEFINITIONS = 16;
 /** 单个定义的 prompt 正文上限，防止把整个上下文塞进系统提示 */
 export const MAX_SUBAGENT_PROMPT_CHARS = 20_000;
 /** 同一次主会话里最多并行多少个委派（超出则 Task 直接拒绝，而不是排队等暗坑） */
-export const MAX_CONCURRENT_SUBAGENT_RUNS = 4;
+export const MAX_CONCURRENT_SUBAGENT_RUNS = 6;
+
+/**
+ * **没有轮次上限。**
+ *
+ * 早先这里有一对 `MAX_SUBAGENT_MAX_TURNS` / `DEFAULT_SUBAGENT_MAX_TURNS`（80 / 30），
+ * 现在**整体删除**。原因是那个机制的定位错了：它被用来「发现子智能体出异常」
+ * （幻觉导致反复做同一件事），但**轮次是资源消耗，不是行为特征** ——
+ * 调低了误伤正当的长任务，调高了发现异常太晚（第 1000 轮才知道）。
+ *
+ * 现在由两层接管：
+ * 1. **重复调用守卫**（`main/pisdk/repeat-guard.ts`）：同名同参数的连续调用
+ *    第 3 次注入纠正消息、第 5 次终止运行 —— 检测的是行为，所以发现得早；
+ * 2. **并发上限**（`MAX_CONCURRENT_SUBAGENT_RUNS`）与**用户随时能停**（`TaskStop`）：
+ *    兜住成本失控。
+ *
+ * 生态对照：opencode / Claude Code / Codex / Copilot 都不设轮次上限；
+ * Goose 的 1000 与 OpenHands 的 500 是宽松兜底。**Oint 选择不设，
+ * 但比它们多一个行为级的检测器**（Codex 连检测器都没有，只有成本预算）。
+ */
 
 /** 名字规则：小写字母/数字开头，允许中间短横线，≤40 字符（与文件名一一对应） */
 export const SUBAGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -87,7 +107,6 @@ export interface SubagentDefinition {
   model?: ModelRef | null;
   /** 思考档位；缺省 = 继承父会话 */
   thinkingLevel?: ThinkingLevel;
-  maxTurns?: number;
   source: SubagentSource;
   /** user 定义的落盘路径（builtin / temp 没有） */
   filePath?: string;
@@ -100,7 +119,6 @@ export interface SubagentInfo {
   tools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
-  maxTurns: number;
   source: SubagentSource;
   enabled: boolean;
   filePath?: string;
@@ -120,7 +138,16 @@ export type SubagentRunStatus =
   | "running"
   /** 正常跑完（拿到了最终报告） */
   | "completed"
-  /** 报告在，但触到了 maxTurns，可能不完整 */
+  /**
+   * 触到了 maxTurns，报告可能不完整。
+   *
+   * **已不再产生**（maxTurns 字段整体删除，见下方关于轮次上限的注释）——
+   * 但**状态定义必须保留**：磁盘上的历史运行记录里有这个值，
+   * 删掉会让旧会话的记录读不出来。`report-delivery.ts` 的 `describeOutcome`
+   * 同理保留它的文案分支。
+   *
+   * 这是「删字段可以硬删（读了也没用），删状态必须向后兼容（历史数据里有）」的差别。
+   */
   | "truncated"
   /** 运行中报错 */
   | "failed"
@@ -174,9 +201,13 @@ export interface SubagentRun {
   /** 实际使用的模型 id（面板上显示用） */
   modelId: string;
   thinkingLevel: ThinkingLevel;
-  maxTurns: number;
   tools: string[];
-  /** 已经跑过的轮次与工具调用次数（进度指标） */
+  /**
+   * 已经跑过的轮次与工具调用次数。
+   *
+   * **`turns` 现在纯粹是进度显示**（面板与 TaskList 看它），
+   * 不再有任何上限拿它做判定 —— 见文件上方关于轮次上限的注释。
+   */
   turns: number;
   toolCalls: number;
   /** 最终报告（子智能体最后一条助手消息的正文） */
@@ -212,7 +243,6 @@ export interface SubagentWriteRequest {
   tools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
-  maxTurns: number | null;
 }
 
 export interface SubagentReadResult {

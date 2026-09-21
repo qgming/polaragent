@@ -37,7 +37,7 @@ export interface SessionCreateOptions {
   delegationId?: string;
 }
 
-import type { ModelRef } from "./common";
+import type { AgentMode, ModelRef } from "./common";
 
 export interface SessionSummary {
   id: string;
@@ -63,7 +63,29 @@ export interface SessionSummary {
    * 所以重启后仍然生效。
    */
   model: ModelRef | null;
+  /**
+   * 该会话自己指定的智能体模式；null / 缺省 = 跟随设置里的默认模式。
+   *
+   * 与 model 同一个模式（会话级选择优先、持久化在会话索引里、重启后仍生效），
+   * 理由也相同：模式改的是「我在跟谁说话」，是**这个会话**的属性；
+   * 而 permissionMode 是「我多信任它」的全局信任级别，两者不该混。
+   *
+   * **可选**是刻意的（与 `kind` / `parentSessionId` 同级）：升级前建的会话索引里
+   * 没有这个键，读出来是 undefined —— 语义就是「没绑定过，跟随默认」。
+   * 写成必填会逼所有旧数据与测试夹具都伪造一个值，而那个值本来就有明确缺省。
+   */
+  agentMode?: AgentMode | null;
 }
+
+/**
+ * 切换会话模式的失败原因。
+ *
+ * 只有一种（模式列表是封闭的、没有版本漂移），列成联合类型是为了与
+ * `SetSessionModelResult` 同形 —— 调用方少一处判断形状的分支。
+ */
+export type SessionModeFailure = "running";
+
+export type SetSessionModeResult = { ok: true } | { ok: false; reason: SessionModeFailure };
 
 /** 切换会话模型失败的原因：界面据此给出具体说明，而不是笼统的「失败」 */
 export type SessionModelFailure =

@@ -13,7 +13,12 @@ import {
   SqliteSessionRepo,
 } from "@earendil-works/pi-session-backend-sqlite-node";
 import { dataDir } from "@/main/app/paths";
-import { ALL_THINKING_LEVELS, type ModelRef, type ThinkingLevel } from "@/shared/contracts/common";
+import {
+  type AgentMode,
+  ALL_THINKING_LEVELS,
+  type ModelRef,
+  type ThinkingLevel,
+} from "@/shared/contracts/common";
 import type {
   ChatMessage,
   SessionCreateOptions,
@@ -93,6 +98,10 @@ export interface SessionStore {
   readModel(id: string): Promise<ModelRef | null>;
   /** 写会话级模型绑定；null 表示清除绑定（回到「跟随默认」） */
   setModel(id: string, model: ModelRef | null): Promise<void>;
+  /** 会话自己指定的智能体模式；未绑定返回 null（调用方据此回落到设置里的默认） */
+  readAgentMode(id: string): Promise<AgentMode | null>;
+  /** 写会话级模式绑定；null 表示清除绑定（回到「跟随默认」） */
+  setAgentMode(id: string, mode: AgentMode | null): Promise<void>;
   /** 物理删除 sqlite 文件并清索引 */
   remove(id: string): Promise<void>;
   /** 在指定条目处创建分支会话（scope:"branch", position:"at"） */
@@ -174,7 +183,13 @@ function toSummary(meta: SessionMetadata, entry?: LocalIndexEntry): SessionSumma
     pinned: entry?.pinned ?? false,
     messageCount: entry?.messageCount ?? 0,
     model: normalizeModelRef(entry?.model),
+    agentMode: normalizeAgentMode(entry?.agentMode),
   };
+}
+
+/** 索引里的 agentMode 是外部 JSON，可能被手改坏：只认两个合法取值，其余按「未绑定」 */
+function normalizeAgentMode(raw: unknown): AgentMode | null {
+  return raw === "standard" || raw === "orchestrate" ? raw : null;
 }
 
 /** 索引里的 model 是外部 JSON，可能被手改坏：只认完整的 {serviceId, modelId} 字符串对 */
@@ -233,7 +248,6 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
   const task = text(record.task);
   const modelId = text(record.modelId);
   const startedAt = count(record.startedAt);
-  const maxTurns = count(record.maxTurns);
   const turns = count(record.turns);
   const toolCalls = count(record.toolCalls);
   const tools = record.tools;
@@ -247,7 +261,6 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
     task === undefined ||
     modelId === undefined ||
     startedAt === undefined ||
-    maxTurns === undefined ||
     turns === undefined ||
     toolCalls === undefined ||
     !isSubagentRunStatus(record.status) ||
@@ -277,7 +290,6 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
     model,
     modelId,
     thinkingLevel: record.thinkingLevel,
-    maxTurns,
     tools,
     turns,
     toolCalls,
@@ -554,6 +566,21 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(id, { model });
   }
 
+  /**
+   * 会话自己指定的智能体模式；没绑定时返回 null（调用方回落到设置里的默认）。
+   *
+   * 与 readModel 一样：**只认合法值**，索引里被手改坏的值一律按「未绑定」处理，
+   * 而不是把垃圾字符串透给提示词装配。
+   */
+  async function readAgentMode(id: string): Promise<AgentMode | null> {
+    const raw = (await index.read())[id]?.agentMode;
+    return raw === "standard" || raw === "orchestrate" ? raw : null;
+  }
+
+  async function setAgentMode(id: string, mode: AgentMode | null): Promise<void> {
+    await updateIndex(id, { agentMode: mode });
+  }
+
   async function setArchived(id: string, archived: boolean): Promise<void> {
     await updateIndex(id, { archived });
   }
@@ -754,6 +781,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     readCwd,
     readModel,
     setModel,
+    readAgentMode,
+    setAgentMode,
     remove,
     fork,
     loadMessages,

@@ -1,7 +1,7 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeFileAtomic } from "@/main/storage/atomic-write";
-import type { ModelRef } from "@/shared/contracts/common";
+import type { AgentMode, ModelRef } from "@/shared/contracts/common";
 import type { SessionUsageRecord } from "@/shared/contracts/session";
 
 /**
@@ -18,6 +18,13 @@ export interface SessionIndexEntry {
   cwd?: string;
   /** 该会话自己指定的模型；null = 跟随设置里的默认模型（写 null 即清除绑定） */
   model?: ModelRef | null;
+  /**
+   * 该会话自己指定的智能体模式；null / 缺省 = 跟随设置里的默认模式。
+   *
+   * 与 model 一样落在索引里（不进 pi 会话元数据）：它是应用层的展示与装配选择，
+   * 内核不需要、也不该进模型上下文。
+   */
+  agentMode?: AgentMode | null;
   /**
    * 随会话持久化的用量快照（会话统计 / Token 合计 / 上下文分解）。
    *

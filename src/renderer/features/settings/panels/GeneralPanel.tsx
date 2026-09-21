@@ -85,6 +85,29 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
         />
       </SettingsSection>
 
+      {/*
+        智能体模式：这里设的是**新会话的默认值**。
+        单个会话可以在输入框的模式 chip 上覆盖（写进会话索引、重启后仍生效），
+        与「会话级模型绑定」同一个模式 —— 所以这一项与切模型放在同一层语义上。
+      */}
+      <SettingsSection title={t("settings.agentSection")}>
+        <SettingsField
+          label={t("settings.agentMode")}
+          description={t("settings.agentModeDesc")}
+          control={
+            <Segmented
+              ariaLabel={t("settings.agentMode")}
+              value={settings.agentMode}
+              onChange={(agentMode) => void update({ agentMode })}
+              options={[
+                { value: "standard", label: t("settings.agentModeStandard") },
+                { value: "orchestrate", label: t("settings.agentModeOrchestrate") },
+              ]}
+            />
+          }
+        />
+      </SettingsSection>
+
       {/* 对话排版：不设分区标题，保持安静的行式布局 */}
       <SettingsSection>
         <SettingsField

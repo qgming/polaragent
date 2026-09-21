@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
+  agentMode: "standard",
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
@@ -98,6 +99,7 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
     ...(merged as unknown as Settings),
     defaultModel: normalizeModelRef(raw.defaultModel),
     permissionMode: normalizePermissionMode(raw.permissionMode),
+    agentMode: normalizeAgentMode(raw.agentMode),
     language: normalizeLanguage(raw.language),
     services: normalizeServices(raw.services, crypto, warn),
     disabledSkillNames: Array.isArray(raw.disabledSkillNames)
@@ -122,6 +124,16 @@ function normalizeModelRef(raw: unknown): Settings["defaultModel"] {
 /** 审批模式容错：非法取值一律回落到 default（安全侧弹卡询问） */
 function normalizePermissionMode(raw: unknown): Settings["permissionMode"] {
   return raw === "ai_review" || raw === "full" ? raw : "default";
+}
+
+/**
+ * 智能体模式容错：非法取值回落到 standard。
+ *
+ * 兜底选 standard 而不是 orchestrate：后者是「默认不自己动手」的策略，
+ * 一个读坏了的值不该悄悄改变模型的工作方式；standard 是能力最完整的那个档。
+ */
+function normalizeAgentMode(raw: unknown): Settings["agentMode"] {
+  return raw === "orchestrate" ? "orchestrate" : "standard";
 }
 
 /** 语言容错：非法取值回落到默认语言（提示词、占位文案都按它索引） */

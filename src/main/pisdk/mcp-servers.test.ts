@@ -32,6 +32,7 @@ function makeSettings(mcpServers: McpServerConfig[]): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers,

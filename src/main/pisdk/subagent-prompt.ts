@@ -1,0 +1,162 @@
+// 子智能体在主会话系统提示里的两段文本：**索引**（所有模式都有）与**路由规则**（编排模式专属）。
+//
+// 为什么单独一个文件：这两段是「模型怎么知道有哪些子智能体、以及该不该派」的唯一来源，
+// 而 runtime.ts 已经有两千多行；把它们抽出来之后可以纯函数单测（不搭 harness、不碰 fs）。
+//
+// 与技能索引的关系（这是设计上刻意对齐的一处）：
+//   技能清单**不是工具**，而是系统提示里的一段 `<available_skills>` 索引，
+//   由内核的 formatSkillsForSystemPrompt 生成，模型要读全文就对 `<location>` 调 read。
+//   子智能体清单同构 —— 这里生成 `<available_subagents>`，模型用 Task 派发。
+//   两者都不是「让模型记得去查」的工具，因为「得先想起来问」正是不可靠的来源。
+
+import { type SubagentDefinition, subagentCanMutate } from "@/shared/contracts/subagent";
+
+/**
+ * 索引里最多列多少个定义。
+ *
+ * 索引是**每个请求都付 token** 的，而用户定义理论上可以有很多
+ * （`MAX_SUBAGENT_DEFINITIONS` 是 16）。所以这里限量，超出部分只报个数。
+ *
+ * 取 12 而不是 16：内置已经占 7 个，留 5 个给用户定义是常见规模；
+ * 再多的定义本身就该考虑合并或禁用，而不是让每一轮都背着它们的描述。
+ */
+const MAX_INDEXED_SUBAGENTS = 12;
+
+/** 把定义里的工具名写进提示，供人或模型核对「这个子智能体拿得到什么」 */
+export function describeSubagentTools(tools: readonly string[]): string {
+  return tools.length === 0 ? "（无）" : tools.join("、");
+}
+
+/**
+ * `<available_subagents>` 索引：**两个模式都注入**。
+ *
+ * 这是「通用模式不在提示词里列子智能体」那条决定的落地方式 ——
+ * 不写散文（那是编排模式的路由规则），但**必须给出目录**，否则模型在通用模式下
+ * 根本不知道有用户自定义的子智能体可用（内置的那些可以从 Task 的描述里看到，
+ * 用户自定义的只在数据目录里）。
+ *
+ * 没有可用定义时返回空串：列一份空索引只会让模型反复尝试派发不存在的子智能体。
+ *
+ * 内容按「名字 + 一句话描述 + 可用工具 + 来源」给，**不写提示词正文** ——
+ * 那是子智能体自己的系统提示，主代理不需要读，也不需要知道。
+ */
+export function formatSubagentsForSystemPrompt(subagents: readonly SubagentDefinition[]): string {
+  if (subagents.length === 0) return "";
+  const shown = subagents.slice(0, MAX_INDEXED_SUBAGENTS);
+  const lines = [
+    "下面是可以委派的子智能体。派发用 Task 工具，agent 参数填名字",
+    "（也可以给 definition 临时定义一个，只活在这次运行里）。",
+    "",
+    "<available_subagents>",
+  ];
+  for (const def of shown) {
+    lines.push("  <subagent>");
+    lines.push(`    <name>${escapeXml(def.name)}</name>`);
+    lines.push(`    <description>${escapeXml(def.description)}</description>`);
+    lines.push(`    <tools>${escapeXml(describeSubagentTools(def.tools))}</tools>`);
+    lines.push(`    <source>${def.source}</source>`);
+    lines.push("  </subagent>");
+  }
+  lines.push("</available_subagents>");
+  const dropped = subagents.length - shown.length;
+  if (dropped > 0) {
+    lines.push(
+      `（还有 ${dropped} 个子智能体没有列出来。要确认完整清单，看数据目录 subagents/ 下的定义文件。）`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * 「委派」路由规则段：**只有编排模式注入**。
+ *
+ * ## 与索引的分工（这条是刻意的，两段不要互相包含）
+ *
+ * - 索引 = **目录 + 每个子智能体的路由判据**（有哪些、各自什么时候派 / 别派），两个模式都有；
+ * - 本段 = **横跨所有子智能体的策略**（派发的纪律、怎么收敛、怎么验收），编排模式的立身之本。
+ *
+ * 于是「explorer 什么时候该派」只有**一个**来源（那一条 `description`），
+ * 而「派出去的任务要自包含」「报告会自动送回来」这类不针对具体某个子智能体的规则在本段。
+ *
+ * **本段不要重复列名录**，也不要把某个子智能体的路由判据再抄一遍 ——
+ * 那会变成同一事实的两个来源，两处必然漂移。
+ *
+ * 没有可用子智能体时返回空串（调用方据此判断要不要追加）。
+ */
+export function buildDelegationPrompt(
+  subagents: readonly SubagentDefinition[],
+  parentModelId: string,
+): string {
+  if (subagents.length === 0) return "";
+  return [
+    "## 委派（子智能体）",
+    "你是编排者：把独立的工作派给子智能体去做，自己的上下文留给综合与决策。",
+    "子智能体在各自独立的上下文里跑，跑完把报告交回来。",
+    "**每个子智能体「什么时候该派、什么时候别派」，看上面 `<available_subagents>` 里它那一条描述** ——",
+    "本节只讲横跨所有子智能体的纪律。",
+    "",
+    "派发的纪律：",
+    "- 每次派发前用**一句话**告诉用户这次要做什么；",
+    "- **引用路径与行号，不要粘贴整个文件**；",
+    "- 任务说明要**自包含**：子智能体看不到这段对话，缺了背景它只能猜。",
+    "  写清目标、范围、判定标准、要交付什么；",
+    "- **两个能改文件的子智能体不要同时改同一批文件** —— 派之前先比一下各自的改动范围；",
+    "- **不要因为「有这个专家」就派**（派发本身有成本），",
+    "  **也不要因为「每一步都不难」就全自己做**（那是编排模式最典型的失败方式）；",
+    "- 派完独立的任务后**不要立刻空等**：先做不冲突的部分，报告会自动送到你这里。",
+    "",
+    "怎么拿到结果：",
+    "- **报告会被自动送到你这里**：子智能体一跑完，它的报告就会作为一条消息出现",
+    "  （你正在跑就插进当前轮次，空闲就起一轮新运行）。所以**不必**为等结果而空转；",
+    "- 需要它的结论才能往下走时，用 TaskWait 收敛（报告会完整给你）；",
+    "  用 TaskList 看进度；用 TaskStop 停掉确实不该继续的活 —— **不要用 TaskStop「催」**；",
+    "- 看到 interrupted（意外终止）的运行：上一个进程在它跑的时候退出了，没人叫它停、",
+    "  也没有错误信息，**结果未知**。要不要重来由你决定 —— 还重要就用",
+    '  `Task {resumeOf: "<那个运行 id>"}` 重派一次，否则把这件事如实告诉用户；',
+    "- description 必填且用户可见：一句话说清这次派发在做什么；",
+    "- 子智能体被拒绝或失败后**不要原样重派**：先改清范围或补足背景再试。",
+    "",
+    "综合与验收：",
+    "- 报告要**由你综合后**给用户，并说明结论来自哪个子智能体；",
+    "  不要把整段对话原样外包，也不要原样转述报告；",
+    "- **说「子智能体完成了」不等于「它的结论是对的」** ——",
+    "  worker 的完成只说明它的回合结束了。涉及改动的报告，",
+    "  **自己 read 一遍被改的文件**再下结论；",
+    "- 有多个能改文件的子智能体时，**先全部收敛再统一验收**，不要边派边验收；",
+    "- 已经验过的证据不要重复验，除非最终状态变了；",
+    `- 当前主会话模型：${parentModelId}；子智能体默认继承它，除非定义里固定了别的模型。`,
+  ].join("\n");
+}
+
+/**
+ * 子智能体的系统提示。
+ *
+ * 三段的分工是刻意的：框定身份（它看不到用户、不能提问、不能再委派）、
+ * 给出定义正文（用户写的那份提示原样照用，不加工）、
+ * 再规定交付物（最后一条消息就是交回主代理的报告）。第三段是最容易漏的一段 ——
+ * 少了它，子智能体会把过程叙述当成交付物，主代理拿到的就是一段「我做了什么」。
+ */
+export function buildSubagentSystemPrompt(def: SubagentDefinition, cwd: string): string {
+  const canMutate = subagentCanMutate(def.tools);
+  const framing = [
+    `你是子智能体「${def.name}」，在主代理委派下完成一件具体的任务。当前工作目录：${cwd}。`,
+    `你看不到用户，不能向用户提问，也不能再委派别的子智能体 —— 只能用手里的工具把这件事做完。`,
+    `可用工具：${describeSubagentTools(def.tools)}。`,
+    canMutate
+      ? "你可以修改文件，但只改任务真正涉及的那些；其余一律不要动。"
+      : "你没有能改文件或执行命令的工具，所以永远不要声称自己做了这类改动。",
+    "你最后一条消息就是主代理收到的报告：写清做了什么、发现了什么（附准确的文件路径与行号）、以及没能完成的部分。",
+    "报告要紧凑：给结论，不要复述自己的过程，也不要为了凑长度写总结。",
+  ].join("\n");
+  return [framing, def.prompt.trim()].filter((part) => part !== "").join("\n\n");
+}
+
+/** XML 转义：定义的名字与描述是用户可写的，直接插进标签里会被 `<` 之类破坏结构 */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}

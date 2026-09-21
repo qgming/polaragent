@@ -27,6 +27,7 @@ export const IPC = {
     pin: "sessions:pin",
     loadMessages: "sessions:load-messages",
     setModel: "sessions:set-model",
+    setMode: "sessions:set-mode",
   },
   projects: {
     list: "projects:list",

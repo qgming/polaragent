@@ -24,6 +24,7 @@ import {
   DEFAULT_SUBAGENT_TOOLS,
   MAX_SUBAGENT_DEFINITIONS,
   MAX_SUBAGENT_PROMPT_CHARS,
+  SUBAGENT_ASSIGNABLE_TOOLS,
 } from "@/shared/contracts/subagent";
 import {
   BUILTIN_SUBAGENTS,
@@ -46,6 +47,7 @@ const BASE_SETTINGS: Settings = {
   defaultModel: null,
   thinkingLevel: "medium",
   permissionMode: "default",
+  agentMode: "standard",
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
@@ -89,27 +91,55 @@ afterEach(async () => {
 });
 
 describe("内置预设", () => {
-  it("四个预设的名字、工具与轮次上限与契约一致", () => {
+  it("七个预设的名字与工具与契约一致", () => {
+    // 前四个是既有名字（不改名，只重写提示词）；后三个是新增的
     expect(BUILTIN_SUBAGENTS.map((def) => def.name)).toEqual([
       "explorer",
       "code-reviewer",
       "fixer",
       "test-runner",
+      "oracle",
+      "designer",
+      "verifier",
     ]);
     expect(BUILTIN_SUBAGENTS.every((def) => def.source === "builtin")).toBe(true);
-    // explorer / code-reviewer 只读；fixer 可写；test-runner 能跑命令但不能改文件
+    // 只读的：explorer / code-reviewer / oracle；可写的：fixer / designer；
+    // 能跑命令不能改文件的：test-runner / verifier
     expect(BUILTIN_SUBAGENTS.map((def) => def.tools)).toEqual([
       ["read", "grep", "glob"],
       ["read", "grep", "glob"],
       ["read", "grep", "glob", "edit", "write", "bash"],
       ["read", "grep", "glob", "bash"],
+      ["read", "grep", "glob"],
+      ["read", "grep", "glob", "edit", "write"],
+      ["read", "grep", "glob", "bash"],
     ]);
-    expect(BUILTIN_SUBAGENTS.map((def) => def.maxTurns)).toEqual([30, 30, 60, 30]);
     // 提示词是「子智能体的全部行为说明」：空提示词等于一个只会瞎猜的子智能体
     for (const def of BUILTIN_SUBAGENTS) {
       expect(def.prompt.length).toBeGreaterThan(0);
       expect(def.prompt.length).toBeLessThanOrEqual(MAX_SUBAGENT_PROMPT_CHARS);
       expect(def.description).not.toContain("\n");
+    }
+  });
+
+  /**
+   * **没有 maxTurns**：轮次上限字段已整体删除。
+   *
+   * 这条断言是刻意的「反向断言」—— 它锁住的是「不要再把轮次上限加回来」。
+   * 那个机制的定位是错的：它被用来发现异常（幻觉导致重复），
+   * 但轮次是资源消耗、不是行为特征，所以调低了误伤长任务、调高了发现太晚。
+   * 异常检测现在归 runtime 的重复调用守卫（同名同参数第 3 次提醒 / 第 5 次终止）。
+   */
+  it("没有任何内置定义带轮次上限", () => {
+    for (const def of BUILTIN_SUBAGENTS) {
+      expect(def).not.toHaveProperty("maxTurns");
+    }
+  });
+
+  it("每个内置定义的工具都落在可分配集合之内（不引入新权限面）", () => {
+    const assignable = new Set<string>(SUBAGENT_ASSIGNABLE_TOOLS);
+    for (const def of BUILTIN_SUBAGENTS) {
+      for (const tool of def.tools) expect(assignable.has(tool)).toBe(true);
     }
   });
 });
@@ -123,7 +153,6 @@ describe("parseSubagentMarkdown / serializeSubagentMarkdown", () => {
       tools: ["read", "bash"],
       model: { serviceId: "svc-a", modelId: "model-x" },
       thinkingLevel: "high",
-      maxTurns: 42,
       source: "user",
     };
 
@@ -185,24 +214,30 @@ describe("parseSubagentMarkdown / serializeSubagentMarkdown", () => {
     expect(noBody.error).toBeDefined();
   });
 
-  it("maxTurns 不是正整数时拒绝；写成 max_turns 也认", () => {
-    expect(
-      parseSubagentMarkdown("a", "---\ndescription: d\nmaxTurns: 很多\n---\nbody").error,
-    ).toContain("maxTurns");
-    expect(
-      parseSubagentMarkdown("a", "---\ndescription: d\nmaxTurns: 0\n---\nbody").error,
-    ).toContain("maxTurns");
-    expect(
-      parseSubagentMarkdown("a", "---\ndescription: d\nmaxTurns: 2.5\n---\nbody").error,
-    ).toContain("maxTurns");
-
-    // 键名大小写与下划线不敏感：max_turns / thinking_level 都要认
+  /**
+   * **向后兼容**：`maxTurns` 字段已删除，但老定义里可能还留着它。
+   *
+   * 这里必须**忽略而不是报错** —— 报错会让一份完整的用户定义因为一个废弃字段
+   * 整个加载失败，表现是「定义莫名消失了」，而那个字段现在没有任何作用。
+   *
+   * 各种形态都试一遍：正常值、0、小数、写错的字符串、以及下划线写法。
+   */
+  it("老的 maxTurns 键被忽略而不是报错（向后兼容）", () => {
+    for (const value of ["12", "0", "2.5", "很多", ""]) {
+      const raw = `---\ndescription: d\nmaxTurns: ${value}\n---\nbody`;
+      const parsed = parseSubagentMarkdown("a", raw);
+      expect(parsed.error).toBeUndefined();
+      expect(parsed.definition?.description).toBe("d");
+      expect(parsed.definition).not.toHaveProperty("maxTurns");
+    }
+    // 下划线写法同样被忽略；同一份 frontmatter 里别的键照常解析
     const parsed = parseSubagentMarkdown(
       "a",
       "---\ndescription: d\nmax_turns: 12\nthinking_level: high\n---\nbody",
     );
-    expect(parsed.definition?.maxTurns).toBe(12);
+    expect(parsed.error).toBeUndefined();
     expect(parsed.definition?.thinkingLevel).toBe("high");
+    expect(parsed.definition).not.toHaveProperty("maxTurns");
   });
 
   it("model 按第一个 / 拆分；拆不开时视为未指定", () => {
@@ -294,12 +329,14 @@ describe("loadSubagentCatalog", () => {
 
     const { definitions, diagnostics } = await loadSubagentCatalog(cwd);
 
-    // 16 个用户定义已占满上限，4 个内置预设被丢弃
+    // 16 个用户定义已占满上限，**全部内置预设**被丢弃
     expect(definitions).toHaveLength(MAX_SUBAGENT_DEFINITIONS);
     expect(definitions.every((def) => def.source === "user")).toBe(true);
     const capDiagnostic = diagnostics.filter((line) => line.includes("丢弃"));
     expect(capDiagnostic).toHaveLength(1);
-    expect(capDiagnostic[0]).toContain("4");
+    // 丢弃数 = 内置数（用户定义先出现、占满上限）。**从常量推**而不是写死数字 ——
+    // 写死的话，以后每加一个内置预设这条断言都会红一次，而它想说的其实是「内置被全丢了」
+    expect(capDiagnostic[0]).toContain(String(BUILTIN_SUBAGENTS.length));
   });
 });
 
@@ -323,13 +360,13 @@ describe("toSubagentInfo", () => {
     );
   });
 
-  it("maxTurns 缺省回落默认值，promptPreview 折叠成单行并截断", () => {
+  it("面板行不带轮次上限；promptPreview 折叠成单行并截断", () => {
     const info = toSubagentInfo(def, settingsWith());
 
-    expect(info.maxTurns).toBe(30);
     expect(info.model).toBeNull();
     expect(info.thinkingLevel).toBeNull();
     expect(info.filePath).toBeUndefined();
+    expect(info).not.toHaveProperty("maxTurns");
     expect(info.promptPreview).not.toContain("\n");
     expect(info.promptPreview.startsWith("第一行 很长")).toBe(true);
     expect(info.promptPreview.length).toBe(160);
@@ -345,7 +382,6 @@ describe("用户定义的落盘", () => {
       tools: ["read", "teleport"],
       model: { serviceId: "svc-a", modelId: "m1" },
       thinkingLevel: "low",
-      maxTurns: 12,
     });
 
     expect(info.name).toBe("my-agent");
@@ -362,7 +398,6 @@ describe("用户定义的落盘", () => {
       tools: ["read"],
       model: { serviceId: "svc-a", modelId: "m1" },
       thinkingLevel: "low",
-      maxTurns: 12,
     });
 
     // 重命名：新名字写成功，旧文件不能留下（否则目录里会出现两份同样的定义）
@@ -374,7 +409,6 @@ describe("用户定义的落盘", () => {
       tools: ["read"],
       model: null,
       thinkingLevel: null,
-      maxTurns: null,
     });
     await expect(readFile(subagentFilePath("my-agent"), "utf8")).rejects.toThrow();
     await expect(readFile(subagentFilePath("renamed"), "utf8")).resolves.toContain("改名后");
@@ -389,7 +423,6 @@ describe("用户定义的落盘", () => {
       tools: [],
       model: null,
       thinkingLevel: null,
-      maxTurns: null,
     });
     expect(info.name).toBe("escape");
     expect(info.filePath).toBe(subagentFilePath("escape"));
@@ -404,7 +437,6 @@ describe("用户定义的落盘", () => {
         tools: [],
         model: null,
         thinkingLevel: null,
-        maxTurns: null,
       }),
     ).rejects.toThrow("非法的子智能体名");
   });

@@ -19,10 +19,8 @@
 import type { ThinkingLevel } from "@/shared/contracts/common";
 import type { SessionCreateOptions } from "@/shared/contracts/session";
 import {
-  DEFAULT_SUBAGENT_MAX_TURNS,
   isSubagentRunFinished,
   MAX_CONCURRENT_SUBAGENT_RUNS,
-  MAX_SUBAGENT_MAX_TURNS,
   type SubagentEventEnvelope,
   type SubagentRun,
   type SubagentRunFinishedStatus,
@@ -232,7 +230,7 @@ function finish(entry: LiveRun, status: SubagentRunFinishedStatus, error?: strin
  * 子智能体到达终态：把结果交回去（组装规则见 report-delivery.ts）。
  *
  * 为什么挂在这里而不是工具层：`finish()` 是**所有**终止路径的唯一收敛点
- * （正常跑完、maxTurns 截断、失败、被主代理停、被新指令中止、起不来）。
+ * （正常跑完、失败、被主代理停、被新指令中止、被重复守卫终止、起不来）。
  * 挂在工具层就只覆盖「模型恰好调了 TaskWait」的那一半 —— 而报告丢失正是这么发生的。
  *
  * 「交回去」的口径是 **runtime 把结果回填到那次 Task 调用的 part 上**：
@@ -257,12 +255,6 @@ function sessionTitle(name: string, description: string): string {
   const chars = Array.from(label);
   if (chars.length <= MAX_TITLE_CHARS) return label;
   return `${chars.slice(0, MAX_TITLE_CHARS - 1).join("")}…`;
-}
-
-/** maxTurns 收敛：缺省 30，硬上限 80，至少 1 —— 定义写错了也不该把子智能体设成无限轮次 */
-function resolveMaxTurns(value: number | undefined): number {
-  const raw = value === undefined || !Number.isFinite(value) ? DEFAULT_SUBAGENT_MAX_TURNS : value;
-  return Math.min(Math.max(Math.floor(raw), 1), MAX_SUBAGENT_MAX_TURNS);
 }
 
 /** 停掉子会话里正在跑的那一轮；失败只记日志（调用方已经在做终态收尾，不该被 abort 的异常打断） */
@@ -355,7 +347,6 @@ async function startReservedRun(
     model: definition.model ?? null,
     modelId: definition.model ? definition.model.modelId : parent.parentModelId,
     thinkingLevel: definition.thinkingLevel ?? parent.parentThinkingLevel ?? "off",
-    maxTurns: resolveMaxTurns(definition.maxTurns),
     tools,
     turns: 0,
     toolCalls: 0,
@@ -575,14 +566,6 @@ export function noteSubagentAssistantMessage(
   entry.run.turns += 1;
   const text = message.text.trim();
   if (text !== "") entry.run.report = text;
-  // maxTurns 是硬上限：**先落 truncated 再中止**（顺序反了就只剩 aborted，截断这件事丢了）。
-  // 判据与契约一致：轮次「超过」上限就截断，同时保留已经拿到的最后一条报告。
-  if (entry.run.turns > entry.run.maxTurns) {
-    finish(entry, "truncated", `已到 maxTurns 上限（${entry.run.maxTurns} 轮），运行被中止`);
-    publish(entry.run);
-    void stopChildRun(entry);
-    return;
-  }
   persist(entry.run);
   publish(entry.run);
 }

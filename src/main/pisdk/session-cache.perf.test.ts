@@ -42,7 +42,17 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(baseDir, { recursive: true, force: true });
+  /**
+   * `maxRetries` / `retryDelay` 是**为 Windows 准备的**。
+   *
+   * SQLite 的 `-wal` / `-shm` 文件在后端刚关闭的那一刻还可能被句柄短暂占着，
+   * 于是递归删除拿到 `EBUSY`；而 `force: true` 只忽略 ENOENT，**不忽略 EBUSY**。
+   *
+   * 症状：全量跑时这个文件偶发失败、单独跑必过（并发几十个 worker 时更容易撞上），
+   * 报错是一句与断言无关的 `EBUSY: resource busy or locked, unlink ...sqlite-wal`。
+   * Node 就是为这种场景提供这两个选项的（遇到 EBUSY/EPERM/ENOTEMPTY 时线性退避重试）。
+   */
+  await rm(baseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("P2-1 会话列表缓存的效果", () => {

@@ -29,7 +29,6 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    maxTurns: 30,
     tools: [...DEFAULT_SUBAGENT_TOOLS],
     turns: 4,
     toolCalls: 7,

@@ -12,6 +12,7 @@ import {
   type AgentToolResult,
   BACKGROUND_CONTEXT,
   type CustomMessage,
+  createCustomMessage,
   type ExecutionEnv,
   type ExecutionToolContext,
   formatSkillsForSystemPrompt,
@@ -38,7 +39,7 @@ import type {
   ChatStreamSnapshot,
   QueuedMessage,
 } from "@/shared/contracts/chat";
-import type { ModelRef } from "@/shared/contracts/common";
+import { type AgentMode, DEFAULT_AGENT_MODE, type ModelRef } from "@/shared/contracts/common";
 import type { JobInfo } from "@/shared/contracts/job";
 import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
 import type {
@@ -57,10 +58,11 @@ import {
   isSubagentRunFinished,
   type SubagentDefinition,
   type SubagentRun,
-  subagentCanMutate,
 } from "@/shared/contracts/subagent";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
+import { renderPrompt } from "@/shared/prompts/template";
 import type { BrowserAutomation } from "../browser/types";
+import { agentModeSection, shouldIncludeDelegationRules } from "./agent-mode-prompt";
 import type { ApprovalService } from "./approvals";
 import { errorText } from "./error-text";
 import { createExecEnv } from "./exec-env";
@@ -75,8 +77,15 @@ import {
   type PermissionRuleStore,
 } from "./permissions";
 import { buildProviders, resolveModel } from "./providers";
+import {
+  createRepeatChain,
+  hardRepeatReason,
+  inspectRepeat,
+  type RepeatChain,
+  softRepeatNotice,
+} from "./repeat-guard";
 import { buildSubagentResult } from "./report-delivery";
-import { resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import { resolveBuiltinSkillDir, resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
 import {
   deriveContextBreakdown,
   estimateTokens,
@@ -94,6 +103,11 @@ import {
 } from "./session-stats";
 import type { SessionStore } from "./session-store";
 import { loadSubagentCatalog } from "./subagent-catalog";
+import {
+  buildDelegationPrompt,
+  buildSubagentSystemPrompt,
+  formatSubagentsForSystemPrompt,
+} from "./subagent-prompt";
 // 循环依赖是刻意的：runner 需要 runtime 的 registerSubagentSession / getChatRuntime，
 // runtime 需要 runner 的运行管理。两边都只在函数体内互相调用，模块初始化期不取值，安全。
 import {
@@ -158,6 +172,14 @@ export interface ChatRuntimeDeps {
   sessionTitles?: SessionTitleGenerator;
   /** 会话工作目录解析：取索引里绑定的 cwd，未绑定时由实现方回退进程当前目录 */
   resolveWorkingDir: (sessionId: string) => Promise<string>;
+  /**
+   * 应用根目录（`app.getAppPath()`），用来定位**随包分发的内置技能**
+   * （`<appPath>/resources/skills`）。
+   *
+   * 由 bootstrap 注入而不是在这里 import electron：与 `browser` / `mcp` 同一套路，
+   * runtime 必须能在 node 单测里跑。未注入时（测试）就只有数据目录与项目目录两个来源。
+   */
+  appPath?: string;
   /**
    * MCP 工具来源；未注入时（测试等场景）只装配内置工具。
    *
@@ -383,6 +405,23 @@ interface SessionRuntime {
    * 而那个数只有从最近一次请求的 usage 才推得出来（见 persistUsage）。
    */
   lastUsage?: { input: number; cacheRead?: number; cacheWrite?: number };
+  /**
+   * 重复调用守卫的**链状态**（同名同参数的连续调用计数）。
+   *
+   * 每个会话一条链（一个 session = 一个 agent），用户新消息时清空 —— 见 repeat-guard.ts。
+   * 放在会话上而不是进程级：两条会话的重复绝不该互相触发提醒。
+   */
+  repeatChain: RepeatChain;
+  /**
+   * 待注入的重复提醒文本。
+   *
+   * 为什么需要这一格中转：检测发生在 `after_tool`（工具刚跑完），而**往上下文里
+   * 追加一条消息**必须在 `transform_context`（请求组装前）做。两个钩子的时机不同，
+   * 所以中间要有个暂存位。注入后即清空。
+   *
+   * 内核没有 dsh 的 `additionalContexts`，所以这里是唯一的投递路径（见 repeat-guard 文件头）。
+   */
+  pendingRepeatNotice?: string;
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -694,36 +733,84 @@ const TOOL_GUIDANCE = [
   "6. 只依据工具的真实返回作答，不要编造执行结果。",
 ].join("\n");
 
-/** 系统提示：工作目录 + 工具指导 + 基本规则 + 技能索引 + 可选 AGENTS.md；保持简洁，不做复杂模板 */
+/**
+ * AGENTS.md 的两层读取结果：全局（数据目录）与项目（会话工作目录）。
+ *
+ * 两层都可能为空串（文件不存在、不可读、或内容只有空白）。
+ */
+export interface AgentsMdLayers {
+  global: string;
+  project: string;
+}
+
+/**
+ * 读 AGENTS.md 的两层：**数据目录的全局指令 + 工作目录的项目指令**。
+ *
+ * 为什么要两层：`~/.oint/AGENTS.md` 里的东西是**跨项目的长期偏好**
+ * （「回答用中文」「别写没用的注释」），而 `<项目>/AGENTS.md` 是**这个项目的约定**
+ * （「这个仓库用 pnpm」「测试在 test/ 下」）。只有一层时用户得二选一 ——
+ * 要么把项目约定也塞进全局（污染所有项目），要么每个项目重复写一遍个人偏好。
+ *
+ * 两层都在时**都注入**：全局在前、项目在后（项目离当前任务更近，放后面更醒目）。
+ *
+ * 三个边界：
+ * 1. **任一层缺失或不可读都静默忽略** —— 与原有行为一致，绝不能因为一个可选的
+ *    指令文件让会话创建失败；
+ * 2. **同路径去重**：`OINT_HOME` 被设成会话工作目录时两层会指向同一个文件，
+ *    那时只读一次（否则同一段指令在提示里出现两遍）；
+ * 3. 用**普通 fs 读**，不走 ExecutionEnv —— 与数据目录那层保持一致，
+ *    也避免让调用方以为这份读取受 allowedRoots 约束。
+ */
+export async function readAgentsMd(cwd: string): Promise<AgentsMdLayers> {
+  const globalPath = path.join(dataDir(), "AGENTS.md");
+  const projectPath = path.join(cwd, "AGENTS.md");
+
+  const readOne = async (file: string): Promise<string> => {
+    try {
+      return (await readFile(file, "utf8")).trim();
+    } catch {
+      // 不存在 / 不可读：静默忽略（可选文件，不该阻断会话）
+      return "";
+    }
+  };
+
+  const global = await readOne(globalPath);
+  // 同一个文件不读第二遍：路径归一后比较，避免 `a/./AGENTS.md` 这类写法绕过判重
+  const project =
+    path.resolve(globalPath) === path.resolve(projectPath) ? "" : await readOne(projectPath);
+  return { global, project };
+}
+
+/**
+ * 系统提示：**模式身份段** + 工具指导 + 技能索引 + 两层 AGENTS.md；保持简洁，不做复杂模板。
+ *
+ * 模式段替换的是**开头那一段身份与工作方式**（见 agent-mode-prompt.ts）——
+ * 两个模式的工具与能力完全相同，区别只在怎么写这段。
+ */
 export async function buildSystemPrompt(
   settings: Settings,
   cwd: string,
   skillsSection?: string,
+  mode: AgentMode = DEFAULT_AGENT_MODE,
 ): Promise<string> {
-  const replyLanguage = settings.language === "en-US" ? "英文" : "简体中文";
-  const sections = [
-    `你是 Oint 桌面应用中的智能编程助手。当前会话工作目录：${cwd}，相对路径均基于该目录解析。`,
-    TOOL_GUIDANCE,
-    [
-      "工作规则：",
-      "1. 修改代码前先阅读相关文件，不要凭空猜测；",
-      "2. 通过工具完成文件读写与命令执行，不要编造执行结果；",
-      `3. 使用${replyLanguage}回复用户。`,
-    ].join("\n"),
-  ];
+  // 模式身份段里的 {{cwd}} 在这里渲染掉：模板只留一个占位符，避免两处各写一遍拼接
+  const identity = renderPrompt(agentModeSection(mode, settings.language), { cwd });
+  const sections = [identity, TOOL_GUIDANCE];
 
   // 技能以「名称 + 描述 + 文件路径」的紧凑索引注入，完整 SKILL.md 由模型按需通过 lane.skill 读取。
   // 该索引稳定不变，放在提示前缀里不会破坏缓存 —— 但**不要**在这里拼接技能全文。
   if (skillsSection !== undefined && skillsSection !== "") sections.push(skillsSection);
 
-  let custom = "";
-  try {
-    custom = (await readFile(path.join(dataDir(), "AGENTS.md"), "utf8")).trim();
-  } catch {
-    // AGENTS.md 不存在或不可读：静默忽略
-    custom = "";
-  }
-  if (custom !== "") sections.push(`用户自定义指令（AGENTS.md）：\n${custom}`);
+  /**
+   * 两层 AGENTS.md（见 readAgentsMd 的说明）。
+   *
+   * 两段的标题刻意不同：用户与测试都要能分清哪段来自全局、哪段来自项目。
+   * 全局在前、项目在后 —— 项目级更贴近当前任务，放在后面更醒目
+   *（也是「越靠后的指令越新」这个直觉）。
+   */
+  const agents = await readAgentsMd(cwd);
+  if (agents.global !== "") sections.push(`用户自定义指令（全局 AGENTS.md）：\n${agents.global}`);
+  if (agents.project !== "") sections.push(`项目指令（AGENTS.md）：\n${agents.project}`);
   return sections.join("\n\n");
 }
 
@@ -747,13 +834,18 @@ export interface LoadedAgentResources {
  *
  * `disabledSkillNames` 在这里过滤；`disableModelInvocation` 的过滤在
  * formatSkillsForSystemPrompt 内部完成（它只把可被模型主动调用的技能写进索引），这里不重复过滤。
+ *
+ * `appPath` 是**可选**的：给了才扫描随包分发的内置技能（`<appPath>/resources/skills`）。
+ * 测试与不关心内置技能的调用方可以省略。
  */
 export async function loadAgentResources(
   env: ExecutionEnv,
   settings: Settings,
   cwd: string,
+  appPath?: string,
 ): Promise<LoadedAgentResources> {
-  const skillDirs = resolveSkillDirs(cwd).map((dir) => path.resolve(cwd, dir));
+  // 目录顺序即优先级（同名先出现者胜）：数据目录 → 项目 → 内置，所以用户能覆盖内置
+  const skillDirs = resolveSkillDirs(cwd, appPath).map((dir) => path.resolve(cwd, dir));
 
   let skills: Skill[] = [];
   try {
@@ -849,78 +941,6 @@ async function effectiveThinkingLevel(
   return spec?.definition.thinkingLevel ?? settings.thinkingLevel;
 }
 
-/** 把定义里的工具名与档位写进子智能体的系统提示，供人核对「这个子智能体拿得到什么」 */
-function describeSubagentTools(tools: readonly string[]): string {
-  return tools.length === 0 ? "（无）" : tools.join("、");
-}
-
-/**
- * 子智能体的系统提示。
- *
- * 三段的分工是刻意的：框定身份（它看不到用户、不能提问、不能再委派）、
- * 给出定义正文（用户写的那份提示原样照用，不加工）、
- * 再规定交付物（最后一条消息就是交回主代理的报告）。第三段是最容易漏的一段 ——
- * 少了它，子智能体会把过程叙述当成交付物，主代理拿到的就是一段「我做了什么」。
- */
-export function buildSubagentSystemPrompt(def: SubagentDefinition, cwd: string): string {
-  const canMutate = subagentCanMutate(def.tools);
-  const framing = [
-    `你是子智能体「${def.name}」，在主代理委派下完成一件具体的任务。当前工作目录：${cwd}。`,
-    `你看不到用户，不能向用户提问，也不能再委派别的子智能体 —— 只能用手里的工具把这件事做完。`,
-    `可用工具：${describeSubagentTools(def.tools)}。`,
-    canMutate
-      ? "你可以修改文件，但只改任务真正涉及的那些；其余一律不要动。"
-      : "你没有能改文件或执行命令的工具，所以永远不要声称自己做了这类改动。",
-    "你最后一条消息就是主代理收到的报告：写清做了什么、发现了什么（附准确的文件路径与行号）、以及没能完成的部分。",
-    "报告要紧凑：给结论，不要复述自己的过程，也不要为了凑长度写总结。",
-  ].join("\n");
-  return [framing, def.prompt.trim()].filter((part) => part !== "").join("\n\n");
-}
-
-/**
- * 主会话系统提示里的「委派」段。
- *
- * 没有可用子智能体时返回空串 —— 列一份空清单只会让模型反复尝试派发不存在的子智能体
- * （调用方据此判断要不要追加，见 createRuntime）。
- *
- * 这里的措辞是模型行为的唯一来源，所以按「什么时候派 / 什么时候别派 / 派完怎么收敛」
- * 组织，而不是罗列工具参数（参数的说明在工具自己的 description 里，两处不重复）。
- */
-export function buildDelegationPrompt(
-  subagents: readonly SubagentDefinition[],
-  parentModelId: string,
-): string {
-  if (subagents.length === 0) return "";
-  const catalog = subagents
-    .map((def) => `- ${def.name}（工具：${describeSubagentTools(def.tools)}）：${def.description}`)
-    .join("\n");
-  return [
-    "## 委派（子智能体）",
-    "把独立的工作派给子智能体去做，自己的上下文留给综合与决策。子智能体在各自独立的上下文里跑，跑完把报告交回来。",
-    "可用的子智能体：",
-    catalog,
-    "什么时候该派：",
-    "- 多件互不依赖的工作可以并行推进：在同一条消息里发多个 Task；",
-    "- 要翻很多文件、很多日志才能得出结论的事：派给 explorer 这类只读子智能体，把结论带回来；",
-    "- 按一份自包含的规格改多个文件：派给可写文件的子智能体；",
-    "- 跑一个具体的测试或构建命令、只要失败清单：派给跑命令的子智能体；",
-    "- 改动做完之后想找人对立地挑毛病：派一次只读审查。",
-    "什么时候不要派：",
-    "- 两三个工具调用就能做完的事；",
-    "- 需要用户拍板的事（提问、确认方案）—— 子智能体不能与用户交互；",
-    "- 必须一步一步看着结果走的活。",
-    "派完之后怎么拿到结果：",
-    "- **报告会被自动送到你这里**：子智能体一跑完，它的报告就会作为一条消息出现（你正在跑就插进当前轮次，",
-    "  空闲就起一轮新运行）。所以你**不必**为等结果而空转，派完继续做手上的事即可；",
-    "- 需要它的结论才能往下走时，用 TaskWait 收敛（报告会完整给你），用 TaskList 看进度、",
-    "  用 TaskStop 停掉确实不该继续的活 —— 不要用 TaskStop「催」；",
-    '- 看到 interrupted（意外终止）的运行：上一个进程在它跑的时候退出了，没人叫它停、也没有错误信息，结果未知。要不要重来由你决定 —— 还重要就用 Task {resumeOf: "<那个运行 id>"} 重派一次，否则把这件事如实告诉用户；',
-    "- description 必填且用户可见：一句话说清这次派发在做什么；",
-    "- 报告要由你综合后给用户，并说明结论来自哪个子智能体；",
-    `- 当前主会话模型：${parentModelId}；子智能体默认继承它，除非定义里固定了别的模型。`,
-  ].join("\n");
-}
-
 /** 会话内待办清单在 session 里的 custom entry 类型 */
 const TODO_ENTRY_TYPE = "todo";
 
@@ -972,15 +992,27 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
  * 注意：子目录此时可能还不存在（首次启动前）。`validatePathAccess` 是纯字符串判断、
  * 不做文件系统访问，所以不存在的根不会报错，只是永远匹配不上。
  */
-export function sessionAllowedRoots(cwd: string): string[] {
+export function sessionAllowedRoots(cwd: string, appPath?: string): string[] {
   const data = dataDir();
-  return [
+  const roots = [
     cwd,
     path.join(data, "skills"),
     path.join(data, "prompts"),
     path.join(data, "subagents"),
     tmpdir(),
   ];
+  /**
+   * 内置技能目录（`<appPath>/resources/skills`）也必须在允许根里。
+   *
+   * 漏掉它的症状与「技能目录不在 allowedRoots 内」完全一样：目录存在却 0 个技能，
+   * 而 diagnostics 里只有一行 list_failed，很容易被当成「应用没带内置技能」。
+   * 只放行 `resources/skills` 这一层，不放行整个 appPath —— 那是应用代码目录，
+   * 没有理由让模型的 read 直接翻。
+   */
+  if (appPath !== undefined && appPath !== "") {
+    roots.push(resolveBuiltinSkillDir(appPath));
+  }
+  return roots;
 }
 
 /**
@@ -1468,8 +1500,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSessionStats(runtime);
     // 用量快照随会话落盘：下一轮或重启后打开这个会话时，底栏不必重算就有数
     void persistUsage(runtime);
-    // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出，
-    // 「truncated」不在这里 —— 它由 maxTurns 判定在计数时先落（见 subagent-runner）
+    // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出。
+    // 子智能体被**重复调用守卫**硬档终止时，runner 已经先落过 failed 终态（带原因），
+    // noteSubagentRunEnd 是先到者为准的幂等操作，所以这里不会把它覆盖成 aborted。
     noteSubagentRunEnd(runtime.sessionId, {
       status:
         event.status === "failed" ? "failed" : event.status === "aborted" ? "aborted" : "completed",
@@ -1814,14 +1847,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 读不到就说明这不是子智能体会话，按主会话那一套来。
      */
     const spec = subagentSessions.get(sessionId);
-    // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录，
-    // tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
+    // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录、
+    // appPath 兜住随包分发的内置技能，tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
     const env = await createExecEnv({
       cwd,
-      allowedRoots: sessionAllowedRoots(cwd),
+      allowedRoots: sessionAllowedRoots(cwd, deps.appPath),
     });
 
-    const loaded = await loadAgentResources(env, settings, cwd);
+    const loaded = await loadAgentResources(env, settings, cwd, deps.appPath);
 
     // 会话级待办状态：create() 时就得交给工具，而 lane 要等 create 之后才有 ——
     // 所以持久化回调走一个可变的 laneRef（工具真正调用它时 lane 一定已就绪）
@@ -1895,20 +1928,48 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     /**
      * 系统提示：
      * - 主会话：交互式提示（工作目录 + 工具指导 + 工作规则 + 技能索引 + AGENTS.md），
-     *   再在「确实有可用定义」时追加委派说明 —— 提示里列一份空清单，
-     *   只会让模型反复尝试派发不存在的子智能体；
-     * - 子智能体：换成定义里的 prompt 正文 + 子智能体的工作规则。刻意不给它技能索引：
-     *   它是被派来干一件具体的事，技能由主代理挑选与转述。
+     *   再追加**子智能体索引**与**委派路由段**；
+     * - 子智能体：换成定义里的 prompt 正文 + 子智能体的工作规则。刻意不给它技能索引、
+     *   也不给它子智能体索引：它是被派来干一件具体的事，不能再委派（契约不允许嵌套）。
+     *
+     * 索引与路由段的分工（两段刻意分开，见 subagent-prompt.ts 的文件头）：
+     * - **索引**（`<available_subagents>`）是**目录**，两个模式都有 —— 没有它，
+     *   通用模式下的模型看不见用户自定义的子智能体（内置那些能从 Task 描述里看到）；
+     * - **路由段**是**策略**（该不该派、怎么派、怎么收敛），**只有编排模式**注入
+     *   （判据见 agent-mode-prompt.ts 的 shouldIncludeDelegationRules）。
+     *
+     * ⚠️ **必须把结果真的交给内核**：`AgentHarness.create` 的 `systemPrompt` 缺省时，
+     * 内核的 `resolveSystemPrompt` 直接返回空串（`generation.js`）—— 也就是说
+     * 「算出来了但没传」等价于**完全没有系统提示**，而且不会有任何报错。
+     * 这个坑曾经真的踩过：整段提示（身份 / 工具指导 / 技能索引 / AGENTS.md /
+     * 子智能体清单 / 委派规则）只被用来估了个 token 数，一个字都没进模型。
+     *
+     * 用**函数形式**而不是字符串：内核每个 generation 都调一次（`resolveSystemPrompt`
+     * 对函数型配置现算），于是**切换模式在下一次请求就生效**，不必重建 harness。
+     * 静态部分（技能索引、子智能体清单、AGENTS.md）在会话创建时算一次就够，
+     * 只有模式与语言每次现读 —— 否则每轮都要扫一遍磁盘。
      */
-    let systemPrompt: string;
-    if (spec === undefined) {
-      systemPrompt = await buildSystemPrompt(settings, cwd, loaded.skillsSection);
-      const available = await loadEnabledSubagents(settings, cwd);
-      const delegation = buildDelegationPrompt(available, model.id);
-      if (delegation !== "") systemPrompt = `${systemPrompt}\n\n${delegation}`;
-    } else {
-      systemPrompt = buildSubagentSystemPrompt(spec.definition, cwd);
-    }
+    const availableSubagents = spec === undefined ? await loadEnabledSubagents(settings, cwd) : [];
+    /** 静态骨架 + 动态模式 → 完整系统提示（主会话用） */
+    const composeMainPrompt = async (): Promise<string> => {
+      const current = await deps.getSettings();
+      // 会话级绑定优先，未绑定时跟随设置里的默认模式
+      const mode = (await deps.sessionStore.readAgentMode(sessionId)) ?? current.agentMode;
+      const parts = [await buildSystemPrompt(current, cwd, loaded.skillsSection, mode)];
+      const index = formatSubagentsForSystemPrompt(availableSubagents);
+      if (index !== "") parts.push(index);
+      if (shouldIncludeDelegationRules(mode)) {
+        const delegation = buildDelegationPrompt(availableSubagents, model.id);
+        if (delegation !== "") parts.push(delegation);
+      }
+      return parts.join("\n\n");
+    };
+    const subagentPrompt =
+      spec === undefined ? "" : buildSubagentSystemPrompt(spec.definition, cwd);
+    const resolvePrompt = async (): Promise<string> =>
+      spec === undefined ? await composeMainPrompt() : subagentPrompt;
+    // 先算一次：上下文分解的固定项要一个具体数字，而函数形式拿不到「当前值」以外的东西
+    const systemPrompt = await resolvePrompt();
     /**
      * 工具表：
      * - 主会话：全套（子智能体工具由第 5 个参数传入 —— 它们需要会话 id 与运行管理器）；
@@ -1943,6 +2004,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         models,
         model,
         tools,
+        /**
+         * 函数形式：每个 generation 现算（内核 resolveSystemPrompt 对函数型配置每轮求值）。
+         * 于是切换模式在下一次请求就生效，不必重建 harness。
+         *
+         * **这一行是系统提示唯一的投递点** —— 漏掉它时内核返回空串，
+         * 模型拿不到任何身份、规则、技能索引与 AGENTS.md，且不会有任何报错。
+         */
+        systemPrompt: resolvePrompt,
         toolContext: {
           env,
           todo,
@@ -1999,6 +2068,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       jobWakes: 0,
       // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
       subagentTools,
+      repeatChain: createRepeatChain(),
       stats: initSessionStatsState(),
       tokenUsage: {
         uncachedInputTokens: 0,
@@ -2019,6 +2089,85 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           console.warn(`工具权限校验失败（${event.toolName}）：${errorText(error)}`);
           return { block: { reason: "权限校验失败，已拒绝该操作" } };
         }
+      }),
+    );
+
+    /**
+     * **重复调用守卫**（取代了原来的 maxTurns 截断，见 repeat-guard.ts 的文件头）。
+     *
+     * 为什么挂 `after_tool` 而不是 `before_tool`：
+     * - 与四家实现（opencode / Roo / Cline / OpenHands）一致，它们都在**执行之后**计数；
+     * - 而且被权限门拒绝的调用也应当计数 —— 模型反复尝试被拒的调用，
+     *   恰恰是最需要打断的那类循环。`before_tool` 的返回值里插不进「顺便记一笔」。
+     *
+     * 两个会话类型一视同仁：主会话也会陷入重复，没有理由只守卫子智能体。
+     */
+    runtime.unsubscribers.push(
+      created.harness.hooks.on("after_tool", async (event) => {
+        try {
+          const verdict = inspectRepeat(runtime.repeatChain, event.toolName, event.args);
+          if (verdict === null) return undefined;
+          if (verdict.level === "soft") {
+            // 只暂存，投递交给 transform_context（两个钩子的时机不同）
+            runtime.pendingRepeatNotice = softRepeatNotice(
+              verdict.toolName,
+              verdict.count,
+              verdict.argsText,
+            );
+            console.warn(
+              `重复调用守卫：${runtime.sessionId} 连续 ${verdict.count} 次调用 ${verdict.toolName}`,
+            );
+            return undefined;
+          }
+          /**
+           * 硬档：终止这次运行。
+           *
+           * **先把终态定下来再请求中止**（顺序不能反）：`noteSubagentRunEnd` 是幂等的、
+           * 先到者为准，所以这次运行的结局会是「失败：检测到重复调用」而不是笼统的
+           * 「已停止」—— 用户与主代理都要能看出**这是异常**，不是跑太久了。
+           */
+          if (subagentSessions.has(runtime.sessionId)) {
+            noteSubagentRunEnd(runtime.sessionId, {
+              status: "failed",
+              error: hardRepeatReason(verdict.toolName, verdict.count),
+            });
+          }
+          console.warn(
+            `重复调用守卫：${runtime.sessionId} 连续 ${verdict.count} 次调用 ${verdict.toolName}，已终止`,
+          );
+          // 不 await：本函数在工具回调里，等中止会让这一轮卡在这儿（stop 自己的注释也是这个理由）
+          void stop(runtime.sessionId);
+        } catch (error) {
+          // 守卫只是增强：它自己出错绝不能影响工具调用的结果
+          console.warn(`重复调用守卫失败（${event.toolName}）：${errorText(error)}`);
+        }
+        // 守卫从不改写工具结果（四家共识：只提醒 / 只中止，不篡改调用本身）
+        return undefined;
+      }),
+    );
+
+    /**
+     * 把暂存的重复提醒**作为一条 user 角色的 custom 消息**追加进请求。
+     *
+     * 为什么用 custom 而不是普通 user 消息：
+     * - `convertToLlm` 把它转成 user 角色（模型看得见，与 dsh 的做法一致）；
+     * - 而 message-mapper **忽略 custom 条目**，所以它不会出现在用户的对话流里 ——
+     *   它是给模型的自纠提示，不是用户说的话，不该伪装成用户发言。
+     *
+     * 注入后立刻清空：提醒只该出现在它触发之后的那一次请求里，
+     * 留着会让它跟着整段历史一直重复。
+     */
+    runtime.unsubscribers.push(
+      created.harness.hooks.on("transform_context", (event) => {
+        const notice = runtime.pendingRepeatNotice;
+        if (notice === undefined) return;
+        runtime.pendingRepeatNotice = undefined;
+        return {
+          messages: [
+            ...event.messages,
+            createCustomMessage("repeat-notice", notice, false, undefined, Date.now()),
+          ],
+        };
       }),
     );
 
@@ -2234,6 +2383,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     runtime.running = true;
     runtime.runEnded = false;
+    /**
+     * 重复调用守卫：**用户的新指令清空链**。
+     *
+     * 全新指令意味着前提变了 —— 模型接下来重复上一轮的调用完全可能是对的
+     * （「再跑一次那个测试」），把它算作循环就是误报。
+     *
+     * 只在**用户真的说话**时清（`internal` 是系统内部消息：作业唤醒、子智能体报告投递），
+     * 那两类不是用户意图，不该顺手洗白一条已经形成的循环。
+     */
+    if (internal?.message === undefined && internal?.jobWake !== true) {
+      runtime.repeatChain = createRepeatChain();
+    }
     // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期项：新一次运行先清空
     runtime.pendingEntries = [];
     // 记录渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
@@ -2563,6 +2724,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
   async function queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
+    /**
+     * 重复调用守卫：排队 / 插话也是**用户的新指令**，同样清空链。
+     *
+     * 注意这里也会覆盖「作业结束唤醒」那条内部路径（notifyJobExit 经 queue 发 steer）——
+     * 那是可接受的：作业结束是一条**新信息**，前提确实变了，此时重置链是对的
+     *（模型接下来重复调用可能是合理的反应）。
+     */
+    runtime.repeatChain = createRepeatChain();
     /**
      * 空闲时直接按发送处理，避免消息无声挂起。
      *

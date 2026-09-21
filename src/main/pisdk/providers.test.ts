@@ -16,6 +16,7 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],

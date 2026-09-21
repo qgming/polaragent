@@ -2,7 +2,7 @@ import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { BrowserEvent, BrowserStatus } from "./browser";
 import type { ChatEventEnvelope, ChatSendOptions, ChatStreamSnapshot } from "./chat";
-import type { ModelRef, WireFormat } from "./common";
+import type { AgentMode, ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
@@ -17,6 +17,7 @@ import type {
   SessionMessagesPage,
   SessionSummary,
   SetSessionModelResult,
+  SetSessionModeResult,
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillDetail, SkillImportResult, SkillInfo } from "./skills";
@@ -61,6 +62,13 @@ export interface OintApi {
      * 立即生效：下一次发送就用新模型，会话上下文完整保留。运行中会被拒绝（reason: "running"）。
      */
     setModel(id: string, model: ModelRef | null): Promise<SetSessionModelResult>;
+    /**
+     * 切换该会话使用的智能体模式（null = 跟随设置里的默认模式）。
+     *
+     * 立即生效：下一次发送就用新模式的系统提示。运行中会被拒绝（reason: "running"）——
+     * 与切模型同一条理由：中途换提示会让同一段对话的前后指令不一致。
+     */
+    setMode(id: string, mode: AgentMode | null): Promise<SetSessionModeResult>;
     remove(id: string): Promise<void>;
     fork(id: string, entryId: string): Promise<SessionSummary>;
     loadMessages(id: string, options?: LoadSessionMessagesOptions): Promise<SessionMessagesPage>;

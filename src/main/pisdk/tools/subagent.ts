@@ -26,20 +26,7 @@ import {
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
-import { BUILTIN_SUBAGENTS } from "../subagent-catalog";
 import type { AppToolContext } from "../tools";
-
-/**
- * 内置子智能体清单（名字 + 一句话用途），拼进 Task 的描述。
- *
- * 为什么从定义生成而不是手抄一份：名字与用途只在 subagent-catalog 的 BUILTIN_SUBAGENTS 里定义，
- * 两处各写一份必然漂移。这份清单必须出现在 Task 的描述里 —— 只写在系统提示时，
- * 模型一旦没注意到它，就只能在收到「没有名为 X 的子智能体」的报错后才知道内置了哪几个
- *（实测：模型因此一直在用 definition 临时造子智能体，而不是直接派 explorer 这类现成的）。
- */
-const BUILTIN_SUBAGENT_ROSTER = BUILTIN_SUBAGENTS.map(
-  (definition) => `- ${definition.name}：${definition.description}`,
-).join("\n");
 
 /** 四个工具的名字：UI 图标表、权限层与测试都按它们登记 */
 export const SUBAGENT_TOOL_NAMES = {
@@ -166,7 +153,7 @@ const taskSchema = Type.Object({
     Type.String({
       minLength: 1,
       description:
-        'Name of the subagent to delegate to, as listed in the system prompt (e.g. "scout"). Required unless "definition" is given.',
+        'Name of the subagent to delegate to, as listed in the system prompt (e.g. "explorer"). Required unless "definition" is given.',
     }),
   ),
   resumeOf: Type.Optional(
@@ -252,14 +239,12 @@ const TASK_DESCRIPTION =
   "已经派出去的运行变成 interrupted（意外终止）时：上一个进程在它跑的时候退出了，没人叫它停，\n" +
   "我们也没有任何错误信息 —— **结果未知**。接下来怎么办由你决定：这件事还重要就用 resumeOf 重新\n" +
   "派一次（不用把任务全文再抄一遍），否则如实告诉用户它被打断了、以及你已经知道的部分。\n\n" +
-  "内置子智能体（直接用 agent 指定，不需要先定义）：\n" +
-  BUILTIN_SUBAGENT_ROSTER +
-  "\n" +
-  "系统提示里可能还列出用户自定义的定义；只干一次的特殊分工可以用 definition 临时定义。\n\n" +
+  "可用的子智能体：见系统提示里的 <available_subagents> 清单（内置的与用户自定义的都在那里），\n" +
+  "只干一次的特殊分工也可以用 definition 临时定义一个。\n\n" +
   "参数：\n" +
   "- description：**必填且用户可见**（用 resumeOf 时可省略，沿用原来那句），一句话说明这次派发在做什么；\n" +
   "  写「调研 X 模块的重试逻辑」这样的一行。\n" +
-  "- agent：要派的子智能体名（见系统提示里的可用清单）。\n" +
+  "- agent：要派的子智能体名，取自 <available_subagents> 清单（例如 explorer / fixer）。\n" +
   "- definition：或者临时定义一个子智能体（name / description / prompt / tools），只活在这次运行里、不落盘；\n" +
   "  与 agent 二选一。工具名只认应用内置的那几个，写了别的会被忽略。\n" +
   "- task：交给它的任务全文，要自包含 —— 目标、范围、判定标准、要交付什么都要写清（用 resumeOf 时可省略）。\n" +
@@ -386,6 +371,13 @@ function statusText(run: SubagentRun, now: number): string {
       text = `已完成（用时 ${elapsed}，${progress}）`;
       break;
     case "truncated":
+      /**
+       * **只可能出现在历史记录里**：轮次上限字段已整体删除，新运行不会再进入这个状态
+       *（见 shared/contracts/subagent.ts 里关于「为什么没有轮次上限」的说明）。
+       *
+       * 分支必须留着 —— 磁盘上的旧运行记录里有这个值，删掉它会让那些记录
+       * 在这一句上变成空白或漏掉状态（`switch` 没有 default，漏了就是 `undefined`）。
+       */
       text = `已到 maxTurns 上限被截断（用时 ${elapsed}，${progress}）：下面这份报告可能不完整`;
       break;
     case "aborted":

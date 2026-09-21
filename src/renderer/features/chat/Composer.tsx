@@ -40,6 +40,7 @@ import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type {
+  AgentMode,
   ChatMessage,
   ChatMessageUsage,
   ModelEntry,
@@ -48,6 +49,7 @@ import type {
   QueuedMessage,
   SessionModelFailure,
   SetSessionModelResult,
+  SetSessionModeResult,
 } from "@/shared/contracts";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { SlashCommandMenu } from "./SlashCommandMenu";
@@ -118,6 +120,28 @@ const PERMISSION_MODES = [
   { value: "default", labelKey: "chat.permissionDefault" },
   { value: "ai_review", labelKey: "chat.permissionAiReview" },
   { value: "full", labelKey: "chat.permissionFull" },
+] as const;
+
+/**
+ * 智能体两模式。
+ *
+ * 顺序上标准在前：它是默认值，也是「不知道该选哪个」时的正确选择。
+ *
+ * `descKey` 只在这一个 chip 的菜单里用 —— 两个模式的名字（标准/编排）自己说明不了差别，
+ * 而它们**能力完全相同**，差别只在系统提示怎么写。不写清楚，用户只会看到两个
+ * 点起来没反应的选项。
+ */
+const AGENT_MODE_OPTIONS = [
+  {
+    value: "standard",
+    labelKey: "chat.agentModeStandard",
+    descKey: "chat.agentModeStandardDesc",
+  },
+  {
+    value: "orchestrate",
+    labelKey: "chat.agentModeOrchestrate",
+    descKey: "chat.agentModeOrchestrateDesc",
+  },
 ] as const;
 
 /** 单选行：形状取自 ComposerMenuItem，选中态用 fieldInteractive 底 + 墨色勾（取自 model-picker） */
@@ -226,6 +250,98 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
             {t(item.labelKey)}
           </PickerItem>
         ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * 智能体模式 chip：两模式单选。
+ *
+ * 与权限 chip 的**关键差别：这个写的是会话，不是设置**。
+ * - 权限模式是「我多信任它」的全局信任级别 → `settings.permissionMode`；
+ * - 智能体模式改的是「我在跟谁说话」→ 每个会话可以不同（`sessions:set-mode` 写会话索引），
+ *   `settings.agentMode` 只作为**新会话的默认值**。
+ *
+ * `mode` 是**已经解析好的生效值**（会话绑定 ?? 设置默认），由调用方算出来 ——
+ * chip 不自己回落，否则「会话没绑定」与「绑定了默认值」两种情况在界面上分不出来。
+ *
+ * 运行中禁用：主进程会以 reason: "running" 拒绝（半途换提示会让同一段对话
+ * 前后指令不一致），这里提前置灰，省掉一次注定失败的往返。
+ */
+function AgentModeChip({
+  mode,
+  bound,
+  disabled,
+  onSelect,
+}: {
+  mode: AgentMode;
+  bound: AgentMode | null;
+  disabled: boolean;
+  onSelect: (mode: AgentMode) => Promise<SetSessionModeResult>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const current = AGENT_MODE_OPTIONS.find((item) => item.value === mode) ?? AGENT_MODE_OPTIONS[0];
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setFailed(false);
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(chipTrigger, disabled && "cursor-not-allowed opacity-40")}
+          aria-expanded={open}
+          aria-label={t("chat.agentMode")}
+          disabled={disabled}
+        >
+          <span>{t(current.labelKey)}</span>
+          {/*
+            会话自己指定过（不跟随默认）时留一个记号，与思考 chip 的 clamped 记号同一手法：
+            让「我改过这个会话」这件事在收起状态也看得见。
+          */}
+          {bound !== null && <span className="text-ink-4">·</span>}
+          <ChevronDown className="size-3 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className={cn(menuPanel, "w-72")}>
+        <p className={cn(typeEyebrow, "px-2.5 pt-2 pb-1")}>{t("chat.agentMode")}</p>
+        {AGENT_MODE_OPTIONS.map((item) => (
+          <PickerItem
+            key={item.value}
+            selected={item.value === mode}
+            onSelect={() => {
+              /**
+               * **成功才关菜单**：被拒绝（运行中）时保持打开并把原因显示在菜单里。
+               * 先关再报错的写法会让原因连同弹层一起消失 —— 用户只看到「点了没反应」。
+               */
+              void onSelect(item.value).then((result) => {
+                if (result.ok) {
+                  setOpen(false);
+                  return;
+                }
+                setFailed(true);
+              });
+            }}
+          >
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span>{t(item.labelKey)}</span>
+              {/* 名字说不清差别，所以每个选项都带一句它到底改了什么 */}
+              <span className="text-ink-3 text-[11.5px] leading-snug">{t(item.descKey)}</span>
+            </span>
+          </PickerItem>
+        ))}
+        {failed ? (
+          <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] text-destructive">
+            {t("chat.agentModeRunning")}
+          </p>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
@@ -561,6 +677,18 @@ export function Composer() {
   );
   const boundModel = activeSession?.model ?? null;
   const effectiveModel = settings === null ? null : resolveEffectiveModelRef(settings, boundModel);
+  /**
+   * 会话绑定的模式（null = 没绑定过）与**生效**模式。
+   *
+   * 与模型那一对同构，理由也一样：主进程装配系统提示时用的就是这个判定
+   * （runtime 的 composeMainPrompt：`readAgentMode(id) ?? settings.agentMode`），
+   * chip 跟着它走才不会出现「界面显示标准、请求按编排发」。
+   *
+   * 两件事都要算出来：`bound` 用来在 chip 上留「我改过这个会话」的记号，
+   * `effective` 用来显示当前生效的是哪个。
+   */
+  const boundAgentMode = activeSession?.agentMode ?? null;
+  const effectiveAgentMode: AgentMode = boundAgentMode ?? settings?.agentMode ?? "standard";
   const currentModel =
     modelOptions.find(
       (option) =>
@@ -783,6 +911,20 @@ export function Composer() {
               >
                 <Plus className="size-4" />
               </ComposerPrimitive.AddAttachment>
+              {/*
+                顺序是刻意的：**智能体模式在权限的左侧**。
+                左边管「用哪种方式干活」（模式），右边管「放行到什么程度」（权限、模型、思考档位）——
+                模式是这一排里最靠前的选择，因为它决定整段系统提示怎么写。
+              */}
+              <AgentModeChip
+                mode={effectiveAgentMode}
+                bound={boundAgentMode}
+                disabled={running}
+                onSelect={async (mode) => {
+                  if (activeSessionId === null) return { ok: true as const };
+                  return useChatStore.getState().setSessionMode(activeSessionId, mode);
+                }}
+              />
               <PermissionChip mode={permissionMode} />
               <ModelChip
                 options={modelOptions}

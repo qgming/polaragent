@@ -10,6 +10,12 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  # 随包分发的内置技能（<appPath>/resources/skills/**）。
+  #
+  # ⚠️ 漏掉这一行的症状是「开发模式一切正常、打包后内置技能为 0」——
+  # 开发期 app.getAppPath() 指向仓库根（resources/ 就在那儿），而打包后指向 asar 根，
+  # asar 里没有这个目录时扫描结果为空，且不会有任何报错（技能扫描按「没有技能」处理）。
+  - resources/**/*
 
 # asarUnpack：把 node-pty 的 native 文件拆到 .asar 之外。
 #
@@ -22,6 +28,18 @@ files:
 asarUnpack:
   - "**/node_modules/@lydell/node-pty*/**"
   - "**/*.node"
+  # 内置技能整个拆出 asar。
+  #
+  # 为什么必须拆：**外部进程读不了 asar 里的文件**。
+  # Electron 的 fs 补丁只对 Electron 自己的 require/fs 生效；模型用 bash 起的
+  # `node` / `python` 是独立进程，对它们来说 `<...>/app.asar` 是一个**文件**而不是目录，
+  # 打开里面的路径一律 ENOENT（实测：os.path.exists 返回 False）。
+  # 而技能自带的 scripts/ 正是要被外部解释器执行的 —— 留在 asar 里等于永远跑不了。
+  #
+  # 拆出来之后真实路径是 `app.asar.unpacked/resources/skills/...`；
+  # resolveBuiltinSkillDir() 会优先返回那个路径，于是技能索引里的 <location>
+  # 本身就是外部进程可用的真实路径（read 与 bash 两条路都对得上）。
+  - "resources/**"
 
 win:
   target:

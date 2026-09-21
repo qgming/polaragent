@@ -3,7 +3,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validatePathAccess } from "@/main/security/path-guard";
 import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
@@ -28,8 +28,10 @@ import {
 } from "./runtime";
 import type { SessionStore } from "./session-store";
 
-// 资源目录解析依赖 dataDir()：固定成不存在的路径，避免测试读到开发机上真实的 ~/.oint/skills
-vi.mock("@/main/app/paths", () => ({ dataDir: () => "/data-oint-unused" }));
+// 资源目录解析依赖 dataDir()：固定成不存在的路径，避免测试读到开发机上真实的 ~/.oint/skills。
+// 用 hoisted 容器接住，让 AGENTS.md 那组用例能把它指到自己的临时目录（其余用例不受影响）。
+const paths = vi.hoisted(() => ({ data: "/data-oint-unused" }));
+vi.mock("@/main/app/paths", () => ({ dataDir: () => paths.data }));
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -42,6 +44,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],
@@ -50,10 +53,12 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe("buildSystemPrompt", () => {
-  it("包含工作目录、工作规则与中文回复要求", async () => {
+  it("包含工作目录、工作方式与中文回复要求", async () => {
     const prompt = await buildSystemPrompt(makeSettings(), "D:\\workspace\\demo");
     expect(prompt).toContain("D:\\workspace\\demo");
-    expect(prompt).toContain("工作规则");
+    // 旧断言是「工作规则」；通用模式把它换成了「怎么工作」——
+    // 新的一段讲的不是编程规则清单，而是「先判断这是什么任务」（见 agent-mode-prompt.ts）
+    expect(prompt).toContain("怎么工作");
     expect(prompt).toContain("使用简体中文回复用户");
   });
 
@@ -64,6 +69,86 @@ describe("buildSystemPrompt", () => {
 
   it("AGENTS.md 不可读时仍返回可用提示（不抛错）", async () => {
     await expect(buildSystemPrompt(makeSettings(), "/tmp/demo")).resolves.toBeTypeOf("string");
+  });
+
+  /**
+   * 两层 AGENTS.md：数据目录的全局指令 + 工作目录的项目指令。
+   *
+   * 为什么要两层：全局那份是跨项目的长期偏好（「回答用中文」），项目那份是这个仓库的约定
+   * （「用 pnpm」）。只有一层时用户得二选一 —— 要么污染所有项目，要么每个项目重复写。
+   */
+  describe("两层 AGENTS.md", () => {
+    let globalDir: string;
+    let projectDir: string;
+    /** 原始值：这组用例会改 paths.data，**必须还原**，否则后面的用例会看见临时目录 */
+    const ORIGINAL_DATA_DIR = "/data-oint-unused";
+
+    beforeEach(async () => {
+      globalDir = await mkdtemp(path.join(tmpdir(), "oint-agents-global-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "oint-agents-project-"));
+      paths.data = globalDir;
+    });
+
+    afterEach(() => {
+      paths.data = ORIGINAL_DATA_DIR;
+    });
+
+    it("只有全局：注入全局段，不出现项目段", async () => {
+      await writeFile(path.join(globalDir, "AGENTS.md"), "回答用中文", "utf8");
+
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).toContain("全局 AGENTS.md");
+      expect(prompt).toContain("回答用中文");
+      expect(prompt).not.toContain("项目指令（AGENTS.md）");
+    });
+
+    it("只有项目：注入项目段，不出现全局段", async () => {
+      await writeFile(path.join(projectDir, "AGENTS.md"), "这个仓库用 pnpm", "utf8");
+
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).toContain("项目指令（AGENTS.md）");
+      expect(prompt).toContain("这个仓库用 pnpm");
+      expect(prompt).not.toContain("全局 AGENTS.md");
+    });
+
+    it("**两层都有时都注入**，且全局在前、项目在后", async () => {
+      await writeFile(path.join(globalDir, "AGENTS.md"), "全局偏好：简洁", "utf8");
+      await writeFile(path.join(projectDir, "AGENTS.md"), "项目约定：用 pnpm", "utf8");
+
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).toContain("全局偏好：简洁");
+      expect(prompt).toContain("项目约定：用 pnpm");
+      // 顺序是刻意的：项目级更贴近当前任务，放后面（越靠后的指令越新）
+      expect(prompt.indexOf("全局偏好：简洁")).toBeLessThan(prompt.indexOf("项目约定：用 pnpm"));
+    });
+
+    it("两层指向同一个文件时只注入一次（OINT_HOME 被设成会话工作目录）", async () => {
+      await writeFile(path.join(projectDir, "AGENTS.md"), "只有一份", "utf8");
+      paths.data = projectDir; // 全局目录 == 工作目录
+
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).toContain("只有一份");
+      // 出现两遍就是同一段指令被注入了两次
+      expect(prompt.split("只有一份")).toHaveLength(2);
+    });
+
+    it("两层都不存在时不出现任何 AGENTS.md 段（也不留空标题）", async () => {
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).not.toContain("AGENTS.md");
+    });
+
+    it("只有空白的文件不注入（避免一个空标题）", async () => {
+      await writeFile(path.join(globalDir, "AGENTS.md"), "   \n\n  ", "utf8");
+
+      const prompt = await buildSystemPrompt(makeSettings(), projectDir);
+
+      expect(prompt).not.toContain("全局 AGENTS.md");
+    });
   });
 
   it("传入技能索引时拼进系统提示", async () => {

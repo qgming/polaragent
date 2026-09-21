@@ -96,6 +96,7 @@ function seedStores(options: {
       defaultModel: { serviceId: "svc", modelId: options.defaultModelId },
       thinkingLevel: options.thinkingLevel ?? "medium",
       permissionMode: "default",
+      agentMode: "standard",
       disabledSkillNames: [],
       disabledSubagentNames: [],
       mcpServers: [],

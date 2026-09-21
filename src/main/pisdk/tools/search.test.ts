@@ -1,7 +1,7 @@
 // grep / glob 的行为测试：全部在真实临时目录上跑（node:fs/promises 造夹具），
 // 因为这两个工具的价值就在「遍历 + 跳过规则 + 路径守卫」这些只有真实文件系统才能验的地方。
 
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -13,9 +13,11 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGlobTool, createGrepTool } from "./search";
 
+let sandbox: string;
 let root: string;
-// 临时根目录之外的兄弟文件：用来验证越界路径被拒且内容不外泄
-const outsideFile = path.join(os.tmpdir(), `oint-search-outside-${process.pid}.ts`);
+// 受控的上级目录：root 是它的子目录。用来验证「工作目录之外」的绝对路径与 ".." 都能检索，
+// 又不至于像直接搜 os.tmpdir() 那样把整个临时目录走一遍（那会真的跑很久）。
+let outsideFile: string;
 
 /** search 工具只读 env.cwd，这里给最小替身，不为测试构造完整 ExecutionEnv */
 function toolContext(cwd: string): ExecutionToolContext {
@@ -69,7 +71,12 @@ function dataLines(text: string): string[] {
 }
 
 beforeAll(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "oint-search-"));
+  sandbox = await mkdtemp(path.join(os.tmpdir(), "oint-search-sandbox-"));
+  root = path.join(sandbox, "project");
+  const outsideDir = path.join(sandbox, "outside");
+  outsideFile = path.join(outsideDir, "outside.ts");
+  await mkdir(outsideDir, { recursive: true });
+  await mkdir(root, { recursive: true });
   await mkdir(path.join(root, "bin"), { recursive: true });
   await mkdir(path.join(root, "empty-dir"), { recursive: true });
   await mkdir(path.join(root, "node_modules", "pkg"), { recursive: true });
@@ -107,8 +114,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await rm(root, { recursive: true, force: true });
-  await rm(outsideFile, { force: true });
+  await rm(sandbox, { recursive: true, force: true });
 });
 
 describe("grep", () => {
@@ -204,17 +210,22 @@ describe("grep", () => {
     expect(dataLines(text)).toEqual(["a.ts:1:export const alpha = 1;"]);
   });
 
-  it("拒绝工作目录之外的 path，且不回传外部文件内容", async () => {
-    const relativeEscape = await runGrep(root, { pattern: "alpha", path: ".." });
-    const absoluteEscape = await runGrep(root, { pattern: "alpha", path: outsideFile });
+  it("path 可以用工作目录之外的绝对路径（与 DSH 的 glob/grep 一致）", async () => {
+    const outcome = await runGrep(root, { pattern: "alpha", path: outsideFile });
+    const text = textOf(outcome);
 
-    for (const outcome of [relativeEscape, absoluteEscape]) {
-      const text = textOf(outcome);
-      expect(text).toContain("Error:");
-      expect(text).toContain("路径不在允许的工作目录内");
-      expect(text).not.toContain("outside alpha");
-      expect(outcome.details.matches).toBe(0);
-    }
+    expect(dataLines(text)).toEqual(["outside.ts:1:outside alpha"]);
+    expect(outcome.details.matches).toBe(1);
+    // root 报告的是 realpath 归一后的检索根：指向被搜的那个文件，而不是会话工作目录
+    expect(outcome.details.root).toBe(await realpath(outsideFile));
+  });
+
+  it('path: ".." 可检索上级目录，命中路径相对检索根而不是工作目录', async () => {
+    const text = textOf(await runGrep(root, { pattern: "outside alpha", path: ".." }));
+
+    // 不再报越界错误；路径相对检索根（sandbox），于是带上中间目录名
+    expect(text).not.toContain("Error:");
+    expect(dataLines(text)).toEqual(["outside/outside.ts:1:outside alpha"]);
   });
 
   it("path 不存在时明确报错", async () => {
@@ -280,10 +291,16 @@ describe("glob", () => {
     expect(outcome.details.matches).toBe(0);
   });
 
-  it("拒绝工作目录之外的 path", async () => {
-    const text = textOf(await runGlob(root, { pattern: "**/*.ts", path: ".." }));
+  it("path 可以用工作目录之外的绝对路径", async () => {
+    const text = textOf(await runGlob(root, { pattern: "*.ts", path: path.dirname(outsideFile) }));
 
-    expect(text).toContain("Error:");
-    expect(text).toContain("路径不在允许的工作目录内");
+    expect(dataLines(text)).toEqual(["outside.ts"]);
+  });
+
+  it('path: ".." 不再报越界错误', async () => {
+    const text = textOf(await runGlob(root, { pattern: "outside/*.ts", path: ".." }));
+
+    expect(text).not.toContain("Error:");
+    expect(dataLines(text)).toEqual(["outside/outside.ts"]);
   });
 });

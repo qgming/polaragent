@@ -176,6 +176,15 @@ export const zhCN = {
     permissionDefault: "默认权限",
     permissionAiReview: "帮我审批",
     permissionFull: "完全访问",
+    // 智能体模式 chip：两个模式能力相同，所以每个选项都要说清「它到底改了什么」。
+    // 两个名字都是**名词**（智能体 / 编排者）—— 它们回答「你在跟谁说话」，
+    // 而不是「强度多大」（那是权限按钮的维度）。
+    agentMode: "智能体模式",
+    agentModeStandard: "智能体",
+    agentModeStandardDesc: "自己判断任务类型，该做的直接做",
+    agentModeOrchestrate: "编排者",
+    agentModeOrchestrateDesc: "先派子智能体去做，自己负责计划与验收",
+    agentModeRunning: "运行中不能切换模式，等这一轮结束再试",
     model: "模型",
     thinkingLevel: "思考等级",
     loadingOlder: "加载中…",
@@ -343,6 +352,7 @@ export const zhCN = {
     skillRemoveDesc: "删除技能「{{name}}」？该技能目录会连同里面的文件一起删除。",
     skillDisabled: "禁用",
     skillEnabled: "启用",
+    skillBuiltinHint: "内置技能随应用更新，不可删除；不需要时可以禁用",
     // 子智能体分栏
     subagentsList: "可用的子智能体",
     subagentsListDesc:
@@ -373,8 +383,6 @@ export const zhCN = {
     subagentThinking: "思考档位",
     // 思考档位的「跟随」只能自己一句：subagentModelInherit 说的是模型，两者不能互相顶替
     subagentThinkingInherit: "跟随主会话",
-    subagentMaxTurns: "轮次上限",
-    subagentMaxTurnsInherit: "默认（{{count}} 轮）",
     subagentSave: "保存",
     subagentCancel: "取消",
     subagentDeleteConfirm: "删除子智能体「{{name}}」？此操作不可撤销。",
@@ -404,13 +412,24 @@ export const zhCN = {
     promptRemoveDesc: "删除魔法提示「{{name}}」？",
     fetchFailed: "拉取失败",
     agentsMd: "AGENTS.md",
-    agentsMdDesc: "每轮对话都会作为系统提示词注入，写下你希望 Agent 长期遵守的规则",
+    agentsMdDesc:
+      "每轮对话都会作为系统提示词注入，写下你希望 Agent 长期遵守的规则；项目目录里的 AGENTS.md 会与本文件一起生效",
     agentsMdPlaceholder: "例如：回复使用简体中文；改动代码前先阅读相关文件…",
     agentsMdSaved: "已保存",
     aboutName: "名称",
     aboutVersion: "版本",
     aboutKernel: "内核",
     appearanceSection: "外观与语言",
+
+    // —— 智能体模式：这里设的是新会话的默认值，单个会话可在输入框的 chip 上覆盖 ——
+    // 分区名带着「模式」二字是刻意的：模式名现在叫「智能体」，分区若也叫「智能体」，
+    // 就会出现「智能体 › 默认模式 › 智能体」这种读起来像同义反复的层级。
+    agentSection: "智能体模式",
+    agentMode: "默认模式",
+    agentModeDesc:
+      "新会话默认用哪种模式；单个会话可以在输入框左侧的模式按钮上单独指定。两个模式的工具能力完全相同，区别只在于系统提示怎么写",
+    agentModeStandard: "智能体",
+    agentModeOrchestrate: "编排者",
 
     // —— MCP：外部工具来源（独立分栏）——
     mcp: "MCP",
@@ -529,6 +548,7 @@ export const zhCN = {
     workingDir: "工作目录",
     model: "模型",
     permission: "权限",
+    agentMode: "模式",
     sessionId: "会话 ID",
     unset: "未指定",
     copyValue: "复制",

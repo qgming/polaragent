@@ -22,6 +22,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     defaultModel: null,
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
     disabledSkillNames: [],

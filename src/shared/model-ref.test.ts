@@ -38,6 +38,7 @@ function settings(over: Partial<Settings> = {}): Settings {
     defaultModel: { serviceId: "svc-a", modelId: "a1" },
     thinkingLevel: "medium",
     permissionMode: "default",
+    agentMode: "standard",
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],

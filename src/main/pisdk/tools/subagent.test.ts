@@ -74,7 +74,6 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    maxTurns: 30,
     tools: [...DEFAULT_SUBAGENT_TOOLS],
     turns: 2,
     toolCalls: 3,
@@ -188,15 +187,40 @@ describe("normalizeSubagentTools", () => {
 });
 
 describe("Task", () => {
-  it("描述里列出内置子智能体的名字与用途：模型不必从报错里才知道有哪几个", () => {
+  /**
+   * 名录**不再写死在 Task 的描述里** —— 那是同一事实的第二个来源，必然与系统提示漂移。
+   *
+   * 现在描述只指向系统提示里的 `<available_subagents>` 索引（内置 + 用户自定义都在那里，
+   * 见 subagent-prompt.ts）。这条断言锁住的是「描述必须把模型指过去」，
+   * 而不是「描述里必须列全」—— 后者是索引的职责，由 subagent-prompt.test.ts 覆盖。
+   */
+  it("描述指向系统提示里的子智能体索引，而不是自己抄一份名录", () => {
     const task = createSubagentTools(createDeps()).find(
       (candidate) => candidate.name === SUBAGENT_TOOL_NAMES.task,
     );
 
-    // 名字与用途从 BUILTIN_SUBAGENTS 生成：清单必须完整，改了内置定义描述这里自然跟着走
+    expect(task?.description).toContain("<available_subagents>");
+    // 抄一份名单的痕迹：任何一条内置定义的完整描述都不应出现在这里
     for (const builtin of BUILTIN_SUBAGENTS) {
-      expect(task?.description).toContain(`- ${builtin.name}：${builtin.description}`);
+      expect(task?.description).not.toContain(builtin.description);
     }
+  });
+
+  it("描述里给的 agent 示例是真实存在的内置名", () => {
+    const task = createSubagentTools(createDeps()).find(
+      (candidate) => candidate.name === SUBAGENT_TOOL_NAMES.task,
+    );
+    const names = BUILTIN_SUBAGENTS.map((def) => def.name);
+
+    // 示例名必须真实存在：`scout` 那种不存在的名字会把模型引到一个派不出去的定义上
+    expect(names).toContain("explorer");
+    expect(task?.description).toContain("explorer");
+
+    // 参数 schema 里的示例同样是真实名字（模型读的是这一份，不是描述那一份）
+    const params = task?.parameters as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined;
+    expect(params?.properties?.agent?.description).toContain('"explorer"');
   });
 
   it("未知 agent 名：返回失败回执，并把可用的名字告诉模型", async () => {

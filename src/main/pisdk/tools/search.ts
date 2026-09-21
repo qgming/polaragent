@@ -2,11 +2,16 @@
 //
 // 为什么要自己写：内核只给 bash/read/write/edit。用 bash 跑 grep/rg 依赖外部可执行文件与
 // shell 引号转义（Windows 上尤其容易写错），read 又只能按文件读、不做检索。这两个工具把
-// 「按模式找内容 / 找文件」变成一次结构化调用：结果里带工作目录内的相对路径与行号，
-// 并且与 exec-env 复用同一份路径守卫，读不到工作目录之外的东西。
+// 「按模式找内容 / 找文件」变成一次结构化调用：结果里带相对检索根的路径与行号，
+// 实现上不依赖任何外部二进制（纯 Node 遍历），与 exec-env 的 bash 通道完全独立。
 //
-// 安全边界：
-// - 根目录先过 validatePathAccess，再过 realpath 归一后复检（堵住「根本身是软链接」的缝）；
+// 路径边界（与 DSH 的 glob/grep 对齐）：
+// - `path` 只决定「检索根」，**不是**围栏：可以是工作目录之外的任意绝对路径；
+// - 会话工作目录只作为相对路径的解析基准（缺省 "."），越界与否交给上层权限门判定；
+// - 因此这里不调用 validatePathAccess —— 该守卫仍用于 read/write/edit 等变更类路径。
+//
+// 仍然保留的边界（与「工作目录」无关，属遍历自身的健壮性）：
+// - realpath 归一 + 存在性校验：root 稳定可比对，路径不存在时明确报错而非空结果；
 // - 遍历不跟随符号链接（只认 dirent.isDirectory()/isFile()）；
 // - 跳过依赖/构建产物目录、超过 1 MiB 的大文件与二进制文件。
 
@@ -19,7 +24,6 @@ import type {
   ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { validatePathAccess } from "@/main/security/path-guard";
 
 /** 递归检索时跳过的目录名：依赖、版本库与构建产物，既没有检索价值又会淹没结果 */
 const SKIPPED_DIR_NAMES: readonly string[] = [
@@ -169,38 +173,31 @@ async function* walkTarget(root: string, isFile: boolean): AsyncGenerator<Walked
 type RootResolution = { ok: true; root: string; isFile: boolean } | { ok: false; message: string };
 
 /**
- * 解析并校验检索根，失败时给出可直接回给模型的文案（不抛异常）。
- * 两道校验：先按工作目录做路径守卫，再对 realpath 归一后的真实路径复检——
- * 后者用来堵住「根目录本身是软链接、指向工作目录之外」这条缝（遍历本身不跟随软链接）。
+ * 解析检索根，失败时给出可直接回给模型的文案（不抛异常）。
+ *
+ * 这里**刻意不做工作目录围栏**：`path` 可以是工作目录之外的任意绝对路径，会话工作目录
+ * 只承担「相对路径的解析基准」这一个职责（缺省即 "."，与 DSH 的 glob/grep 一致）。
+ * 越界与否由上层权限门决定，不在检索工具这一层判死。
+ *
+ * 仍然保留两道与围栏无关的校验：
+ * - realpath 归一：软链接指向哪里都按真实路径报告，`root` 是稳定可比对的绝对路径；
+ * - 存在性校验：路径不存在时给出明确文案，而不是回一个空结果集。
+ * 遍历本身依旧不跟随符号链接（见 walkDirectory），所以「根是软链接」不会让遍历越走越远。
  */
 async function resolveSearchRoot(
   requested: string | undefined,
   cwd: string,
 ): Promise<RootResolution> {
   const requestedRoot = path.resolve(cwd, requested ?? ".");
-  const access = validatePathAccess(requestedRoot, [cwd]);
-  if (!access.ok) {
-    return { ok: false, message: `${access.reason} (working directory: ${cwd})` };
-  }
-  const [realRoot, realCwd] = await Promise.all([
-    realpath(access.resolved).catch(() => undefined),
-    realpath(cwd).catch(() => cwd),
-  ]);
+  const realRoot = await realpath(requestedRoot).catch(() => undefined);
   if (realRoot === undefined) {
-    return { ok: false, message: `Path not found: ${access.resolved}` };
+    return { ok: false, message: `Path not found: ${requestedRoot}` };
   }
-  const canonical = validatePathAccess(realRoot, [realCwd]);
-  if (!canonical.ok) {
-    return {
-      ok: false,
-      message: `Refusing to search ${access.resolved}: it resolves outside the working directory (${realRoot})`,
-    };
-  }
-  const info = await stat(canonical.resolved).catch(() => undefined);
+  const info = await stat(realRoot).catch(() => undefined);
   if (info === undefined) {
-    return { ok: false, message: `Path not found: ${access.resolved}` };
+    return { ok: false, message: `Path not found: ${realRoot}` };
   }
-  return { ok: true, root: canonical.resolved, isFile: info.isFile() };
+  return { ok: true, root: realRoot, isFile: info.isFile() };
 }
 
 /** 文件前 8 KiB 是否含 NUL 字节（含则视为二进制，不参与 grep） */
@@ -236,7 +233,7 @@ const grepSchema = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        'File or directory to search, relative to the working directory. Defaults to "."',
+        'File or directory to search. Relative paths resolve against the working directory; an absolute path outside it is also accepted. Defaults to "."',
     }),
   ),
   include: Type.Optional(
@@ -252,7 +249,7 @@ const grepSchema = Type.Object({
   ),
 });
 
-const GREP_DESCRIPTION = `Search file contents in the working directory and return every matching line as "path:line:text".
+const GREP_DESCRIPTION = `Search file contents and return every matching line as "path:line:text".
 
 When to use it:
 - Find where a name, string or shape lives: a function/type/variable, an error message, a config key, a TODO, a log line. The search is recursive and only reports files that actually contain a hit, so it is much cheaper than reading files one by one: to locate "createTodoState", grep for it instead of opening candidate files.
@@ -267,7 +264,7 @@ When not to use it:
 
 Arguments:
 - pattern (required): JavaScript regular expression source tested against each line separately (case-sensitive, no flags). In JSON a backslash is escaped, so "\\\\s" in the tool call is the regex \\s. Prefer a distinctive literal ("createTodoState") over a loose one ("e").
-- path: file or directory to search, relative to the working directory (an absolute path inside it also works). Defaults to ".". A file is scanned directly, a directory is walked recursively.
+- path: file or directory to search. A relative path resolves against the working directory; an absolute path outside it also works, in which case hits are reported relative to that root. Defaults to ".". A file is scanned directly, a directory is walked recursively.
 - include: optional file-name filter with "*" (any characters) and "?" (one character). Examples: "*.ts", "*.test.tsx", "package.json". It is matched against the file name only, never the directory part, and supports no braces or alternatives.
 - limit: maximum number of matching lines returned. Default ${GREP_DEFAULT_LIMIT}; values above ${GREP_MAX_LIMIT} are clamped, values below 1 are raised to 1.
 
@@ -276,11 +273,11 @@ Output:
 - A matching line longer than ${MAX_LINE_CHARS} characters is cut and ends with "…".
 - No hits: an explicit "No matches for ..." line with the number of files searched — never an empty answer.
 - Too many hits: the summary says the limit was reached and that more matches exist, so refine "pattern"/"include" or raise "limit".
-Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; files larger than 1 MiB; binary files (a NUL byte within the first 8 KiB); symbolic links are never followed. The search never leaves the working directory.
+Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; files larger than 1 MiB; binary files (a NUL byte within the first 8 KiB); symbolic links are never followed. The reported paths are relative to the resolved root, so a search outside the working directory reports the same shape of path.
 
 Keep patterns simple: a regex with nested quantifiers tested against a very long minified line can be extremely slow.`;
 
-/** 构造 grep 工具（只读；根目录与每个被读文件都限定在会话工作目录内） */
+/** 构造 grep 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
 export function createGrepTool<
   TContext extends ExecutionToolContext = ExecutionToolContext,
 >(): AgentHarnessTool<TContext, typeof grepSchema, GrepToolDetails> {
@@ -371,7 +368,8 @@ const globSchema = Type.Object({
   }),
   path: Type.Optional(
     Type.String({
-      description: 'Directory to search, relative to the working directory. Defaults to "."',
+      description:
+        'Directory to search. Relative paths resolve against the working directory; an absolute path outside it is also accepted. Defaults to "."',
     }),
   ),
   limit: Type.Optional(
@@ -392,20 +390,19 @@ When not to use it:
 - Not for searching file contents: use grep.
 - Not for listing a directory that needs no pattern, and not for symlinks: glob returns regular files only, never directories, and it does not follow symbolic links or descend into skipped directories.
 - Not a shell command line: there is no brace expansion ("*.{ts,tsx}" does not work), no "!" negation and no multiple patterns per call — pass one pattern and use "*", "?" and "**".
-- Not for paths outside the working directory: they are rejected.
 
 Arguments:
 - pattern (required): glob pattern matched against the path relative to the search root, with "*" for any characters inside one directory segment, "?" for a single character and "**" for any number of directories. "**/*.ts" matches both "a.ts" and "src/deep/a.ts"; "src/*.ts" matches only the first level of "src".
-- path: directory to search, relative to the working directory (an absolute path inside it also works). Defaults to ".".
+- path: directory to search. A relative path resolves against the working directory; an absolute path outside it also works, in which case paths are reported relative to that root. Defaults to ".".
 - limit: maximum number of paths returned. Default ${GLOB_DEFAULT_LIMIT}; values above ${GLOB_MAX_LIMIT} are clamped. Because the list is newest-first, a cut keeps the most recently modified files.
 
 Output:
 - One relative path per line, newest first (equal timestamps are ordered alphabetically), followed by a summary line with the file count and the search root.
 - No match: an explicit "No files match ..." line — never an empty answer.
 - Truncated: the summary says the limit was reached and that more files match, so narrow the pattern or raise "limit".
-Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; symbolic links are never followed. The listing never leaves the working directory.`;
+Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; symbolic links are never followed. Paths are reported relative to the resolved root.`;
 
-/** 构造 glob 工具（只读；根目录与遍历范围限定在会话工作目录内） */
+/** 构造 glob 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
 export function createGlobTool<
   TContext extends ExecutionToolContext = ExecutionToolContext,
 >(): AgentHarnessTool<TContext, typeof globSchema, GlobToolDetails> {

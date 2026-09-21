@@ -324,21 +324,21 @@ export function subagentElapsedMs(run: SubagentRun, now: number = Date.now()): n
 }
 
 /**
- * 进度估计：turns / maxTurns 的百分比。
+ * 进度**不再是一个百分比**。
  *
- * 刻意**不用**「转圈就代表在跑」那种无信息的进度条：turns 是主进程报的真实轮次，
- * 且只增不减，所以这个数天然单调，条形只会向前走。maxTurns 缺失（旧记录）时给 0，
- * 让 SubagentList 的进度条停在起点，而不是显示一个凭空的数字。
+ * 早先这里有 `subagentProgress(run)` = `turns / maxTurns` —— 它依赖 `maxTurns`
+ * 那个字段，而该字段已整体删除（见 shared/contracts/subagent.ts 里关于
+ * 「为什么没有轮次上限」的说明）。
  *
- * interrupted 用的是**同一把尺子**：它就是停下那一刻的 turns / maxTurns，不返回
- * 100 / -1 之类的哨兵值 —— 那是第二套刻度，调用方还得反推回来才知道怎么画。
- * 「还在不在跑」只由 run.status 决定：调用方据此把 interrupted 的行挡在活跃进度条外
- * （见 ToolParts 给 SubagentList 的 running 过滤），而不是从这个比值里猜。
+ * 这个删除同时暴露了原设计的一个问题：**轮次本来就不该被当成进度**。
+ * 一个子智能体要跑多少轮是它自己决定的，不是调用方规定的额度 ——
+ * `turns / maxTurns` 画出来的「进度条」实际上在说「你已经用掉了多少配额」，
+ * 而用户想知道的是「它还在动吗」。
+ *
+ * 所以现在只报**绝对轮次**（`run.turns`），由调用方按「在跑就转、停下就冻结」
+ * 表达状态；`subagentElapsedMs` 提供另一个单调递增的读数（耗时）。
+ * 两个都是一直向前走、不需要分母的量。
  */
-export function subagentProgress(run: SubagentRun): number {
-  if (run.maxTurns <= 0) return 0;
-  return Math.min(100, Math.round((run.turns / run.maxTurns) * 100));
-}
 
 /** 运行记录 → 展开详情；字段一一对应，不改动任何值 */
 function toSubagentDetail(run: SubagentRun): SubagentDetailData {

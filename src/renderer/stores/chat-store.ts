@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AgentMode,
   ApprovalDecision,
   ApprovalRequest,
   AskReply,
@@ -16,6 +17,7 @@ import type {
   SessionSummary,
   SessionTokenUsage,
   SetSessionModelResult,
+  SetSessionModeResult,
 } from "@/shared/contracts";
 
 /** 单页加载的消息条数 */
@@ -371,6 +373,13 @@ interface ChatState {
    * 失败时返回原因（正在运行 / 目标模型不存在），界面据此说明。
    */
   setSessionModel(id: string, model: ModelRef | null): Promise<SetSessionModelResult>;
+  /**
+   * 切换会话的智能体模式（null = 跟随设置里的默认模式）。
+   *
+   * 下一次发送即生效（模式是**每轮现算**的系统提示，见 runtime 的 composeMainPrompt）；
+   * 运行中会被拒绝（reason: "running"），界面据此说明。
+   */
+  setSessionMode(id: string, mode: AgentMode | null): Promise<SetSessionModeResult>;
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
   send(text: string, images?: { data: string; mimeType: string }[]): Promise<void>;
@@ -676,6 +685,24 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === id ? { ...session, model } : session,
+      ),
+    }));
+    return result;
+  },
+
+  /**
+   * 切换会话的智能体模式（与 setSessionModel 同构，只是字段不同）。
+   *
+   * 落盘后**只就地改这一个会话的字段**，不重拉整表：模式不影响排序与时间。
+   * 主进程在**下一次请求装配时**读它（runtime 的 composeMainPrompt），
+   * 所以这里不需要通知运行中的会话 —— 事实上运行中会被主进程拒绝（reason: "running"）。
+   */
+  async setSessionMode(id, mode) {
+    const result = await window.oint.sessions.setMode(id, mode);
+    if (!result.ok) return result;
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, agentMode: mode } : session,
       ),
     }));
     return result;

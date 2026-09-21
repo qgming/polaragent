@@ -414,7 +414,6 @@ describe("session-store", () => {
         model: null,
         modelId: "svc/model-x",
         thinkingLevel: "medium",
-        maxTurns: 30,
         tools: ["read", "grep"],
         turns: 2,
         toolCalls: 3,

@@ -1,11 +1,12 @@
 import { getChatRuntime } from "@/main/pisdk/runtime";
 import { getSessionStore } from "@/main/pisdk/session-store";
-import type { ModelRef } from "@/shared/contracts/common";
+import type { AgentMode, ModelRef } from "@/shared/contracts/common";
 import { IPC } from "@/shared/contracts/ipc";
 import {
   isHiddenSessionKind,
   type LoadSessionMessagesOptions,
   type SessionCreateOptions,
+  type SetSessionModeResult,
 } from "@/shared/contracts/session";
 import { handle } from "./handler";
 
@@ -51,6 +52,22 @@ export function registerSessionsIpc(): void {
    */
   handle(IPC.sessions.setModel, "切换会话模型", (request: { id: string; model: ModelRef | null }) =>
     getChatRuntime().setModel(request.id, request.model),
+  );
+  /**
+   * 切换会话模式：只写会话索引（模式在**下一次请求装配时**生效）。
+   *
+   * 不经过聊天运行时，与 setModel 不同：切模型要热改 lane 配置，而模式只影响
+   * 系统提示的组装，那次组装发生在下一次发送时 —— 所以这里落盘就够了。
+   * 运行中拒绝：中途换提示会让同一段对话前后指令不一致（与切模型同一条理由）。
+   */
+  handle(
+    IPC.sessions.setMode,
+    "切换会话模式",
+    async (request: { id: string; mode: AgentMode | null }): Promise<SetSessionModeResult> => {
+      if (getChatRuntime().isRunning(request.id)) return { ok: false, reason: "running" };
+      await store.setAgentMode(request.id, request.mode);
+      return { ok: true };
+    },
   );
   /**
    * 加载消息：顺带把该会话持久化的用量快照带回去。

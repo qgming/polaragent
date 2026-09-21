@@ -22,9 +22,7 @@ import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { ALL_THINKING_LEVELS, type ModelRef, type ThinkingLevel } from "@/shared/contracts/common";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 import {
-  DEFAULT_SUBAGENT_MAX_TURNS,
   DEFAULT_SUBAGENT_TOOLS,
-  MAX_SUBAGENT_MAX_TURNS,
   SUBAGENT_ASSIGNABLE_TOOLS,
   SUBAGENT_NAME_PATTERN,
   type SubagentCatalog,
@@ -59,21 +57,6 @@ const MODEL_SEPARATOR = "::";
 function promptBody(content: string): string {
   const matched = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
   return matched === null ? content : content.slice(matched[0].length);
-}
-
-/**
- * 轮次上限的文本 → 落盘值。
- *
- * 留空表示「用默认」；非整数、小于 1 或超过上限的值同样按默认处理，不写进设置 ——
- * 上限是防止一个定义把子智能体跑爆的硬约束（见契约注释），
- * 与其把一个会被运行层拒绝的数字写盘，不如顺手夹回默认。
- */
-function parseMaxTurns(text: string): number | null {
-  const trimmed = text.trim();
-  if (trimmed === "") return null;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_SUBAGENT_MAX_TURNS) return null;
-  return parsed;
 }
 
 /** 表单字段块：眉题 + 控件 + 说明（校验失败时说明换成原因） */
@@ -130,7 +113,6 @@ function SubagentEditor({
   const [tools, setTools] = useState<string[]>(info?.tools ?? [...DEFAULT_SUBAGENT_TOOLS]);
   const [model, setModel] = useState<ModelRef | null>(info?.model ?? null);
   const [thinking, setThinking] = useState<ThinkingLevel | null>(info?.thinkingLevel ?? null);
-  const [maxTurns, setMaxTurns] = useState(info === null ? "" : String(info.maxTurns));
   // null = 正文还没读回来（编辑态）；新建时直接是空串，不必等一次 IPC
   const [prompt, setPrompt] = useState<string | null>(info === null ? "" : null);
   const [readFailed, setReadFailed] = useState(false);
@@ -231,7 +213,6 @@ function SubagentEditor({
       tools: SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => tools.includes(tool)),
       model,
       thinkingLevel: thinking,
-      maxTurns: parseMaxTurns(maxTurns),
     };
     // 编辑时带上原名：主进程据此定位旧文件（名称变了就是重命名，旧文件要清掉）
     if (info !== null) request.originalName = info.name;
@@ -392,22 +373,6 @@ function SubagentEditor({
             </select>
           </FieldBlock>
         </div>
-
-        <FieldBlock label={t("settings.subagentMaxTurns")}>
-          <input
-            type="number"
-            min={1}
-            max={MAX_SUBAGENT_MAX_TURNS}
-            value={maxTurns}
-            aria-label={t("settings.subagentMaxTurns")}
-            placeholder={t("settings.subagentMaxTurnsInherit", {
-              count: DEFAULT_SUBAGENT_MAX_TURNS,
-            })}
-            disabled={readOnly}
-            onChange={(event) => setMaxTurns(event.target.value)}
-            className={cn(settingsInput, "w-28 font-mono")}
-          />
-        </FieldBlock>
       </div>
     </SettingsDialog>
   );

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Composer 的斜杠菜单集成测试（ui project / jsdom）。
  *
  * 挂的是**真的** Composer + 真的 AssistantRuntimeProvider + 真的两个 store（settings / chat），
@@ -89,6 +89,7 @@ function seedStores() {
   useSettingsStore.setState({
     settings: {
       permissionMode: "default",
+      agentMode: "standard",
       thinkingLevel: "medium",
       defaultModel: null,
       services: [],

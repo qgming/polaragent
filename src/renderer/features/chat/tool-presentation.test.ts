@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JobInfo } from "@/shared/contracts/job";
 import type { SubagentRun, SubagentRunStatus } from "@/shared/contracts/subagent";
+import { isSubagentRunFinished } from "@/shared/contracts/subagent";
 import {
   BASH_TAIL_LINES,
   bashCommand,
@@ -13,7 +14,6 @@ import {
   SUBAGENT_STATUS_LABEL_KEYS,
   shortenPath,
   subagentElapsedMs,
-  subagentProgress,
   toEditDiff,
   toolChip,
   toolRows,
@@ -56,7 +56,6 @@ function subagentRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    maxTurns: 30,
     tools: ["read", "grep", "glob"],
     turns: 4,
     toolCalls: 6,
@@ -557,39 +556,30 @@ describe("subagentElapsedMs", () => {
   });
 });
 
-describe("subagentProgress", () => {
-  it("按 turns/maxTurns 算百分比，封顶 100，maxTurns 为 0 时给 0 而不是 NaN", () => {
-    expect(subagentProgress(subagentRun({ turns: 0, maxTurns: 30 }))).toBe(0);
-    expect(subagentProgress(subagentRun({ turns: 15, maxTurns: 30 }))).toBe(50);
-    expect(subagentProgress(subagentRun({ turns: 30, maxTurns: 30 }))).toBe(100);
-    // 被截断的记录 turns 可能超过 maxTurns：进度条不越界
-    expect(subagentProgress(subagentRun({ turns: 45, maxTurns: 30 }))).toBe(100);
-    // 旧记录可能缺 maxTurns（解析层给的默认值是 0）：停在起点，不是 NaN
-    expect(subagentProgress(subagentRun({ turns: 7, maxTurns: 0 }))).toBe(0);
-  });
-
-  it("interrupted 用同一把 turns/maxTurns 尺子，不返回哨兵值", () => {
-    // 「还在不在跑」由状态决定：调用方（ToolParts 的 running 过滤）据此把它挡在活跃进度条外，
-    // 这里只负责给出它停下那一刻的真实进度
-    expect(
-      subagentProgress(
-        subagentRun({ status: "interrupted", turns: 15, maxTurns: 30, endedAt: 5_000 }),
-      ),
-    ).toBe(50);
-    // 缺 maxTurns 的旧记录仍然停在起点，不是 NaN
-    expect(subagentProgress(subagentRun({ status: "interrupted", turns: 7, maxTurns: 0 }))).toBe(0);
-  });
-
-  it("随 turns 单调不减，且始终落在 0–100 内", () => {
-    let previous = 0;
+describe("运行进度不再有百分比", () => {
+  /**
+   * 早先这里测的是 `subagentProgress` = turns/maxTurns。
+   * `maxTurns` 字段已整体删除（见 shared/contracts/subagent.ts 的说明），
+   * 而且那个比值本身就是错的口径 —— 它把「轮次」当成了「配额消耗」。
+   *
+   * 现在只报绝对轮次，所以这里改测**轮次本身就是单调的读数**：
+   * 这是它还能当进度用的唯一依据。
+   */
+  it("turns 是单调读数：调用方可以直接拿它表达「还在动」", () => {
+    let previous = -1;
     for (const turns of [0, 1, 2, 3, 7, 15, 29, 30, 31, 80]) {
-      const value = subagentProgress(subagentRun({ turns, maxTurns: 30 }));
-      expect(Number.isFinite(value)).toBe(true);
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThanOrEqual(100);
-      expect(value).toBeGreaterThanOrEqual(previous);
+      const value = subagentRun({ turns }).turns;
+      expect(value).toBe(turns);
+      expect(value).toBeGreaterThan(previous);
       previous = value;
     }
+  });
+
+  it("interrupted 保留它停下那一刻的 turns（不归零、不给哨兵值）", () => {
+    const run = subagentRun({ status: "interrupted", turns: 15, endedAt: 5_000 });
+    expect(run.turns).toBe(15);
+    // 「还在不在跑」由状态决定，调用方据此把它挡在活跃进度之外
+    expect(isSubagentRunFinished(run.status)).toBe(true);
   });
 });
 
