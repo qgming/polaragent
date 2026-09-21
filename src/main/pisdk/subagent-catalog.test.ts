@@ -14,6 +14,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@/shared/contracts/settings";
 import type { SubagentDefinition } from "@/shared/contracts/subagent";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 
 // mock 工厂先于 import 执行：用 hoisted 容器接住 dataDir，让每个用例指向自己的临时目录，
 // 避免用例之间互相看见对方写的定义（文件系统是全局状态）
@@ -51,6 +52,7 @@ const BASE_SETTINGS: Settings = {
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
+  webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
 };
 
 function settingsWith(patch: Partial<Settings> = {}): Settings {
@@ -104,13 +106,17 @@ describe("内置预设", () => {
     ]);
     expect(BUILTIN_SUBAGENTS.every((def) => def.source === "builtin")).toBe(true);
     // 只读的：explorer / code-reviewer / oracle；可写的：fixer / designer；
-    // 能跑命令不能改文件的：test-runner / verifier
+    // 能跑命令不能改文件的：test-runner / verifier。
+    //
+    // explorer 与 oracle 多了 web_search / web_fetch：它们的工作就是「搞清楚现状」，
+    // 而现状常常在代码库之外（库的最新版本、上游 issue、规范原文）。
+    // 详见 SUBAGENT_ASSIGNABLE_TOOLS 的注释。
     expect(BUILTIN_SUBAGENTS.map((def) => def.tools)).toEqual([
-      ["read", "grep", "glob"],
+      ["read", "grep", "glob", "web_search", "web_fetch"],
       ["read", "grep", "glob"],
       ["read", "grep", "glob", "edit", "write", "bash"],
       ["read", "grep", "glob", "bash"],
-      ["read", "grep", "glob"],
+      ["read", "grep", "glob", "web_search", "web_fetch"],
       ["read", "grep", "glob", "edit", "write"],
       ["read", "grep", "glob", "bash"],
     ]);

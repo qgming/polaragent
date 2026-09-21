@@ -266,18 +266,22 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
  * `mode` 是**已经解析好的生效值**（会话绑定 ?? 设置默认），由调用方算出来 ——
  * chip 不自己回落，否则「会话没绑定」与「绑定了默认值」两种情况在界面上分不出来。
  *
- * 运行中禁用：主进程会以 reason: "running" 拒绝（半途换提示会让同一段对话
- * 前后指令不一致），这里提前置灰，省掉一次注定失败的往返。
+ * **运行中也能切**（原先置灰并靠主进程拒绝）。模式只影响系统提示的组装，而那是每轮现算的，
+ * 所以写入之后下一轮自然生效：正在生成的这一轮不受影响，用户的下一条消息用新模式。
+ * 运行中额外给一句说明（`running` 为 true 时显示），否则用户会疑惑「现在切了到底算不算」。
  */
 function AgentModeChip({
   mode,
   bound,
   disabled,
+  running,
   onSelect,
 }: {
   mode: AgentMode;
   bound: AgentMode | null;
   disabled: boolean;
+  /** 本会话正在运行：此时切换会在**下一轮**生效，菜单里说明这一点 */
+  running: boolean;
   onSelect: (mode: AgentMode) => Promise<SetSessionModeResult>;
 }) {
   const { t } = useTranslation();
@@ -318,8 +322,9 @@ function AgentModeChip({
             selected={item.value === mode}
             onSelect={() => {
               /**
-               * **成功才关菜单**：被拒绝（运行中）时保持打开并把原因显示在菜单里。
+               * **成功才关菜单**：失败时保持打开并把原因显示在菜单里。
                * 先关再报错的写法会让原因连同弹层一起消失 —— 用户只看到「点了没反应」。
+               * （模式切换目前不会失败，但这条纪律对将来的失败分支仍然成立。）
                */
               void onSelect(item.value).then((result) => {
                 if (result.ok) {
@@ -340,6 +345,11 @@ function AgentModeChip({
         {failed ? (
           <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] text-destructive">
             {t("chat.agentModeRunning")}
+          </p>
+        ) : running ? (
+          // 运行中切换是允许的，但要说清生效时机，否则用户会以为「现在就该换」
+          <p className="text-ink-3 px-2.5 pt-1 pb-1.5 text-[11.5px]">
+            {t("chat.agentModeNextTurn")}
           </p>
         ) : null}
       </PopoverContent>
@@ -919,7 +929,9 @@ export function Composer() {
               <AgentModeChip
                 mode={effectiveAgentMode}
                 bound={boundAgentMode}
-                disabled={running}
+                // 只在没有活动会话时禁用；运行中**可以**切（生效于下一轮）
+                disabled={activeSessionId === null}
+                running={running}
                 onSelect={async (mode) => {
                   if (activeSessionId === null) return { ok: true as const };
                   return useChatStore.getState().setSessionMode(activeSessionId, mode);

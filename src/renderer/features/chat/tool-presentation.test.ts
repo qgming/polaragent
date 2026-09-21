@@ -10,6 +10,8 @@ import {
   DIFF_MAX_LINES,
   detailsPatch,
   jobElapsedMs,
+  parseWebFetchDetail,
+  parseWebSearchDetail,
   resolveToolDetail,
   SUBAGENT_STATUS_LABEL_KEYS,
   shortenPath,
@@ -660,5 +662,148 @@ describe("jobElapsedMs", () => {
 
   it("时钟回拨（endedAt 早于 startedAt）时夹到 0，不出现负数读数", () => {
     expect(jobElapsedMs(jobInfo({ startedAt: 5_000, endedAt: 4_000 }), 9_999)).toBe(0);
+  });
+});
+
+/**
+ * 网络工具的 details 解析。
+ *
+ * details 从主进程过来是 `unknown`，形状不对时必须返回 null（落回内置的文本面板），
+ * **绝不能抛** —— 工具卡在渲染期抛错会带塌整条消息。
+ */
+describe("parseWebSearchDetail", () => {
+  it("正常形状", () => {
+    const detail = parseWebSearchDetail({
+      provider: "searxng",
+      sources: [{ url: "https://a.test", title: "A", snippet: "S" }],
+      truncated: false,
+    });
+    expect(detail).toMatchObject({
+      kind: "web-search",
+      provider: "searxng",
+      truncated: false,
+      sources: [{ url: "https://a.test", title: "A", snippet: "S" }],
+    });
+  });
+
+  it("保留 answer 与 instance", () => {
+    const detail = parseWebSearchDetail({
+      provider: "tavily",
+      sources: [{ url: "https://a.test" }],
+      truncated: true,
+      answer: "42",
+    });
+    expect(detail?.answer).toBe("42");
+    expect(detail?.truncated).toBe(true);
+  });
+
+  it("空 sources 是合法的（「没有结果」也是一种结果）", () => {
+    expect(
+      parseWebSearchDetail({ provider: "searxng", sources: [], truncated: false }),
+    ).toMatchObject({
+      sources: [],
+    });
+  });
+
+  it("缺少 sources / sources 不是数组时返回 null", () => {
+    expect(parseWebSearchDetail({ provider: "searxng", truncated: false })).toBeNull();
+    expect(parseWebSearchDetail({ sources: "nope" })).toBeNull();
+  });
+
+  it("来源项缺 url 时整体放弃（而不是只丢那一项）", () => {
+    expect(
+      parseWebSearchDetail({
+        provider: "searxng",
+        sources: [{ url: "https://a.test" }, { title: "没有 url" }],
+        truncated: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("可选字段类型不对时返回 null", () => {
+    expect(
+      parseWebSearchDetail({
+        provider: "searxng",
+        sources: [{ url: "https://a.test", title: 42 }],
+        truncated: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("非对象输入返回 null（不抛）", () => {
+    for (const bad of [null, undefined, "string", 42, []]) {
+      expect(parseWebSearchDetail(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("provider 缺失时回空串（卡片仍要能画）", () => {
+    const detail = parseWebSearchDetail({ sources: [], truncated: false });
+    expect(detail?.provider).toBe("");
+  });
+
+  it("空 answer 不带上（避免渲染一个空块）", () => {
+    expect(
+      parseWebSearchDetail({ provider: "x", sources: [], truncated: false, answer: "" }),
+    ).not.toHaveProperty("answer");
+  });
+});
+
+describe("parseWebFetchDetail", () => {
+  it("正常形状", () => {
+    expect(
+      parseWebFetchDetail({ url: "https://a.test", statusCode: 200, title: "T", truncated: false }),
+    ).toEqual({ kind: "web-fetch", url: "https://a.test", statusCode: 200, title: "T" });
+  });
+
+  it("非 2xx 也是合法详情（状态码本身就是信息）", () => {
+    expect(parseWebFetchDetail({ url: "https://a.test", statusCode: 404 })).toMatchObject({
+      statusCode: 404,
+    });
+  });
+
+  it("缺 url / statusCode 非数字时返回 null", () => {
+    expect(parseWebFetchDetail({ statusCode: 200 })).toBeNull();
+    expect(parseWebFetchDetail({ url: "", statusCode: 200 })).toBeNull();
+    expect(parseWebFetchDetail({ url: "https://a.test" })).toBeNull();
+    expect(parseWebFetchDetail({ url: "https://a.test", statusCode: "200" })).toBeNull();
+  });
+
+  it("非对象输入返回 null（不抛）", () => {
+    for (const bad of [null, undefined, "string", 42]) {
+      expect(parseWebFetchDetail(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("空 title 不带上", () => {
+    expect(
+      parseWebFetchDetail({ url: "https://a.test", statusCode: 200, title: "" }),
+    ).not.toHaveProperty("title");
+  });
+});
+
+describe("网络工具走卡片而不是内置文本面板", () => {
+  it("web_search 有 details 时解析成 web-search 详情", () => {
+    const detail = resolveToolDetail("web_search", {
+      provider: "searxng",
+      sources: [{ url: "https://a.test" }],
+      truncated: false,
+    });
+    expect(detail?.kind).toBe("web-search");
+  });
+
+  it("web_fetch 有 details 时解析成 web-fetch 详情", () => {
+    const detail = resolveToolDetail("web_fetch", { url: "https://a.test", statusCode: 200 });
+    expect(detail?.kind).toBe("web-fetch");
+  });
+
+  it("失败时不给详情（与其它工具同一口径：失败结果不再显示成卡片）", () => {
+    expect(
+      resolveToolDetail("web_search", { provider: "searxng", sources: [], truncated: false }, true),
+    ).toBeNull();
+  });
+
+  it("details 形状不对时落回内置面板（返回 null）", () => {
+    expect(resolveToolDetail("web_search", { unexpected: true })).toBeNull();
+    expect(resolveToolDetail("web_fetch", { unexpected: true })).toBeNull();
   });
 });

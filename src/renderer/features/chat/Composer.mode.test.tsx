@@ -19,9 +19,10 @@ import i18n from "@/renderer/i18n";
 import { toThreadMessage } from "@/renderer/runtime/message-converter";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import type { AgentMode, SetSessionModeResult } from "@/shared/contracts";
+import type { AgentMode } from "@/shared/contracts";
 import type { ChatMessage, SessionSummary } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { Composer } from "./Composer";
 
 afterEach(cleanup);
@@ -49,12 +50,10 @@ function session(agentMode: AgentMode | null): SessionSummary {
   };
 }
 
-/** setMode 的返回值可控：用来验「运行中被拒绝」时给出说明 */
-let setModeResult: SetSessionModeResult = { ok: true };
+/** 记录 setMode 的调用：用来验「运行中也能切」「切了真的发出去」 */
 let setModeCalls: { id: string; mode: AgentMode | null }[] = [];
 
 function stubBridge() {
-  setModeResult = { ok: true };
   setModeCalls = [];
   vi.stubGlobal("oint", {
     skills: { list: vi.fn(async () => []) },
@@ -62,7 +61,8 @@ function stubBridge() {
     sessions: {
       setMode: vi.fn(async (id: string, mode: AgentMode | null) => {
         setModeCalls.push({ id, mode });
-        return setModeResult;
+        // 契约里已无失败分支（见 SessionModeFailure），所以这里不再有可配的返回值
+        return { ok: true as const };
       }),
     },
   });
@@ -72,10 +72,12 @@ function seedStores(options: {
   defaultMode?: AgentMode;
   sessionMode?: AgentMode | null;
   running?: boolean;
+  /** 没有活动会话：chip 该禁用（没有可写入的会话） */
+  noSession?: boolean;
 }) {
   useChatStore.setState({
-    sessions: [session(options.sessionMode ?? null)],
-    activeSessionId: SESSION_ID,
+    sessions: options.noSession === true ? [] : [session(options.sessionMode ?? null)],
+    activeSessionId: options.noSession === true ? null : SESSION_ID,
     messagesBySession: {},
     loadedSessions: {},
     runningBySession: options.running === true ? { [SESSION_ID]: true } : {},
@@ -96,6 +98,7 @@ function seedStores(options: {
       disabledSkillNames: [],
       disabledSubagentNames: [],
       mcpServers: [],
+      webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     } satisfies Settings,
     loaded: true,
   });
@@ -238,24 +241,47 @@ describe("AgentModeChip 的写入", () => {
     expect(useChatStore.getState().sessions[0]?.agentMode).toBe("orchestrate");
   });
 
-  it("运行中 chip 禁用，点不开（主进程也会拒绝，这里省掉一次注定失败的往返）", async () => {
+  /**
+   * 运行中**可以**切换（契约已改，见 shared/contracts/session.ts 的 SessionModeFailure）。
+   *
+   * 旧行为是「运行中置灰 + 主进程拒绝」，但那条限制在实现上并不成立：
+   * 模式只影响系统提示，而系统提示每轮现算，所以写入之后下一轮自然生效，
+   * 正在生成的那一轮不受影响。拒绝反而制造了「点了没反应」。
+   */
+  it("运行中 chip 仍可点，且切换会真的发出去", async () => {
     seedStores({ sessionMode: null, running: true });
+    render(<Harness />);
+    const trigger = await openChip("智能体模式");
+
+    expect((trigger as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByText("编排者").closest("button") as HTMLElement);
+
+    await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "orchestrate" }]));
+  });
+
+  it("运行中切换时说明生效时机（否则用户不知道现在切了算不算）", async () => {
+    seedStores({ sessionMode: null, running: true });
+    render(<Harness />);
+    await openChip("智能体模式");
+
+    // 菜单里给一句「将在下一轮生效」，而不是让用户猜
+    expect(screen.getByText(/下一轮生效/)).toBeDefined();
+  });
+
+  it("不在运行时不给那句生效时机说明（那是运行中才有的信息）", async () => {
+    seedStores({ sessionMode: null, running: false });
+    render(<Harness />);
+    await openChip("智能体模式");
+
+    expect(screen.queryByText(/下一轮生效/)).toBeNull();
+  });
+
+  it("没有活动会话时 chip 禁用（没有可写入的会话）", async () => {
+    seedStores({ sessionMode: null, noSession: true });
     render(<Harness />);
 
     const trigger = await screen.findByRole("button", { name: "智能体模式" });
     expect((trigger as HTMLButtonElement).disabled).toBe(true);
-    expect(setModeCalls).toEqual([]);
-  });
-
-  it("被主进程拒绝时给出说明，而不是静默失败", async () => {
-    setModeResult = { ok: false, reason: "running" };
-    seedStores({ sessionMode: null });
-    render(<Harness />);
-    await openChip("智能体模式");
-
-    // 菜单里再点一次：这次写入会被拒绝（模拟「刚好在点下去的瞬间开始跑了」）
-    fireEvent.click(screen.getByText("编排者").closest("button") as HTMLElement);
-
-    await waitFor(() => expect(screen.getByText(/运行中不能切换模式/)).toBeDefined());
   });
 });

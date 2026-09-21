@@ -141,6 +141,10 @@ export const enUS = {
     todos: "Todos",
     todosEmpty: "No todos yet",
     todosPanelToggle: "Expand or collapse the todo list",
+    // Web tool cards (web_search source list / web_fetch status summary)
+    webSourceCount: "{{count}} sources",
+    webTruncated: "truncated",
+    webStatus: "HTTP {{status}}",
     // Background job panel (shown above the composer, next to the todo bar)
     jobs: "Background jobs",
     jobsPanelToggle: "Expand or collapse background jobs",
@@ -186,6 +190,8 @@ export const enUS = {
     agentModeOrchestrate: "Orchestrator",
     agentModeOrchestrateDesc: "Delegates to subagents first, keeps planning and verification",
     agentModeRunning: "Can't switch modes while running — wait for this turn to finish",
+    // Switching mid-run is allowed and applies to the next turn — say so explicitly
+    agentModeNextTurn: "You can switch while running; it takes effect on the next turn",
     model: "Model",
     thinkingLevel: "Thinking level",
     loadingOlder: "Loading…",
@@ -269,6 +275,7 @@ export const enUS = {
   settings: {
     general: "General",
     services: "Model services",
+    web: "Web search",
     skills: "Skills",
     subagents: "Subagents",
     personalization: "Personalization",
@@ -495,6 +502,42 @@ export const enUS = {
     mcpNotice: "Security notes",
     mcpNoticeDesc:
       'An MCP server is an external process or remote service outside Oint\'s path guard, so its tool calls are approved as high risk on every use. To allow a whole server, turn on "Trust every tool of this server" in its entry, or switch the permission mode to full access. Environment variables and headers are stored as plain text in the settings file (~/.oint/settings.json).',
+    // Web search: backend configuration for the web_search / web_fetch tools
+    webSearchSection: "Search provider",
+    webEnabled: "Enable web search",
+    webEnabledDesc: "When off, the model cannot see web_search or web_fetch",
+    webProvider: "Provider",
+    webNoKey: "no key",
+    webApiKey: "API key",
+    webApiKeySaved: "Saved. Leave empty to keep it",
+    webApiKeyGet: "Get an API key",
+    webInstances: "SearXNG instances",
+    webInstancesHint:
+      "One address per line; leave empty to use the built-in ones. Note: a public instance must enable JSON output (json must be listed in its search.formats), otherwise it is skipped",
+    webInstancesBuiltin:
+      "Built-in instances ({{count}}): tried in order when none are configured, up to 3 attempts",
+    webTavilyDepth: "Search depth",
+    webTavilyAnswer: "Include AI answer",
+    webTavilyAnswerDesc: "Ask Tavily for a generated answer (uses more credits)",
+    webSerperGl: "Region code (gl)",
+    webSerperHl: "Language code (hl)",
+    webExaType: "Search type",
+    webBraveCountry: "Country",
+    webBraveLang: "Search language",
+    webTest: "Test connection",
+    webTesting: "Testing…",
+    webTestOk: "Connected, {{count}} results",
+    webLimitsSection: "Result limits",
+    webLimitsDesc:
+      "These are deployment-side limits, not model arguments: the model can only tighten them",
+    webMaxResults: "Source limit",
+    webMaxResultsDesc: "Most sources one web_search call returns (1–20)",
+    webFetchChars: "Fetch output limit",
+    webFetchCharsDesc: "Character limit for one web_fetch response",
+    webFetchTimeout: "Fetch timeout (seconds)",
+    webFetchTimeoutDesc: "Per-URL fetch timeout; on expiry the call aborts with an error",
+    webFooter:
+      "Both tools are read-only and never touch workspace files, so they need no approval. Fetching only reaches public addresses: loopback, private-network and link-local targets are refused, and cross-origin redirects are not followed automatically.",
   },
   approval: {
     allowOnce: "Allow once",
@@ -592,6 +635,10 @@ export const enUS = {
     grepActive: "Searching",
     glob: "Matched",
     globActive: "Matching",
+    webSearch: "Searched the web",
+    webSearchActive: "Searching the web",
+    webFetch: "Fetched a page",
+    webFetchActive: "Fetching a page",
     todo: "Updated",
     todoActive: "Updating",
     askUser: "Asked",

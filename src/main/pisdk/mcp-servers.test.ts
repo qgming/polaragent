@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { McpCallResult, McpClient, McpHandshake, McpRemoteTool } from "@/main/mcp/client";
 import type { McpServerConfig } from "@/shared/contracts/mcp";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createMcpServers } from "./mcp-servers";
 
 function makeConfig(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
@@ -36,6 +37,7 @@ function makeSettings(mcpServers: McpServerConfig[]): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers,
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
   };
 }
 

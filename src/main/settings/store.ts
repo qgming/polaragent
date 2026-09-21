@@ -5,6 +5,13 @@ import { writeFileAtomic } from "@/main/storage/atomic-write";
 import { ALL_THINKING_LEVELS, type ThinkingLevel } from "@/shared/contracts/common";
 import { isValidMcpServerId, type McpServerConfig } from "@/shared/contracts/mcp";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
+import {
+  DEFAULT_WEB_SEARCH_SETTINGS,
+  WEB_SEARCH_PROVIDERS,
+  type WebSearchProvider,
+  type WebSearchProviderConfig,
+  type WebSearchSettings,
+} from "@/shared/contracts/web";
 
 /** safeStorage 的最小接口，便于在测试中注入假实现 */
 export type Crypto = {
@@ -22,7 +29,22 @@ export interface EncryptedKey {
 
 type PersistedApiKey = string | EncryptedKey;
 type PersistedService = Omit<ModelServiceConfig, "apiKey"> & { apiKey: PersistedApiKey };
-type PersistedSettings = Omit<Settings, "services"> & { services: PersistedService[] };
+/**
+ * webSearch 的落盘形状：与 WebSearchSettings 同形，但每个 provider 的 apiKey 换成
+ * 可能加密的值。
+ *
+ * 用映射类型而不是逐个列出五个 provider：漏一个就会让那个 provider 的 Key 明文落盘，
+ * 而这正是这里要避免的。WebSearchProvider 是字面量联合，映射类型因此是穷举的。
+ */
+type PersistedWebSearchSettings = Omit<WebSearchSettings, WebSearchProvider | "provider"> & {
+  provider: WebSearchProvider;
+} & {
+  [K in WebSearchProvider]: Omit<WebSearchProviderConfig, "apiKey"> & { apiKey: PersistedApiKey };
+};
+type PersistedSettings = Omit<Settings, "services" | "webSearch"> & {
+  services: PersistedService[];
+  webSearch: PersistedWebSearchSettings;
+};
 type Warn = (message: string) => void;
 
 /** 完整 Settings 默认值；读文件时缺失字段一律以此兜底 */
@@ -40,6 +62,7 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
+  webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
 };
 
 export interface SettingsStoreOptions {
@@ -61,6 +84,7 @@ function cloneDefaults(): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: cloneWebSearchSettings(DEFAULT_WEB_SEARCH_SETTINGS),
   };
 }
 
@@ -111,6 +135,8 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
       : base.disabledSubagentNames,
     // MCP server 列表：逐条归一（命令/参数/环境变量可能是任意 JSON），非法条目直接丢掉
     mcpServers: normalizeMcpServers(raw.mcpServers),
+    // 网络搜索：provider 子对象逐字段归一，apiKey 走与 services 相同的解密路径
+    webSearch: normalizeWebSearch(raw.webSearch, crypto, warn),
   };
 }
 
@@ -199,6 +225,128 @@ function asOptionalPositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+/** 整数夹取：非有限值/非数字回落 fallback，其余取整并夹到 [min, max] */
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(Math.floor(value), max));
+}
+
+/** 非空字符串，否则 undefined（用于「可选的字符串字段」归一） */
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/**
+ * webSearch 深拷贝：provider 子对象必须各自展开。
+ *
+ * 不这么做的话，设置面板改一个 provider 的字段会串到另一个
+ *（`DEFAULT_WEB_SEARCH_SETTINGS.searxng` 与 clone 出来的对象共享同一个引用）。
+ */
+export function cloneWebSearchSettings(source: WebSearchSettings): WebSearchSettings {
+  return {
+    ...source,
+    searxng: { ...source.searxng },
+    tavily: { ...source.tavily },
+    exa: { ...source.exa },
+    serper: { ...source.serper },
+    brave: { ...source.brave },
+  };
+}
+
+/**
+ * webSearch 归一化。
+ *
+ * 逐字段白名单而不是整体 spread：磁盘上的 JSON 可能被手改过，
+ * 一个 `provider: "openai"` 或 `maxResults: -1` 不该让整个设置加载失败 ——
+ * 与 normalizeServices / normalizeMcpServers 同一口径。
+ *
+ * apiKey 走与 services[].apiKey **同一个** decodeApiKey：加密可用性只有一处判断。
+ */
+export function normalizeWebSearch(
+  raw: unknown,
+  crypto: Crypto | null,
+  warn: Warn,
+): WebSearchSettings {
+  const base = cloneWebSearchSettings(DEFAULT_WEB_SEARCH_SETTINGS);
+  if (!isRecord(raw)) return base;
+
+  const providerConfig = (key: WebSearchProvider): WebSearchProviderConfig => {
+    const src = isRecord(raw[key]) ? (raw[key] as Record<string, unknown>) : {};
+    // 从默认值出发，只用**类型正确**的磁盘值覆盖它：
+    // 这样「字段缺失」与「字段类型不对」都自然回落到默认，不需要为每个字段各写一次判断。
+    const merged: WebSearchProviderConfig = { ...base[key] };
+
+    // apiKey 单独走解密路径（其余字段都是明文）
+    merged.apiKey = decodeApiKey(src.apiKey, crypto, warn);
+
+    if (src.searchDepth === "basic" || src.searchDepth === "advanced") {
+      merged.searchDepth = src.searchDepth;
+    }
+    if (src.type === "neural" || src.type === "keyword") {
+      merged.type = src.type;
+    }
+    if (typeof src.includeAnswer === "boolean") {
+      merged.includeAnswer = src.includeAnswer;
+    }
+    // instances 允许显式空串（那表示「用内置清单」），所以不能按「非空才要」处理
+    if (typeof src.instances === "string") {
+      merged.instances = src.instances;
+    }
+    for (const field of ["gl", "hl", "country", "searchLang"] as const) {
+      const value = asNonEmptyString(src[field]);
+      if (value !== undefined) merged[field] = value;
+    }
+    return merged;
+  };
+
+  const provider = WEB_SEARCH_PROVIDERS.find((candidate) => candidate === raw.provider);
+
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : base.enabled,
+    provider: provider ?? base.provider,
+    searxng: providerConfig("searxng"),
+    tavily: providerConfig("tavily"),
+    exa: providerConfig("exa"),
+    serper: providerConfig("serper"),
+    brave: providerConfig("brave"),
+    maxResults: clampInt(raw.maxResults, 1, 20, base.maxResults),
+    fetchMaxOutputChars: clampInt(
+      raw.fetchMaxOutputChars,
+      1_000,
+      1_000_000,
+      base.fetchMaxOutputChars,
+    ),
+    fetchTimeoutMs: clampInt(raw.fetchTimeoutMs, 1_000, 120_000, base.fetchTimeoutMs),
+  };
+}
+
+/** webSearch 落盘：把每个 provider 的 apiKey 加密，其余字段原样 */
+export function persistWebSearch(
+  settings: WebSearchSettings,
+  crypto: Crypto | null,
+): PersistedWebSearchSettings {
+  return {
+    enabled: settings.enabled,
+    provider: settings.provider,
+    maxResults: settings.maxResults,
+    fetchMaxOutputChars: settings.fetchMaxOutputChars,
+    fetchTimeoutMs: settings.fetchTimeoutMs,
+    searxng: persistProviderConfig(settings.searxng, crypto),
+    tavily: persistProviderConfig(settings.tavily, crypto),
+    exa: persistProviderConfig(settings.exa, crypto),
+    serper: persistProviderConfig(settings.serper, crypto),
+    brave: persistProviderConfig(settings.brave, crypto),
+  };
+}
+
+function persistProviderConfig(
+  config: WebSearchProviderConfig,
+  crypto: Crypto | null,
+): Omit<WebSearchProviderConfig, "apiKey"> & { apiKey: PersistedApiKey } {
+  const { apiKey, ...rest } = config;
+  return { ...rest, apiKey: encodeApiKey(apiKey, crypto) };
+}
+
 /**
  * 校验思考档位：只留本仓五档、去重、按强弱顺序排好；空数组视为「没有信息」（undefined）。
  *
@@ -272,6 +420,7 @@ function toPersisted(settings: Settings, crypto: Crypto | null): PersistedSettin
       ...service,
       apiKey: encodeApiKey(service.apiKey, crypto),
     })),
+    webSearch: persistWebSearch(settings.webSearch, crypto),
   };
 }
 

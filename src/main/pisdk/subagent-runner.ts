@@ -372,10 +372,22 @@ async function startReservedRun(
     parentSessionId: parent.sessionId,
   });
 
-  // 先落盘再发事件：渲染层收到 run-updated 时，索引里已经有这条运行了（刷新 / 重启都在）
+  /**
+   * 落盘 → 起跑 → 再发事件。
+   *
+   * **顺序是刻意的，publish 必须排在 startChildRun 之后**：渲染层收到 run-updated 会去
+   * 拉这条子会话的转录（面板的详情、主会话里 Task 卡片的嵌套消息）。若在 send **之前**发，
+   * 那次拉取读到的是一条**刚建好、还一条消息都没有**的子会话 —— 拿到空数组，
+   * 而拉取闸门（subagent-store 的 requestedChildren / childMessages）不会再重试，
+   * 于是详情区**永久空白**，直到跑完 report 才有东西可看。
+   *
+   * `startChildRun` 是 fire-and-forget（它内部 await 的 send 要等整轮跑完才 resolve），
+   * 所以这里 `void` 之后立刻 publish 不会阻塞 —— 但 send 已经把首条用户消息同步登记进会话，
+   * 渲染层随后那次拉取因此能看到消息。
+   */
   persist(run);
-  publish(entry.run);
   void startChildRun(entry);
+  publish(entry.run);
   return run;
 }
 

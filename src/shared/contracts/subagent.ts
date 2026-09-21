@@ -28,6 +28,11 @@ export type SubagentSource = "builtin" | "user" | "temp";
  * 刻意**不在**列表里的：ask_user（子智能体不能卡住等用户）、作业三件套（子智能体不该自己起
  * 后台进程）、浏览器工具（不该操作用户正盯着的页面）、Task 系列（不允许嵌套委派）。
  * 这条约束在 tools.ts 的 buildTools 注释里已有对应说明，两处不要漂移。
+ *
+ * **web_search / web_fetch 在列表里**（与浏览器工具相反）：它们是无状态、无 UI 归属、
+ * 可并发的网络调用 —— 不需要用户眼前的标签页，也不会把子智能体卡在等人回答上，
+ * 所以上面那三条排除理由对它们都不成立。加上它们之后，
+ * `deep-research` 这类技能才不必再教子智能体用 bash + curl 上网。
  */
 export const SUBAGENT_ASSIGNABLE_TOOLS = [
   "read",
@@ -37,6 +42,8 @@ export const SUBAGENT_ASSIGNABLE_TOOLS = [
   "edit",
   "write",
   "todo",
+  "web_search",
+  "web_fetch",
 ] as const;
 
 export type SubagentToolName = (typeof SUBAGENT_ASSIGNABLE_TOOLS)[number];

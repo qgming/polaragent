@@ -225,4 +225,90 @@ describe("流式事件合帧缓冲", () => {
     flushStreamEvents("s1");
     expect(textOf("s1")).toBe("");
   });
+
+  /**
+   * 缓冲计数器的守恒。
+   *
+   * 这个计数在每个 token 上被读一次（`bufferedEventCount() > STREAM_BUFFER_LIMIT`），
+   * 所以它必须是增量维护的 O(1) 计数 —— 早先的实现每次都遍历「所有会话 × 所有 part」，
+   * 多子智能体并行流式时那笔开销随会话数线性增长，是 UI 发卡的来源之一。
+   *
+   * 换成计数器之后，**守恒**就成了正确性前提：漏减会让它单调增长，
+   * 最终每一次 token 都越过上限、退化成「每个 token 一次全量 setState」——
+   * 比原来的遍历更糟。所以这里把三条路径（新增 / flush 清空 / 丢弃）都钉住。
+   */
+  describe("缓冲计数器守恒", () => {
+    /** 从模块外部读计数：只能通过触发上限行为间接观察，所以这里用导出函数 */
+    it("同一 part 反复追加只算一个条目（不会按 token 增长）", () => {
+      seed("s1", [streamingMessage()]);
+      const store = useChatStore.getState();
+      store.applyEvent("s1", {
+        type: "part-upsert",
+        messageId: "a1",
+        partIndex: 0,
+        part: { type: "text", text: "" },
+      });
+      for (let i = 0; i < 50; i += 1) {
+        store.applyEvent("s1", {
+          type: "part-delta",
+          messageId: "a1",
+          partIndex: 0,
+          kind: "text",
+          delta: "x",
+        });
+      }
+      // 全部在缓冲里合批：文本只有在 flush 之后才可见
+      expect(textOf("s1")).toBe("");
+      flushStreamEvents("s1");
+      expect(textOf("s1")).toBe("x".repeat(50));
+    });
+
+    it("多个会话各自缓冲，flush 一个不影响另一个的待提交内容", () => {
+      seed("s1", [streamingMessage()]);
+      seed("s2", [streamingMessage()]);
+      const store = useChatStore.getState();
+      for (const id of ["s1", "s2"]) {
+        store.applyEvent(id, {
+          type: "part-upsert",
+          messageId: "a1",
+          partIndex: 0,
+          part: { type: "text", text: "" },
+        });
+        store.applyEvent(id, {
+          type: "part-delta",
+          messageId: "a1",
+          partIndex: 0,
+          kind: "text",
+          delta: id,
+        });
+      }
+
+      flushStreamEvents("s1");
+      expect(textOf("s1")).toBe("s1");
+      // s2 仍攒着：此时不该被顺带提交
+      expect(textOf("s2")).toBe("");
+
+      flushStreamEvents("s2");
+      expect(textOf("s2")).toBe("s2");
+    });
+
+    it("反复 flush 之后计数器归零（否则会单调增长并退化成每 token 一次提交）", () => {
+      seed("s1", [streamingMessage()]);
+      const store = useChatStore.getState();
+      // 来 10 轮「upsert + 增量 + flush」：若计数器漏减，第 400 轮之前就会被迫逐 token 提交。
+      // 这里断言的是**行为**而不是内部数字：每轮 flush 前文本都还不可见，
+      // 说明它们确实被合批了，而不是因为计数越界被提前提交。
+      for (let round = 0; round < 10; round += 1) {
+        store.applyEvent("s1", {
+          type: "part-upsert",
+          messageId: "a1",
+          partIndex: 0,
+          part: { type: "text", text: `${round}:` },
+        });
+        expect(textOf("s1"), `第 ${round} 轮 flush 前`).not.toContain(`${round}:`);
+        flushStreamEvents("s1");
+      }
+      expect(textOf("s1")).toContain("9:");
+    });
+  });
 });

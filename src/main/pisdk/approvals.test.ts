@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import type { AiApprover } from "./ai-approver";
 import { type ApprovalService, createApprovalService } from "./approvals";
 
@@ -20,6 +21,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
   };

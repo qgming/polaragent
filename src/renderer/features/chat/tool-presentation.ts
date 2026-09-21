@@ -22,6 +22,7 @@ import {
   type SubagentRunStatus,
   type SubagentSource,
 } from "@/shared/contracts/subagent";
+import { WEB_TOOL_NAMES, type WebSource } from "@/shared/contracts/web";
 
 /**
  * 后台作业四件套在渲染层的名字表。
@@ -419,7 +420,71 @@ export type ToolDetail =
   | { kind: "terminal" }
   | { kind: "todo"; items: TodoItem[]; revision?: number }
   | ({ kind: "subagent" } & SubagentDetailData)
-  | ({ kind: "job" } & JobDetailData);
+  | ({ kind: "job" } & JobDetailData)
+  | {
+      kind: "web-search";
+      sources: WebSource[];
+      provider: string;
+      truncated: boolean;
+      answer?: string;
+    }
+  | { kind: "web-fetch"; url: string; statusCode: number; title?: string };
+
+/** WebSource 的逐项校验：details 从主进程过来是 unknown，必须自己验 */
+function parseWebSources(value: unknown): WebSource[] | null {
+  if (!Array.isArray(value)) return null;
+  const sources: WebSource[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    const url = item.url;
+    if (typeof url !== "string" || url === "") return null;
+    const title = item.title;
+    const snippet = item.snippet;
+    const publishedAt = item.publishedAt;
+    if (title !== undefined && typeof title !== "string") return null;
+    if (snippet !== undefined && typeof snippet !== "string") return null;
+    if (publishedAt !== undefined && typeof publishedAt !== "string") return null;
+    sources.push({
+      url,
+      ...(title === undefined ? {} : { title }),
+      ...(snippet === undefined ? {} : { snippet }),
+      ...(publishedAt === undefined ? {} : { publishedAt }),
+    });
+  }
+  return sources;
+}
+
+/** web_search 的 details → 卡片数据；形状不对返回 null（落回内置文本面板） */
+export function parseWebSearchDetail(
+  value: unknown,
+): Extract<ToolDetail, { kind: "web-search" }> | null {
+  if (!isRecord(value)) return null;
+  const sources = parseWebSources(value.sources);
+  if (sources === null) return null;
+  const provider = typeof value.provider === "string" ? value.provider : "";
+  const truncated = value.truncated === true;
+  const answer = typeof value.answer === "string" && value.answer !== "" ? value.answer : undefined;
+  return {
+    kind: "web-search",
+    sources,
+    provider,
+    truncated,
+    ...(answer === undefined ? {} : { answer }),
+  };
+}
+
+/** web_fetch 的 details → 卡片数据 */
+export function parseWebFetchDetail(
+  value: unknown,
+): Extract<ToolDetail, { kind: "web-fetch" }> | null {
+  if (!isRecord(value)) return null;
+  const url = value.url;
+  if (typeof url !== "string" || url === "") return null;
+  const statusCode = value.statusCode;
+  if (typeof statusCode !== "number" || !Number.isFinite(statusCode)) return null;
+  const title = typeof value.title === "string" && value.title !== "" ? value.title : undefined;
+  return { kind: "web-fetch", url, statusCode, ...(title === undefined ? {} : { title }) };
+}
 /**
  * 选展开面板的渲染方式，并把要用的数据一并解析好。
  *
@@ -472,6 +537,15 @@ export function resolveToolDetail(
     const todo = parseTodoDetail(details) ?? parseTodoArgs(args);
     return todo === null ? null : { kind: "todo", ...todo };
   }
+  /**
+   * 网络工具：results 是结构化来源列表（details 里带），比纯文本更适合做卡片 ——
+   * 标题可点、hostname 可见、snippet 折叠。
+   *
+   * 放在 `toolName !== "edit"` 那道硬门**之前**（见下面那行的注释：
+   * 新分支必须插在它之前，否则永远走不到）。
+   */
+  if (toolName === WEB_TOOL_NAMES.search) return parseWebSearchDetail(details);
+  if (toolName === WEB_TOOL_NAMES.fetch) return parseWebFetchDetail(details);
   if (toolName !== "edit") return null;
 
   const patch = detailsPatch(details);

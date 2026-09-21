@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
+import { WEB_TOOL_NAMES } from "@/shared/contracts/web";
 import type { BrowserAutomation } from "../browser/types";
+import type { WebService } from "../web/types";
 import { buildTools, TOOL_NAMES } from "./tools";
 
 /** 内核原生四件套：description 由 tools.ts 整体覆盖 */
@@ -50,9 +52,14 @@ describe("buildTools", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [...NATIVE_TOOLS, ...CUSTOM_TOOLS].sort(),
     );
-    // TOOL_NAMES 是权限层 / UI 的登记表：ask_user 按会话注入、浏览器族按实现注入
-    //（见 runtime 的两处 buildTools），所以默认工具集 = 登记表去掉这两族。
-    const injectable = new Set<string>([TOOL_NAMES.ask, ...BROWSER_TOOL_NAME_LIST]);
+    // TOOL_NAMES 是权限层 / UI 的登记表：ask_user 按会话注入、浏览器族按实现注入、
+    // 网络工具按 WebService 注入（见 runtime 的 buildTools 调用点），
+    // 所以默认工具集 = 登记表去掉这三族。
+    const injectable = new Set<string>([
+      TOOL_NAMES.ask,
+      ...BROWSER_TOOL_NAME_LIST,
+      ...Object.values(WEB_TOOL_NAMES),
+    ]);
     expect(new Set(tools.map((tool) => tool.name))).toEqual(
       new Set(Object.values(TOOL_NAMES).filter((name) => !injectable.has(name))),
     );
@@ -119,5 +126,77 @@ describe("buildTools", () => {
       expect(tool?.description).toContain("When to use it");
       expect(tool?.description).toContain("When NOT to use it");
     }
+  });
+});
+
+/**
+ * 网络工具的装配。
+ *
+ * 这一组同时是**防回归**：`buildTools` 有多个调用点（会话创建的主/子两条分支 +
+ * MCP 热替换），漏传第 6 个参数会让新工具静默消失 —— ask_user 踩过同一个坑
+ * （见 tools.ts 的注释）。这里对源码做一次静态断言，因为漏传是**运行期悄无声息**的。
+ */
+describe("网络工具", () => {
+  /** 假 service：装配测试只关心名字/描述，这些方法一次都不会被调用 */
+  const fakeWeb: WebService = {
+    fetchOutputLimit: async () => 20_000,
+    search: () => Promise.reject(new Error("测试不应该真的搜索")),
+    fetch: () => Promise.reject(new Error("测试不应该真的抓取")),
+  };
+
+  it("传入 service 时装配出两个网络工具，name 与 label 一致", () => {
+    const tools = buildTools([], undefined, [], undefined, [], fakeWeb);
+    const names = tools.map((tool) => tool.name);
+    expect(names).toContain(WEB_TOOL_NAMES.search);
+    expect(names).toContain(WEB_TOOL_NAMES.fetch);
+    for (const name of Object.values(WEB_TOOL_NAMES)) {
+      expect(tools.find((tool) => tool.name === name)?.label).toBe(name);
+    }
+  });
+
+  it("不传 service 时两个工具都不出现（单测里的 buildTools() 行为不变）", () => {
+    const names = buildTools().map((tool) => tool.name);
+    expect(names).not.toContain(WEB_TOOL_NAMES.search);
+    expect(names).not.toContain(WEB_TOOL_NAMES.fetch);
+  });
+
+  it("description 写清了「什么时候用 / 不要用」（本仓库的既定标准）", () => {
+    const tools = buildTools([], undefined, [], undefined, [], fakeWeb);
+    for (const name of Object.values(WEB_TOOL_NAMES)) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      expect(tool?.description).toContain("When to use it");
+      expect(tool?.description).toContain("When not to use it");
+    }
+  });
+
+  it("description 把外部内容标记为不可信（提示注入的第一道防线）", () => {
+    const tools = buildTools([], undefined, [], undefined, [], fakeWeb);
+    for (const name of Object.values(WEB_TOOL_NAMES)) {
+      expect(tools.find((tool) => tool.name === name)?.description).toContain("UNTRUSTED");
+    }
+  });
+
+  it("名字表可由 TOOL_NAMES 取到（权限层与 UI 图标表按它登记）", () => {
+    // 展开 WEB_TOOL_NAMES 后键名是 search / fetch（与 BROWSER_TOOL_NAMES 展开出
+    // open / snapshot 等同一个约定：键是短名，值是模型可见的全名）
+    expect(TOOL_NAMES.search).toBe(WEB_TOOL_NAMES.search);
+    expect(TOOL_NAMES.fetch).toBe(WEB_TOOL_NAMES.fetch);
+  });
+
+  /**
+   * 静态检查 runtime.ts 的三个 buildTools 调用点都传了 web 依赖。
+   *
+   * 为什么用读源码而不是行为测试：漏传第 6 个参数时**没有任何运行期症状**，
+   * 直到用户发现「MCP 一刷新，web 工具就没了」。源码断言能立刻抓住它，
+   * 而行为测试要构造三个调用点的完整运行时（harness + 会话 + MCP）才能覆盖。
+   */
+  it("runtime.ts 的每个 buildTools 调用点都传了 deps.web", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./runtime.ts", import.meta.url), "utf8");
+    // 取每个 buildTools( 之后到匹配右括号为止的片段，数其中有没有 deps.web
+    const calls = source.match(/buildTools\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    const webArgs = source.match(/deps\.web,?\s*\)|deps\.web,/g) ?? [];
+    expect(webArgs.length).toBeGreaterThanOrEqual(3);
   });
 });

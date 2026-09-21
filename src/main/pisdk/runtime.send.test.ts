@@ -10,6 +10,7 @@
 // 「prompt 被调用了几次」「abort 有没有在别人的运行上被触发」。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 
 /** 记录假 lane 上的每一次调用 */
 const harness = vi.hoisted(() => ({
@@ -166,6 +167,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
 }

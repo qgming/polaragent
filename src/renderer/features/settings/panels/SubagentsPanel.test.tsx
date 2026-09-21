@@ -20,6 +20,7 @@ import type {
   SubagentInfo,
   SubagentWriteRequest,
 } from "@/shared/contracts/subagent";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { SubagentsPanel } from "./SubagentsPanel";
 
 // vitest 未开 globals，RTL 的自动清理不会注册，必须手动
@@ -78,6 +79,7 @@ function settingsFixture(overrides: Partial<Settings>): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
 }

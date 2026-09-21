@@ -19,6 +19,7 @@ import { registerSettingsIpc } from "./settings";
 import { registerSkillsIpc } from "./skills";
 import { registerSubagentsIpc } from "./subagents";
 import { registerTerminalIpc } from "./terminal";
+import { registerWebIpc } from "./web";
 import { registerWindowIpc } from "./window";
 
 /** 汇总注册全部 invoke 处理器，避免分散注册导致通道遗漏或重复 */
@@ -45,4 +46,5 @@ export function registerIpcHandlers(): void {
   registerReviewIpc();
   registerTerminalIpc();
   registerBrowserIpc();
+  registerWebIpc();
 }

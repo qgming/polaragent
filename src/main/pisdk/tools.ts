@@ -22,12 +22,15 @@ import {
   type ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
 import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
+import { WEB_TOOL_NAMES } from "@/shared/contracts/web";
 import type { BrowserAutomation } from "../browser/types";
+import type { WebService } from "../web/types";
 import { ASK_TOOL_NAME } from "./tools/ask";
 import { createBrowserTools } from "./tools/browser";
 import { createReadToolWithLineNumbers } from "./tools/read";
 import { createGlobTool, createGrepTool } from "./tools/search";
 import { createTodoTool, type TodoToolContext } from "./tools/todo";
+import { createWebTools } from "./tools/web";
 
 /**
  * 应用级工具上下文：受路径守卫约束的执行环境 + 会话级待办状态。
@@ -51,6 +54,8 @@ export const TOOL_NAMES = {
   ask: ASK_TOOL_NAME,
   /** 浏览器工具；名字取自 shared/contracts/browser.ts（UI 图标表与权限层复用同一份） */
   ...BROWSER_TOOL_NAMES,
+  /** 网络工具；名字取自 shared/contracts/web.ts（同上） */
+  ...WEB_TOOL_NAMES,
 } as const;
 const BASH_DESCRIPTION =
   "在当前工作目录执行一条 shell 命令，返回合并后的 stdout 与 stderr；超长输出只保留末尾 2000 行 / 50KB。\n" +
@@ -150,11 +155,19 @@ function withBashExitCode(
  * - subagentTools：四个子智能体工具（见 tools/subagent.ts）。它们必须由 runtime 注入而不是
  *   在这里装配：需要**父会话 id**、聊天运行时（子会话的 prompt 走 getChatRuntime().send）与
  *   运行管理器，这三样只有 runtime.ts 拿得到。位置固定在 jobTools 之后、extraTools 之前 ——
- *   `extraTools` 是「谁都可以塞」的扩展位，子智能体工具是产品内置的一组，不该混在扩展位后面。
+ *   `extraTools` 是「谁都可以塞」的扩展位，子智能体工具是产品内置的一组，不该混在扩展位后面；
+ * - webService：网络工具（见 tools/web.ts）。与 browserAutomation 同款：
+ *   **不传就完全不装配**，于是单测里 buildTools() 的结果与加这个参数之前完全一致。
+ *   它由 runtime 经 RuntimeDeps 注入（同 browser 的理由：实现依赖 node:https 与设置存储，
+ *   在这里 import 会把它们拖进 runtime 的 node 单测）。
  *
  * 注意前四个参数都是**可选**的：不传就没有对应的工具。会话创建
  * （runtime 的 tools: ...）与 MCP 热替换（applyMcpTools 的 harness.setTools）两条路径
  * 都必须把它们带上，否则热替换之后这些工具会凭空消失（ask_user 踩过同一个坑）。
+ *
+ * ⚠️ **web 工具要一并带进子智能体的那条路径**：与 browser 不同，子智能体**应该**能联网
+ * （它们不需要用户眼前的 UI，也不会卡住等人）。是否真的拿到取决于 restrictTools 的
+ * 白名单 —— 见 shared/contracts/subagent.ts 的 SUBAGENT_ASSIGNABLE_TOOLS。
  */
 export function buildTools(
   extraTools: AgentHarnessTool<AppToolContext>[] = [],
@@ -162,6 +175,7 @@ export function buildTools(
   jobTools: AgentHarnessTool<AppToolContext>[] = [],
   browserAutomation?: BrowserAutomation,
   subagentTools: AgentHarnessTool<AppToolContext>[] = [],
+  webService?: WebService,
 ): AgentHarnessTool<AppToolContext>[] {
   return [
     {
@@ -178,6 +192,10 @@ export function buildTools(
     ...(browserAutomation === undefined
       ? []
       : (createBrowserTools(browserAutomation) as AgentHarnessTool<AppToolContext>[])),
+    // 网络工具：同样是主进程单例（WebService），与工作目录无关（见 tools/web.ts）
+    ...(webService === undefined
+      ? []
+      : (createWebTools(webService) as AgentHarnessTool<AppToolContext>[])),
     // 子智能体（子 lane）上线时**不要**把这些工具注入子 lane：子智能体不能自己卡住等用户
     // （ask_user），也不该自己起后台进程（作业工具），更不该操作用户正盯着的浏览器 ——
     // 它要把结果写进最终回复，由主 lane 统一提问与调度（见 tools/ask.ts 顶部注释）

@@ -9,6 +9,7 @@ import type {
   WireFormat,
 } from "./common";
 import type { McpServerConfig } from "./mcp";
+import type { WebSearchSettings } from "./web";
 
 export interface ModelEntry {
   id: string;
@@ -69,4 +70,12 @@ export interface Settings {
    * McpServers，只在内存里，见 src/main/pisdk/mcp-servers.ts。
    */
   mcpServers: McpServerConfig[];
+
+  /**
+   * 网络搜索 / 网页抓取（web_search / web_fetch）。
+   *
+   * 形状见 shared/contracts/web.ts；apiKey 与 services[].apiKey 走同一套
+   * safeStorage 加解密（见 settings/store.ts 的 encodeApiKey / decodeApiKey）。
+   */
+  webSearch: WebSearchSettings;
 }

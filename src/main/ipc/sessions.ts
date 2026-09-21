@@ -58,13 +58,21 @@ export function registerSessionsIpc(): void {
    *
    * 不经过聊天运行时，与 setModel 不同：切模型要热改 lane 配置，而模式只影响
    * 系统提示的组装，那次组装发生在下一次发送时 —— 所以这里落盘就够了。
-   * 运行中拒绝：中途换提示会让同一段对话前后指令不一致（与切模型同一条理由）。
+   *
+   * **运行中也允许切**（此前会以 reason: "running" 拒绝）。理由：
+   * - 系统提示本来就是每轮现算的（runtime 的 composeMainPrompt 每次装配都读一次
+   *   `readAgentMode(id) ?? settings.agentMode`），所以写入之后**下一轮**自然生效，
+   *   不存在「同一段对话前后指令不一致」——那句担心在实现上并不成立：
+   *   正在生成的那一轮用的仍是它开始时装配好的提示，不会中途改变；
+   * - 拒绝反而制造了更难解释的行为：用户点了没反应，且没有任何提示告诉他为什么。
+   *
+   * 与 setModel 的差别因此是**有意保留的**：切模型要热改 lane 配置、会让同一段
+   * 对话的工具调用与思考历史跨供应商，那条限制仍然成立。
    */
   handle(
     IPC.sessions.setMode,
     "切换会话模式",
     async (request: { id: string; mode: AgentMode | null }): Promise<SetSessionModeResult> => {
-      if (getChatRuntime().isRunning(request.id)) return { ok: false, reason: "running" };
       await store.setAgentMode(request.id, request.mode);
       return { ok: true };
     },

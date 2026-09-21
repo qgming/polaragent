@@ -508,6 +508,24 @@ export const useSubagentStore = create<SubagentState>()((set, get) => {
 
     async loadChild(childSessionId) {
       const state = get();
+      /**
+       * 幂等闸门：`requestedChildren` 防并发重复请求，`childMessages` 已有的不再拉。
+       *
+       * ⚠️ **这不是实时数据源**。它的内容来自一次 `sessions:load-messages`（读磁盘），
+       * 而磁盘上内核只在**一轮结束时**提交助手条目 —— 所以它最多给出「轮次粒度」的快照，
+       * 而且是**调用那一刻**的快照。
+       *
+       * 实时转录走的是另一条路：子会话的 `chat:event` 与主会话同一条通路
+       * （runtime.ts 用**子**会话 id 发事件，chat-store.applyEvent 不按会话过滤），
+       * 所以 `chat-store.messagesBySession[childSessionId]` 里**已经有 token 级的实时消息**。
+       * 面板优先读那一份（见 SubagentPanel 的 liveMessages），本函数只负责：
+       *   · 冷启动 / 重启后补齐历史（那时内存里没有事件）；
+       *   · 终态后的权威快照。
+       *
+       * 历史注意：这里曾经是「拿到 `[]` 就永久闩死」，导致启动竞态下
+       * （runner 先 publish 再 send，读到的子会话还没有消息）详情永远空白 ——
+       * 那正是「有轮次与工具次数、却没有会话内容」这个缺陷的一半原因。
+       */
       if (state.childMessages[childSessionId] !== undefined) return;
       if (state.requestedChildren[childSessionId] === true) return;
       set((current) => ({

@@ -462,7 +462,7 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "快速的代码库探索，把结论带回来（不改任何文件）。派它：动手前要先搞清楚现状、要多路并行搜索、需要一份摘要而不是全文、范围还不确定。别派它：已经知道路径且要读内容、本来就要读整份文件、只是查一个具体的东西、马上要改这个文件。口诀：「X 在哪 / Y 怎么实现的」派它；「读这个文件」自己做。",
     prompt: EXPLORER_PROMPT,
-    tools: ["read", "grep", "glob"],
+    tools: ["read", "grep", "glob", "web_search", "web_fetch"],
     source: "builtin",
   },
   {
@@ -494,7 +494,7 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "只读的技术参谋：架构取舍、方案对比、疑难根因、改动前的风险审查。派它：影响面大的架构决定、同一问题修了两次还没好、高风险的多模块重构、代价昂贵的取舍、根因不明的疑难、以及需要有人对方案做简化审视（YAGNI）。别派它：你有把握的常规决定、第一次尝试修 bug、直截了当的取舍、需要「怎么做」而不是「该不该做」、查一下或试一下就能答的问题。口诀：需要资深架构判断或评审派它；routine 的协调与最终综合自己做。**它是升级手段，不是默认的验证步骤。**",
     prompt: ORACLE_PROMPT,
-    tools: ["read", "grep", "glob"],
+    tools: ["read", "grep", "glob", "web_search", "web_fetch"],
     source: "builtin",
   },
   {

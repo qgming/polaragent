@@ -6,6 +6,7 @@ import { assessCommand } from "@/main/security/command-guard";
 import { writeFileAtomic } from "@/main/storage/atomic-write";
 import { BROWSER_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/browser";
 import { isMcpToolName } from "@/shared/contracts/mcp";
+import { WEB_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/web";
 import { BACKGROUND_JOB_TOOL_NAMES } from "./tools/jobs";
 
 /**
@@ -48,12 +49,20 @@ export interface PermissionRuleStore {
 //
 // 这份名单不再在这里逐条写死：只读那一侧直接展开 shared/contracts/browser.ts 的
 // BROWSER_READ_ONLY_TOOL_NAMES（工具名常量与权限表只维护一份，避免加工具时漏改一处）。
+//
+// 网络工具（web_search / web_fetch）同样在低风险里：两个都是只读的（不碰工作区、
+// 不改任何状态），与 read/grep/glob 同一档。它们确实引入了**出站网络**这一新面，
+// 但那条边界由 main/web/network.ts 的「公网地址强制 + 连接钉死 + 仅同源重定向」兜底，
+// 而不是靠每次弹审批卡 —— 检索是交互式动作，要审批就等于不可用。
+// 三家参考实现同向：codex 里没有 ApprovalAction::WebSearch，dsh 出厂 preset
+// 也不对公开抓取要审批。见 docs/web-tools-plan.md §0 的决策记录。
 const LOW_RISK_TOOLS = new Set([
   "read",
   "grep",
   "glob",
   "todo",
   "ask_user",
+  ...WEB_READ_ONLY_TOOL_NAMES,
   ...BROWSER_READ_ONLY_TOOL_NAMES,
   BACKGROUND_JOB_TOOL_NAMES.output,
   BACKGROUND_JOB_TOOL_NAMES.list,

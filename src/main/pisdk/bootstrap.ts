@@ -3,6 +3,7 @@ import { loadSettings } from "@/main/settings/store";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
 import { getBrowserAutomation } from "../browser/service";
+import { createProductionWebService } from "../web";
 import { createAiApprover } from "./ai-approver";
 import { createApprovalService } from "./approvals";
 import { createInteractionService } from "./interactions";
@@ -86,6 +87,13 @@ export function bootstrapPisdk(options: {
     // 内置浏览器自动化：与 IPC 域共用主进程单例，否则面板看到的与工具操作的会是两份状态。
     // 传的是实现对象而不是让 runtime 自己 import —— runtime 要能在 node 单测里跑（见其 deps 说明）。
     browser: getBrowserAutomation(),
+    /**
+     * 网络搜索 / 网页抓取：同样是注入实现而不是让 runtime 自己 import
+     * （实现依赖 node:http(s) 与设置存储，后者会 await import electron 取 safeStorage）。
+     *
+     * 配置每次调用现取，所以改设置立即生效，不需要重建 service。
+     */
+    web: createProductionWebService({ getSettings: loadSettings }),
   });
 
   // 启动后异步连接已启用的 MCP server：单个 server 失败只记日志，不阻断启动。

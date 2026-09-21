@@ -51,6 +51,7 @@ export interface PendingBrowserRequest {
 export type SettingsSection =
   | "general"
   | "services"
+  | "web"
   | "mcp"
   | "skills"
   | "subagents"
@@ -66,6 +67,8 @@ export type SettingsSection =
 export const SETTINGS_SECTIONS = [
   "general",
   "services",
+  // 网络搜索紧挨模型服务：两者都是「外部服务配置」，放在一起符合直觉
+  "web",
   "mcp",
   "skills",
   "subagents",

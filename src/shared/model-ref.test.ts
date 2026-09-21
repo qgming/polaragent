@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import type { ModelRef } from "./contracts/common";
 import type { Settings } from "./contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "./contracts/web";
 import { hasModel, resolveEffectiveModelRef } from "./model-ref";
 
 function settings(over: Partial<Settings> = {}): Settings {
@@ -42,6 +43,7 @@ function settings(over: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...over,
   };
 }

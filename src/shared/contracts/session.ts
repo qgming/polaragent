@@ -80,11 +80,18 @@ export interface SessionSummary {
 /**
  * 切换会话模式的失败原因。
  *
- * 只有一种（模式列表是封闭的、没有版本漂移），列成联合类型是为了与
- * `SetSessionModelResult` 同形 —— 调用方少一处判断形状的分支。
+ * **当前没有失败分支**：模式只影响系统提示的组装，而系统提示是**每轮现算**的
+ * （runtime 的 composeMainPrompt 在每次请求装配时读一次 `readAgentMode(id)`），
+ * 所以「运行中也能切」是安全的 —— 本次回复继续用旧模式，用户的下一条消息用新模式。
+ *
+ * 这一对类型保留下来（而不是把 IPC 返回值改成 void），是为了让调用方的形状不变、
+ * 且将来若真的出现失败场景（例如会话已被删除）时不必再改一遍双端契约。
+ * 用 `never` 表达「现在不可能失败」比删掉整个联合类型更好：
+ * 调用方的 `if (!result.ok)` 分支将来能直接复用，而不必重新推导。
  */
-export type SessionModeFailure = "running";
+export type SessionModeFailure = never;
 
+/** 恒为 `{ ok: true }`；见 SessionModeFailure 的说明 */
 export type SetSessionModeResult = { ok: true } | { ok: false; reason: SessionModeFailure };
 
 /** 切换会话模型失败的原因：界面据此给出具体说明，而不是笼统的「失败」 */

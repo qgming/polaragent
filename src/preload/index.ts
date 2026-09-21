@@ -161,6 +161,10 @@ const api = {
       return () => ipcRenderer.removeListener(IPC.browser.event, listener);
     },
   },
+  web: {
+    // 用草稿配置做一次真实检索：「测试连接」与「是否已保存」解耦
+    test: (request) => ipcRenderer.invoke(IPC.web.test, request),
+  },
 } satisfies OintApi;
 
 contextBridge.exposeInMainWorld("oint", api);

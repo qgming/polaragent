@@ -25,6 +25,7 @@ import type {
   SubagentRun,
   SubagentWriteRequest,
 } from "@/shared/contracts/subagent";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { registerSubagentsIpc } from "./subagents";
 
 type IpcListener = (event: unknown, request?: unknown) => unknown;
@@ -68,6 +69,7 @@ const BASE_SETTINGS: Settings = {
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
+  webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
 };
 
 function settingsWith(patch: Partial<Settings> = {}): Settings {
@@ -152,7 +154,8 @@ describe("subagents:list", () => {
       source: "builtin",
       model: null,
       thinkingLevel: null,
-      tools: ["read", "grep", "glob"],
+      // explorer 带网络工具：它的工作就是「搞清楚现状」，而现状常常在代码库之外
+      tools: ["read", "grep", "glob", "web_search", "web_fetch"],
       enabled: true,
     });
     expect(catalog.subagents[0]?.promptPreview).not.toBe("");

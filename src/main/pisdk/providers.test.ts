@@ -2,6 +2,7 @@
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { ModelEntry, ModelServiceConfig, Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { buildProviders, resolveModel, toPiModels } from "./providers";
 
 /** 构造最小 Settings，避免引入 Electron 相关依赖 */
@@ -19,6 +20,7 @@ function makeSettings(services: ModelServiceConfig[]): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
   };
 }

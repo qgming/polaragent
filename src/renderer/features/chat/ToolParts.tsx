@@ -7,6 +7,7 @@ import {
   Bot,
   CameraIcon,
   ChevronRightIcon,
+  CloudDownloadIcon,
   CodeIcon,
   FileSearchIcon,
   FileTextIcon,
@@ -22,6 +23,7 @@ import {
   RocketIcon,
   ScanEyeIcon,
   ScrollTextIcon,
+  SearchIcon,
   SquareIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -102,6 +104,9 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   browser_evaluate: CodeIcon,
   browser_wait: TimerIcon,
   browser_dialog: BellRingIcon,
+  // 网络工具：检索（SearchIcon）/ 抓取（CloudDownloadIcon）
+  web_search: SearchIcon,
+  web_fetch: CloudDownloadIcon,
   // 子智能体四件套：委派 / 等它 / 列一下 / 停掉（与主进程 tools.ts 的 Task 系列一一对应）
   Task: Bot,
   TaskWait: NetworkIcon,
@@ -138,6 +143,9 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   browser_logs: { resting: "tools.browserLogs", active: "tools.browserLogsActive" },
   browser_dialog: { resting: "tools.browserDialog", active: "tools.browserDialogActive" },
   browser_evaluate: { resting: "tools.browserEvaluate", active: "tools.browserEvaluateActive" },
+  // 网络工具（词条见 locales 的 tools.webSearch* / tools.webFetch*）
+  web_search: { resting: "tools.webSearch", active: "tools.webSearchActive" },
+  web_fetch: { resting: "tools.webFetch", active: "tools.webFetchActive" },
   // 子智能体四件套（词条见 locales 的 tools.task*）
   Task: { resting: "tools.task", active: "tools.taskActive" },
   TaskWait: { resting: "tools.taskWait", active: "tools.taskWaitActive" },
@@ -220,6 +228,101 @@ function TodoDetail({ items, revision }: { items: TodoItem[]; revision?: number 
       <TodoList items={items} revision={revision} title={t("chat.todos")} />
     </div>
   );
+}
+
+/**
+ * web_search 的来源列表卡片。
+ *
+ * 为什么值得一张专门的卡（而不是落回内置的 request/result 文本面板）：
+ * 搜索结果的价值在**标题 + 域名 + 摘要**这三者的对应关系上，
+ * 纯文本里它们被拼成一行 markdown 链接，用户要自己从 URL 里读域名去判断可信度。
+ * 这里把 hostname 单独提出来（`text-ink-4` 的小字），点标题即外链。
+ *
+ * 外链交给系统浏览器：`app/window.ts` 的导航守卫会把外链 openExternal，
+ * 所以这里**不要**自己 window.open（那会被守卫拒掉）。
+ */
+function WebSearchDetail({ detail }: { detail: Extract<ToolDetail, { kind: "web-search" }> }) {
+  const { t } = useTranslation();
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={cn(mono, "text-ink-4")}>
+          {detail.provider}
+          {detail.truncated ? ` · ${t("chat.webTruncated")}` : ""}
+        </span>
+        <span className={cn(mono, "text-ink-4")}>
+          {t("chat.webSourceCount", { count: detail.sources.length })}
+        </span>
+      </div>
+
+      {detail.answer === undefined ? null : (
+        <div className="mt-2 border-border/60 border-l-2 pl-2.5 text-[13.5px] leading-6">
+          {detail.answer}
+        </div>
+      )}
+
+      <ul className="mt-2 space-y-2">
+        {detail.sources.map((source) => (
+          <li key={source.url} className="min-w-0">
+            <a
+              href={source.url}
+              className="text-[13.5px] leading-5 break-words text-primary hover:text-primary/80 hover:underline"
+            >
+              {source.title ?? source.url}
+            </a>
+            <div className={cn(mono, "truncate text-ink-4")} title={source.url}>
+              {hostnameOf(source.url)}
+              {source.publishedAt === undefined ? "" : ` · ${source.publishedAt}`}
+            </div>
+            {source.snippet === undefined ? null : (
+              <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{source.snippet}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * web_fetch 的结果卡片。
+ *
+ * 只显示「取了哪个 URL、返回什么状态」——**正文不在这里**：
+ * 它已经在工具结果文本里（模型看的就是那份），重复渲染会让长页面在界面上再铺一遍。
+ * 展开区仍然是内置的 request/result 面板。
+ */
+function WebFetchDetail({ detail }: { detail: Extract<ToolDetail, { kind: "web-fetch" }> }) {
+  const { t } = useTranslation();
+  // 非 2xx 不是错误（见工具描述），但界面上要一眼看出「这个页面没取到内容」
+  const failed = detail.statusCode < 200 || detail.statusCode >= 300;
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl p-3")}>
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(mono, failed ? "text-destructive" : "text-ink-4")}
+          title={String(detail.statusCode)}
+        >
+          {t("chat.webStatus", { status: detail.statusCode })}
+        </span>
+        <span className={cn(mono, "truncate text-ink-4")}>{hostnameOf(detail.url)}</span>
+      </div>
+      <a
+        href={detail.url}
+        className="mt-1 block text-[13.5px] leading-5 break-words text-primary hover:text-primary/80 hover:underline"
+      >
+        {detail.title ?? detail.url}
+      </a>
+    </div>
+  );
+}
+
+/** 取 URL 的 hostname；解析不了就原样返回（不要因为一个坏 URL 把卡片搞崩） */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 /**
@@ -771,6 +874,9 @@ function ResolvedDetail({
   // 后台作业同样是状态 pill（与子智能体同形）：它「跑完没有」才是要害，
   // 落到终端块里会被读成「一条命令的输出」。结果文本要传下去 —— 作业 pill 的展开区就是它
   if (detail.kind === "job") return <JobStatus detail={detail} result={result} />;
+  // 网络工具：搜索给来源列表、抓取给状态摘要；正文都留在展开区的内置文本面板里
+  if (detail.kind === "web-search") return <WebSearchDetail detail={detail} />;
+  if (detail.kind === "web-fetch") return <WebFetchDetail detail={detail} />;
   return <TerminalDetail args={args} result={result} running={running} />;
 }
 

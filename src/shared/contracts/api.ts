@@ -30,6 +30,7 @@ import type {
   SubagentWriteRequest,
 } from "./subagent";
 import type { TerminalEvent, TerminalInfo, TerminalReplay } from "./terminal";
+import type { WebTestRequest, WebTestResult } from "./web";
 
 /** preload 暴露给渲染进程的全部能力面；渲染进程除此外无特权通道 */
 export interface OintApi {
@@ -254,5 +255,15 @@ export interface OintApi {
     activateTab(tabId: string): Promise<void>;
     /** 订阅浏览器事件（状态变化 / 开标签请求 / 模型操作中），返回取消订阅函数 */
     onEvent(callback: (event: BrowserEvent) => void): () => void;
+  };
+  /**
+   * 网络搜索：只需要一个「测试连接」通道。
+   *
+   * 配置本身走 settings 的读写（webSearch 字段），provider 清单是编译期常量 ——
+   * 都不需要额外的 IPC。
+   */
+  web: {
+    /** 用**草稿**配置发一次真实检索，验证 provider 是否可用（与是否已保存无关） */
+    test(request: WebTestRequest): Promise<WebTestResult>;
   };
 }

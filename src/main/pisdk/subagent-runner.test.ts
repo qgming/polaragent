@@ -143,6 +143,28 @@ afterEach(() => {
 });
 
 describe("运行记录的落盘", () => {
+  /**
+   * 事件顺序：**先起跑、再 publish**。
+   *
+   * 渲染层收到 run-updated 会去拉这条子会话的转录（面板详情 + 主会话里 Task 卡片的嵌套消息）。
+   * 若在 send 之前发，那次拉取读到的是一条刚建好、还没有任何消息的子会话 —— 拿到空数组，
+   * 而拉取闸门不会重试，详情区就**永久空白**，直到跑完 report 才有东西可看。
+   * 这条断言把顺序钉死（send 先于事件出口的调用）。
+   */
+  it("先 startChildRun 再 publish（否则渲染层会拉到空的子会话转录）", async () => {
+    const order: string[] = [];
+    chat.send.mockImplementation(async () => {
+      order.push("send");
+    });
+    setSubagentEmitter(() => {
+      order.push("publish");
+    });
+
+    await startRun();
+
+    expect(order).toEqual(["send", "publish"]);
+  });
+
   it("起一次运行就落一次盘：状态 running、计数为 0、updatedAt 已写", async () => {
     const run = await startRun();
 

@@ -2,6 +2,7 @@
 import type { MutableModels } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { ChatMessage, ModelServiceConfig, Settings } from "@/shared/contracts";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import {
   autoTitleSession,
   collectTitleSource,
@@ -25,6 +26,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
   };

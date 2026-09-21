@@ -58,6 +58,14 @@ interface PartBufferEntry {
 type PartBuffer = Map<string, Map<string, Map<number, PartBufferEntry>>>;
 
 const partBuffers: PartBuffer = new Map();
+/**
+ * `partBuffers` 里的**条目总数**（不是会话数）。
+ *
+ * 用它替代「每次遍历整张表」来回答「攒了多少」——那个判断在每个 token 上都会跑一次，
+ * 而遍历的成本是 O(会话数 × part 数)。多个子智能体并行流式时这正是热路径。
+ * 维护点只有三处：bufferEntry 新建条目 +1、flushBuffers 清空、clearStreamBuffer 丢弃。
+ */
+let bufferedParts = 0;
 /** 检测到增量缺口的会话（消息/part 不存在）：flush 后逐个用快照重同步 */
 const resyncSessions = new Set<string>();
 /** 快照重同步的在飞闸门 + 防抖（异常情况下不许把快照 IPC 打成风暴） */
@@ -80,6 +88,8 @@ function bufferEntry(
   if (entry === undefined) {
     entry = { textDelta: "", reasoningDelta: "", argsDelta: "" };
     byPart.set(partIndex, entry);
+    // 只有**新建**才计数：更新已有条目不改变总数（见 bufferedParts 的说明）
+    bufferedParts += 1;
   }
   return entry;
 }
@@ -129,13 +139,19 @@ function scheduleFlush(): void {
   }, STREAM_FLUSH_INTERVAL_MS);
 }
 
-/** 缓冲区里的事件条数（测试与上限判断用） */
+/**
+ * 缓冲区里的事件条数。
+ *
+ * **用增量计数器而不是每次遍历**：这个数在每个 token 上都要读一次
+ *（见 applyEvent 的 `bufferedEventCount() > STREAM_BUFFER_LIMIT` 判断），
+ * 而遍历是「所有会话 × 所有 part」—— 多个子智能体并行流式时，
+ * 每一次 token 都要扫完整张缓冲表。那是 O(会话数 × part 数) 的每-token 成本，
+ * 正是「多子智能体运行时 UI 发卡」的一个直接来源。
+ *
+ * 计数器在 bufferEntry（新增条目 +1）与 flushBuffers/clearStreamBuffer（清空归零）处维护。
+ */
 function bufferedEventCount(): number {
-  let count = 0;
-  for (const bySession of partBuffers.values()) {
-    for (const byPart of bySession.values()) count += byPart.size;
-  }
-  return count;
+  return bufferedParts;
 }
 
 /** 把增量拼到 part 上；没有可拼内容时返回 null（避免无谓的新对象） */
@@ -307,8 +323,11 @@ export function flushStreamEvents(sessionId?: string): void {
     const buffered = partBuffers.get(id);
     if (buffered === undefined) continue;
     partBuffers.delete(id);
+    // 腾空该会话的条目：计数器同步扣减（否则会越涨越大，最终每次都触发立即提交）
+    for (const byPart of buffered.values()) bufferedParts -= byPart.size;
     pending.set(id, buffered);
   }
+  if (bufferedParts < 0) bufferedParts = 0;
 
   const partial = flushBuffers(pending);
   if (partial !== null) useChatStore.setState(partial);
@@ -319,6 +338,11 @@ export function flushStreamEvents(sessionId?: string): void {
 
 /** 丢弃某会话的待提交 part 事件（消息被截断/会话被移除时调用，防止事件把旧内容拼回来） */
 export function clearStreamBuffer(sessionId: string): void {
+  const buffered = partBuffers.get(sessionId);
+  if (buffered !== undefined) {
+    for (const byPart of buffered.values()) bufferedParts -= byPart.size;
+    if (bufferedParts < 0) bufferedParts = 0;
+  }
   partBuffers.delete(sessionId);
   resyncSessions.delete(sessionId);
 }

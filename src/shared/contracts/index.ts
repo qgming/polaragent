@@ -16,3 +16,4 @@ export * from "./session";
 export * from "./settings";
 export * from "./subagent";
 export * from "./terminal";
+export * from "./web";

@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@/shared/contracts/settings";
-import { type Crypto, createSettingsStore, DEFAULT_SETTINGS } from "./store";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
+import {
+  type Crypto,
+  cloneWebSearchSettings,
+  createSettingsStore,
+  DEFAULT_SETTINGS,
+} from "./store";
 
 // 假加密：密文带前缀，便于断言"文件不含明文"
 const fakeCrypto: Crypto = {
@@ -340,5 +346,122 @@ describe("模型条目的校验与迁移", () => {
     const saved = raw.services[0]?.models[0];
     expect(saved?.acceptsImages).toBe(true);
     expect(saved).not.toHaveProperty("thinkingLevels");
+  });
+});
+
+/**
+ * 网络搜索设置（webSearch）。
+ *
+ * 这一组测的是三件事，缺一不可：
+ *   1. **兜底**：字段缺失/非法时回落到默认（旧设置文件升级上来的路径）；
+ *   2. **加密**：apiKey 与 services[].apiKey 走同一套 safeStorage，不能明文落盘；
+ *   3. **深拷贝**：五个 provider 的子对象是各自独立的（改一个不串另一个）。
+ */
+describe("网络搜索设置", () => {
+  it("旧设置文件没有 webSearch 时补上完整默认值", async () => {
+    // 模拟升级：文件里完全没有 webSearch 字段
+    const legacy = { ...sampleSettings("sk-legacy-web") } as Record<string, unknown>;
+    delete legacy.webSearch;
+    await writeRawSettings(legacy);
+
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded.webSearch).toEqual(DEFAULT_WEB_SEARCH_SETTINGS);
+    expect(loaded.webSearch.provider).toBe("searxng");
+    expect(loaded.webSearch.enabled).toBe(true);
+  });
+
+  it("非法 provider / 越界数值一律回落或夹取", async () => {
+    await writeRawSettings({
+      ...DEFAULT_SETTINGS,
+      webSearch: {
+        enabled: "yes", // 非布尔
+        provider: "openai", // 不在名单里
+        maxResults: -1,
+        fetchMaxOutputChars: 999_999_999, // 超上限
+        fetchTimeoutMs: "fast", // 非数字
+      },
+    });
+
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded.webSearch.enabled).toBe(DEFAULT_WEB_SEARCH_SETTINGS.enabled);
+    expect(loaded.webSearch.provider).toBe("searxng");
+    expect(loaded.webSearch.maxResults).toBe(1); // 夹到下限
+    expect(loaded.webSearch.fetchMaxOutputChars).toBe(1_000_000); // 夹到上限
+    expect(loaded.webSearch.fetchTimeoutMs).toBe(DEFAULT_WEB_SEARCH_SETTINGS.fetchTimeoutMs);
+  });
+
+  it("apiKey 加密落盘，读回是原文", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const base = await store.load();
+    await store.save({
+      ...base,
+      webSearch: {
+        ...base.webSearch,
+        provider: "tavily",
+        tavily: { ...base.webSearch.tavily, apiKey: "tvly-secret" },
+      },
+    });
+
+    // 文件里不能出现明文，且必须是加密对象
+    const rawText = await readFile(settingsFile, "utf8");
+    expect(rawText).not.toContain("tvly-secret");
+    const raw = JSON.parse(rawText) as {
+      webSearch: { tavily: { apiKey: unknown } };
+    };
+    expect(raw.webSearch.tavily.apiKey).toMatchObject({ v: 1, enc: true });
+
+    const loaded = await store.load();
+    expect(loaded.webSearch.tavily.apiKey).toBe("tvly-secret");
+  });
+
+  it("加密不可用时回退明文并告警一次", async () => {
+    const warn = vi.fn();
+    const store = createSettingsStore(baseDir, { crypto: unavailableCrypto, warn });
+    const base = await store.load();
+    await store.save({
+      ...base,
+      webSearch: {
+        ...base.webSearch,
+        provider: "serper",
+        serper: { ...base.webSearch.serper, apiKey: "plain-key" },
+      },
+    });
+    expect(warn).toHaveBeenCalled();
+    const loaded = await store.load();
+    expect(loaded.webSearch.serper.apiKey).toBe("plain-key");
+  });
+
+  it("searxng 的 instances 允许显式空串（表示用内置清单）", async () => {
+    await writeRawSettings({
+      ...DEFAULT_SETTINGS,
+      webSearch: { ...DEFAULT_WEB_SEARCH_SETTINGS, searxng: { apiKey: "", instances: "" } },
+    });
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded.webSearch.searxng.instances).toBe("");
+  });
+
+  it("自定义实例清单原样保留", async () => {
+    await writeRawSettings({
+      ...DEFAULT_SETTINGS,
+      webSearch: {
+        ...DEFAULT_WEB_SEARCH_SETTINGS,
+        searxng: { apiKey: "", instances: "https://my.searxng.test\nhttps://b.test" },
+      },
+    });
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const loaded = await store.load();
+    expect(loaded.webSearch.searxng.instances).toBe("https://my.searxng.test\nhttps://b.test");
+  });
+
+  it("cloneWebSearchSettings 深拷贝：改一个 provider 不串到另一个", () => {
+    const cloned = cloneWebSearchSettings(DEFAULT_WEB_SEARCH_SETTINGS);
+    cloned.tavily.apiKey = "changed";
+    cloned.searxng.instances = "https://x.test";
+    // 原对象不受影响
+    expect(DEFAULT_WEB_SEARCH_SETTINGS.tavily.apiKey).toBe("");
+    expect(DEFAULT_WEB_SEARCH_SETTINGS.searxng.instances).toBe("");
   });
 });

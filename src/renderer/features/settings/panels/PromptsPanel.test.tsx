@@ -13,6 +13,7 @@ import i18n from "@/renderer/i18n";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { PromptTemplateInfo, PromptTemplateWriteRequest } from "@/shared/contracts/prompts";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { PromptsPanel } from "./PromptsPanel";
 
 // vitest 未开 globals，RTL 的自动清理不会注册，必须手动
@@ -54,6 +55,7 @@ function settingsFixture(overrides: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
 }

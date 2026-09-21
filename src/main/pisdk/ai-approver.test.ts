@@ -2,6 +2,7 @@
 import type { MutableModels } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createAiApprover } from "./ai-approver";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -18,6 +19,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
   };

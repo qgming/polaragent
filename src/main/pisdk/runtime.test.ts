@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validatePathAccess } from "@/main/security/path-guard";
 import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import {
@@ -47,6 +48,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
   };

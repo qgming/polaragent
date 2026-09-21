@@ -142,4 +142,15 @@ export const IPC = {
     /** 主进程 → 渲染进程的单向推送（同 terminal:event） */
     event: "browser:event",
   },
+  /**
+   * 网络搜索：设置面板的「测试连接」。
+   *
+   * 只这一个通道 —— provider 集合是编译期常量（见 shared/contracts/web.ts 的
+   * WEB_SEARCH_PROVIDERS），不需要从主进程问；配置读写走既有的
+   * settings:read / settings:write，不另开。
+   */
+  web: {
+    /** 用**草稿**配置发一次真实检索（与是否已保存无关） */
+    test: "web:test",
+  },
 } as const;

@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { JobInfo } from "@/shared/contracts/job";
 import type { Settings } from "@/shared/contracts/settings";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createApprovalService } from "./approvals";
 import type { JobService } from "./jobs";
 import { type ChatRuntime, createChatRuntime } from "./runtime";
@@ -24,6 +25,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
   };

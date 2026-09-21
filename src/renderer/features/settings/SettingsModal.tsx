@@ -2,6 +2,7 @@ import {
   Bot,
   Database,
   FileText,
+  Globe,
   Info,
   Plug,
   Server,
@@ -31,6 +32,7 @@ import { PromptsPanel } from "./panels/PromptsPanel";
 import { ServicesPanel } from "./panels/ServicesPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { SubagentsPanel } from "./panels/SubagentsPanel";
+import { WebPanel } from "./panels/WebPanel";
 import { SettingsPanelTitle } from "./settings-shared";
 
 // 左侧分类导航：图标语义取自 Elements 的 settings 面
@@ -41,6 +43,7 @@ const SECTIONS: readonly {
 }[] = [
   { id: "general", labelKey: "settings.general", Icon: Settings2 },
   { id: "services", labelKey: "settings.services", Icon: Server },
+  { id: "web", labelKey: "settings.web", Icon: Globe },
   { id: "mcp", labelKey: "settings.mcp", Icon: Plug },
   { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
   { id: "subagents", labelKey: "settings.subagents", Icon: Bot },
@@ -66,6 +69,8 @@ function renderPanel(section: SettingsSection) {
       return <GeneralPanel />;
     case "services":
       return <ServicesPanel />;
+    case "web":
+      return <WebPanel />;
     case "mcp":
       return <McpPanel />;
     case "skills":

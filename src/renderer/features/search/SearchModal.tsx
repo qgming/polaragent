@@ -17,6 +17,7 @@ import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { SETTINGS_SECTIONS, useUiStore } from "@/renderer/stores/ui-store";
+import type { ChatMessage } from "@/shared/contracts/session";
 import { findMatches } from "./find-matches";
 
 /** 输入即搜的防抖时长 */
@@ -25,6 +26,16 @@ const DEBOUNCE_MS = 150;
 const MESSAGE_LIMIT = 20;
 /** 空输入时展示的最近会话数 */
 const RECENT_SESSION_LIMIT = 5;
+
+/**
+ * 弹窗关闭时用的稳定空表。
+ *
+ * 必须是**模块级常量**：zustand 用 Object.is 比较选择器结果，
+ * 每次返回一个新的 `{}` 会被判定为「快照变了」从而不停重渲
+ * （与 SubagentPanel 的 EMPTY_RUNS 同一条纪律）。
+ */
+const EMPTY_SESSIONS: Record<string, ChatMessage[]> = {};
+
 type CommandId = "new-chat" | "toggle-theme";
 
 /**
@@ -46,7 +57,18 @@ export function SearchModal() {
   const jumpToMessage = useUiStore((s) => s.jumpToMessage);
   const openSettings = useUiStore((s) => s.openSettings);
   const sessions = useChatStore((s) => s.sessions);
-  const messagesBySession = useChatStore((s) => s.messagesBySession);
+  /**
+   * 消息表**只在弹窗打开时订阅**。
+   *
+   * 为什么这是必要的：`messagesBySession` 是流式写入的热字段 —— 每个 token 的 flush
+   * 都会换一次它的引用。无条件订阅意味着**每一次 token 都要重渲整个搜索弹窗**，
+   * 哪怕它关着、哪怕命中的是用户根本没在看的子智能体会话。
+   * 多子智能体并行时这条开销尤其明显（它们也在往同一张表里写）。
+   *
+   * 关着时返回一个稳定的空对象：zustand 用 Object.is 比较，常量引用不会触发重渲。
+   * 打开时再订阅 —— 那时用户确实需要看到最新的搜索结果。
+   */
+  const messagesBySession = useChatStore((s) => (open ? s.messagesBySession : EMPTY_SESSIONS));
   const runningBySession = useChatStore((s) => s.runningBySession);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const createSession = useChatStore((s) => s.createSession);

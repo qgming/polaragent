@@ -30,6 +30,7 @@ import {
   subagentLastSeenAt,
 } from "../chat/tool-presentation";
 import { PanelEmpty, PanelError } from "./panel-view";
+import { pickTranscript } from "./subagent-transcript";
 
 /**
  * 子智能体：一次委派的执行详情。
@@ -68,7 +69,6 @@ export function SubagentPanel(): React.JSX.Element {
   const runs = useSubagentStore((s) =>
     activeSessionId === null ? undefined : s.runs[activeSessionId],
   );
-  const childMessages = useSubagentStore((s) => s.childMessages);
   const [error, setError] = useState<string | null>(null);
 
   // 订阅是进程级的：重复挂载由 store 内部的模块级闸门挡掉，这里不做判断
@@ -131,8 +131,10 @@ export function SubagentPanel(): React.JSX.Element {
 
   /**
    * 转录是否还在路上：store 里的 requestedChildren 是加载闸门（见 loadChild），它为 true
-   * 而 childMessages 里还没有这一份，就是「正在加载」。此时显示「子会话里还没有消息」是撒谎，
-   * 所以那一格单独给一行加载态，而不是一张空白卡片。
+   * 而两份来源都还没有内容，才是真的「正在加载」。
+   *
+   * 必须把实时那份也算进来：子会话一开始跑，实时流就会带来消息，
+   * 此时磁盘快照可能仍是空的（内核按轮提交）—— 那种情况下显示「还没有消息」是撒谎。
    */
   const transcriptLoading = useSubagentStore(
     (s) =>
@@ -143,6 +145,47 @@ export function SubagentPanel(): React.JSX.Element {
 
   // 正在跑的行才需要每秒重算耗时；没有运行中的行时不起定时器（静止的界面不该有心跳）
   const now = useRunTicker(list.some((run) => run.status === "running"));
+
+  /**
+   * 实时转录：子会话的 `chat:event` 与主会话走**同一条**通路
+   * （runtime 用子会话 id 发事件，chat-store.applyEvent 不按会话过滤），
+   * 所以 `messagesBySession[childSessionId]` 里已经有 token 级的实时消息。
+   *
+   * 这是「子智能体详情能像主会话一样看到正在输出的内容」的关键：
+   * 之前面板只读 subagent-store 的 `childMessages`（一次 IPC 拉取 + 永久闩死），
+   * 于是启动竞态读到空数组后就再也不更新 —— 表现就是「列表有轮次与工具次数、
+   * 详情却一直没有会话内容」。实时数据本来就在手边，只是没人读它。
+   *
+   * ⚠️ 必须放在任何 `return` **之前**：hook 的调用顺序不能随渲染分支变化。
+   */
+  const liveMessages = useChatStore((s) =>
+    selectedChildId === undefined ? undefined : s.messagesBySession[selectedChildId],
+  );
+
+  /**
+   * 落盘转录的修订号：已加载的子会话份数（只增不减，天然单调）。
+   *
+   * 用它当「落盘那份变了」的信号，而不是订阅整张 `childMessages` 表 ——
+   * 后者在任何子会话更新时都会重渲本面板（多子智能体并行时每个 token 都触发）。
+   * 数字最稳（zustand 用 Object.is 比较），且只增不减，正好当修订号。
+   */
+  const childTranscriptRevision = useSubagentStore((s) => Object.keys(s.childMessages).length);
+
+  /**
+   * 面板要显示的转录：实时优先、落盘兜底，并去掉开头那条任务消息。
+   *
+   * 规则与理由都写在 `pickTranscript` 里（纯函数，有单测）——
+   * 这里只负责把两个来源取出来喂给它。
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision 是「落盘那份变了」的失效信号，不是计算输入（落盘数据从 getState 现取）
+  const transcript = useMemo(() => {
+    const persisted =
+      selected?.childSessionId === undefined
+        ? EMPTY_MESSAGES
+        : (useSubagentStore.getState().childMessages[selected.childSessionId] ?? EMPTY_MESSAGES);
+    return pickTranscript(liveMessages ?? EMPTY_MESSAGES, persisted);
+  }, [liveMessages, selected?.childSessionId, childTranscriptRevision]);
+  const hasTranscript = transcript.length > 0;
 
   if (activeSessionId === null) {
     return (
@@ -180,8 +223,6 @@ export function SubagentPanel(): React.JSX.Element {
       </div>
     );
   }
-
-  const transcript = childMessages[selected.childSessionId] ?? EMPTY_MESSAGES;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -225,7 +266,7 @@ export function SubagentPanel(): React.JSX.Element {
           </Section>
 
           <Section title={t("rightPanel.subagentTranscript")}>
-            {transcript.length === 0 ? (
+            {!hasTranscript ? (
               <p className="text-ink-4 text-[12.5px]">
                 {transcriptLoading ? t("common.loading") : t("rightPanel.subagentTranscriptEmpty")}
               </p>

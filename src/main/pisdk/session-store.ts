@@ -589,7 +589,48 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(id, { pinned });
   }
 
+  /**
+   * 删除一个会话，**并连带删除它名下的子智能体会话**。
+   *
+   * 为什么必须级联：子会话是真实落盘的会话（kind = "subagent"，parentSessionId 指向父），
+   * 它们**不出现在左侧栏**（list 时按 hidden kind 过滤）。所以父会话一删，
+   * 这些子会话就成了**永远看不见、也删不掉的磁盘垃圾** —— 每派一次子智能体就留一份。
+   *
+   * 顺序：先收集子会话 id（要在删父之前读索引，删完就没得找了），
+   * 再逐个走与父会话完全相同的删除路径（close → repo.delete → 清索引），
+   * 最后删父。子会话的删除失败**不阻断**父会话的删除 —— 父删不掉才是用户能感知的问题，
+   * 而残留的子会话还有「下次删除父级时再试一次」的机会。
+   */
   async function remove(id: string): Promise<void> {
+    // 先找出子会话：必须在删父之前读，删完索引条目就没了
+    let childIds: string[] = [];
+    try {
+      const entries = await index.read();
+      childIds = Object.entries(entries)
+        .filter(([childId, entry]) => {
+          if (childId === id) return false;
+          const record = entry as LocalIndexEntry | undefined;
+          return record?.kind === "subagent" && record.parentSessionId === id;
+        })
+        .map(([childId]) => childId);
+    } catch (error) {
+      // 读索引失败不该阻断删除：至多留下几个孤儿，而不是让用户删不掉会话
+      console.warn(`读取子会话列表失败（父会话 ${id}）：${String(error)}`);
+    }
+
+    for (const childId of childIds) {
+      try {
+        await removeOne(childId);
+      } catch (error) {
+        console.warn(`删除子会话失败 ${childId}（父会话 ${id}）：${String(error)}`);
+      }
+    }
+
+    await removeOne(id);
+  }
+
+  /** 删除单个会话（不含级联）；remove 的级联逻辑复用它 */
+  async function removeOne(id: string): Promise<void> {
     await closeHandle(id);
     let deleted = true;
     try {

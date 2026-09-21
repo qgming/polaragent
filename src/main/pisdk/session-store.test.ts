@@ -331,6 +331,92 @@ describe("session-store", () => {
     });
   });
 
+  /**
+   * 级联删除：删父会话时，它名下的子智能体会话必须一起删掉。
+   *
+   * 为什么这条重要：子会话是**真实落盘**的会话，但 `list` 时按 hidden kind 过滤掉，
+   * 所以它们在左侧栏里看不见。父会话一删，这些子会话就成了永远看不见、也删不掉的
+   * 磁盘垃圾 —— 每派一次子智能体就留一份。这里钉住级联行为。
+   */
+  describe("删除父会话时级联删除子会话", () => {
+    it("子会话与其索引条目一并消失，父会话正常删除", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const child = await store.create({
+        title: "子智能体",
+        kind: "subagent",
+        parentSessionId: parent.id,
+        parentToolCallId: "call-1",
+        agentName: "explorer",
+        delegationId: "call-1",
+      });
+      // 子会话确实进了索引（否则这条测试的前提就不成立）
+      const before = await store.list();
+      expect(before.find((item) => item.id === child.id)?.kind).toBe("subagent");
+
+      await store.remove(parent.id);
+
+      const after = await store.list();
+      expect(after.find((item) => item.id === parent.id)).toBeUndefined();
+      expect(after.find((item) => item.id === child.id)).toBeUndefined();
+      // 打开也要失败：文件真的被删了，而不只是索引条目没了
+      await expect(store.open(child.id)).resolves.toBeUndefined();
+    });
+
+    it("只删自己的子会话，不动别人的", async () => {
+      const parentA = await store.create({ title: "父 A" });
+      const parentB = await store.create({ title: "父 B" });
+      const childA = await store.create({
+        kind: "subagent",
+        parentSessionId: parentA.id,
+        delegationId: "a1",
+      });
+      const childB = await store.create({
+        kind: "subagent",
+        parentSessionId: parentB.id,
+        delegationId: "b1",
+      });
+
+      await store.remove(parentA.id);
+
+      const after = await store.list();
+      expect(after.find((item) => item.id === childA.id)).toBeUndefined();
+      // B 的子树必须完好
+      expect(after.find((item) => item.id === parentB.id)).toBeDefined();
+      expect(after.find((item) => item.id === childB.id)).toBeDefined();
+    });
+
+    it("多个子会话全部级联删除", async () => {
+      const parent = await store.create({ title: "派了三个" });
+      const children = await Promise.all(
+        [1, 2, 3].map((n) =>
+          store.create({ kind: "subagent", parentSessionId: parent.id, delegationId: `d${n}` }),
+        ),
+      );
+
+      await store.remove(parent.id);
+
+      const after = await store.list();
+      for (const child of children) {
+        expect(
+          after.find((item) => item.id === child.id),
+          child.id,
+        ).toBeUndefined();
+      }
+    });
+
+    it("普通会话（kind=chat）不作为子会话被误删", async () => {
+      const parent = await store.create({ title: "父" });
+      // 一个 parentSessionId 恰好指向父、但 kind 是 chat 的会话（例如旧版 fork 的遗留）：
+      // 只认 kind === "subagent"，不能因为 parentSessionId 相同就删掉别人的数据
+      const forked = await store.create({ title: "普通会话", parentSessionId: parent.id });
+
+      await store.remove(parent.id);
+
+      const after = await store.list();
+      expect(after.find((item) => item.id === forked.id)).toBeDefined();
+    });
+  });
+
   it("setPinned 写索引并能从 list 读回", async () => {
     const target = await store.create({ title: "置顶目标" });
     const other = await store.create({ title: "不受影响" });
