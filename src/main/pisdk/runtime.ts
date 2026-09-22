@@ -56,6 +56,7 @@ import type { Settings } from "@/shared/contracts/settings";
 import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
 import {
   isSubagentRunFinished,
+  resolveSubagentTools,
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
@@ -358,6 +359,19 @@ interface SessionRuntime {
   stream?: AssistantStream;
   lastAssistantMessageId?: string;
   /**
+   * **本轮运行**产出的最后一条助手消息 id；本轮还没产出消息时为 undefined。
+   *
+   * 与 `lastAssistantMessageId` 的区别是作用域：那个是「这个会话最后一次见到的助手消息」，
+   * 会跨轮保留；这个是「本次 run 的」。run_end 失败时要区分两种情形：
+   * - 本轮**产出过**消息（例如最后一步报错）→ 把错误盖在那条消息上是准确的；
+   * - 本轮**一条都没产出**（最典型的是 `configured_tools_unavailable` / `model_unavailable`
+   *   这类配置失败 —— 请求根本没发出去，不会有 message_start）→ 此时
+   *   `lastAssistantMessageId` 指的是**上一轮**那条成功的回复，
+   *   盖上去会让用户看到「我发的消息没回应，而上一条正常回复突然变红」。
+   *   这种情形必须新发一条错误消息，而不是改写历史。
+   */
+  runAssistantMessageId?: string;
+  /**
    * 已建好但还没拿到 entryId 的消息，按建立顺序排队。
    *
    * 条目要到消息落盘时才产生（entry_added 事件），而渲染层需要 entryId 才有「分支」入口、
@@ -369,6 +383,14 @@ interface SessionRuntime {
   /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
   pendingUserMessageId?: string;
   toolParts: Map<string, ToolCallPartRef>;
+  /**
+   * 每个工具调用**上次发**流式输出的时刻（toolCallId → ms），用于节流。
+   *
+   * 内核的 `tool_update` 跟随进程输出频率（编译日志一秒几百条），逐条投 IPC 会把通道打满。
+   * 窗口内的更新**直接丢弃**而不是攒起来 —— 每份快照本来就是「到目前为止的累计输出」，
+   * 丢掉中间态不丢信息，下一份会把内容补齐。
+   */
+  toolOutputAt: Map<string, number>;
   /**
    * 本会话创建时装配的那四个子智能体工具（只有主会话有，子智能体会话是空数组）。
    *
@@ -450,6 +472,14 @@ function getRuleStore(): PermissionRuleStore {
 /** 我们只用一条 lane：pi 侧固定叫 main */
 const LANE_NAME = "main";
 
+/**
+ * 工具流式输出的节流窗口（毫秒）。
+ *
+ * 取 200ms：比渲染层那个 32ms 的合帧窗口宽得多，因为这里省的是**跨进程**的往返 ——
+ * 每次都要结构化克隆一份可能上万字符的输出。200ms 的刷新节奏对「看构建进展」这类
+ * 用途足够（人眼读日志本来就跟不上更快），而 IPC 量降到每秒 5 次封顶。
+ */
+const TOOL_OUTPUT_INTERVAL_MS = 200;
 /**
  * lane 配置里**实际**在用的模型引用；读不出来（模型已从注册表消失）返回 null。
  *
@@ -578,12 +608,17 @@ export function agentMessageText(message: AgentMessage): string {
     .join("");
 }
 
-/** 工具结果 → UI 值：优先文本，其次 details，最后原样返回 */
-function toolResultValue(result: AgentToolResult<unknown>): unknown {
-  const text = result.content
+/** 工具结果里的文本块拼起来；没有文本块时是空串 */
+function toolResultText(result: AgentToolResult<unknown>): string {
+  return result.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+/** 工具结果 → UI 值：优先文本，其次 details，最后原样返回 */
+function toolResultValue(result: AgentToolResult<unknown>): unknown {
+  const text = toolResultText(result);
   if (text !== "") return text;
   if (result.details !== undefined) return result.details;
   return "";
@@ -1400,7 +1435,48 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       failed,
     });
     runtime.lastAssistantMessageId = stream.messageId;
+    runtime.runAssistantMessageId = stream.messageId;
     runtime.stream = undefined;
+  }
+
+  /**
+   * 工具流式输出（内核 `tool_update`）→ `part-output` 事件。
+   *
+   * 三件事必须做对：
+   *
+   * 1. **整份下发、不是增量**。内核给的 `partialResult` 是**累计快照**，而且 shell 捕获
+   *    用 `retain: "tail"` —— 超过上限后头部会被丢掉。所以「这次文本」与「上次文本」
+   *    既非前缀也非追加，按「取新增部分」算增量必然错位。渲染层按覆盖处理。
+   *
+   * 2. **节流**。内核的推送跟随进程输出（编译日志一秒可以几百条），逐条投 IPC 会把
+   *    通道打满、并让渲染层每个 chunk 重渲一次。按 toolCallId 记上次发送时间，
+   *    窗口内的更新直接丢弃（下一份快照本来就是累计的，丢中间态不丢信息）。
+   *
+   * 3. **没有 part 就丢弃**。工具调用 part 由 `message_update` 的 toolcall_* 增量创建；
+   *    若那条链断了（窗口重载、事件丢失），这里找不到落点。渲染层的快照重同步会补齐。
+   */
+  function handleToolUpdate(
+    runtime: SessionRuntime,
+    event: Extract<HarnessEvent, { type: "tool_update" }>,
+  ): void {
+    const ref = runtime.toolParts.get(event.toolCallId);
+    if (ref === undefined) return;
+
+    const text = toolResultText(event.partialResult);
+    if (text === "") return;
+
+    const now = Date.now();
+    const last = runtime.toolOutputAt.get(event.toolCallId);
+    if (last !== undefined && now - last < TOOL_OUTPUT_INTERVAL_MS) return;
+    runtime.toolOutputAt.set(event.toolCallId, now);
+
+    ref.part.partialOutput = text;
+    emitSafe(runtime.sessionId, {
+      type: "part-output",
+      messageId: ref.messageId,
+      partIndex: ref.partIndex,
+      text,
+    });
   }
 
   function handleToolStart(
@@ -1504,13 +1580,36 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
       });
       runtime.lastAssistantMessageId = stream.messageId;
+      runtime.runAssistantMessageId = stream.messageId;
       runtime.stream = undefined;
-    } else if (event.status === "failed" && runtime.lastAssistantMessageId) {
-      emitSafe(runtime.sessionId, {
-        type: "message-updated",
-        messageId: runtime.lastAssistantMessageId,
-        patch: { status: "error", error: event.error.message },
-      });
+    } else if (event.status === "failed") {
+      /**
+       * 没有在流的消息、运行又失败了。两种情形必须分开处置（见 runAssistantMessageId 注释）：
+       *
+       * - 本轮产出过助手消息（如最后一步报错）→ 把错误盖在那条消息上，这是准确的；
+       * - 本轮**一条都没产出**（配置失败：请求根本没发出去）→ `lastAssistantMessageId`
+       *   还指着**上一轮**那条成功的回复，盖上去就是「新消息没回应、旧回复莫名变红」。
+       *   这种情形新发一条错误消息，让错误出现在它该出现的位置。
+       */
+      if (runtime.runAssistantMessageId !== undefined) {
+        emitSafe(runtime.sessionId, {
+          type: "message-updated",
+          messageId: runtime.runAssistantMessageId,
+          patch: { status: "error", error: event.error.message },
+        });
+      } else {
+        emitSafe(runtime.sessionId, {
+          type: "message-added",
+          message: {
+            id: randomUUID(),
+            role: "assistant",
+            createdAt: Date.now(),
+            parts: [],
+            status: "error",
+            error: event.error.message,
+          },
+        });
+      }
     }
     runtime.running = false;
     // 会话统计：run 结束，清理 pending calls
@@ -1570,7 +1669,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       })),
     });
     for (const toolCallId of [...runtime.toolParts.keys()]) {
-      if (!keep.has(toolCallId)) runtime.toolParts.delete(toolCallId);
+      if (!keep.has(toolCallId)) {
+        runtime.toolParts.delete(toolCallId);
+        // 节流表与 part 表同生命周期：留着已回收调用的时间戳只是慢性泄漏
+        runtime.toolOutputAt.delete(toolCallId);
+      }
     }
   }
 
@@ -1721,10 +1824,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "message_end", (event) => handleMessageEnd(runtime, event));
     subscribe(runtime, "entry_added", (event) => handleEntryAdded(runtime, event));
     subscribe(runtime, "tool_start", (event) => handleToolStart(runtime, event));
+    subscribe(runtime, "tool_update", (event) => handleToolUpdate(runtime, event));
     subscribe(runtime, "tool_end", (event) => handleToolEnd(runtime, event));
     subscribe(runtime, "run_start", (event) => {
       // 记下内核这一轮的 id：run_end 判「是不是上一轮的尾巴」全靠它（见 handleRunEnd）
       runtime.kernelRunId = event.runId;
+      // 本轮助手消息记录也要清空：run_end 靠它区分「本轮失败」与「上一轮的尾巴」（见该字段注释）
+      runtime.runAssistantMessageId = undefined;
     });
     subscribe(runtime, "turn_start", (event) => {
       // 会话统计：轮次计数（同 turnId 只计一次，见 session-stats 的 onTurnStart）
@@ -1756,18 +1862,43 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promise<void> {
     runtime.mcpToolsStale = false;
     try {
-      await runtime.harness.setTools(
-        buildTools(
-          mcp.tools(),
-          createAskTool({ sessionId: runtime.sessionId, interactions }),
-          jobToolsFor(runtime.sessionId),
-          deps.browser,
-          // 子智能体工具只属于主会话的初始装配，热替换时不带上（与加 web 之前一致）
-          [],
-          deps.web,
-        ),
-        BACKGROUND_CONTEXT,
+      const nextTools = buildTools(
+        mcp.tools(),
+        createAskTool({ sessionId: runtime.sessionId, interactions }),
+        jobToolsFor(runtime.sessionId),
+        deps.browser,
+        /**
+         * 子智能体工具**必须原样带回去**。
+         *
+         * `harness.setTools` 是**整表替换**（不是增量），漏掉这一项会让
+         * Task / TaskWait / TaskList / TaskStop 从这张表里消失。
+         *
+         * 而消失的后果不是「少几个工具」而是**整个会话失效**：内核的 `activeToolNames`
+         * 是创建时按 `tools.map(t => t.name)` 播种的、`setTools` 不动它，
+         * 于是此后每次请求 `prepareGeneration` 都发现「已激活的工具不在表里」，
+         * 直接以 `configured_tools_unavailable` 失败 —— 请求根本发不出去。
+         * 触发条件还很低：`mcp-servers.ts` 的 `reload()` **无条件** notify，
+         * 而 `bootstrap.ts` 每次启动都会调它（即使用户一个 MCP server 都没配）。
+         *
+         * 字段的存在理由见 SessionRuntime.subagentTools 的注释。
+         */
+        runtime.subagentTools,
+        deps.web,
       );
+      await runtime.harness.setTools(nextTools, BACKGROUND_CONTEXT);
+      /**
+       * 工具表变了，「工具定义」那一段的估算必须跟着变。
+       *
+       * 它只在会话创建时算过一次 —— 不在这里更新的话，上下文环会一直用旧工具表的读数，
+       * 而 `messageTokens = 压力 − 系统 − 工具` 会把这份误差整份转嫁给「对话消息」段。
+       * 不在这里 emit：本函数可能在两轮之间跑，而 `emitContextBreakdown` 在不带 usage
+       * 样本时会把 messageTokens 置 0（那是给「还没有任何样本」用的）。下一个 usage
+       * 样本到达时自然会带上新值。
+       */
+      runtime.contextBreakdown = {
+        ...runtime.contextBreakdown,
+        toolsTokens: estimateToolsTokens(nextTools),
+      };
     } catch (error) {
       console.warn(`刷新 MCP 工具失败：${errorText(error)}`);
     }
@@ -2021,7 +2152,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
               [],
               deps.web,
             ),
-            spec.definition.tools,
+            /**
+             * **执行路径**的工具过滤：与显示路径（run 记录、设置面板、系统提示）
+             * 共用同一个 `resolveSubagentTools` —— 两处各推一份就会漂移，
+             * 而漂移的表现是「面板说它只有只读工具，实际它拿到了 bash」这类静默错位。
+             */
+            resolveSubagentTools(spec.definition.disabledTools),
           );
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
@@ -2091,6 +2227,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runEnded: false,
       pendingEntries: [],
       toolParts: new Map(),
+      toolOutputAt: new Map(),
       queue: [],
       unsubscribers: [],
       // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
@@ -2184,6 +2321,32 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 注入后立刻清空：提醒只该出现在它触发之后的那一次请求里，
      * 留着会让它跟着整段历史一直重复。
      */
+    /**
+     * 上下文分解里「系统提示」那一段**每轮重算**。
+     *
+     * 它本来只在会话创建时算一次（见 createRuntime 里的 systemTokens）。但系统提示是
+     * **函数形式、每个 generation 现算**的：切换智能体模式会增删「委派路由段」，
+     * AGENTS.md 改了也同理。固定项一旦陈旧，`messageTokens = 压力 − 系统 − 工具`
+     * 的误差就整份转嫁到「对话消息」段 —— 上下文环的三段占比是错的，且不会报任何错。
+     *
+     * 挂在 `transform_context` 而不是 `before_request`：这个 event 直接带着
+     * `systemPrompt`（本轮真正要发出去的那一份），不必再去求值一次 resolvePrompt
+     *（那是 async 且要读设置，放进请求路径上不划算）。
+     *
+     * 这里**不发事件**：`emitContextBreakdown` 在不带 usage 样本时会把 messageTokens
+     * 置 0，那是给「还没有任何样本」准备的语义。正确顺序本来就是
+     * 「本钩子更新 → 本次请求的 usage 到达 → 带新值发出」，所以只更新即可。
+     */
+    runtime.unsubscribers.push(
+      created.harness.hooks.on("transform_context", (event) => {
+        const systemTokens = estimateTokens(event.systemPrompt);
+        if (systemTokens !== runtime.contextBreakdown.systemTokens) {
+          runtime.contextBreakdown = { ...runtime.contextBreakdown, systemTokens };
+        }
+        return undefined;
+      }),
+    );
+
     runtime.unsubscribers.push(
       created.harness.hooks.on("transform_context", (event) => {
         const notice = runtime.pendingRepeatNotice;
@@ -2469,7 +2632,22 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         // prompt 被拒时不会追加消息，所以重试不会写出重复的用户消息。
         result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
       }
-      if (!result.ok) emitRunFailure(runtime, runId, result.error);
+      if (!result.ok) {
+        emitRunFailure(runtime, runId, result.error);
+      } else if (result.value.status === "failed" && !runtime.runEnded) {
+        /**
+         * 内核有**两条**失败通道，这里必须都覆盖：
+         * - `!result.ok` —— 操作被拒（LaneBusy、InvalidMessage…）；
+         * - `ok:true` + `value.status === "failed"` —— 操作被受理但这个 run 失败了
+         *   （典型是 `configured_tools_unavailable`：请求根本没发出去）。
+         *
+         * 后者正常情况下已经由 `run_end` → `handleRunEnd` 呈现（那条路径在**本轮没产出
+         * 任何助手消息**时会新发一条错误消息）。这里的判断是兜底：万一那条 run_end 被
+         * `handleRunEnd` 当作陈旧事件丢掉，失败就会**完全不可见**（UI 停在「没回应」）。
+         * `emitRunFailure` 自带 `runEnded` 幂等闸门，所以已呈现过时它不会重复发。
+         */
+        emitRunFailure(runtime, runId, result.value.error?.message ?? "运行失败（内核未给出原因）");
+      }
     } catch (error) {
       emitRunFailure(runtime, runId, error);
     } finally {

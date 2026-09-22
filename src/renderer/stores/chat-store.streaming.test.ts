@@ -125,6 +125,130 @@ describe("流式事件合帧缓冲", () => {
     expect(part?.type === "tool-call" ? part.argsText : undefined).toBe('{"cmd":"ls"}');
   });
 
+  /**
+   * 工具运行期间的输出快照是**替换**语义，不是追加。
+   *
+   * 内核给的 `partialResult` 是累计快照，而且 shell 捕获按 tail 保留 ——
+   * 超过上限后头部会被丢掉。所以「本次文本」与「上次文本」既不是前缀关系也不是追加关系，
+   * 一旦按 `part-delta` 那样拼字符串，截断发生后内容就会重复或错位。
+   */
+  it("工具输出快照覆盖而非追加（内核给的是累计文本）", () => {
+    seed("s1", [
+      {
+        id: "a1",
+        role: "assistant",
+        createdAt: 1,
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "bash",
+            argsText: "",
+            status: "running",
+          },
+        ],
+        status: "streaming",
+      },
+    ]);
+    const store = useChatStore.getState();
+
+    store.applyEvent("s1", {
+      type: "part-output",
+      messageId: "a1",
+      partIndex: 0,
+      text: "第一行\n",
+    });
+    flushStreamEvents("s1");
+    let part = useChatStore.getState().messagesBySession.s1?.[0]?.parts[0];
+    expect(part?.type === "tool-call" ? part.partialOutput : undefined).toBe("第一行\n");
+
+    store.applyEvent("s1", {
+      type: "part-output",
+      messageId: "a1",
+      partIndex: 0,
+      text: "第一行\n第二行\n",
+    });
+    flushStreamEvents("s1");
+    part = useChatStore.getState().messagesBySession.s1?.[0]?.parts[0];
+    // 是完整覆盖后的文本，不是 "第一行\n第一行\n第二行\n"
+    expect(part?.type === "tool-call" ? part.partialOutput : undefined).toBe("第一行\n第二行\n");
+  });
+
+  it("同一窗口内只有最后一份快照生效（中间态直接丢弃）", () => {
+    seed("s1", [
+      {
+        id: "a1",
+        role: "assistant",
+        createdAt: 1,
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "bash",
+            argsText: "",
+            status: "running",
+          },
+        ],
+        status: "streaming",
+      },
+    ]);
+    const store = useChatStore.getState();
+
+    for (const text of ["a\n", "a\nb\n", "a\nb\nc\n"]) {
+      store.applyEvent("s1", { type: "part-output", messageId: "a1", partIndex: 0, text });
+    }
+    flushStreamEvents("s1");
+
+    const part = useChatStore.getState().messagesBySession.s1?.[0]?.parts[0];
+    expect(part?.type === "tool-call" ? part.partialOutput : undefined).toBe("a\nb\nc\n");
+  });
+
+  it("随后的全量 upsert 覆盖缓冲里的快照（工具结束时以权威全量为准）", () => {
+    seed("s1", [
+      {
+        id: "a1",
+        role: "assistant",
+        createdAt: 1,
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "bash",
+            argsText: "",
+            status: "running",
+          },
+        ],
+        status: "streaming",
+      },
+    ]);
+    const store = useChatStore.getState();
+
+    store.applyEvent("s1", {
+      type: "part-output",
+      messageId: "a1",
+      partIndex: 0,
+      text: "跑到一半",
+    });
+    // 工具结束：全量 upsert 不带 partialOutput
+    store.applyEvent("s1", {
+      type: "part-upsert",
+      messageId: "a1",
+      partIndex: 0,
+      part: {
+        type: "tool-call",
+        toolCallId: "t1",
+        toolName: "bash",
+        argsText: "",
+        result: "done",
+        status: "done",
+      },
+    });
+    flushStreamEvents("s1");
+
+    const part = useChatStore.getState().messagesBySession.s1?.[0]?.parts[0];
+    expect(part?.type === "tool-call" ? part.partialOutput : undefined).toBeUndefined();
+  });
+
   it("缺少创建事件（增量没有可落的 part）时不写坏 store", () => {
     seed("s1", [streamingMessage()]);
     const store = useChatStore.getState();

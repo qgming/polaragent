@@ -73,7 +73,8 @@ const READ_DESCRIPTION =
   "什么时候用：**修改任何文件之前先读它**；需要看完整实现或其上下文时。\n" +
   "什么时候不要用：只想定位某个符号或字符串在哪 → 用 grep；文件很大而只需要片段 → 先用 grep 拿到行号，" +
   "再带 offset/limit 读那一段；只是想确认文件存在或看目录结构 → 用 glob。\n" +
-  "**要看的是一张图片（png/jpg/webp/gif）时用 read_image**：read 只回一句类型说明，看不到图。" +
+  "**要看的是一张图片（png/jpg/webp/gif）时用 read_image**：read 确实也能把图片整个读回来，" +
+  "但它**没有大小上限**，一张大图会整份进上下文；read_image 有 16 MiB 守卫并返回尺寸。" +
   "SVG 不是图片而是文本，仍用 read。";
 
 const WRITE_DESCRIPTION =
@@ -228,14 +229,19 @@ export function buildTools(
  * 允许名单 —— 于是「设置里允许了 bash」与「子智能体实际拿到的是 bash」永远不可能漂移
  * （参考实现里两套工厂函数各写一遍，名字或行为对不上时没有任何地方会报错）。
  *
- * `allowed` 为空时**原样返回**：契约里空数组表示「没有指定」而不是「什么都不给」，
- * 真的什么都不给会让子智能体连 read 都没有，等于跑不起来。
+ * ⚠️ **`allowed` 必须是「已经解析好的有效清单」**，不能是用户填的原始字段。
+ * 唯一正确的来源是 `resolveSubagentTools(definition.disabledTools)`：
+ * - 它总是给出一个**显式**清单（黑名单制：没禁的就是要给的）；
+ * - 空清单因此是**明确语义**（「这个子智能体什么工具都不给」），不是「没指定」。
+ *
+ * 这一点必须写清，因为它是旧实现踩过的坑：那时把**空允许表**当「不限制」原样返回，
+ * 于是一个拼错的工具名（过滤后为空）会让子智能体拿到**全部**工具 —— 连浏览器与
+ * 作业工具都在内。现在没有这个歧义：调用方永远给显式清单，空就是空。
  */
 export function restrictTools(
   tools: AgentHarnessTool<AppToolContext>[],
   allowed: readonly string[],
 ): AgentHarnessTool<AppToolContext>[] {
-  if (allowed.length === 0) return tools;
   const names = new Set(allowed);
   return tools.filter((tool) => names.has(tool.name));
 }

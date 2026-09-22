@@ -88,6 +88,16 @@ function toThreadPart(part: ChatPart, resolveChild?: ChildMessageResolver): Thre
         // 工具的 details 走 assistant-ui 的 artifact 槽位（库声明的 UI 专用附属数据）。
         // 不能直接挂一个自造字段：那不是 ThreadMessageLike 的形状，会在归一化时被丢掉。
         ...(part.details !== undefined ? { artifact: part.details } : {}),
+        /**
+         * 运行期间的输出快照走 `providerMetadata`（库声明的「宿主附加的 JSON 数据」槽位）。
+         *
+         * 与 artifact 同理：自造字段会被归一化丢掉，而 artifact 已经被工具 details 占了
+         *（混进去会污染 `parseToolDetail` 的输入）。嵌套在 `oint` 命名空间下，
+         * 与类型要求的 `{ [providerName]: ReadonlyJSONObject }` 形状一致。
+         */
+        ...(part.partialOutput === undefined
+          ? {}
+          : { providerMetadata: { oint: { partialOutput: part.partialOutput } } }),
         // 嵌套是 assistant-ui 为「工具调用自己开了一条会话」预留的槽位（见库的
         // ToolCallMessagePart.messages 注释），sub-agent 正好就是这种形状：把子会话
         // 转录挂上去，PartPrimitive.Messages 才能把它渲染成一条真实的会话。

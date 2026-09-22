@@ -399,9 +399,9 @@ export const enUS = {
     subagentPrompt: "System prompt",
     subagentPromptHint:
       "The subagent's entire instruction set; its final message is the report sent back to the main AI",
-    subagentTools: "Allowed tools",
+    subagentTools: "Disabled tools",
     subagentToolsHint:
-      "Read-only trio by default; ticking write tools means it can change your files",
+      "Ticked tools are blocked for this subagent; anything unticked is available (including bash / edit / write, so it can change your files)",
     subagentToolsReadOnly: "Read-only",
     subagentToolsCanWrite: "Can write files",
     subagentModel: "Model",

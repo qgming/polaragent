@@ -21,6 +21,7 @@ import type { SessionCreateOptions } from "@/shared/contracts/session";
 import {
   isSubagentRunFinished,
   MAX_CONCURRENT_SUBAGENT_RUNS,
+  resolveSubagentTools,
   type SubagentEventEnvelope,
   type SubagentRun,
   type SubagentRunFinishedStatus,
@@ -28,11 +29,10 @@ import {
 import { errorText } from "./error-text";
 import { getChatRuntime, registerSubagentSession } from "./runtime";
 import { getSessionStore } from "./session-store";
-import {
-  normalizeSubagentTools,
-  type SubagentSlotHolder,
-  type SubagentSlotReservation,
-  type SubagentStartRequest,
+import type {
+  SubagentSlotHolder,
+  SubagentSlotReservation,
+  SubagentStartRequest,
 } from "./tools/subagent";
 
 /** 子会话标题里描述部分的上限（连同名字一起，别把侧栏刚展开的一行撑爆） */
@@ -318,7 +318,14 @@ async function startReservedRun(
   parent: SubagentRunnerParent,
 ): Promise<SubagentRun> {
   const definition = request.definition;
-  const tools = normalizeSubagentTools(definition.tools);
+  /**
+   * run 记录里存的是**有效工具清单**（解析后的），不是禁用清单。
+   *
+   * 面板与主会话里的胶囊都显示「这个子智能体能用什么」——那是结果，只能由
+   * `resolveSubagentTools` 给出。运行时注入的工具走的是同一个函数（见 runtime 的
+   * restrictTools 调用），所以「显示的」与「真的给的」不可能对不上。
+   */
+  const tools = resolveSubagentTools(definition.disabledTools);
   const createOptions: SessionCreateOptions = {
     cwd: parent.cwd,
     title: sessionTitle(definition.name, request.description),

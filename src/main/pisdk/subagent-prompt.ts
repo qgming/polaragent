@@ -9,7 +9,11 @@
 //   子智能体清单同构 —— 这里生成 `<available_subagents>`，模型用 Task 派发。
 //   两者都不是「让模型记得去查」的工具，因为「得先想起来问」正是不可靠的来源。
 
-import { type SubagentDefinition, subagentCanMutate } from "@/shared/contracts/subagent";
+import {
+  resolveSubagentTools,
+  type SubagentDefinition,
+  subagentCanMutate,
+} from "@/shared/contracts/subagent";
 
 /**
  * 索引里最多列多少个定义。
@@ -53,7 +57,9 @@ export function formatSubagentsForSystemPrompt(subagents: readonly SubagentDefin
     lines.push("  <subagent>");
     lines.push(`    <name>${escapeXml(def.name)}</name>`);
     lines.push(`    <description>${escapeXml(def.description)}</description>`);
-    lines.push(`    <tools>${escapeXml(describeSubagentTools(def.tools))}</tools>`);
+    lines.push(
+      `    <tools>${escapeXml(describeSubagentTools(resolveSubagentTools(def.disabledTools)))}</tools>`,
+    );
     lines.push(`    <source>${def.source}</source>`);
     lines.push("  </subagent>");
   }
@@ -137,11 +143,13 @@ export function buildDelegationPrompt(
  * 少了它，子智能体会把过程叙述当成交付物，主代理拿到的就是一段「我做了什么」。
  */
 export function buildSubagentSystemPrompt(def: SubagentDefinition, cwd: string): string {
-  const canMutate = subagentCanMutate(def.tools);
+  // 有效工具从禁用清单解析出来 —— 提示里说的「能用什么」必须与运行时真的注入的一致
+  const effective = resolveSubagentTools(def.disabledTools);
+  const canMutate = subagentCanMutate(effective);
   const framing = [
     `你是子智能体「${def.name}」，在主代理委派下完成一件具体的任务。当前工作目录：${cwd}。`,
     `你看不到用户，不能向用户提问，也不能再委派别的子智能体 —— 只能用手里的工具把这件事做完。`,
-    `可用工具：${describeSubagentTools(def.tools)}。`,
+    `可用工具：${describeSubagentTools(effective)}。`,
     canMutate
       ? "你可以修改文件，但只改任务真正涉及的那些；其余一律不要动。"
       : "你没有能改文件或执行命令的工具，所以永远不要声称自己做了这类改动。",

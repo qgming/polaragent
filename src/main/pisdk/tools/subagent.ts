@@ -19,7 +19,6 @@
 import type { AgentHarnessTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
 import {
-  DEFAULT_SUBAGENT_TOOLS,
   MAX_CONCURRENT_SUBAGENT_RUNS,
   normalizeSubagentName,
   SUBAGENT_ASSIGNABLE_TOOLS,
@@ -305,17 +304,17 @@ const STOP_DESCRIPTION =
   "输出：每个运行停止后的状态（aborted = 已停止；已经结束的不受影响）。";
 
 /**
- * 把定义里的工具名收敛到可分配的集合（SUBAGENT_ASSIGNABLE_TOOLS）。
+ * 把定义里的禁用清单收敛到**可分配**的集合（黑名单制）。
  *
- * 空数组**不能**透传：restrictTools 把「空允许表」当「不限制」处理（见 tools.ts），
- * 于是 tools 写错的临时定义会拿到全部工具（连浏览器、作业工具都在内）。所以兜底回默认的只读三件套。
+ * 与旧白名单实现的差别值得记一笔，因为它是这次语义反转最实质的收益：
+ * 旧实现在这里回落到「只读四件套」是为了**补救一个 bug** —— `restrictTools` 把
+ * 「空允许表」当「不限制」，于是一个拼错的工具名会让子智能体拿到**全部**工具。
+ * 黑名单制下空清单的含义本来就是「什么都不禁用」，不再需要那种补救；
+ * 而拼错的名字只是被丢掉、不产生效果，也不会误放行别的工具。
  */
-export function normalizeSubagentTools(tools: readonly string[] | undefined): string[] {
-  if (tools === undefined) return [...DEFAULT_SUBAGENT_TOOLS];
-  const allowed = tools.filter((tool) =>
-    (SUBAGENT_ASSIGNABLE_TOOLS as readonly string[]).includes(tool),
-  );
-  return allowed.length > 0 ? allowed : [...DEFAULT_SUBAGENT_TOOLS];
+export function normalizeSubagentTools(disabled: readonly string[] | undefined): string[] {
+  if (disabled === undefined) return [];
+  return disabled.filter((tool) => (SUBAGENT_ASSIGNABLE_TOOLS as readonly string[]).includes(tool));
 }
 
 /** 失败回执：文本给模型，isError 给渲染层与测试（内核只把工具抛错当错误，见文件头注释） */
@@ -331,14 +330,14 @@ function temporaryDefinition(input: {
   name: string;
   description: string;
   prompt: string;
-  tools?: string[];
+  disabledTools?: string[];
 }): SubagentDefinition {
   return {
     // 名字要能被面板与日志安全地当标识用；归一后为空（例如给了一串符号）时兜一个固定名
     name: normalizeSubagentName(input.name) || "temp",
     description: input.description.trim(),
     prompt: input.prompt,
-    tools: normalizeSubagentTools(input.tools),
+    disabledTools: normalizeSubagentTools(input.disabledTools),
     model: null,
     source: "temp",
   };

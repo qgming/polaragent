@@ -15,8 +15,9 @@
 import { type AgentHarnessToolInvocation, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_SUBAGENT_TOOLS,
   MAX_CONCURRENT_SUBAGENT_RUNS,
+  SUBAGENT_MUTATING_TOOLS,
+  SUBAGENT_READ_ONLY_TOOLS,
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
@@ -52,7 +53,7 @@ function definition(name: string, patch: Partial<SubagentDefinition> = {}): Suba
     name,
     description: `${name} 的说明`,
     prompt: "你是子智能体，只做被派的那件事。",
-    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
     ...patch,
   };
@@ -74,7 +75,7 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    tools: [...SUBAGENT_READ_ONLY_TOOLS],
     turns: 2,
     toolCalls: 3,
     ...patch,
@@ -173,16 +174,25 @@ function lastStart(deps: SubagentToolDeps): SubagentStartRequest {
   return call[0];
 }
 
-describe("normalizeSubagentTools", () => {
-  it("未指定工具时给只读三件套", () => {
-    expect(normalizeSubagentTools(undefined)).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+describe("normalizeSubagentTools（黑名单制）", () => {
+  it("未指定禁用项 = 什么都不禁用（空清单）", () => {
+    // 空清单在 resolveSubagentTools 里意味着「全部可分配工具都可用」，
+    // 与旧白名单制相反：那时 undefined 会回落到只读三件套
+    expect(normalizeSubagentTools(undefined)).toEqual([]);
+    expect(normalizeSubagentTools([])).toEqual([]);
   });
 
-  it("未知工具名被丢掉；丢掉后为空则回落到只读三件套", () => {
+  it("未知工具名被丢掉，且不会被当成禁用项（拼错不产生任何效果）", () => {
     expect(normalizeSubagentTools(["read", "teleport"])).toEqual(["read"]);
-    expect(normalizeSubagentTools(["teleport"])).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
-    // 空数组不能透传：restrictTools 把空允许表当「不限制」，tools 写错的临时定义会拿到全部工具
-    expect(normalizeSubagentTools([])).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+    // 旧白名单制下这里会回落到只读三件套，是为了补救「拼错 → 空允许表 → 拿到全部工具」；
+    // 黑名单制下拼错的名字本来就不放行任何东西，不需要那种补救
+    expect(normalizeSubagentTools(["teleport"])).toEqual([]);
+  });
+
+  it("可分配集合之外的条目会被丢掉（ask_user / 作业 / 浏览器 / Task 系列）", () => {
+    expect(normalizeSubagentTools(["bash", "Task", "browser_open", "bash_background"])).toEqual([
+      "bash",
+    ]);
   });
 });
 
@@ -254,7 +264,7 @@ describe("Task", () => {
     expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
   });
 
-  it("临时定义：source=temp、model=null，tools 缺省为只读三件套", async () => {
+  it("临时定义：source=temp、model=null，未给禁用项即全部可用", async () => {
     const deps = createDeps();
 
     await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-2", {
@@ -273,7 +283,7 @@ describe("Task", () => {
       name: "my-temp-agent", // 名字先规范化再当运行标签用
       source: "temp",
       model: null,
-      tools: [...DEFAULT_SUBAGENT_TOOLS],
+      disabledTools: [],
     });
     // 临时定义不查目录：目录里有没有同名定义都不影响这次派发
     expect(vi.mocked(deps.definitions)).not.toHaveBeenCalled();
@@ -289,11 +299,11 @@ describe("Task", () => {
         name: "temp-2",
         description: "临时的",
         prompt: "p",
-        tools: ["read", "teleport"],
+        disabledTools: ["bash", "teleport"],
       },
     });
 
-    expect(lastStart(deps).definition.tools).toEqual(["read"]);
+    expect(lastStart(deps).definition.disabledTools).toEqual(["bash"]);
   });
 
   it("并发上限：名额已被占满时直接拒绝，不再启动", async () => {

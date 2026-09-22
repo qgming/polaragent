@@ -39,6 +39,8 @@ function trackingAutomation(
     network?: BrowserNetworkReport;
     /** 覆盖 console 的返回值：Electron 噪音被过滤的用例按需给 */
     console?: BrowserConsoleReport;
+    /** 覆盖 screenshot 的 warning：全白图告警的用例按需给 */
+    screenshotWarning?: string;
   } = {},
 ) {
   const events: string[] = [];
@@ -134,7 +136,13 @@ function trackingAutomation(
     },
     screenshot: async () => {
       await act("screenshot");
-      return { data: "AAAA", mimeType: "image/png" as const, width: 10, height: 10 };
+      return {
+        data: "AAAA",
+        mimeType: "image/png" as const,
+        width: 10,
+        height: 10,
+        ...(options.screenshotWarning === undefined ? {} : { warning: options.screenshotWarning }),
+      };
     },
     console: async (): Promise<BrowserConsoleReport> => {
       await act("console");
@@ -240,6 +248,30 @@ async function call(
   args: Record<string, unknown> = {},
 ): Promise<void> {
   await callText(tools, name, args);
+}
+
+/**
+ * 调用一个工具并取回**完整结果**（content 各块 + details）。
+ *
+ * `callText` 只回第一块文本，够不着两件事：图片块（截图工具会同时回文本与 image），
+ * 以及 details。断言「模型看得见什么」与「渲染层拿得到什么」时必须区分这两处 ——
+ * 截图的全白告警就是因为只进了 content 而曾经整个丢掉。
+ */
+async function callResult<TDetails = unknown>(
+  tools: AgentHarnessTool<ExecutionToolContext>[],
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<{ content: { type: string; text?: string }[]; details: TDetails }> {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (tool === undefined) throw new Error(`缺少工具 ${name}`);
+  return (await tool.execute(
+    "t1",
+    args as never,
+    (() => undefined) as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  )) as { content: { type: string; text?: string }[]; details: TDetails };
 }
 
 /** 调用一个工具并取回它抛出的错误文案（参数校验的用例用它） */
@@ -416,6 +448,46 @@ describe("浏览器工具", () => {
     const entered = events.filter((event) => event.startsWith("enter:"));
     expect(entered).toContain("enter:console");
     expect(entered).toContain("enter:network");
+  });
+
+  it("browser_screenshot 的 warning 必须进正文：模型不能把全白图当成页面本来的样子", async () => {
+    const { automation } = trackingAutomation({
+      screenshotWarning: "The viewport looks blank — the page may still be rendering.",
+    });
+    const tools = createBrowserTools(automation);
+
+    const result = await callResult<{ warning?: string; width: number }>(
+      tools,
+      "browser_screenshot",
+      {},
+    );
+
+    // 模型只看得到 content（details 是给渲染层的），所以告警必须出现在文本里
+    const text = result.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+    expect(text).toContain("The viewport looks blank");
+
+    // 同时保留在 details 里，让界面也能提示「这张图可能是白的」
+    expect(result.details.warning).toContain("The viewport looks blank");
+
+    // 图片本身照常返回（告警是非致命的，不是错误）
+    expect(result.content.some((block) => block.type === "image")).toBe(true);
+  });
+
+  it("没有 warning 时不加噪声行", async () => {
+    const { automation } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    const result = await callResult<{ warning?: string }>(tools, "browser_screenshot", {});
+    const text = result.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+
+    expect(text).not.toContain("Warning:");
+    expect(result.details.warning).toBeUndefined();
   });
 
   it("browser_open 的 newTab 透传（开新标签而不是把当前页面顶掉），输出带标签身份", async () => {

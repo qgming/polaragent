@@ -1012,11 +1012,26 @@ export function createBrowserTools(
             content: [
               {
                 type: "text",
-                text: `${tabLine(automation, ops.tabId)}\nScreenshot of the visible viewport (${shot.width}×${shot.height}).`,
+                text:
+                  `${tabLine(automation, ops.tabId)}\n` +
+                  `Screenshot of the visible viewport (${shot.width}×${shot.height}).` +
+                  /**
+                   * `warning` 必须进正文，不能只放进 details。
+                   *
+                   * 它是**非致命**的如实告警（见 BrowserScreenshot 的类型注释）：截图拿到了、
+                   * 但内容可疑 —— 最典型的是刚挂载时那张全白图。模型只看得到 content，
+                   * 而 details 只给渲染层用；漏掉这一句，模型就只能把纯白当成页面本来的样子。
+                   */
+                  (shot.warning === undefined ? "" : `\nWarning: ${shot.warning}`),
               },
               { type: "image", data: shot.data, mimeType: shot.mimeType },
             ],
-            details: { width: shot.width, height: shot.height, tabId: ops.tabId },
+            details: {
+              width: shot.width,
+              height: shot.height,
+              tabId: ops.tabId,
+              ...(shot.warning === undefined ? {} : { warning: shot.warning }),
+            },
           };
         },
       );

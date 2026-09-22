@@ -22,7 +22,6 @@ import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { ALL_THINKING_LEVELS, type ModelRef, type ThinkingLevel } from "@/shared/contracts/common";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 import {
-  DEFAULT_SUBAGENT_TOOLS,
   SUBAGENT_ASSIGNABLE_TOOLS,
   SUBAGENT_NAME_PATTERN,
   type SubagentCatalog,
@@ -109,8 +108,13 @@ function SubagentEditor({
   const { t } = useTranslation();
   const [name, setName] = useState(info?.name ?? "");
   const [description, setDescription] = useState(info?.description ?? "");
-  // 新建时预勾只读三件套：与「没有显式指定工具」的运行时默认值一致
-  const [tools, setTools] = useState<string[]>(info?.tools ?? [...DEFAULT_SUBAGENT_TOOLS]);
+  /**
+   * 勾选框状态是**禁用清单**（黑名单制）：勾上 = 这个工具不给它。
+   *
+   * 新建时全不勾 = 什么都不禁用 = 拿到全部可分配工具。这与运行时的默认值一致
+   *（旧的白名单制在这里预勾只读四件套，因为那时的默认是「没写就只读」）。
+   */
+  const [disabledTools, setDisabledTools] = useState<string[]>(info?.disabledTools ?? []);
   const [model, setModel] = useState<ModelRef | null>(info?.model ?? null);
   const [thinking, setThinking] = useState<ThinkingLevel | null>(info?.thinkingLevel ?? null);
   // null = 正文还没读回来（编辑态）；新建时直接是空串，不必等一次 IPC
@@ -177,8 +181,15 @@ function SubagentEditor({
     );
   }
 
-  const toggleTool = (tool: string, checked: boolean) => {
-    setTools((current) => (checked ? [...current, tool] : current.filter((item) => item !== tool)));
+  /**
+   * 勾选框 = **禁用**该工具（黑名单制）。勾上表示「这个子智能体不能用它」。
+   *
+   * 语义与旧的白名单实现相反：那时勾上 = 允许，且默认预勾只读四件套。
+   */
+  const toggleTool = (tool: string, disabled: boolean) => {
+    setDisabledTools((current) =>
+      disabled ? [...current, tool] : current.filter((item) => item !== tool),
+    );
   };
 
   const handleModelChange = (value: string) => {
@@ -209,8 +220,8 @@ function SubagentEditor({
       name: name.trim(),
       description: description.trim(),
       prompt,
-      // 按契约里的规范顺序写：同一组工具不因勾选先后产生不同的文件内容
-      tools: SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => tools.includes(tool)),
+      // 按契约里的规范顺序写：同一组禁用项不因勾选先后产生不同的文件内容
+      disabledTools: SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => disabledTools.includes(tool)),
       model,
       thinkingLevel: thinking,
     };
@@ -316,7 +327,7 @@ function SubagentEditor({
               <label key={tool} className="flex items-center gap-1.5 text-xs text-ink-2">
                 <input
                   type="checkbox"
-                  checked={tools.includes(tool)}
+                  checked={disabledTools.includes(tool)}
                   aria-label={tool}
                   disabled={readOnly}
                   onChange={(event) => toggleTool(tool, event.target.checked)}
@@ -507,7 +518,7 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
             {visible.map((info) => {
               // 设置里的禁用名单是唯一事实来源，避免列表快照过期（与技能列表同口径）
               const enabled = !settings.disabledSubagentNames.includes(info.name);
-              const canWrite = subagentCanMutate(info.tools);
+              const canWrite = subagentCanMutate(info.effectiveTools);
               return (
                 <div
                   key={`${info.source}:${info.name}`}
@@ -536,9 +547,9 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
                       </Badge>
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{info.description}</p>
-                    {info.tools.length === 0 ? null : (
+                    {info.effectiveTools.length === 0 ? null : (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                        {info.tools.map((tool) => (
+                        {info.effectiveTools.map((tool) => (
                           <span
                             key={tool}
                             className={cn(field, mono, "rounded-full px-1.5 py-0.5 text-ink-3")}

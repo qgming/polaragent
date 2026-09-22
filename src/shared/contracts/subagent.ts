@@ -19,15 +19,18 @@ import type { ModelRef, ThinkingLevel } from "./common";
 export type SubagentSource = "builtin" | "user" | "temp";
 
 /**
- * 允许分配给子智能体的工具名。
+ * 允许分配给子智能体的工具名 —— **这是硬边界，与黑白名单无关**。
  *
  * 用**应用自己的小写工具名**（与 src/main/pisdk/tools.ts 的 TOOL_NAMES 同一套），
  * 不是内核的 Read/Glob/Grep —— 面板里显示的字面量必须和权限层、图标表里的键一致，
- * 否则「设置里允许了 bash」与「实际注入的是 bash」会悄悄对不上。
+ * 否则「设置里禁用了 bash」与「实际注入的是 bash」会悄悄对不上。
  *
  * 刻意**不在**列表里的：ask_user（子智能体不能卡住等用户）、作业三件套（子智能体不该自己起
  * 后台进程）、浏览器工具（不该操作用户正盯着的页面）、Task 系列（不允许嵌套委派）。
  * 这条约束在 tools.ts 的 buildTools 注释里已有对应说明，两处不要漂移。
+ *
+ * ⚠️ **这份名单是「可分配的上限」，不是「默认给谁」**。默认给谁由黑名单制决定：
+ * 见 `resolveSubagentTools` —— 未列进禁用清单的**都可分配**。
  *
  * **web_search / web_fetch 在列表里**（与浏览器工具相反）：它们是无状态、无 UI 归属、
  * 可并发的网络调用 —— 不需要用户眼前的标签页，也不会把子智能体卡在等人回答上，
@@ -51,17 +54,45 @@ export const SUBAGENT_ASSIGNABLE_TOOLS = [
 
 export type SubagentToolName = (typeof SUBAGENT_ASSIGNABLE_TOOLS)[number];
 
-/** 没有显式指定工具时的默认集合：只读三件套（最安全的那一档） */
-export const DEFAULT_SUBAGENT_TOOLS: readonly SubagentToolName[] = [
+/**
+ * fail-closed 兜底集合：**只读四件套**。
+ *
+ * 它**不是**「默认值」（黑名单制下默认是「全部可分配」）。它只在一种情形用得上：
+ * 定义里的字段没法解析 —— 最典型的是旧版本写的 `tools:`（那是**白名单**语义，
+ * 原样当黑名单用会把「只给这三个」变成「除了这三个全给」，等于静默提权）。
+ * 遇到这种情况宁可少给权限，也不猜用户想要什么。
+ */
+export const SUBAGENT_READ_ONLY_TOOLS: readonly SubagentToolName[] = [
   "read",
   "read_image",
   "grep",
   "glob",
 ];
 
+/**
+ * 禁用清单 → **有效允许清单**（黑名单制的核心）。
+ *
+ * 语义：`disabled` 里列出的不可用，**其余全部可用**（可分配集合见 SUBAGENT_ASSIGNABLE_TOOLS）。
+ *
+ * 两条必须守住的边界：
+ * - **不可分配的永远不给**：`ask_user` / 作业 / 浏览器 / Task 系列不在可分配集合里，
+ *   所以无论禁用清单写什么，它们都不会出现在结果里；
+ * - **不认识的条目静默忽略**：写错的工具名（拼错、或用内核的大写名）不会「顺便放行」
+ *   什么东西，只是不产生效果 —— 与旧白名单实现相反，那时一个拼错的名字会让
+ *   `restrictTools` 交出**空工具表**（子智能体一个工具都没有，而面板还显示着默认四件套）。
+ *
+ * **调用方必须走这个函数**：执行路径（runtime 的 restrictTools）与显示路径
+ * （run 记录、设置面板、系统提示里的「可用工具」）都从这里取值，两边才不会漂移。
+ */
+export function resolveSubagentTools(disabled: readonly string[]): SubagentToolName[] {
+  const denied = new Set(disabled);
+  return SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => !denied.has(tool));
+}
+
 /** 带写权限的工具：用于决定子智能体系统提示里那句「你可以改文件」是否成立 */
 export const SUBAGENT_MUTATING_TOOLS: readonly SubagentToolName[] = ["bash", "edit", "write"];
 
+/** 有效工具清单里是否有能改文件的（**吃的是 resolveSubagentTools 的结果**，不是禁用清单） */
 export function subagentCanMutate(tools: readonly string[]): boolean {
   return tools.some((tool) => (SUBAGENT_MUTATING_TOOLS as readonly string[]).includes(tool));
 }
@@ -117,7 +148,14 @@ export interface SubagentDefinition {
   description: string;
   /** 子智能体的系统提示正文（markdown） */
   prompt: string;
-  tools: string[];
+  /**
+   * **禁用清单**（黑名单制）：列在这里的工具不给这个子智能体，其余全部可用。
+   *
+   * 空数组 = 不做任何禁用 = 拿到全部可分配工具（见 `SUBAGENT_ASSIGNABLE_TOOLS`）。
+   * 注意这**包含** bash / edit / write —— 想让一个子智能体只读，必须显式禁掉它们，
+   * 内置定义就是这么做的（见 subagent-catalog 的 BUILTIN_SUBAGENTS）。
+   */
+  disabledTools: string[];
   /** 固定使用的模型；null / 缺省 = 继承父会话 */
   model?: ModelRef | null;
   /** 思考档位；缺省 = 继承父会话 */
@@ -131,7 +169,15 @@ export interface SubagentDefinition {
 export interface SubagentInfo {
   name: string;
   description: string;
-  tools: string[];
+  /** 面板勾选框的状态：勾上 = 禁用该工具 */
+  disabledTools: string[];
+  /**
+   * 解析后的**有效工具清单**（`resolveSubagentTools(disabledTools)`）。
+   *
+   * 面板用它算「只读 / 可写文件」那枚徽标 —— 徽标表达的是**结果**，
+   * 而结果只能由解析函数给出，不能拿禁用清单自己去推（两处推就会漂移）。
+   */
+  effectiveTools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
   source: SubagentSource;
@@ -255,7 +301,8 @@ export interface SubagentWriteRequest {
   description: string;
   /** markdown 正文（prompt） */
   prompt: string;
-  tools: string[];
+  /** 禁用清单（黑名单制）：见 SubagentDefinition.disabledTools */
+  disabledTools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
 }

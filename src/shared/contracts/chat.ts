@@ -46,6 +46,28 @@ export interface PartDeltaEvent {
 }
 
 /**
+ * 工具运行期间的输出快照（内核 `tool_update` 事件的转发）。
+ *
+ * **语义是「替换」而不是「追加」**，所以它不能并进 `part-delta`（那个是拼字符串）。
+ * 两个原因：
+ * 1. 内核给的 `partialResult` 是**累计快照**（每次都是「到目前为止的全部输出」）；
+ * 2. shell 捕获用 `retain: "tail"` —— 超过上限后早期内容会从**头部**丢掉。
+ *
+ * 于是「本次文本」与「上次文本」既不是前缀关系也不是追加关系，按「取新增部分」
+ * 算出来的增量必然是错的（截断发生后会重复或错位）。所以这里整份下发，
+ * 由渲染层覆盖 `ToolCallPart.partialOutput`。
+ *
+ * 主进程侧按工具调用节流：内核的推送频率跟随进程输出，不节流会把 IPC 打爆。
+ */
+export interface PartOutputEvent {
+  type: "part-output";
+  messageId: string;
+  partIndex: number;
+  /** 截至此刻的累计输出（可能已被内核按 tail 截断，**不是**完整输出） */
+  text: string;
+}
+
+/**
  * 某会话当前流式消息的完整快照（没有在流的消息时为 null）。
  *
  * 渲染层错过创建事件（窗口重载、早于订阅达到等）时用它整条补齐 ——
@@ -63,6 +85,7 @@ export type ChatEvent =
   | { type: "message-added"; message: ChatMessage }
   | { type: "part-upsert"; messageId: string; partIndex: number; part: ChatPart }
   | PartDeltaEvent
+  | PartOutputEvent
   | {
       type: "message-updated";
       messageId: string;

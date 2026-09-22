@@ -31,12 +31,34 @@ export interface ToolCallProps {
    */
   detail: ReactNode;
   /**
+   * 运行期间工具已经产出的输出（内核 `tool_update` 的累计快照）。
+   *
+   * 只在 `running` 且非空时渲染成行下的一小段预览：长命令（装依赖、构建、跑测试）
+   * 没有它就是一张转圈的卡片，用户无从判断是在干活还是卡住了。
+   *
+   * 刻意**只显示尾部几行**：这是「看一眼进展」，不是结果 —— 完整输出在跑完后由
+   * `result` 给出，展开区里显示的是那个。（内核侧按 tail 截断，本身也不是完整输出。）
+   */
+  output?: string;
+  /**
    * 调用失败：整行转红、收尾标记换成红叉。
    * 必须由调用方显式传入 —— 这个组件从 part 上拿不到失败信息（aui 的 part status 只表达
    * 「跑没跑完」，「有没有报错」在本仓是 isError 这个独立字段）。
    */
   isError?: boolean;
   className?: string;
+}
+
+/**
+ * 取文本的最后 `max` 行。
+ *
+ * 末尾的空行先去掉再截：它们不携带信息，却会把真正想看的最后几行挤掉。
+ * 被截掉时在最前面加一行省略标记 —— 否则用户会以为那就是输出的开头。
+ */
+export function tailLines(text: string, max: number): string {
+  const lines = text.replace(/\s+$/, "").split("\n");
+  if (lines.length <= max) return lines.join("\n");
+  return `… ${lines.length - max} 行略 …\n${lines.slice(-max).join("\n")}`;
 }
 
 export function ToolCall({
@@ -47,9 +69,19 @@ export function ToolCall({
   open,
   onOpenChange,
   detail,
+  output,
   isError = false,
   className,
 }: ToolCallProps) {
+  /**
+   * 预览只取尾部若干行。
+   *
+   * 为什么不整段显示：内核给的是累计快照，长命令的输出可以到几十 KB，
+   * 全渲染会把列表拖慢，而这里要表达的只是「它在动、在产出什么」。
+   * 取尾部而不是头部，是因为出错信息几乎总在末尾。
+   */
+  const preview = running && output !== undefined && output !== "" ? tailLines(output, 6) : null;
+
   // 纵向间距交给父容器的 gap（与正文段落、思考块同为 12px），块自身不带到外边距
   return (
     <Collapsible
@@ -96,6 +128,22 @@ export function ToolCall({
             ))}
         </span>
       </CollapsibleTrigger>
+      {/*
+        运行中输出预览：**不放在 CollapsibleContent 里** —— 它要的是「不用展开也看得见」，
+        与展开区是两件事。整块只在 running 且确实有输出时出现。
+      */}
+      {preview !== null && (
+        <pre
+          data-slot="tool-call-output"
+          className={cn(
+            mono,
+            "text-ink-3 mt-1.5 max-h-24 overflow-hidden text-[11.5px] leading-[1.45] whitespace-pre-wrap",
+            "border-border/50 border-s ps-2",
+          )}
+        >
+          {preview}
+        </pre>
+      )}
       <CollapsibleContent className={cn(collapsePanel, "outline-none")}>
         {/*
           展开区：**不再套外层容器**，只给上间距。

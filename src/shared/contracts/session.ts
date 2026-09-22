@@ -121,6 +121,18 @@ export interface ToolCallPart {
   argsText: string;
   args?: unknown;
   result?: unknown;
+  /**
+   * 运行期间工具流式产出的**累计输出**（内核 `tool_update` 转发的最近一份快照）。
+   *
+   * 只用来在「还在跑」的时候给用户看一眼进展 —— 长命令（装依赖、构建、跑测试）没有它
+   * 就是一张转圈的卡片，用户无从判断是在干活还是卡住了。
+   *
+   * 三点约定：
+   * - **不是完整输出**：内核的 shell 捕获按 tail 保留，超出上限后头部会被丢掉；
+   * - **只在内存里**：它不来自会话条目，所以落盘的历史里没有它（回读时为 undefined）；
+   * - 结束后由 `result` 接管，渲染层只在 `status === "running"` 时展示。
+   */
+  partialOutput?: string;
   /** 工具自己声明的结构化详情（如 edit 的 diff/patch）；形状由工具决定，渲染层按工具名取用 */
   details?: unknown;
   isError?: boolean;

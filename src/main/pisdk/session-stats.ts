@@ -8,43 +8,42 @@
  * 因 pi 的 HarnessEvent 不带统一 time 字段，时间由调用方在 handler 中用 Date.now() 传入。
  */
 
+import { normalizeContext, type TSchema } from "@earendil-works/pi-ai";
+import { estimateContextTokens, estimateTextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { ContextBreakdown, SessionStats } from "@/shared/contracts/session";
 
 /**
- * 启发式 token 估算：按平均 4 字符 / token 折算（DSH 的 estimateMessage 同阶粗估，
- * 用于上下文环的三段分解展示，不是计费依据）。
- */
-export function estimateTokens(text: string): number {
-  return Math.max(1, Math.round(text.length / 4));
-}
-
-/**
- * 从一份工具清单估算「工具定义」段的 token 数。
+ * 工具定义段的 token 估算：**直接用内核的口径**，不再自算。
  *
- * 每个工具按「name + description + JSON schema 序列化长度」折算；
- * 序列化结果的字符数与模型实际看到的结构化工具定义同阶，
- * 足以让「工具定义」在上下文环里呈现合理的相对占比。
+ * 为什么不能自算（实测过）：内核把它算在 system 消息的 `toolsAdded` 上，
+ * 走的是 `estimateTextTokens(JSON.stringify(tools))` —— 含整个数组的 JSON 外壳与键名。
+ * 本仓早先是「逐个工具拼 name+description+schema 再除以 4」，同一份输入实测
+ * **71 vs 内核 93（低估约 24%）**。这个差值会全额转嫁到「对话消息」段
+ *（`deriveContextBreakdown` 是 `压力 − 系统 − 工具` 倒推的），于是上下文环的三段占比是错的。
+ *
+ * 实现上绕了一步 `normalizeContext`：内核的 tools 估算没有单独导出，但它会在
+ * 「首条 system 消息」上算 —— 传空 messages + tools，得到的就是纯工具段。
+ * 这样内核改了公式我们自动跟上，而不是再抄一份。
  */
 export function estimateToolsTokens(
   tools: readonly { name: string; description?: string; parameters?: unknown }[],
 ): number {
   if (tools.length === 0) return 0;
-  let total = 0;
-  for (const tool of tools) {
-    const schema = tool.parameters === undefined ? "" : safeStableStringify(tool.parameters);
-    total += estimateTokens(`${tool.name}\n${tool.description ?? ""}\n${schema}`);
-  }
-  return total;
+  return estimateContextTokens(
+    normalizeContext({
+      messages: [],
+      tools: tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description ?? "",
+        // 缺 schema 的工具按「空对象 schema」计入：内核序列化时同样会给它一个 JSON 外壳
+        parameters: (tool.parameters ?? { type: "object", properties: {} }) as TSchema,
+      })),
+    }),
+  ).tokens;
 }
 
-/** 不抛错的 JSON 序列化（参数 schema 可能带循环引用/函数） */
-function safeStableStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return "";
-  }
-}
+/** 文本段估算：内核口径（`ceil(len/4)`，空串为 0） */
+export { estimateTextTokens as estimateTokens };
 
 /**
  * 折叠内部状态：在视图基础上增加 in-flight 边界。

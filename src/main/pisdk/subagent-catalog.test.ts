@@ -22,10 +22,11 @@ const paths = vi.hoisted(() => ({ data: "" }));
 vi.mock("@/main/app/paths", () => ({ dataDir: () => paths.data }));
 
 import {
-  DEFAULT_SUBAGENT_TOOLS,
   MAX_SUBAGENT_DEFINITIONS,
   MAX_SUBAGENT_PROMPT_CHARS,
+  resolveSubagentTools,
   SUBAGENT_ASSIGNABLE_TOOLS,
+  subagentCanMutate,
 } from "@/shared/contracts/subagent";
 import {
   BUILTIN_SUBAGENTS,
@@ -111,20 +112,41 @@ describe("内置预设", () => {
     // explorer 与 oracle 多了 web_search / web_fetch：它们的工作就是「搞清楚现状」，
     // 而现状常常在代码库之外（库的最新版本、上游 issue、规范原文）。
     // 详见 SUBAGENT_ASSIGNABLE_TOOLS 的注释。
-    expect(BUILTIN_SUBAGENTS.map((def) => def.tools)).toEqual([
-      ["read", "grep", "glob", "web_search", "web_fetch"],
-      ["read", "grep", "glob"],
-      ["read", "grep", "glob", "edit", "write", "bash"],
-      ["read", "grep", "glob", "bash"],
-      ["read", "grep", "glob", "web_search", "web_fetch"],
-      ["read", "grep", "glob", "edit", "write"],
-      ["read", "grep", "glob", "bash"],
+    // 黑名单制下断言的是**禁用清单**而不是可用清单 —— 空数组表示「全部可分配工具都给它」。
+    // 每个内置只禁用自己 prompt 契约明确排除的那些（「它不改任何文件」「它不改代码」）。
+    expect(BUILTIN_SUBAGENTS.map((def) => def.disabledTools)).toEqual([
+      ["bash", "edit", "write"], // explorer：只读探索
+      ["bash", "edit", "write"], // code-reviewer：只读
+      [], // fixer：本来就该能改能跑
+      ["edit", "write"], // test-runner：跑命令但不改代码
+      ["bash", "edit", "write"], // oracle：只读参谋
+      ["bash"], // designer：改界面文件，不跑命令
+      ["edit", "write"], // verifier：跑验证命令但不改文件
     ]);
     // 提示词是「子智能体的全部行为说明」：空提示词等于一个只会瞎猜的子智能体
     for (const def of BUILTIN_SUBAGENTS) {
       expect(def.prompt.length).toBeGreaterThan(0);
       expect(def.prompt.length).toBeLessThanOrEqual(MAX_SUBAGENT_PROMPT_CHARS);
       expect(def.description).not.toContain("\n");
+    }
+  });
+
+  /**
+   * 只读那几个内置**必须**显式禁掉全部可写工具。
+   *
+   * 黑名单制的代价就在这里：默认是「全给」，所以「只读」不再是默认值、而是一条要写出来的
+   * 声明。这条断言防止将来有人「清理冗余」时把这几行删掉 —— 删掉之后子智能体会静默获得
+   * 写文件与跑命令的能力，而它的 prompt 里还写着「你没有能改文件的工具」。
+   */
+  it("声明为只读的内置都禁掉了全部可写工具", () => {
+    // verifier / test-runner 有 bash（要跑验证命令），但按本仓的定义也算「可写」——
+    // 所以只读名单只收真正三个全禁的：explorer / code-reviewer / oracle
+    const readOnly = ["explorer", "code-reviewer", "oracle"];
+    for (const name of readOnly) {
+      const def = BUILTIN_SUBAGENTS.find((candidate) => candidate.name === name);
+      expect(def).toBeDefined();
+      const effective = resolveSubagentTools(def?.disabledTools ?? []);
+      expect(subagentCanMutate(effective)).toBe(false);
     }
   });
 
@@ -142,10 +164,10 @@ describe("内置预设", () => {
     }
   });
 
-  it("每个内置定义的工具都落在可分配集合之内（不引入新权限面）", () => {
+  it("每个内置定义的禁用项都落在可分配集合之内（不引入新权限面）", () => {
     const assignable = new Set<string>(SUBAGENT_ASSIGNABLE_TOOLS);
     for (const def of BUILTIN_SUBAGENTS) {
-      for (const tool of def.tools) expect(assignable.has(tool)).toBe(true);
+      for (const tool of def.disabledTools) expect(assignable.has(tool)).toBe(true);
     }
   });
 });
@@ -156,7 +178,7 @@ describe("parseSubagentMarkdown / serializeSubagentMarkdown", () => {
       name: "my-agent",
       description: "做一件事",
       prompt: "你是子智能体。\n\n汇报要求：给文件与行号。",
-      tools: ["read", "bash"],
+      disabledTools: ["bash"],
       model: { serviceId: "svc-a", modelId: "model-x" },
       thinkingLevel: "high",
       source: "user",
@@ -173,37 +195,76 @@ describe("parseSubagentMarkdown / serializeSubagentMarkdown", () => {
       name: "x",
       description: "只有必填项",
       prompt: "正文",
-      tools: ["read"],
+      disabledTools: ["bash"],
       source: "user",
     });
 
     // 锁定磁盘格式：键顺序固定、空值不写，`name` 始终写出（冗余一份方便人读）
-    expect(text).toBe("---\nname: x\ndescription: 只有必填项\ntools: [read]\n---\n\n正文\n");
+    expect(text).toBe(
+      "---\nname: x\ndescription: 只有必填项\ndisabled_tools: [bash]\n---\n\n正文\n",
+    );
   });
 
-  it("tools 支持内联列表与 - item 行两种写法", () => {
+  it("空禁用清单不写进文件（黑名单制下那是默认语义）", () => {
+    const text = serializeSubagentMarkdown({
+      name: "x",
+      description: "不禁用任何工具",
+      prompt: "正文",
+      disabledTools: [],
+      source: "user",
+    });
+
+    expect(text).not.toContain("disabled_tools");
+  });
+
+  it("disabled_tools 支持内联列表与 - item 行两种写法", () => {
     const inline = parseSubagentMarkdown(
       "a",
-      "---\ndescription: d\ntools: [read, grep]\n---\nbody",
+      "---\ndescription: d\ndisabled_tools: [bash, edit]\n---\nbody",
     );
-    expect(inline.definition?.tools).toEqual(["read", "grep"]);
+    expect(inline.definition?.disabledTools).toEqual(["bash", "edit"]);
 
     const block = parseSubagentMarkdown(
       "a",
-      "---\ndescription: d\ntools:\n  - read\n  - grep\n---\nbody",
+      "---\ndescription: d\ndisabled_tools:\n  - bash\n  - edit\n---\nbody",
     );
-    expect(block.definition?.tools).toEqual(["read", "grep"]);
+    expect(block.definition?.disabledTools).toEqual(["bash", "edit"]);
   });
 
-  it("未知工具名被过滤；过滤后为空则回落到默认只读三件套", () => {
+  it("禁用清单里的未知工具名被过滤（拼错不产生效果）", () => {
     const mixed = parseSubagentMarkdown(
       "a",
-      "---\ndescription: d\ntools: [read, teleport]\n---\nbody",
+      "---\ndescription: d\ndisabled_tools: [bash, teleport]\n---\nbody",
     );
-    expect(mixed.definition?.tools).toEqual(["read"]);
+    expect(mixed.definition?.disabledTools).toEqual(["bash"]);
 
-    const unknown = parseSubagentMarkdown("a", "---\ndescription: d\ntools: [teleport]\n---\nbody");
-    expect(unknown.definition?.tools).toEqual([...DEFAULT_SUBAGENT_TOOLS]);
+    const unknown = parseSubagentMarkdown(
+      "a",
+      "---\ndescription: d\ndisabled_tools: [teleport]\n---\nbody",
+    );
+    expect(unknown.definition?.disabledTools).toEqual([]);
+  });
+
+  /**
+   * 旧字段 `tools:` 是**白名单**语义，与 `disabled_tools` 相反 —— 绝不能按黑名单解释。
+   *
+   * 老定义写 `tools: [read, grep]` 的意思是「只给这两个」；当成禁用清单就变成
+   * 「除了这两个全给」（含 bash/edit/write）—— 静默提权。所以这里 fail-closed：
+   * 只读工具集 + 一条能定位到文件的警告。
+   */
+  it("旧的 tools: 字段 fail-closed（禁掉全部可写工具）并给出警告", () => {
+    const legacy = parseSubagentMarkdown(
+      "a",
+      "---\ndescription: d\ntools: [read, grep]\n---\nbody",
+    );
+
+    expect(legacy.definition).toBeDefined();
+    expect(legacy.error).toBeUndefined();
+    // 警告必须存在，否则用户只会觉得「我明明限制了工具，它怎么拿到 bash 了」
+    expect(legacy.warning).toContain("tools");
+    // fail-closed：解析出来的禁用清单覆盖全部可写工具
+    const effective = resolveSubagentTools(legacy.definition?.disabledTools ?? []);
+    expect(subagentCanMutate(effective)).toBe(false);
   });
 
   it("description 或正文为空时拒绝解析", () => {
@@ -351,7 +412,7 @@ describe("toSubagentInfo", () => {
     name: "explorer",
     description: "d",
     prompt: `第一行\n${"很长".repeat(120)}`,
-    tools: ["read"],
+    disabledTools: ["bash", "edit", "write"],
     source: "builtin",
   };
 
@@ -364,6 +425,26 @@ describe("toSubagentInfo", () => {
     expect(toSubagentInfo(def, settingsWith({ disabledSubagentNames: ["other"] })).enabled).toBe(
       true,
     );
+  });
+
+  it("面板行的 effectiveTools 就是解析函数的结果（显示与执行不许各推一份）", () => {
+    /**
+     * 这条断言守的是一处**真的发生过**的不一致：旧实现里显示走 `normalizeSubagentTools`、
+     * 执行走 `spec.definition.tools`（原始清单），两条路各推一份。于是一个拼错的工具名
+     * 会让面板说「它有 read/grep/glob」而运行时交出**空工具表** —— 子智能体一个工具都没有，
+     * 界面却显示得好好的。
+     *
+     * 现在两边都走 `resolveSubagentTools`，这条断言把「同一个来源」钉住。
+     */
+    const denied = ["bash", "edit", "write"];
+    const info = toSubagentInfo({ ...def, disabledTools: denied }, settingsWith());
+
+    expect(info.effectiveTools).toEqual(resolveSubagentTools(denied));
+    expect(info.disabledTools).toEqual(denied);
+    // 解析函数的结果必须是**可分配集合的子集**（不可分配的永远不给）
+    for (const tool of info.effectiveTools) {
+      expect(SUBAGENT_ASSIGNABLE_TOOLS).toContain(tool);
+    }
   });
 
   it("面板行不带轮次上限；promptPreview 折叠成单行并截断", () => {
@@ -385,13 +466,13 @@ describe("用户定义的落盘", () => {
       name: "My_Agent",
       description: "写盘测试",
       prompt: "你是子智能体。",
-      tools: ["read", "teleport"],
+      disabledTools: ["bash", "teleport"],
       model: { serviceId: "svc-a", modelId: "m1" },
       thinkingLevel: "low",
     });
 
     expect(info.name).toBe("my-agent");
-    expect(info.tools).toEqual(["read"]);
+    expect(info.disabledTools).toEqual(["bash"]);
     expect(info.enabled).toBe(true);
 
     const parsed = parseSubagentMarkdown(
@@ -401,7 +482,7 @@ describe("用户定义的落盘", () => {
     expect(parsed.definition).toMatchObject({
       name: "my-agent",
       description: "写盘测试",
-      tools: ["read"],
+      disabledTools: ["bash"],
       model: { serviceId: "svc-a", modelId: "m1" },
       thinkingLevel: "low",
     });
@@ -412,7 +493,7 @@ describe("用户定义的落盘", () => {
       name: "renamed",
       description: "改名后",
       prompt: "你是子智能体。",
-      tools: ["read"],
+      disabledTools: ["bash", "edit"],
       model: null,
       thinkingLevel: null,
     });
@@ -426,7 +507,7 @@ describe("用户定义的落盘", () => {
       name: "../escape",
       description: "d",
       prompt: "p",
-      tools: [],
+      disabledTools: [],
       model: null,
       thinkingLevel: null,
     });
@@ -440,7 +521,7 @@ describe("用户定义的落盘", () => {
         name: "日本語",
         description: "d",
         prompt: "p",
-        tools: [],
+        disabledTools: [],
         model: null,
         thinkingLevel: null,
       }),

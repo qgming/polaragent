@@ -92,3 +92,61 @@ describe("触发行上的参数 chip", () => {
     expect(chip(container)).toBeNull();
   });
 });
+
+/**
+ * 运行中的输出预览。
+ *
+ * 没有它，长命令（装依赖、构建、跑测试）在界面上就是一张转圈的卡片 ——
+ * 用户无从判断是在干活还是卡住了。内核一直在推 `tool_update`，早先没人订阅。
+ *
+ * 三条约定：只在运行中显示、只在有内容时显示、只显示尾部若干行。
+ */
+describe("ToolCall 的运行中输出预览", () => {
+  function preview(container: HTMLElement): Element | null {
+    return container.querySelector('[data-slot="tool-call-output"]');
+  }
+
+  it("运行中且有输出时显示", () => {
+    const { container } = render(<ToolCall {...BASE} running output={"编译中…\n完成 3/10"} />);
+
+    expect(preview(container)?.textContent).toContain("完成 3/10");
+  });
+
+  it("跑完之后不再显示（结果由展开区负责）", () => {
+    const { container } = render(<ToolCall {...BASE} running={false} output={"编译中…"} />);
+
+    expect(preview(container)).toBeNull();
+  });
+
+  it("没有输出时不占位", () => {
+    const { container } = render(<ToolCall {...BASE} running />);
+
+    expect(preview(container)).toBeNull();
+  });
+
+  it("空串不渲染（内核的首次 update 就是空内容）", () => {
+    const { container } = render(<ToolCall {...BASE} running output="" />);
+
+    expect(preview(container)).toBeNull();
+  });
+
+  it("长输出只显示尾部若干行，并标明省略了多少", () => {
+    const long = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
+    const { container } = render(<ToolCall {...BASE} running output={long} />);
+    const text = preview(container)?.textContent ?? "";
+
+    // 尾部在（最新进展与报错都在末尾），头部不在
+    expect(text).toContain("line 20");
+    expect(text).not.toContain("line 1\n");
+    // 省略了多少要写出来，否则用户会以为这就是输出的开头
+    expect(text).toContain("14");
+  });
+
+  it("行数不超过上限时不加省略标记", () => {
+    const { container } = render(<ToolCall {...BASE} running output={"a\nb\nc"} />);
+    const text = preview(container)?.textContent ?? "";
+
+    expect(text).toContain("a");
+    expect(text).not.toContain("略");
+  });
+});

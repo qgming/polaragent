@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
+import { resolveSubagentTools, SUBAGENT_ASSIGNABLE_TOOLS } from "@/shared/contracts/subagent";
 import { WEB_TOOL_NAMES } from "@/shared/contracts/web";
 import type { BrowserAutomation } from "../browser/types";
 import type { WebService } from "../web/types";
-import { buildTools, TOOL_NAMES } from "./tools";
+import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 
 /** 内核原生四件套：description 由 tools.ts 整体覆盖 */
 const NATIVE_TOOLS = ["bash", "read", "write", "edit"];
@@ -116,6 +117,37 @@ describe("buildTools", () => {
     expect(edit?.description).toContain("oldText");
   });
 
+  /**
+   * 工具描述是**模型唯一的行为依据** —— 描述说错了，它会照着错的做。
+   *
+   * 两条曾经说反的话：
+   * - read 的描述写「read 只回一句类型说明，看不到图」，而内核 read 命中图片魔数时
+   *   会把图片整份 base64 返回（`read.js` 的图片分支，**没有任何字节上限**）。
+   *   于是模型被从唯一有 16 MiB 守卫的 read_image 支开，指向了唯一没有上限的那条路。
+   * - read_image 的描述承诺「大图会自动缩小」，而它**没有任何缩放实现**：
+   *   超限时的实际行为是报错让模型自己去缩。模型按描述以为不必管，就卡住了。
+   *
+   * 这两条断言钉的是「描述不许声称本仓不做的行为」。
+   */
+  it("read 的描述如实说明它也能读图、但没有大小上限（不能把模型支开）", () => {
+    const tools = buildTools();
+    const read = tools.find((tool) => tool.name === TOOL_NAMES.read);
+
+    expect(read?.description).toContain("read_image");
+    // 关键的诚实之处：承认 read 读得到图，并点明它的风险
+    expect(read?.description).toContain("没有大小上限");
+    // 不能再出现那句与实现相反的话
+    expect(read?.description).not.toContain("看不到图");
+  });
+
+  it("read_image 的描述不承诺自动缩放（本仓没有缩放实现）", () => {
+    const tools = buildTools();
+    const readImage = tools.find((tool) => tool.name === TOOL_NAMES.readImage);
+
+    expect(readImage?.description).toContain("rejected");
+    expect(readImage?.description).not.toContain("downscaled automatically");
+  });
+
   it("自建工具的 name 与 label 一致", () => {
     const tools = buildTools();
     for (const name of CUSTOM_TOOLS) {
@@ -204,5 +236,74 @@ describe("网络工具", () => {
     expect(calls.length).toBeGreaterThanOrEqual(3);
     const webArgs = source.match(/deps\.web,?\s*\)|deps\.web,/g) ?? [];
     expect(webArgs.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/**
+ * `restrictTools` 的「空允许表」语义。
+ *
+ * 这是个踩过的坑，值得单独钉住：旧实现在空清单时**原样返回整张表**，理由是「空数组表示
+ * 没指定」。但子智能体的调用路径上，空清单还可能来自「用户写的工具名全拼错了」——
+ * 于是过滤后为空 → 原样返回 → 子智能体拿到**全部**工具（连浏览器与作业工具都在内）。
+ *
+ * 现在调用方（runtime）永远传 `resolveSubagentTools(...)` 的**显式**结果，
+ * 所以空就是纯粹的「一个都不给」，不再有歧义。
+ */
+describe("restrictTools", () => {
+  const tools = buildTools();
+
+  it("按名字过滤，只保留清单里的", () => {
+    const narrowed = restrictTools(tools, [TOOL_NAMES.read, TOOL_NAMES.grep]);
+    expect(narrowed.map((tool) => tool.name).sort()).toEqual(
+      [TOOL_NAMES.read, TOOL_NAMES.grep].sort(),
+    );
+  });
+
+  it("空清单 = 什么都不给（不是「不限制」）", () => {
+    expect(restrictTools(tools, [])).toEqual([]);
+  });
+
+  it("不认识的名字不匹配任何工具（拼错不会顺便放行）", () => {
+    expect(restrictTools(tools, ["teleport"])).toEqual([]);
+  });
+});
+
+/**
+ * 黑名单制的端到端语义：`disabledTools` → 有效工具清单。
+ *
+ * 这是本次语义反转的核心，所以把「空清单 = 全给」与「禁用即不给」两条都钉住 ——
+ * 它们与旧白名单制**正好相反**，是最容易被后来者按旧直觉改错的地方。
+ */
+describe("子智能体工具的黑名单制", () => {
+  it("禁用清单为空 = 拿到全部可分配工具（含 bash / edit / write）", () => {
+    const effective = resolveSubagentTools([]);
+    expect(effective).toContain("bash");
+    expect(effective).toContain("edit");
+    expect(effective).toContain("write");
+    expect(effective).toHaveLength(SUBAGENT_ASSIGNABLE_TOOLS.length);
+  });
+
+  it("禁用的工具不在有效清单里，其余的照旧可用", () => {
+    const effective = resolveSubagentTools(["bash", "edit", "write"]);
+    expect(effective).not.toContain("bash");
+    expect(effective).not.toContain("edit");
+    expect(effective).not.toContain("write");
+    expect(effective).toContain("read");
+    expect(effective).toContain("grep");
+  });
+
+  it("不可分配的工具永远不给，无论禁用清单怎么写", () => {
+    // 空禁用清单已经是最宽松的情形，ask_user / 作业 / 浏览器 / Task 系列仍不在结果里
+    const effective = resolveSubagentTools([]) as readonly string[];
+    for (const name of ["ask_user", "bash_background", "browser_open", "Task"]) {
+      expect(effective).not.toContain(name);
+    }
+  });
+
+  it("全禁用是合法配置（结果为空，交给 restrictTools 得到空工具表）", () => {
+    expect(resolveSubagentTools([...SUBAGENT_ASSIGNABLE_TOOLS])).toEqual([]);
+    expect(
+      restrictTools(buildTools(), resolveSubagentTools([...SUBAGENT_ASSIGNABLE_TOOLS])),
+    ).toEqual([]);
   });
 });

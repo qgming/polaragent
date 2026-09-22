@@ -12,8 +12,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_SUBAGENT_TOOLS,
   MAX_CONCURRENT_SUBAGENT_RUNS,
+  SUBAGENT_MUTATING_TOOLS,
+  SUBAGENT_READ_ONLY_TOOLS,
   type SubagentDefinition,
   type SubagentEventEnvelope,
   type SubagentRun,
@@ -66,7 +67,7 @@ function definition(name = "scout"): SubagentDefinition {
     name,
     description: `${name} 的说明`,
     prompt: "你是子智能体，只做被派的那件事。",
-    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
   };
 }
@@ -87,7 +88,7 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: [...DEFAULT_SUBAGENT_TOOLS],
+    tools: [...SUBAGENT_READ_ONLY_TOOLS],
     turns: 0,
     toolCalls: 0,
     ...patch,

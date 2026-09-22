@@ -91,7 +91,15 @@ const DESCRIPTION =
   "when a tool already returned the image to you in its result.\n\n" +
   "Do not install image libraries or write scripts to decode, resize or make thumbnails of an image " +
   "merely to inspect it — this tool is the supported route. " +
-  "Large images are downscaled automatically before they reach you.\n\n" +
+  /**
+   * 这里**不要**承诺自动缩放。本工具没有任何缩放实现（只有 MAX_IMAGE_BYTES 那道拒绝），
+   * 超过上限时它的实际行为是报错并让模型自己去缩小 —— 描述与行为不一致会把模型卡住：
+   * 它按描述以为「大图会被自动处理」，于是既不缩小、也不换路。
+   *
+   * （那句「会自动缩小」是从内核 read 的描述抄来的 —— 内核**注入了 imageProcessor 时**
+   * 确实会缩，而 Oint 从未注入。见 tools/read.ts 的说明。）
+   */
+  "Images over the size limit are rejected — the error tells you to downscale it first.\n\n" +
   "Requires the current model to accept image input. Independent files may be read in small batches.";
 
 /** 读到的图片：给界面的结构化读数（全部是可结构化克隆的原始类型） */

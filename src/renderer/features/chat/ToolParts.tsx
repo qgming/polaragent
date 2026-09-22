@@ -1369,6 +1369,23 @@ function StepDetail({ index, open }: { index: number; open: boolean }) {
 }
 
 /**
+ * 从 part 的 `providerMetadata` 里取运行期间的输出快照。
+ *
+ * 这是主进程经 `part-output` 事件送来的（内核 `tool_update` 的累计快照），
+ * 由 message-converter 放进 assistant-ui 的 `providerMetadata` 槽位 ——
+ * 自造字段会在归一化时被丢掉，而 `artifact` 已经被工具 details 占用。
+ *
+ * 取不到就返回 undefined（绝大多数工具不产出流式输出），组件据此不渲染预览。
+ */
+function partialOutput(providerMetadata: unknown): string | undefined {
+  if (typeof providerMetadata !== "object" || providerMetadata === null) return undefined;
+  const oint = (providerMetadata as Record<string, unknown>).oint;
+  if (typeof oint !== "object" || oint === null) return undefined;
+  const value = (oint as Record<string, unknown>).partialOutput;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
  * 单个工具调用：折叠行**统一**走官方 ToolCall，成功与失败的差别只体现在它的收尾标记与行色上
  * （`isError` → 红叉 + 整行转红）。展开区的内容由 `resolveToolDetail` 决定：
  *
@@ -1442,6 +1459,7 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
       isError={isError}
       open={open}
       onOpenChange={setOpen}
+      output={partialOutput(props.providerMetadata)}
       detail={
         <ResolvedDetail
           toolName={props.toolName}

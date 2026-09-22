@@ -52,6 +52,14 @@ interface PartBufferEntry {
   textDelta: string;
   reasoningDelta: string;
   argsDelta: string;
+  /**
+   * 工具运行期间的输出快照（`part-output`）。
+   *
+   * 与上面三个「增量」字段不同，它是**替换**语义：内核给的是累计快照，
+   * 且 shell 捕获按 tail 保留（头部会被丢掉），所以「取新增部分」算不出来。
+   * 因此这里只保留**最后一份**，flush 时整个覆盖 `part.partialOutput`。
+   */
+  outputText?: string;
 }
 
 /** sessionId → messageId → partIndex → 待提交状态 */
@@ -111,6 +119,21 @@ function bufferUpsert(
   entry.textDelta = "";
   entry.reasoningDelta = "";
   entry.argsDelta = "";
+  /**
+   * 工具输出快照也一并清掉：`part-upsert` 是权威全量，它带的 `partialOutput`
+   *（工具结束时通常已经没有）优先于缓冲里那份陈旧的。
+   */
+  entry.outputText = undefined;
+}
+
+/** 工具运行期间的输出快照：**覆盖**而非追加（见 PartBufferEntry.outputText） */
+function bufferOutput(sessionId: string, messageId: string, partIndex: number, text: string): void {
+  let bySession = partBuffers.get(sessionId);
+  if (bySession === undefined) {
+    bySession = new Map();
+    partBuffers.set(sessionId, bySession);
+  }
+  bufferEntry(bySession, messageId, partIndex).outputText = text;
 }
 
 function bufferDelta(
@@ -165,8 +188,14 @@ function appendDeltas(part: ChatPart, entry: PartBufferEntry): ChatPart | null {
     return { ...part, text: part.text + entry.reasoningDelta };
   }
   if (part.type === "tool-call") {
-    if (entry.argsDelta === "") return null;
-    return { ...part, argsText: part.argsText + entry.argsDelta };
+    // 参数增量与输出快照可能同时待提交：两者是不同的字段，都要落
+    const output = entry.outputText;
+    if (entry.argsDelta === "" && output === undefined) return null;
+    return {
+      ...part,
+      ...(entry.argsDelta === "" ? {} : { argsText: part.argsText + entry.argsDelta }),
+      ...(output === undefined ? {} : { partialOutput: output }),
+    };
   }
   return null;
 }
@@ -909,6 +938,14 @@ export const useChatStore = create<ChatState>()((set, get) => ({
      */
     if (event.type === "part-delta") {
       bufferDelta(sessionId, event.messageId, event.partIndex, event.kind, event.delta);
+      scheduleFlush();
+      if (bufferedEventCount() > STREAM_BUFFER_LIMIT) flushStreamEvents();
+      return;
+    }
+    if (event.type === "part-output") {
+      // 与 part-delta 共用同一个合帧窗口：主进程已经把频率压到 200ms 一次，
+      // 这里再合一次是为了与同窗口内的 part-upsert 合并成**一次**渲染
+      bufferOutput(sessionId, event.messageId, event.partIndex, event.text);
       scheduleFlush();
       if (bufferedEventCount() > STREAM_BUFFER_LIMIT) flushStreamEvents();
       return;

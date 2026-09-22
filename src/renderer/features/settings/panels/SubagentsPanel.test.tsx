@@ -15,10 +15,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import i18n from "@/renderer/i18n";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { Settings } from "@/shared/contracts/settings";
-import type {
-  SubagentCatalog,
-  SubagentInfo,
-  SubagentWriteRequest,
+import {
+  SUBAGENT_ASSIGNABLE_TOOLS,
+  type SubagentCatalog,
+  type SubagentInfo,
+  type SubagentWriteRequest,
 } from "@/shared/contracts/subagent";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { SubagentsPanel } from "./SubagentsPanel";
@@ -34,7 +35,9 @@ beforeAll(async () => {
 const USER_ROW: SubagentInfo = {
   name: "helper",
   description: "改代码的小工",
-  tools: ["read", "bash"],
+  // 禁用清单为空 = 全部可用；effectiveTools 是解析结果，面板用它算「可写文件」徽标
+  disabledTools: [],
+  effectiveTools: [...SUBAGENT_ASSIGNABLE_TOOLS],
   model: null,
   thinkingLevel: null,
   source: "user",
@@ -46,7 +49,9 @@ const USER_ROW: SubagentInfo = {
 const BUILTIN_ROW: SubagentInfo = {
   name: "explore",
   description: "调研代码库",
-  tools: ["read", "grep", "glob"],
+  // 只读：禁掉全部可写工具（黑名单制下「只读」必须显式声明）
+  disabledTools: ["bash", "edit", "write"],
+  effectiveTools: ["read", "read_image", "grep", "glob", "todo", "web_search", "web_fetch"],
   model: { serviceId: "svc", modelId: "m1" },
   thinkingLevel: "medium",
   source: "builtin",
@@ -212,7 +217,8 @@ describe("SubagentsPanel", () => {
       originalName: "helper",
       name: "helper",
       prompt: "先看再改",
-      tools: ["read", "bash"],
+      // 黑名单制：保存的是**禁用清单**（这一行没禁用任何工具）
+      disabledTools: [],
     });
   });
 });

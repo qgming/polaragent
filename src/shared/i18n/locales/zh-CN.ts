@@ -393,8 +393,9 @@ export const zhCN = {
     subagentDescriptionHint: "一句话说明什么时候该把任务派给它",
     subagentPrompt: "系统提示",
     subagentPromptHint: "子智能体的全部行为说明；它的最终回复就是交回给主 AI 的汇报",
-    subagentTools: "可用工具",
-    subagentToolsHint: "默认为只读三件套；勾选写类工具意味着它会改动你的文件",
+    subagentTools: "禁用的工具",
+    subagentToolsHint:
+      "勾上的工具这个子智能体不能用；不勾即全部可用（含 bash / edit / write，也就是它会改你的文件）",
     subagentToolsReadOnly: "只读",
     subagentToolsCanWrite: "可写文件",
     subagentModel: "模型",

@@ -24,7 +24,7 @@
 
 Oint 是面向本地工作流的桌面 Agent 客户端：把 pisdk 的能力原样呈现，只在其上补少量只读工具。
 
-- **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 批量转发。
+- **对话**：assistant-ui Thread ↔ 主进程的 AgentHarness（每会话一个），事件经 IPC 逐条转发。
 - **工具**：内核原生四件套 `bash`/`read`/`write`/`edit` + 自建 `grep`/`glob`/`todo` +
   **网络检索 `web_search`/`web_fetch`** + **内置浏览器操作**
   `browser_*`（打开网址、读页面、点击、输入、截图、看控制台）；
@@ -52,7 +52,7 @@ Oint 是面向本地工作流的桌面 Agent 客户端：把 pisdk 的能力原�
 └────────────────────────────────────────────────────────────┘
 ```
 
-关键设计：**主进程独占 pisdk**（其资源文件依赖 `import.meta.url`，因此主进程构建必须外置依赖，不能内联打包）；渲染进程通过类型化 IPC 通道消费，事件按批下发。
+关键设计：**主进程独占 pisdk**（其资源文件依赖 `import.meta.url`，因此主进程构建必须外置依赖，不能内联打包）；渲染进程通过类型化 IPC 通道消费。事件**逐条**下发（`emitSafe` → `webContents.send`，一对一）；流式增量的合帧在渲染层做（`chat-store` 的 32ms 合帧缓冲），终端通道则另有主进程侧的按字节合帧。
 
 目录：
 
@@ -125,9 +125,16 @@ Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（
 └── cache/                  # 可再生成的缓存（models.dev 模型元数据）
 ```
 
-> ⚠️ `settings.json`（含 API Key）与 `permission-rules.json` 也在这个目录里，而该目录当前位于模型的
-> 可读/可写范围内 —— 审计发现这是一条提权链（模型可改写 `permissionMode` 关闭全部审批）。
-> 详见 `docs/audit-report.md` 的 C-1。
+> ⚠️ `settings.json`（含 API Key）与 `permission-rules.json` 也在这个目录里。
+>
+> **写侧已收口**：会话的路径守卫（`sessionAllowedRoots`）**不放行数据根本身**，只放行
+> `skills` / `prompts` / `subagents` 三个子目录 + 随包分发的 `resources/skills` + 系统临时目录，
+> 所以 `read` / `write` / `edit` 够不到凭据与审批规则（有测试钉住）。
+> 这也意味着**数据根不能整个交给模型** —— 加允许根时要按子目录逐项放行。
+>
+> **仍有未修的越界读写路径**（`grep`/`glob` 不经过路径守卫、路径守卫不做 realpath、
+> 「始终允许」按命令首词授权、`bash` 不受守卫且子进程继承全量环境）——
+> 详见 `docs/architecture-review-0.87.md` 第二节，那里有逐条的机制与影响。
 
 技能、魔法提示与子智能体定义除了数据目录里的固定文件夹，还会扫描**会话工作目录下的 `.oint/` 同名子目录**
 （项目级，跟随会话的 cwd，同样无需配置）。

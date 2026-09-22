@@ -157,10 +157,14 @@ describe("session-stats 折叠", () => {
 });
 
 describe("上下文分解", () => {
-  it("估算按 4 字符 / token 折算，至少 1", () => {
-    expect(estimateTokens("")).toBe(1);
+  it("文本估算与内核同口径：ceil(len/4)，空串为 0", () => {
+    // 这几条钉的是「不再自算」：早先本仓用 max(1, round(len/4))，
+    // 与内核的 ceil 在边界上差 1，且把空串算成 1（内核算 0）。
+    expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("abcd")).toBe(1);
     expect(estimateTokens("a".repeat(400))).toBe(100);
+    // ceil 而非 round：5 字符是 2 个 token，不是 1
+    expect(estimateTokens("abcde")).toBe(2);
   });
 
   it("工具定义估算：空清单为 0，随描述与 schema 增长", () => {
@@ -171,6 +175,16 @@ describe("上下文分解", () => {
     ]);
     expect(bare).toBeGreaterThan(0);
     expect(rich).toBeGreaterThanOrEqual(bare);
+  });
+
+  it("工具段按内核口径计入 JSON 外壳（不再逐字段拼文本）", () => {
+    // 内核是把整个 tools 数组序列化后折算，所以同一份输入必然比
+    // 「逐个工具拼 name+description+schema」的旧口径大 —— 旧口径实测低估约 24%
+    const tools = [{ name: "read", description: "读文件" }];
+    const serialized = JSON.stringify([
+      { name: "read", description: "读文件", parameters: { type: "object", properties: {} } },
+    ]);
+    expect(estimateToolsTokens(tools)).toBe(Math.ceil(serialized.length / 4));
   });
 
   it("schema 无法序列化时不抛错", () => {
