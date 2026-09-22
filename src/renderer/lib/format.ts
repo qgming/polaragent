@@ -71,15 +71,27 @@ export function formatTokens(n: number): string {
   return `${trimZero((n / 1_000_000).toFixed(2))}M`;
 }
 
-/** 时长缩写：0.5s / 1.2s / 45s / 2m3s / 5m */
+/**
+ * 时长缩写：0.5s / 1.2s / 45s / 2m3s / 5m / 11h7m。
+ *
+ * 小时这一档是必须的：作业活得比一轮久得多，一个挂了几小时的进程按分钟报会变成
+ * `667m41s` —— 那个读数是**对的**但没法读（人脑要自己去除以 60 才知道它快 11 小时了）。
+ * 分钟档却保留 `2m3s` 这种带秒的写法：那是「刚刚过去的一小段」，秒数有意义；
+ * 到了小时档秒数已经没有信息量，只留小时与分钟。
+ */
 export function formatDuration(ms: number): string {
   const totalSeconds = ms / 1000;
   if (totalSeconds < 10) return `${trimZero(totalSeconds.toFixed(1))}s`;
   if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
   const total = Math.round(totalSeconds);
   const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return seconds === 0 ? `${minutes}m` : `${minutes}m${seconds}s`;
+  if (minutes < 60) {
+    const seconds = total % 60;
+    return seconds === 0 ? `${minutes}m` : `${minutes}m${seconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes === 0 ? `${hours}h` : `${hours}h${restMinutes}m`;
 }
 
 /** 字节数缩写：512B / 1.5KB / 3.2MB / 1.1GB */

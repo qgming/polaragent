@@ -40,6 +40,7 @@ const DETAIL_COMPONENTS = {
   WriteDetail: "self",
   AskDetail: "self",
   BrowserDetail: "self",
+  ImageDetail: "self",
   TodoDetail: "self",
   WebSearchDetail: "self",
   WebFetchDetail: "self",
@@ -62,8 +63,16 @@ describe("每个工具详情都有 paper 外壳（自己画，或交给自带外
         : `${name} 把外壳交给自带 paper 的元素`,
       () => {
         const body = functionBody(name);
-        const returned = body.slice(body.indexOf("return ("));
-        expect(returned, `${name} 里找不到 return (`).not.toBe("");
+        /**
+         * 找 **JSX 的那个 return**，不能用 `indexOf("return (")` ——
+         * 那个前缀同时命中 `useEffect` 清理函数的 `return () => {…}`，
+         * 于是「组件里有 effect」会把它误判成「根元素没有 paper」（实测踩过）。
+         * JSX 的 return 后面跟的是 `<`（`return (` 换行后接标签），
+         * 清理函数后面跟的是 `)`，这一条能把两者干净地分开。
+         */
+        const jsxReturn = /return \(\s*</.exec(body);
+        expect(jsxReturn, `${name} 里找不到返回 JSX 的 return (`).not.toBeNull();
+        const returned = body.slice(jsxReturn?.index ?? 0);
 
         if (kind === "self") {
           // paper 与 rounded-2xl 要出现在**根元素**那一处 class 里：

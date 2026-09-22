@@ -63,10 +63,25 @@ describe("formatDuration", () => {
     expect(formatDuration(45_000)).toBe("45s");
   });
 
-  it("1 分钟以上为 XmYs", () => {
+  it("1 分钟以上、1 小时以内为 XmYs", () => {
     expect(formatDuration(60_000)).toBe("1m");
     expect(formatDuration(123_000)).toBe("2m3s");
-    expect(formatDuration(3_600_000)).toBe("60m");
+    expect(formatDuration(3_599_000)).toBe("59m59s");
+  });
+
+  /**
+   * 小时这一档是补上的：作业活得比一轮久得多，一个挂了几小时的进程按分钟报会变成
+   * `667m41s` —— 读数是**对的**（那正是用户截图里的原始毛病）但没法读，
+   * 人脑要自己去除以 60 才知道它快 11 小时了。
+   *
+   * 到了小时档不再带秒：那个精度已经没有信息量了。
+   */
+  it("1 小时以上为 XhYm（不再按分钟累计）", () => {
+    expect(formatDuration(3_600_000)).toBe("1h");
+    expect(formatDuration(3_660_000)).toBe("1h1m");
+    // 截图里的那个读数：667m41s = 11h7m41s
+    expect(formatDuration(40_061_000)).toBe("11h7m");
+    expect(formatDuration(86_400_000)).toBe("24h");
   });
 });
 

@@ -17,7 +17,7 @@ import { useTerminalStore } from "./terminal-store";
 /**
  * 终端面板：给用户敲的持久终端（真 PTY）。
  *
- * 与「后台作业」面板（JobPanel）的区别：作业面板显示的是模型起的一次性后台进程，
+ * 与对话流里的**后台作业**状态 pill 的区别：那条 pill 显示的是模型起的一次性后台进程，
  * 没有 stdin；这里是交互式 shell，可输入、可 Ctrl+C、可改尺寸。
  *
  * 三件套（主进程侧实现，见 main/terminal/service.ts）在渲染层的一侧表现：
@@ -570,7 +570,13 @@ function TerminalTab({
           event.stopPropagation();
           onClose();
         }}
-        className="rounded p-0.5 text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+        className={cn(
+          "rounded p-0.5 text-ink-4 transition-colors",
+          // × 一直显示（与右侧栏的标签条同一条口径，见 RightSidebar 的说明）：
+          // 静止时是淡的，hover 到标签或按钮自己才转深
+          "hover:bg-foreground/[0.08] hover:text-foreground focus-visible:ring-1 focus-visible:ring-foreground/20",
+          active ? "text-ink-3" : "group-hover:text-ink-3",
+        )}
       >
         <X className="size-3" />
       </button>

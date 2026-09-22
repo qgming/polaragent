@@ -4,10 +4,11 @@
  * 分两层测：
  * - 纯函数层用**手搓的模型对象**驱动，把 thinkingLevelMap 的几种形态钉死（这是档位语义的
  *   唯一依据，也是本功能最容易出错的地方）；
- * - 末尾一条走**真实目录**，验证 39 个 provider 子路径真的能 import —— 那正是「打包裁剪 /
- *   内核升级改了文件名」这类事故的唯一探测手段。
+ * - 末尾几条走**真实目录**，验证 pi-ai 的 `providers/all` 枚举出的每个 provider 都真的进了
+ *   索引 —— 那正是「依赖升级新增/改动了 provider 目录」这类事故的唯一探测手段。
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, it } from "vitest";
 import {
   buildKnownModelIndex,
@@ -18,7 +19,7 @@ import {
   knownThinkingLevels,
   matchInKnownIndex,
   matchKnownModel,
-  PROVIDER_CATALOG_COUNT,
+  providerCatalogCount,
 } from "./known-models";
 
 /** 造一个最小可用的 pi-ai 模型 */
@@ -137,7 +138,7 @@ describe("knownCapabilities", () => {
 });
 
 describe("真实目录（防「子路径失效」这类事故）", () => {
-  it("能加载 39 个 provider 目录并匹配到已知模型", async () => {
+  it("能加载全部 provider 目录并匹配到已知模型", async () => {
     const hit = await matchKnownModel("claude-opus-4-5");
     expect(hit).not.toBeNull();
     expect(hit?.input).toContain("image");
@@ -165,17 +166,33 @@ describe("真实目录（防「子路径失效」这类事故）", () => {
     expect(await matchKnownModel("Claude-Opus-4-5")).not.toBeNull();
   }, 30000);
 
-  it("加载器表是完整的：39 个子路径都贡献了模型（某个失效时这里会红）", async () => {
-    // 39 = node_modules/@earendil-works/pi-ai/dist/providers/*.models.d.ts 的数量
-    expect(PROVIDER_CATALOG_COUNT).toBe(39);
+  it("目录覆盖全部内置 provider：每个 provider 的每个模型都能匹配到", async () => {
+    // provider 清单直接来自 pi-ai 的 providers/all，数量与上游一致（升级新增 provider 自动跟上）
+    expect(await providerCatalogCount()).toBe(getBuiltinProviders().length);
     // 索引里的键含 provider/id 与归一化形式，数量是模型数的数倍；
     // 用下限兜住「少加载了几个 provider」这种静默退化
     expect(await knownModelCount()).toBeGreaterThan(2000);
-  }, 30000);
+
+    /**
+     * 逐条反查：任何一个 provider 目录没进索引，它下面的模型就一条都匹配不到。
+     *
+     * 这条断言是手写清单被删掉之后**唯一**的守卫 —— 以前漏一个子路径只会少几百个模型、
+     * 不报任何错，现在至少在这里会红。索引加载一次即缓存，逐条走 matchKnownModel 不重复解析。
+     */
+    const unreachable: string[] = [];
+    for (const provider of getBuiltinProviders()) {
+      for (const model of getBuiltinModels(provider)) {
+        if ((await matchKnownModel(`${provider}/${model.id}`)) === null) {
+          unreachable.push(`${provider}/${model.id}`);
+        }
+      }
+    }
+    expect(unreachable).toEqual([]);
+  }, 60000);
 
   it("列表靠后的 provider 同样被加载（漏掉尾部不会报错，只能靠断言发现）", async () => {
     // zai-coding-cn 在表的前段；amazon-bedrock 在表尾（id 带点与冒号，顺带覆盖归一化匹配）
-    expect(await matchKnownModel("zai-coding-cn/glm-4.7")).not.toBeNull();
+    expect(await matchKnownModel("zai-coding-cn/glm-5.3")).not.toBeNull();
     expect(await matchKnownModel("amazon-bedrock/anthropic.claude-fable-5")).not.toBeNull();
   }, 30000);
 });

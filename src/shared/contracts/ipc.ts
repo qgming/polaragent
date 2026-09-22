@@ -121,6 +121,8 @@ export const IPC = {
   files: {
     listDirectory: "files:list-directory",
     readFile: "files:read-file",
+    /** 读一张图片（返回可直接显示的 dataUrl）；供 read_image 的详情按需加载 */
+    readImage: "files:read-image",
   },
   review: {
     summary: "review:summary",

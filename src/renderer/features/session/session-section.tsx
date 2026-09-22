@@ -17,9 +17,9 @@ import { useCopyToClipboard } from "@/renderer/hooks/use-copy-to-clipboard";
 import { cn } from "@/renderer/lib/utils";
 
 /**
- * 会话面板里的一个可折叠区块（浮层里五块共用这一个外壳）。
+ * 会话面板里的一个可折叠区块（浮层里三块共用这一个外壳：环境信息 / 产物 / 参考）。
  *
- * 与 TodoPanel / JobPanel 原来贴在输入框上沿的那两条是同一套写法（整行可点的
+ * 与 TodoPanel 原来贴在输入框上沿的那条是同一套写法（整行可点的
  * CollapsibleTrigger + 右侧进度 + 会翻转的 chevron + collapsePanel 键帧动画），
  * 只是不再自带负外边距与圆角 —— 那两件事由 composer 的面负责，这里由浮层的面负责。
  *

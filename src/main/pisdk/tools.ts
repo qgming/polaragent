@@ -28,6 +28,7 @@ import type { WebService } from "../web/types";
 import { ASK_TOOL_NAME } from "./tools/ask";
 import { createBrowserTools } from "./tools/browser";
 import { createReadToolWithLineNumbers } from "./tools/read";
+import { createReadImageTool, READ_IMAGE_TOOL_NAME } from "./tools/read-image";
 import { createGlobTool, createGrepTool } from "./tools/search";
 import { createTodoTool, type TodoToolContext } from "./tools/todo";
 import { createWebTools } from "./tools/web";
@@ -45,6 +46,8 @@ export type AppToolContext = TodoToolContext;
 export const TOOL_NAMES = {
   bash: "bash",
   read: "read",
+  /** 读一张图片（用户上传的 / 项目里的 / 截图工具产出的），名字取自 tools/read-image.ts */
+  readImage: READ_IMAGE_TOOL_NAME,
   write: "write",
   edit: "edit",
   grep: "grep",
@@ -69,7 +72,9 @@ const READ_DESCRIPTION =
   "行号是给你引用位置用的阅读辅助，**不是文件内容**：edit 的 oldText/newText 与 write 的正文都不要把它带上（见 edit 的说明）。\n\n" +
   "什么时候用：**修改任何文件之前先读它**；需要看完整实现或其上下文时。\n" +
   "什么时候不要用：只想定位某个符号或字符串在哪 → 用 grep；文件很大而只需要片段 → 先用 grep 拿到行号，" +
-  "再带 offset/limit 读那一段；只是想确认文件存在或看目录结构 → 用 glob。";
+  "再带 offset/limit 读那一段；只是想确认文件存在或看目录结构 → 用 glob。\n" +
+  "**要看的是一张图片（png/jpg/webp/gif）时用 read_image**：read 只回一句类型说明，看不到图。" +
+  "SVG 不是图片而是文本，仍用 read。";
 
 const WRITE_DESCRIPTION =
   "把一个文件的全部内容写入磁盘，已存在则整体覆盖。\n\n" +
@@ -183,6 +188,15 @@ export function buildTools(
       description: BASH_DESCRIPTION,
     },
     { ...createReadToolWithLineNumbers<AppToolContext>(), description: READ_DESCRIPTION },
+    /**
+     * read_image 紧挨着 read：两者是同一个问题的两条路（读文件），只是结果形态不同
+     *（文本 vs 图片）。放在一起，模型在「这个路径该用哪个」上的选择最短。
+     *
+     * 它**无条件装配**（不像 browser / web 需要注入实现）：只依赖 ExecutionEnv，
+     * 而那个所有会话都有。图片能力本身由**模型**决定 —— 不支持的模型会在收到
+     * image 块时报错，工具说明里已经写明了这条前提。
+     */
+    createReadImageTool<AppToolContext>(),
     { ...createWriteTool<AppToolContext>(), description: WRITE_DESCRIPTION },
     { ...createEditTool<AppToolContext>(), description: EDIT_DESCRIPTION },
     createGrepTool<AppToolContext>(),

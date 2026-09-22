@@ -150,9 +150,6 @@ export const zhCN = {
     webSourceCount: "{{count}} 条来源",
     webTruncated: "已截断",
     webStatus: "HTTP {{status}}",
-    // 后台作业面板（贴在输入框上方，与待办条同区）
-    jobs: "后台作业",
-    jobsPanelToggle: "展开或收起后台作业",
     inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
     newChat: "新建对话",
     welcome: "今天想做点什么？",
@@ -622,6 +619,8 @@ export const zhCN = {
     referencesToggle: "展开或收起参考",
     referencesEmpty: "本次会话还没有参考",
     attachment: "图片附件",
+    /** 文件足迹行的无障碍名称：点它在右侧栏打开这个文件 */
+    openFile: "在右侧栏打开 {{path}}",
   },
   /*
     工具动词表：**收尾态用光杆动词，进行态用「正在 + 动词」**。
@@ -634,6 +633,8 @@ export const zhCN = {
   tools: {
     read: "读取",
     readActive: "正在读取",
+    readImage: "查看图片",
+    readImageActive: "正在查看图片",
     write: "写入",
     writeActive: "正在写入",
     edit: "编辑",
@@ -710,6 +711,13 @@ export const zhCN = {
     browserRaw: "原始结果",
     /** web_fetch 卡片里折叠起来的页面正文 */
     webFetchBody: "页面正文",
+    /**
+     * 图片详情读不出图片时的一句话。
+     *
+     * 必须把**原因**带出来（文件被删了 / 越界 / 太大 / 不是支持的格式）：
+     * 那是一张空图框之外唯一能给用户的线索。
+     */
+    imageUnavailable: "这张图片现在读不出来：{{reason}}",
   },
   errors: {
     generic: "出错了，请稍后重试",

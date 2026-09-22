@@ -4,12 +4,19 @@
  * 为什么要用这份目录，而不是只看 models.dev：
  * - models.dev 只有一个 `reasoning: boolean`，**没有档位信息** —— 无法回答
  *   「这个模型支不支持 minimal / high」；
- * - pi-ai 的 `dist/providers/data/*.json`（39 个 provider）里每个模型都带
+ * - pi-ai 的 `dist/providers/data/*.json`（41 个 provider）里每个模型都带
  *   `thinkingLevelMap`，`null` 明确表示「该档位不支持」，这才是权威档位数据；
  * - 内核自己就按它做降级（`clampThinkingLevel`），我们用同一份数据才能与内核口径一致。
  *
- * 加载策略：懒加载 + 一次缓存。39 个目录合计约 700 KB JSON（openrouter 一份就 164 KB），
- * 而匹配只发生在「用户填模型 ID」这一刻，没有理由在启动时把它全解析一遍。
+ * 加载策略：**懒加载 + 一次缓存，且连 `providers/all` 本身都动态 import**。
+ * 目录合计约 1.4 MB JSON（openrouter 一份就 164 KB），而匹配只发生在「用户填模型 ID」
+ * 这一刻；`providers/all` 还会把 41 个 provider 工厂连同各自的 SDK 适配层一起拉进来
+ * （实测 ~190 ms），没有任何理由在主进程启动时付这个代价。
+ *
+ * provider 清单**不再手写**：改用 pi-ai 的 `getBuiltinProviders()` / `getBuiltinModels()`。
+ * 手写清单在 0.85.1 → 0.87.0 之间就漏掉了新增的 `meta` 与 `radius` 两个 provider，
+ * 而漏掉的后果是静默的 —— 用户填这两个 provider 的模型 id 时匹配不到档位。
+ * 交给上游枚举，升级时新增 provider 自动跟上。
  *
  * 匹配用的是自己的一套归一化（与 models-catalog.ts 同思路、独立实现）：pi-ai 的 id 不带
  * provider 前缀，所以额外准备 `<provider>/<id>` 与「只留字母数字」两种键。
@@ -19,89 +26,12 @@ import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-work
 import { ALL_THINKING_LEVELS, type ThinkingLevel } from "@/shared/contracts/common";
 import type { CatalogModality } from "@/shared/contracts/models";
 
-/** provider 目录加载器；返回该模块导出的整份目录对象（形状在 toModelList 里校验） */
-type CatalogLoader = () => Promise<unknown>;
+/** `@earendil-works/pi-ai/providers/all` 的静态类型，供动态 import 标注 */
+type BuiltinCatalog = typeof import("@earendil-works/pi-ai/providers/all");
 
-/**
- * 全部 provider 目录。顺序即优先级：同一个模型 id 出现在多个 provider 时先出现的赢，
- * 唯一例外见 buildKnownModelIndex（带 thinkingLevelMap 的会顶掉不带的 —— 那正是我们要的信息）。
- */
-const LOADERS: readonly CatalogLoader[] = [
-  async () => (await import("@earendil-works/pi-ai/providers/anthropic.models")).ANTHROPIC_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/openai.models")).OPENAI_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/google.models")).GOOGLE_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/google-vertex.models")).GOOGLE_VERTEX_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/deepseek.models")).DEEPSEEK_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/mistral.models")).MISTRAL_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/xai.models")).XAI_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/zai.models")).ZAI_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/zai-coding-cn.models")).ZAI_CODING_CN_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/minimax.models")).MINIMAX_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/minimax-cn.models")).MINIMAX_CN_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/moonshotai.models")).MOONSHOTAI_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/moonshotai-cn.models")).MOONSHOTAI_CN_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/kimi-coding.models")).KIMI_CODING_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/xiaomi.models")).XIAOMI_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/xiaomi-token-plan-ams.models"))
-      .XIAOMI_TOKEN_PLAN_AMS_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/xiaomi-token-plan-cn.models"))
-      .XIAOMI_TOKEN_PLAN_CN_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/xiaomi-token-plan-sgp.models"))
-      .XIAOMI_TOKEN_PLAN_SGP_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/qwen-token-plan.models")).QWEN_TOKEN_PLAN_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/qwen-token-plan-cn.models"))
-      .QWEN_TOKEN_PLAN_CN_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/qwen-token-plan-individual.models"))
-      .QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/ant-ling.models")).ANT_LING_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/groq.models")).GROQ_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/cerebras.models")).CEREBRAS_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/baseten.models")).BASETEN_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/fireworks.models")).FIREWORKS_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/nvidia.models")).NVIDIA_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/together.models")).TOGETHER_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/github-copilot.models")).GITHUB_COPILOT_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/openai-codex.models")).OPENAI_CODEX_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/huggingface.models")).HUGGINGFACE_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/cloudflare-workers-ai.models"))
-      .CLOUDFLARE_WORKERS_AI_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/cloudflare-ai-gateway.models"))
-      .CLOUDFLARE_AI_GATEWAY_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/vercel-ai-gateway.models"))
-      .VERCEL_AI_GATEWAY_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/openrouter.models")).OPENROUTER_MODELS,
-  async () => (await import("@earendil-works/pi-ai/providers/opencode.models")).OPENCODE_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/opencode-go.models")).OPENCODE_GO_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/amazon-bedrock.models")).AMAZON_BEDROCK_MODELS,
-  async () =>
-    (await import("@earendil-works/pi-ai/providers/azure-openai-responses.models"))
-      .AZURE_OPENAI_RESPONSES_MODELS,
-];
-
-/** 目录对象 → 模型数组；只收「有字符串 id」的条目，目录结构变化时不抛错 */
-function toModelList(catalog: unknown): Model<Api>[] {
-  if (typeof catalog !== "object" || catalog === null) return [];
-  return Object.values(catalog).filter(
-    (item): item is Model<Api> => typeof (item as Model<Api> | null)?.id === "string",
-  );
+/** 动态加载上游 provider 枚举（见文件头：这项 import 约 190 ms，不能进启动路径） */
+function loadBuiltinCatalog(): Promise<BuiltinCatalog> {
+  return import("@earendil-works/pi-ai/providers/all");
 }
 
 /** 只留字母数字：处理 "claude-opus-4.5" 与 "claude-opus-4-5" 这种写法差异 */
@@ -174,13 +104,13 @@ let cached: Promise<Map<string, Model<Api>>> | null = null;
 
 async function loadIndex(): Promise<Map<string, Model<Api>>> {
   const models: Model<Api>[] = [];
-  // 逐个 try：某个 provider 的目录加载失败（打包裁剪、依赖升级改了文件名）不该让整个匹配失效
-  for (const load of LOADERS) {
+  // 逐个 try：某个 provider 的目录取值失败（打包裁剪、依赖升级改了结构）不该让整个匹配失效
+  for (const entry of await providerCatalog()) {
     try {
-      models.push(...toModelList(await load()));
+      models.push(...entry.models);
     } catch (error) {
       console.warn(
-        `[known-models] 加载 provider 目录失败：${error instanceof Error ? error.message : String(error)}`,
+        `[known-models] 加载 provider 目录失败（${entry.provider}）：${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -251,13 +181,32 @@ export async function matchKnownCapabilities(id: string): Promise<KnownCapabilit
 }
 
 /**
- * 目录加载器的数量。
+ * 上游 provider 枚举（provider 名 + 该 provider 的模型清单），懒加载一次。
  *
- * 暴露出来是给测试当守卫：`loadIndex` 对单个 provider 的失败只记警告，万一某个子路径改名 /
- * 被裁掉，表现是「静默少了几百个模型」而不是报错。测试拿它 + 模型总数一起断言，才能把这类
- * 事故变成红的。
+ * 抽出这一层是为了让 `providers/all` 只在真正要匹配时才被 import —— 见文件头。
  */
-export const PROVIDER_CATALOG_COUNT = LOADERS.length;
+let catalog: Promise<ReadonlyArray<{ provider: string; models: Model<Api>[] }>> | null = null;
+
+function providerCatalog(): Promise<ReadonlyArray<{ provider: string; models: Model<Api>[] }>> {
+  catalog ??= (async () => {
+    const all = await loadBuiltinCatalog();
+    return all.getBuiltinProviders().map((provider) => ({
+      provider,
+      models: [...all.getBuiltinModels(provider)],
+    }));
+  })();
+  return catalog;
+}
+
+/**
+ * 目录里的 provider 数量（由 pi-ai 的 `providers/all` 提供）。
+ *
+ * 暴露出来是给测试当守卫：单个 provider 取值失败只记警告，万一某个子路径改名 / 被裁掉，
+ * 表现是「静默少了几百个模型」而不是报错。测试拿它 + 模型总数一起断言，才能把这类事故变成红的。
+ */
+export async function providerCatalogCount(): Promise<number> {
+  return (await providerCatalog()).length;
+}
 
 /** 已加载目录里的模型条数（首次调用会触发全量加载） */
 export async function knownModelCount(): Promise<number> {

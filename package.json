@@ -29,6 +29,8 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "probe:csp": "node scripts/probe-csp.mjs",
     "probe:dev": "node scripts/probe-dev-render.mjs",
+    "probe:kernel": "node scripts/probe-upgrade-087.mjs",
+    "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -39,9 +41,9 @@
   "dependencies": {
     "@assistant-ui/react": "^0.15.18",
     "@assistant-ui/react-markdown": "^0.14.14",
-    "@earendil-works/pi-agent-core": "^0.85.1",
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-session-backend-sqlite-node": "^0.85.1",
+    "@earendil-works/pi-agent-core": "^0.87.0",
+    "@earendil-works/pi-ai": "^0.87.0",
+    "@earendil-works/pi-session-backend-sqlite-node": "^0.87.0",
     "@lydell/node-pty": "^1.2.0-beta.15",
     "@tailwindcss/vite": "^4.3.3",
     "@xterm/addon-fit": "^0.11.0",
@@ -67,7 +69,7 @@
     "tailwindcss": "^4.3.3",
     "tw-animate-css": "^1.4.0",
     "tw-shimmer": "^0.4.12",
-    "typebox": "1.3.7",
+    "typebox": "1.3.27",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

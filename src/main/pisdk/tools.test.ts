@@ -7,8 +7,14 @@ import { buildTools, TOOL_NAMES } from "./tools";
 
 /** 内核原生四件套：description 由 tools.ts 整体覆盖 */
 const NATIVE_TOOLS = ["bash", "read", "write", "edit"];
-/** 自建工具（不含浏览器族，也不含按会话注入的 ask_user） */
-const CUSTOM_TOOLS = ["grep", "glob", "todo"];
+/**
+ * 自建工具（不含浏览器族，也不含按会话注入的 ask_user）。
+ *
+ * `read_image` 在这里而不在 NATIVE_TOOLS：它不是内核那四件套，而是我们自己的实现
+ *（内核的 read 虽然也认图片，但回的是「说明文本 + image 块」，界面看不见、
+ * 模型也拿不到尺寸 —— 见 tools/read-image.ts 的文件头）。
+ */
+const CUSTOM_TOOLS = ["grep", "glob", "todo", "read_image"];
 /**
  * 浏览器工具名清单。
  *
@@ -45,7 +51,7 @@ function fakeAutomation(): BrowserAutomation {
 }
 
 describe("buildTools", () => {
-  it("默认返回内核四件套 + 三个自建工具：浏览器与 ask_user 都要调用方注入", () => {
+  it("默认返回内核四件套 + 四个自建工具：浏览器与 ask_user 都要调用方注入", () => {
     const tools = buildTools();
 
     expect(tools).toHaveLength(NATIVE_TOOLS.length + CUSTOM_TOOLS.length);

@@ -49,3 +49,30 @@ export interface FileContent {
   /** 文本按 UTF-8 解码时出现过替换字符：面板提示「可能是二进制文件」 */
   binary: boolean;
 }
+
+/**
+ * 读一张图片的结果。
+ *
+ * **为什么单独一个通道而不是复用 readFile**：`readFile` 是给等宽文本预览用的
+ *（它按 UTF-8 解码、二进制只回一句「这是二进制」），而图片要的是能直接塞进 `<img src>`
+ * 的形态。两者共用一个函数就得在里面按类型分支，调用方也分不清自己会拿到什么。
+ *
+ * `dataUrl` 是渲染层**唯一**能显示图片的形态：CSP 只放行 `img-src 'self' data: blob:`
+ *（见 main/app/window.ts），`file://` 会被拦掉。
+ *
+ * 数据量：图片是几 MB 级的，而这条通道只在**用户展开详情时**走一次（不常驻、不落盘）。
+ * 模型侧的 read_image 结果里刻意不含这份 dataUrl —— 它会随 part 写进会话库，
+ * 每读一张图就多几 MB。
+ */
+export interface ImageContent {
+  path: string;
+  /** 图片格式；按**内容**判定（扩展名可能是错的） */
+  mediaType: string;
+  /** 文件字节数 */
+  bytes: number;
+  /** 像素尺寸；头部解析不出来时缺省（界面据此不显示尺寸，而不是显示编的） */
+  width?: number;
+  height?: number;
+  /** `data:<mediaType>;base64,...`，可直接用于 <img src> */
+  dataUrl: string;
+}

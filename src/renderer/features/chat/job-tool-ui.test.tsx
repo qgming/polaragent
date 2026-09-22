@@ -31,7 +31,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  useChatStore.setState({ activeSessionId: "s1", jobsBySession: {} });
+  useChatStore.setState({
+    activeSessionId: "s1",
+    jobsBySession: {},
+    jobsReconciledSessions: {},
+  });
 });
 
 /** 作业快照（契约里的必填字段都在，测试按需覆盖） */
@@ -83,8 +87,12 @@ function renderPart({
 }
 
 /** 把作业塞进当前会话（模拟 job-changed 已经到过 / 补拉已完成） */
-function seed(jobs: JobInfo[]) {
-  useChatStore.setState({ activeSessionId: "s1", jobsBySession: { s1: jobs } });
+function seed(jobs: JobInfo[], sessionId = "s1") {
+  useChatStore.setState({
+    activeSessionId: sessionId,
+    jobsBySession: { [sessionId]: jobs },
+    jobsReconciledSessions: { [sessionId]: true },
+  });
 }
 
 describe("作业工具的状态 pill", () => {
@@ -99,14 +107,45 @@ describe("作业工具的状态 pill", () => {
     expect(screen.queryByText(/运行中/)).toBeNull();
   });
 
-  it("反过来同样成立：快照是终态、store 里还在跑时显示运行中", () => {
-    // 这条走的是「进程被重新拉起来」这类少见情形，但两条数据源的优先级只该有一份定义，
-    // 不能只在一个方向上对
-    seed([job()]);
+  /**
+   * 终态是既成事实，running 只可能是一条陈旧断言 —— 所以优先级**刻意不对称**。
+   *
+   * 这一条早先写的是「两个方向都要成立」，那是错的：同一次运行不可能从终态回到 running。
+   * 作业一旦结算就再也不会被拉起来（`jobs.start` 永远产生一条**新**作业，没有 resume），
+   * 所以「终态 vs running」这对矛盾里终态必然更可信。按「谁后到谁赢」处理，
+   * 等于允许一条陈旧断言把已经落定的结论重新翻回去 —— 正是本次要修的毛病。
+   */
+  it("终态不被 store 里的陈旧 running 盖回去", () => {
+    // 同一次运行（id 与 startedAt 都一致），store 那份却还写着 running
+    seed([job({ status: "running", startedAt: 1_000 })]);
 
-    renderPart({ artifact: { job: job({ status: "exited", exitCode: 0, endedAt: 3_000 }) } });
+    renderPart({
+      artifact: { job: job({ status: "exited", exitCode: 0, startedAt: 1_000, endedAt: 3_000 }) },
+    });
 
-    expect(screen.getByText(/运行中/)).toBeTruthy();
+    expect(screen.getByText(/已退出/)).toBeTruthy();
+    expect(screen.queryByText(/运行中/)).toBeNull();
+  });
+
+  /**
+   * id 每次重启都从 `job-1` 重数（见 main/pisdk/jobs.ts 的 nextJobNumber），
+   * 所以同一个会话里会同时存在「上次进程留下的 job-1」与「本次进程新起的 job-1」。
+   *
+   * 只按 id 认人，旧 pill 会认领到新作业的状态 —— 一条早就结束的历史作业看起来又在跑了，
+   * 而这正是本次要修的那类症状的另一个入口。身份必须带上 startedAt。
+   */
+  it("同名不同次：转录里的 job-1 不认领本次进程新起的 job-1", () => {
+    // store 里这条 job-1 是本次进程新起的（startedAt 晚得多），并不是快照那一条
+    seed([job({ status: "running", startedAt: 9_000 })]);
+
+    // 快照是上次进程留下的那条，早就结束了
+    renderPart({
+      artifact: { job: job({ status: "exited", exitCode: 0, startedAt: 1_000, endedAt: 2_000 }) },
+    });
+
+    // 认不出同一次运行 → 不拿新作业给它盖章；它自己的终态照原样显示
+    expect(screen.getByText(/已退出/)).toBeTruthy();
+    expect(screen.queryByText(/运行中/)).toBeNull();
   });
 
   it("store 里查不到这条作业时退回快照，不是空白 pill", () => {
@@ -191,5 +230,75 @@ describe("作业工具的状态 pill", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /pnpm dev/ }));
     expect(screen.getByText(/spawn ENOENT/)).toBeTruthy();
+  });
+
+  /**
+   * 本次修复的核心回归：**重启后一条早就结束的作业一直显示「运行中」**。
+   *
+   * 这是真实报上来的症状，成因是两条数据源同时失效：
+   *   · store 里没有它 —— 主进程的作业表只活在内存里，进程退出（重启应用）后 jobs.list 返回空；
+   *   · 转录里那份 details 快照永远写着 running —— 它是**启动那一刻**写的，此后永不更新
+   *     （退出时的结论只回填到内存里那条 part 上，不落盘）。
+   *
+   * 于是 `find(...) ?? detail.job` 的回退逻辑恰好落到最不可信的那一份上。
+   * 判据必须是「状态本身的确定性」：对过账之后，权威列表里没有的 running 一律按已结束呈现。
+   */
+  it("重启后：对过账、权威列表里没有这条作业 → 不再显示「运行中」", () => {
+    // 权威列表已经回来过，而且是空的（作业表随进程退出清空了）
+    useChatStore.setState({
+      activeSessionId: "s1",
+      jobsBySession: { s1: [] },
+      jobsReconciledSessions: { s1: true },
+    });
+
+    // 转录里那份快照停在启动那一刻
+    renderPart({
+      artifact: { job: job() },
+      result: 'Started job-1 (pid 736) in D:/app: pnpm dev\nUse job_output {"id":"job-1"} …',
+    });
+
+    expect(screen.queryByText(/运行中/)).toBeNull();
+    expect(screen.getByText(/已退出/)).toBeTruthy();
+  });
+
+  it("还没对过账时不降级：jobs.list 还在飞，running 照常显示", () => {
+    // 启动那一瞬间转录先到、权威列表后到。此时无权下结论 ——
+    // 提前把每条 running 都判成已结束只会闪一屏假的终态
+    useChatStore.setState({
+      activeSessionId: "s1",
+      jobsBySession: {},
+      jobsReconciledSessions: {},
+    });
+
+    renderPart({ artifact: { job: job() } });
+
+    expect(screen.getByText(/运行中/)).toBeTruthy();
+  });
+
+  it("对账后降级的耗时：不摆一个编出来的读数", () => {
+    // 这条作业的真实结局已无从得知（进程没了、作业表也清了）：我们不知道它跑了多久。
+    // 一个会增长的秒数读起来像「还在跑」，而补一个 0 又读成「瞬间跑完」—— 两者都不真实，
+    // 所以这一档干脆不显示耗时（见 jobElapsedReading）。
+    useChatStore.setState({
+      activeSessionId: "s1",
+      jobsBySession: { s1: [] },
+      jobsReconciledSessions: { s1: true },
+    });
+
+    renderPart({ artifact: { job: job() } });
+
+    expect(screen.queryByText(/运行中/)).toBeNull();
+    expect(screen.queryByText(/^(0s|0\.0s)$/)).toBeNull();
+  });
+
+  it("权威列表里有终态时，终态胜过快照里的 running（与到达顺序无关）", () => {
+    // 作业退出后 close 事件先到、下次打开才补拉：两份都在内存里，
+    // 但快照那份可能是「退出前最后一次 job_output」留下的 running
+    seed([job({ status: "killed", endedAt: 5_000 })]);
+
+    renderPart({ artifact: { job: job() } });
+
+    expect(screen.getByText(/已停止/)).toBeTruthy();
+    expect(screen.queryByText(/运行中/)).toBeNull();
   });
 });

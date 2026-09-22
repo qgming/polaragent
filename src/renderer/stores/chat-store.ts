@@ -379,6 +379,14 @@ interface ChatState {
   pendingAsks: AskRequest[];
   /** 各会话的后台作业（按启动先后升序，与主进程 job_list 的「最老在前」一致） */
   jobsBySession: Record<string, JobInfo[]>;
+  /**
+   * 收到过**权威列表**（一次成功的 `jobs.list`）的会话。
+   *
+   * 这份名单是「转录里那条 running 还算不算数」的闸门（见 tool-presentation 的 resolveJobView）：
+   * 主进程是唯一知道「这条作业在本进程里是否还活着」的一方，而在它答话之前不能做任何降级 ——
+   * 启动瞬间转录先到、`jobs.list` 后到，提前下结论会让满屏历史作业先闪一屏假的终态。
+   */
+  jobsReconciledSessions: Record<string, true>;
   /** 各会话最近一次压缩摘要 */
   compactionNotices: Record<string, string>;
   loading: boolean;
@@ -425,7 +433,7 @@ interface ChatState {
   loadPendingAsks(id: string | null): Promise<void>;
   /** 停止一个后台作业（面板上的「停止」按钮）；失败保留原状，见实现 */
   killJob(id: string): Promise<void>;
-  /** 补拉某会话的后台作业（会话切换 / 打开时恢复面板） */
+  /** 补拉某会话的后台作业（会话切换 / 打开时恢复面板）；成功后标记该会话已对账 */
   loadJobs(id: string | null): Promise<void>;
   setRunning(id: string, running: boolean): void;
 }
@@ -595,6 +603,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   pendingApprovals: [],
   pendingAsks: [],
   jobsBySession: {},
+  jobsReconciledSessions: {},
   compactionNotices: {},
   loading: false,
 
@@ -755,6 +764,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       tokenUsageBySession: omitSession(state.tokenUsageBySession, id),
       breakdownBySession: omitSession(state.breakdownBySession, id),
       jobsBySession: omitSession(state.jobsBySession, id),
+      jobsReconciledSessions: omitSession(state.jobsReconciledSessions, id),
       compactionNotices: omitSession(state.compactionNotices, id),
       pendingApprovals: state.pendingApprovals.filter((item) => item.sessionId !== id),
       pendingAsks: state.pendingAsks.filter((item) => item.sessionId !== id),
@@ -1136,6 +1146,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
    * 与 loadPendingAsks 同一套路：事件只覆盖「作业变动时就开着这个会话」的情形，
    * 切走再切回、或重开窗口之后，面板要靠这次补拉复原（主进程的作业表是权威）。
    * 失败不影响切换本身 —— 面板暂时空着，比切不过去轻。
+   *
+   * **成功之后必须标记已对账**：这一次返回的列表就是「本进程里还有哪些作业」的权威答案，
+   * 里面没有的那些（进程退出后重启、或已被上限淘汰）此后不再算「还在跑」——
+   * 转录里那份停在启动那一刻的快照写着 running，是重启后「一条早就结束的作业一直显示运行中」
+   * 的全部原因（见 tool-presentation 的 resolveJobView）。
+   * 拉失败时刻意**不标记**：一次 IPC 抖动不能把满屏历史作业判成终态。
    */
   async loadJobs(id) {
     if (id === null) return;
@@ -1150,7 +1166,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         for (const job of state.jobsBySession[id] ?? []) {
           if (job.startedAt >= startedAt) restored.set(job.id, job);
         }
-        return { jobsBySession: { ...state.jobsBySession, [id]: [...restored.values()] } };
+        return {
+          jobsBySession: { ...state.jobsBySession, [id]: [...restored.values()] },
+          jobsReconciledSessions: { ...state.jobsReconciledSessions, [id]: true },
+        };
       });
     } catch (error) {
       console.warn(`恢复后台作业失败：${String(error)}`);

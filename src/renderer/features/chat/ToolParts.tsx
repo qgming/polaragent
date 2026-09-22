@@ -13,8 +13,10 @@ import {
   FileTextIcon,
   GlobeIcon,
   HistoryIcon,
+  ImageIcon,
   ListIcon,
   ListTodoIcon,
+  Loader2Icon,
   type LucideIcon,
   MessageCircleQuestion,
   MousePointerClickIcon,
@@ -38,6 +40,7 @@ import type {
 } from "@/renderer/components/assistant-ui/elements/agent-status";
 import { AgentStatusList } from "@/renderer/components/assistant-ui/elements/agent-status";
 import { CodeDiff } from "@/renderer/components/assistant-ui/elements/code-diff";
+import { ImageZoom } from "@/renderer/components/assistant-ui/elements/image";
 import { MarkdownBlock } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import { mono, paper } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TerminalBlock } from "@/renderer/components/assistant-ui/elements/terminal-block";
@@ -48,7 +51,7 @@ import {
   ToolTimeline,
 } from "@/renderer/components/assistant-ui/elements/tool-timeline";
 import { Button } from "@/renderer/components/ui/button";
-import { formatDuration } from "@/renderer/lib/format";
+import { formatBytes, formatDuration } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import {
@@ -58,18 +61,24 @@ import {
 } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { JobInfo, JobStatus as JobStatusValue } from "@/shared/contracts/job";
-import type { SubagentRun, SubagentRunStatus } from "@/shared/contracts/subagent";
+import {
+  isSubagentRunFinished,
+  type SubagentRun,
+  type SubagentRunStatus,
+} from "@/shared/contracts/subagent";
 import {
   bashCommand,
   bashOutput,
   type EditDiff,
   JOB_TOOL_NAMES,
   type JobDetailData,
-  jobElapsedMs,
+  jobElapsedReading,
   parseJobDetail,
+  resolveJobView,
   resolveToolDetail,
   SUBAGENT_STATUS_LABEL_KEYS,
   type SubagentDetailData,
+  sameJobRun,
   subagentElapsedMs,
   type ToolDetail,
   type ToolRow,
@@ -88,6 +97,9 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   glob: FileSearchIcon,
   todo: ListTodoIcon,
   ask_user: MessageCircleQuestion,
+  // 读图片：ImageIcon（与浏览器截图那个 CameraIcon 分开 —— 一个是「读一张已有的图」，
+  // 一个是「现拍一张」）
+  read_image: ImageIcon,
   // 后台作业四件套：起进程 / 读输出 / 列清单 / 停掉
   bash_background: RocketIcon,
   job_output: ScrollTextIcon,
@@ -126,6 +138,7 @@ const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
   glob: { resting: "tools.glob", active: "tools.globActive" },
   todo: { resting: "tools.todo", active: "tools.todoActive" },
   ask_user: { resting: "tools.askUser", active: "tools.askUserActive" },
+  read_image: { resting: "tools.readImage", active: "tools.readImageActive" },
   bash_background: { resting: "tools.bashBackground", active: "tools.bashBackgroundActive" },
   job_output: { resting: "tools.jobOutput", active: "tools.jobOutputActive" },
   job_list: { resting: "tools.jobList", active: "tools.jobListActive" },
@@ -346,6 +359,97 @@ function AskDetail({ detail }: { detail: Extract<ToolDetail, { kind: "ask" }> })
           );
         })}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * 图片详情：**点开就是那张图**（用户明确要求）。
+ *
+ * 上面一行读数（格式 · 尺寸 · 体积 · 路径），下面就是图片本体。
+ *
+ * **图片按需加载**：details 里只有读数，没有字节 —— 那会把几 MB 的 base64 写进会话库
+ *（details 随 part 落盘），而它只为了「点开看一眼」。所以这里在挂载时用
+ * `files.readImage` 按 path 现取一次（与右边栏的文件查看器同一条 IPC 纪律：
+ * 只给 sessionId + 路径，根由主进程从会话索引解析、越界会被拒）。
+ *
+ * 三种状态都要说清楚，不能只给一个空白区：
+ *   · 加载中 → 骨架 + 转圈；
+ *   · 失败 → 说明原因（图片被删了 / 越界 / 太大），那是用户唯一能看到的线索；
+ *   · 成功 → 图片 + 点击放大（复用官方 Image 元素的 Zoom，与用户消息里的图片同一个交互）。
+ */
+function ImageDetail({ detail }: { detail: Extract<ToolDetail, { kind: "image" }> }) {
+  const { t } = useTranslation();
+  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // 会话换了就重新取：同一条 path 在不同会话下的可达性不同（根不同）
+    if (activeSessionId === null) return undefined;
+    let cancelled = false;
+    setSrc(null);
+    setError(null);
+
+    window.oint.files
+      .readImage({ sessionId: activeSessionId, path: detail.path })
+      .then((content) => {
+        // 卸载/换会话之后到达的结果丢掉：否则会往一个已经不在的视图里塞图片
+        if (!cancelled) setSrc(content.dataUrl);
+      })
+      .catch((failure: unknown) => {
+        if (!cancelled) setError(failure instanceof Error ? failure.message : String(failure));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, detail.path]);
+
+  const dimensions =
+    detail.width === undefined || detail.height === undefined
+      ? undefined
+      : `${detail.width}×${detail.height}`;
+
+  return (
+    <div className={cn(paper, "w-full overflow-hidden rounded-2xl text-[0.86em]")}>
+      <div className="border-border/50 flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3.5 py-2">
+        <span className={cn(mono, "text-ink-3 shrink-0")}>{detail.mediaType}</span>
+        {dimensions !== undefined && (
+          <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>{dimensions}</span>
+        )}
+        <span className={cn(mono, "text-ink-4 shrink-0 tabular-nums")}>
+          {formatBytes(detail.bytes)}
+        </span>
+        {/* 路径放最后并可截断：它最长，而前三个读数才是扫一眼要看的 */}
+        <span
+          className={cn(mono, "text-ink-4 min-w-0 flex-1 truncate")}
+          title={detail.path}
+          dir="ltr"
+        >
+          {detail.path}
+        </span>
+      </div>
+
+      <div className="p-3">
+        {error !== null ? (
+          <p className="text-ink-4 text-[12.5px]">
+            {t("tools.imageUnavailable", { reason: error })}
+          </p>
+        ) : src === null ? (
+          <div className="bg-foreground/[0.03] flex min-h-32 items-center justify-center rounded-lg">
+            <Loader2Icon className="text-ink-4 size-5 animate-spin motion-reduce:animate-none" />
+          </div>
+        ) : (
+          <ImageZoom src={src} alt={detail.path}>
+            <img
+              src={src}
+              alt={detail.path}
+              className="mx-auto block h-auto max-h-[28rem] w-auto max-w-full rounded-lg object-contain"
+            />
+          </ImageZoom>
+        )}
+      </div>
     </div>
   );
 }
@@ -741,13 +845,19 @@ function SubagentStatus({
    * 已完成运行的报告正文。直接取自 store 里那条**对过账**的行（row），
    * 而不是 details 快照：快照在重启后可能还没有 report（进程退出时就写到那儿为止）。
    * 终结态才有报告可显示（还在跑时 report 为空）。
+   *
+   * 闸门用 `isSubagentRunFinished` 而不是 `stepState !== "working"`：两者对 running
+   * 是一致的，但用状态本身表达「不再推进了」才不会在图标映射改动时被牵连
+   *（图标那三档是呈现决定，报告有没有是数据事实）。
    */
-  const reportText = stepState === "working" ? "" : (row.report ?? "").trim();
+  const finished = isSubagentRunFinished(row.status);
+  const reportText = finished ? (row.report ?? "").trim() : "";
   const steps: StatusStep[] = delegated
     ? [
         {
           state: stepState,
-          label: delegationLabel(agentName, row.description, statusLabel, stepState === "done"),
+          // 终态（不只 completed）都要报状态词 —— 判据是「结束了没有」，见 delegationLabel
+          label: delegationLabel(agentName, row.description, statusLabel, finished),
           // 终态的耗时已经冻结在 endedAt / updatedAt 上（见 subagentElapsedMs），
           // now 只对 running 参与计算
           elapsed: formatDuration(subagentElapsedMs(row, now)),
@@ -886,8 +996,29 @@ function JobStatus({ detail, result }: { detail: JobDetailData; result: unknown 
   const sessionJobs = useChatStore((s) =>
     activeSessionId === null ? undefined : s.jobsBySession[activeSessionId],
   );
+  /**
+   * 这个会话对过账没有（收到过一次成功的 jobs.list）。
+   *
+   * 只有对过账之后才敢把「store 里查不到」读成「它已经不在跑了」——
+   * 启动瞬间转录先到、jobs.list 后到，提前下结论会让历史作业先闪一屏假的终态。
+   */
+  const reconciled = useChatStore((s) =>
+    activeSessionId === null ? false : s.jobsReconciledSessions[activeSessionId] === true,
+  );
 
-  const job = (sessionJobs ?? EMPTY_JOBS).find((item) => item.id === detail.jobId) ?? detail.job;
+  /**
+   * 界面显示的这条作业 = 快照 + store + 对账，三者按可信度收敛（判据见 resolveJobView）。
+   *
+   * 简单的 `find(...) ?? detail.job`（本函数早先的写法）在**重启后**是错的：
+   * 那时 store 里没有这条作业（主进程的作业表已随进程退出清空），于是回退到转录里那份
+   * 停在启动那一刻的快照 —— 而它永远写着 running。一条早就结束的作业因此一直显示「运行中」。
+   *
+   * 认人用 `sameJobRun`（id + startedAt）而不是只比 id：id 每次重启都从 job-1 重数，
+   * 只比 id 会让旧 pill 认领到本次进程新起的同名作业。
+   */
+  const sessionJobsForRead = sessionJobs ?? EMPTY_JOBS;
+  const live = sessionJobsForRead.find((item) => sameJobRun(item, detail.job));
+  const job = resolveJobView(detail.job, live, reconciled);
 
   const stepState = jobAgentState(job);
   // 还有 working 的步骤时才需要每秒推进 now：终态的耗时冻结在 endedAt 上（见 jobElapsedMs），
@@ -902,12 +1033,17 @@ function JobStatus({ detail, result }: { detail: JobDetailData; result: unknown 
    *（id 是给机器看的）。命令缺失（记录不全）时退回 id，别在 pill 上留一个空位。
    */
   const command = job.command.trim() === "" ? job.id : job.command;
+  /**
+   * 终态没有 endedAt 时**不显示耗时**（见 jobElapsedReading）：那种记录只说明
+   * 「我们知道它结束了」，不说明「它跑了多久」—— 补一个 0 会读成「瞬间跑完」。
+   */
+  const elapsedMs = jobElapsedReading(job, now);
   const steps: StatusStep[] = [
     {
       state: stepState,
       label: jobStatusLabel(command, statusLabel, batchSuffix),
       // 终态不再走 now（见 jobElapsedMs）；绿勾那一档元素本来就不渲染读数
-      elapsed: formatDuration(jobElapsedMs(job, now)),
+      ...(elapsedMs === undefined ? {} : { elapsed: formatDuration(elapsedMs) }),
     },
   ];
 
@@ -997,16 +1133,28 @@ function useRunTicker(active: boolean): number {
  * 状态得靠左边那枚图标去猜。所以终态一律把状态词带出来（`explorer · 已完成`），
  * 进行态才保留描述（`explorer · 调研重试逻辑`）—— 那时用户关心的是「在干什么」。
  *
+ * **判据是「结束了没有」，不是「成功了没有」**（这条曾经写错）：早先这里收的是
+ * `done: boolean`（= 元素那三档里的 done），而那一档只有 `completed` 会命中 ——
+ * 于是 failed / aborted / denied / truncated / interrupted 五个终态全落进了
+ * 「进行态」那支，pill 上显示成「名字 · 任务描述」，与还在跑的样子**一模一样**：
+ * 一次失败的委派看起来既像在跑、又像被用户正常停掉，只能靠点开详情或听读屏名去分辨
+ *（而读屏名里恰恰是带状态词的，两者因此还会打架）。
+ *
+ * 现在改成按 `finished`（= 不再会推进了，见 isSubagentRunFinished）分流：
+ * 凡是终态都报状态词 —— 失败就说失败，被停就说已停止。图标那三档（绿勾只给 completed）
+ * 仍然由 SUBAGENT_AGENT_STATES 单独决定，两者是**正交**的：文案负责说清楚「怎么了」，
+ * 图标负责一眼可辨「好不好」。失败给空心点（不是绿勾）与它同时报出「失败」并不矛盾。
+ *
  * 描述放不下时优先留状态词：状态是这条 pill 的结论，描述只是它的来龙去脉。
  */
 function delegationLabel(
   name: string,
   description: string,
   statusLabel: string,
-  done: boolean,
+  finished: boolean,
 ): string {
   const separator = " · ";
-  if (done) return `${name}${separator}${statusLabel}`;
+  if (finished) return `${name}${separator}${statusLabel}`;
   const text = description.trim();
   const room = STEP_LABEL_LIMIT - labelWidth(name) - labelWidth(separator);
   if (text === "" || room < STEP_LABEL_MIN_DESCRIPTION) return `${name}${separator}${statusLabel}`;
@@ -1139,6 +1287,8 @@ function ResolvedDetail({
   }
   // 提问：每道题一行，题面 + 用户选了什么（会话里唯一能回看答案的地方）
   if (detail.kind === "ask") return <AskDetail detail={detail} />;
+  // 图片：读数行 + 按需加载的图片本体（点开就是那张图）
+  if (detail.kind === "image") return <ImageDetail detail={detail} />;
   // 文本类（read / grep / glob / MCP / 兜底）：保留换行与等宽，header/footer 分开
   if (detail.kind === "text") return <TextDetail detail={detail} />;
   // 写入：路径 + 规模 + 带行号的正文预览

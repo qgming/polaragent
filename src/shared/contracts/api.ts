@@ -3,7 +3,7 @@ import type { ApprovalDecision } from "./approval";
 import type { BrowserEvent, BrowserStatus } from "./browser";
 import type { ChatEventEnvelope, ChatSendOptions, ChatStreamSnapshot } from "./chat";
 import type { AgentMode, ModelRef, WireFormat } from "./common";
-import type { DirectoryListing, FileContent } from "./files";
+import type { DirectoryListing, FileContent, ImageContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
@@ -235,6 +235,14 @@ export interface OintApi {
     listDirectory(request: { sessionId: string; path?: string }): Promise<DirectoryListing>;
     /** 读一个文件（等宽预览用，超出上限会截断） */
     readFile(request: { sessionId: string; path: string }): Promise<FileContent>;
+    /**
+     * 读一张图片，返回可直接用于 `<img src>` 的 dataUrl。
+     *
+     * 与 readFile 分开是因为结果形态完全不同（一个是给等宽预览的文本，一个是给 <img> 的
+     * 数据 URL），而这条通道**只在用户展开 read_image 的详情时**走 —— 模型那次调用的
+     * details 里刻意不带图片字节（它会落盘，见 main/pisdk/tools/read-image.ts）。
+     */
+    readImage(request: { sessionId: string; path: string }): Promise<ImageContent>;
   };
   /** 右侧面板「审查」：本次会话改动过的文件与补丁 */
   review: {

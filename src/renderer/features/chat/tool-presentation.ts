@@ -56,6 +56,13 @@ const BROWSER_TOOL_NAMES_VALUES: readonly string[] = Object.values(BROWSER_TOOL_
 /** 提问的工具名。与主进程 tools/ask.ts 的 ASK_TOOL_NAME 同一个字面量（渲染层不 import 主进程） */
 const ASK_TOOL_NAME = "ask_user";
 
+/**
+ * 读图片的工具名。同样是字面量（渲染层不 import 主进程，理由见上面 JOB_TOOL_NAMES）。
+ *
+ * 与主进程 tools/read-image.ts 的 READ_IMAGE_TOOL_NAME 一一对应，改名时两边都要动。
+ */
+export const READ_IMAGE_TOOL_NAME = "read_image";
+
 /** bash 只留末尾这么多行：关键结论（报错、统计、列表）通常在结尾 */
 export const BASH_TAIL_LINES = 30;
 
@@ -424,6 +431,122 @@ function toJobInfo(value: unknown): JobInfo | null {
 }
 
 /**
+ * 落定的作业状态是不是**终态**。
+ *
+ * 与子智能体那边 `isSubagentRunFinished` 同一个用途：主进程的作业表里只有 `running`
+ * 是活的，另外三种都是终态。这里刻意不写成 `status !== "running"` 的取反，
+ * 而是用穷举式的正向判断 —— 契约里加一档状态时，这里是编译错误而不是「新状态被当成终态」。
+ */
+export function isJobFinished(status: JobInfo["status"]): boolean {
+  switch (status) {
+    case "running":
+      return false;
+    case "exited":
+    case "failed":
+    case "killed":
+      return true;
+  }
+}
+
+/**
+ * 同一作业 id 的两份记录谁更可信。
+ *
+ * ## 为什么需要它（这条是一个真实缺陷的根治点）
+ *
+ * 一条作业有**两份**数据源，而它们的新旧并不一致：
+ *
+ * 1. 磁盘转录里的 `details`（`bash_background` 落盘的那份快照）—— 它停在**启动那一刻**，
+ *    写着 `status: "running"`、`totalBytes: 0`、没有 `endedAt`。此后永不更新，
+ *    除非进程退出时主进程把结论回填到内存里那条 part 上（而回填**不落盘**）。
+ * 2. store 的 `jobsBySession`（`job-changed` 事件 + `jobs.list` 补拉）—— 它始终是最新的，
+ *    但**只在内存里**：进程退出后重建会话时，主进程的作业表已经空了，`jobs.list` 返回 `[]`。
+ *
+ * 于是「重启应用 → 打开一个跑过作业的历史会话」这条路会同时丢掉两边：
+ * store 里没有这条作业（主进程表已清空），转录里那份快照又永远写着 running ——
+ * 界面于是**永远显示「运行中」**，而那条命令其实早就退出了。
+ *
+ * 判据因此不能是「谁后到」，只能是**状态本身的确定性**：终态是既成事实（进程已经没了，
+ * 不可能再变），running 是一条随时会被推翻的陈旧断言。所以终态一律胜过 running，
+ * 与到达顺序、数据来源都无关。
+ *
+ * 两份都是 running、或两份都是终态时，取 `incoming`（调用方保证它来自更新的那一侧）。
+ */
+export function preferJobStatus(existing: JobInfo, incoming: JobInfo): JobInfo {
+  if (isJobFinished(existing.status) && !isJobFinished(incoming.status)) return existing;
+  return incoming;
+}
+
+/**
+ * 两份记录是不是**同一次运行**。
+ *
+ * 只比 id 是不够的：作业 id 是主进程内从 1 起的自增序号（`job-1`、`job-2` ……），
+ * **每次重启应用都从头数**（见 main/pisdk/jobs.ts 的 nextJobNumber）。于是同一个会话里
+ * 完全可能出现「转录里那条上次进程留下的 job-1」与「本次进程新起的 job-1」并存 ——
+ * 只按 id 认人，旧 pill 会显示成新作业的状态（一个早就结束的作业看起来又在跑）。
+ * `startedAt` 是同一次运行的出生时间，两边都由作业服务在 start 那一刻写下，因此可以当身份用。
+ *
+ * 认不出身份时**当作不匹配**：宁可退回「这条历史作业已结束」，也不要拿另一个进程的
+ * 同名作业给它盖章。
+ */
+export function sameJobRun(
+  a: Pick<JobInfo, "id" | "startedAt">,
+  b: Pick<JobInfo, "id" | "startedAt">,
+): boolean {
+  return a.id === b.id && a.startedAt === b.startedAt;
+}
+
+/**
+ * 把 store 里同 id 的权威记录并到快照上。
+ *
+ * `live === undefined`（store 里没有这条作业）时**原样返回快照**：那种情况下快照是唯一的
+ * 依据，但对一条早已结束的历史作业来说它恰恰是最不可信的一份 —— 这一档因此交给
+ * `reconciled` 判定（见 resolveJobView），不要在这里编一个状态。
+ */
+export function mergeJobSnapshot(snapshot: JobInfo, live: JobInfo | undefined): JobInfo {
+  if (live === undefined) return snapshot;
+  return preferJobStatus(snapshot, live);
+}
+
+/**
+ * 界面最终该显示的那条作业记录。
+ *
+ * 三档，按可信度从高到低：
+ *
+ * 1. **对过账、且权威列表里没有它** → 这条作业已经不在主进程的作业表里了
+ *    （进程退出后重启、或被上限淘汰）。它是历史，不可能还在跑；而快照里那份
+ *    running 是启动那一刻的死数据。既然无从知道它究竟怎么结束的，
+ *    就**按「已结束」呈现**。这与子智能体把未确认的 running 降级成 interrupted 同一条纪律：
+ *    「确认不了它还在跑」绝不能显示成「还在跑」。
+ *
+ *    这里把 `endedAt` **留空**而不是补一个 startedAt：补出来的会让耗时读数是「0s」，
+ *    而那个 0 是编的 —— 它读起来像「它瞬间就结束了」，与事实（我们不知道它跑了多久）
+ *    不符。留空则走 jobElapsedMs 的「终态缺 endedAt → 0」那一档，同样不显示会增长的读数，
+ *    但语义上是「不知道」而不是「零」。
+ *
+ * 2. store 里有它 → 用 `preferJobStatus` 合并（终态胜过 running）。
+ *
+ * 3. 还没对过账（`reconciled === false`）→ 原样用快照。启动那一瞬间 `jobs.list` 还在飞，
+ *    此时把每条 running 都判成已结束只会闪一屏假的终态。
+ */
+export function resolveJobView(
+  snapshot: JobInfo,
+  live: JobInfo | undefined,
+  reconciled: boolean,
+): JobInfo {
+  if (live !== undefined) return mergeJobSnapshot(snapshot, live);
+  // 没对过账：无权下结论，快照说什么就是什么
+  if (!reconciled) return snapshot;
+  if (isJobFinished(snapshot.status)) return snapshot;
+  // 对过账、权威列表里没有、快照却还写着 running → 陈旧断言，按已结束呈现。
+  // endedAt 只在快照本来就有的时候才带上，绝不编一个（见上面第 1 条）
+  return {
+    ...snapshot,
+    status: "exited",
+    ...(snapshot.endedAt === undefined ? {} : { endedAt: snapshot.endedAt }),
+  };
+}
+
+/**
  * 作业的耗时。
  *
  * 与子智能体同一套规则：**终态必须冻结**在 endedAt 上，只有 running 才允许用 now ——
@@ -433,6 +556,22 @@ function toJobInfo(value: unknown): JobInfo | null {
 export function jobElapsedMs(job: JobInfo, now: number = Date.now()): number {
   const endedAt = job.endedAt ?? (job.status === "running" ? now : job.startedAt);
   return Math.max(0, endedAt - job.startedAt);
+}
+
+/**
+ * pill 上该显示的耗时（毫秒）；**不知道时返回 undefined，调用方据此不显示读数**。
+ *
+ * 与 jobElapsedMs 的分工：那个只管「算出一个不会随时间增长的数」，所以终态缺 endedAt 时
+ * 必须退回 0 才安全。但 0 画到界面上是 `0s` —— 那读起来是「它瞬间就结束了」，
+ * 而真正的情况是**我们不知道它跑了多久**（作业表已经清了、转录里那份快照停在启动那一刻）。
+ * 一个编出来的 0 与一个会增长的秒数一样不真实，只是方向相反：宁可什么都不说。
+ *
+ * running 一定有读数（它正在流逝）；终态只在**有 endedAt** 时才有读数 ——
+ * 那正是「它什么时候结束的」这个事实被记录下来的标志。
+ */
+export function jobElapsedReading(job: JobInfo, now: number = Date.now()): number | undefined {
+  if (job.status !== "running" && job.endedAt === undefined) return undefined;
+  return jobElapsedMs(job, now);
 }
 /** 展开面板里用什么渲染结果 */
 export type ToolDetail =
@@ -456,7 +595,61 @@ export type ToolDetail =
   /** 写入：文件路径 + 规模 + 正文预览（write 的 details 是 undefined） */
   | WriteDetailData
   /** 浏览器工具的通用结果：tab 身份 + 读数行 + 条目列表 */
-  | BrowserDetailData;
+  | BrowserDetailData
+  /** 图片：路径 + 读数 + 按需加载的图片本体（见 parseImageDetail） */
+  | ImageDetailData;
+
+/**
+ * 图片详情：一次 read_image 调用的读数。
+ *
+ * **刻意不含图片字节**：工具 details 会随 part 落盘（见 main/pisdk/tools/read-image.ts
+ * 的文件头），把几 MB 的图塞进去等于每读一张就往会话库里写一份 base64。
+ * 界面展开时用 `files.readImage` 按 path 现取一次（见 ImageDetail 组件）。
+ */
+export interface ImageDetailData {
+  kind: "image";
+  /** 绝对路径（主进程解析后的；按它去读图片） */
+  path: string;
+  mediaType: string;
+  bytes: number;
+  /** 像素尺寸；头部解析不出来时缺省 —— 界面据此不显示尺寸，而不是显示编的 */
+  width?: number;
+  height?: number;
+}
+
+/**
+ * read_image 的 details → 图片详情。
+ *
+ * 形状不对返回 null，让调用方退回文本详情（结果里的信封文本仍能读到路径与读数）——
+ * 与其它 parse* 同一条纪律：details 从主进程过来是 unknown，必须自己验。
+ *
+ * `path` 是必需的：没有它就无法去读图片，而一张显示不出来的图详情没有意义。
+ */
+export function parseImageDetail(value: unknown): ImageDetailData | null {
+  if (!isRecord(value)) return null;
+  const image = value.image;
+  if (!isRecord(image)) return null;
+
+  const path = image.path;
+  if (typeof path !== "string" || path === "") return null;
+  const mediaType = image.mediaType;
+  if (typeof mediaType !== "string" || mediaType === "") return null;
+  const bytes = image.bytes;
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
+
+  // 尺寸是可选读数：读不出来时只是不显示，不该因此丢掉整张卡
+  const width = typeof image.width === "number" && image.width > 0 ? image.width : undefined;
+  const height = typeof image.height === "number" && image.height > 0 ? image.height : undefined;
+
+  return {
+    kind: "image",
+    path,
+    mediaType,
+    bytes,
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
+  };
+}
 
 /**
  * 提问详情：一次 ask_user 调用的问题与答案。
@@ -968,6 +1161,17 @@ export function resolveToolDetail(
   }
 
   if (toolName === "bash") return { kind: "terminal" };
+
+  /**
+   * 读图片：详情就是**那张图**（用户明确要求「点开就是显示图片」）。
+   *
+   * 失败时给文本详情而不是图片卡：读不出来时结果文本里写着原因
+   *（格式不支持 / 太大 / 路径越界），那才是用户要看的东西 —— 摆一张空图框更糟。
+   */
+  if (toolName === READ_IMAGE_TOOL_NAME) {
+    const image = failed ? null : parseImageDetail(details);
+    return image ?? parseTextDetail(result);
+  }
 
   if (toolName === "todo") {
     // details 要等结果回来才有；工具参数在调用抵达时就有了（流式期靠它兜底）

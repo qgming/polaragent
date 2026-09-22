@@ -199,6 +199,8 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 | 脚本 | 用途 |
 | --- | --- |
 | `node scripts/probe-pisdk.mjs` | pisdk 装配探针（真实端点，验证 harness/工具/会话链路） |
+| `node scripts/probe-upgrade-087.mjs` | 内核升级探针（离线、免凭据：把 pi 0.86/0.87 的新接口逐条跑一遍 —— `openTextLineReader`、`providers/all` 枚举、`SystemMessage`/`TranscriptContext`、两种 `estimateContextTokens`、harness 装配） |
+| `node scripts/probe-packaged-kernel.mjs` | 打包内核探针（在真实 Electron 运行时里、对着 `release/*/resources/app.asar` 验证 pi 的 ESM 子路径导出、provider 目录 JSON、typebox 互通 —— 「node 下能跑」不等于「打包后能跑」） |
 | `node scripts/e2e-smoke.mjs` | 端到端冒烟（CDP 驱动真实 Electron，覆盖流式对话、工具调用、审批、完全访问、重启恢复） |
 | `node scripts/probe-browser-guest.mjs` | 内置浏览器探针（CDP 驱动真实 Electron，验证 webview 的 guest 真的附着、导航可用且只加载一次） |
 

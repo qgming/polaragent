@@ -15,15 +15,29 @@
 // 并对「链接是否算越界」做一次产品决定，而不是在这里单独加一层（那会让面板与模型
 // 看到的世界不一致）。
 
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { imageDimensions, sniffMediaType } from "@/main/pisdk/tools/image-meta";
 import { normalizePath, validatePathAccess } from "@/main/security/path-guard";
-import type { DirectoryListing, FileContent, FileTreeEntry } from "@/shared/contracts/files";
+import type {
+  DirectoryListing,
+  FileContent,
+  FileTreeEntry,
+  ImageContent,
+} from "@/shared/contracts/files";
 
 /** 单次列目录返回的最大条目数：node_modules 那种几万条的子目录不该把 IPC 打爆 */
 const MAX_ENTRIES = 2000;
 /** 单次读文件的最大字节数：预览用，够看几千行代码；更大的一律截断并提示 */
 const MAX_FILE_BYTES = 512 * 1024;
+/**
+ * 单张图片预览的字节上限（32 MiB）。
+ *
+ * 比 read_image 工具那条（16 MiB）宽：那边要过 IPC 落进 part，这边只在用户展开详情时
+ * 走一次、且不进会话库。但仍然要有上限 —— dataUrl 是 base64（比原字节大 1/3），
+ * 而它是**同步**在渲染进程里解码的一张位图。
+ */
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 /**
  * 判定「看起来是二进制」的字节数上限。
  * 只嗅探开头这一小段：真正的二进制文件（图片、可执行文件）在前几百字节里就会出现 NUL，
@@ -155,4 +169,48 @@ export async function readFileContent(request: {
   }
 
   return { path: target, text: content.toString("utf8"), truncated, size, binary: false };
+}
+
+/**
+ * 读一张图片用于界面显示（返回可直接塞进 `<img src>` 的 dataUrl）。
+ *
+ * root 的来源与另外两个函数相同（IPC 层从会话索引解析），并且同样先过路径守卫 ——
+ * 这是**唯一**能让渲染层拿到图片字节的通道，所以守卫必须在这里，而不是指望调用方。
+ *
+ * 与 readFileContent 的分工：那个把字节当 UTF-8 文本解（图片会命中它的二进制分支、
+ * 只回一句「这是二进制」）；这个把字节当图片（判格式、读尺寸、编 dataUrl）。
+ *
+ * 格式按**内容**判定（扩展名可能是错的），尺寸读不出来时不编：
+ * 界面宁可少显示一行读数，也不要一个错的 width 被模型拿去算坐标。
+ */
+export async function readImageContent(request: {
+  root: string;
+  path: string;
+}): Promise<ImageContent> {
+  const check = validatePathAccess(request.path, [normalizePath(request.root)]);
+  if (!check.ok) throw new Error(check.reason);
+  const target = check.resolved;
+
+  const info = await stat(target);
+  if (info.isDirectory()) throw new Error("这是一个目录，不是图片文件");
+  if (info.size === 0) throw new Error("这个文件是空的");
+  if (info.size > MAX_IMAGE_BYTES) {
+    throw new Error(`图片有 ${info.size} 字节，超过 ${MAX_IMAGE_BYTES} 字节的上限，无法预览`);
+  }
+
+  const bytes = await readFile(target);
+  const data = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const mediaType = sniffMediaType(data);
+  if (mediaType === undefined) {
+    throw new Error("这个文件的内容不是 PNG / JPEG / WebP / GIF 图片");
+  }
+
+  const dimensions = imageDimensions(data, mediaType);
+  return {
+    path: target,
+    mediaType,
+    bytes: info.size,
+    ...(dimensions === undefined ? {} : { width: dimensions.width, height: dimensions.height }),
+    dataUrl: `data:${mediaType};base64,${bytes.toString("base64")}`,
+  };
 }

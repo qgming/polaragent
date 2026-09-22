@@ -1,6 +1,6 @@
 import { getSessionStore } from "@/main/pisdk/session-store";
 import { IPC } from "@/shared/contracts/ipc";
-import { listDirectory, readFileContent } from "../files/service";
+import { listDirectory, readFileContent, readImageContent } from "../files/service";
 import { handle } from "./handler";
 
 /**
@@ -39,5 +39,13 @@ export function registerFilesIpc(): void {
   handle(IPC.files.readFile, "读取文件", async (request: { sessionId: string; path: string }) => {
     const root = await resolveRoot(request?.sessionId);
     return readFileContent({ root, path: request?.path });
+  });
+  /**
+   * 读一张图片。与 readFile 同一条守卫（root 由会话索引解析、目标必须落在 root 内），
+   * 只是结果形态不同：那个回文本，这个回可直接显示的 dataUrl。
+   */
+  handle(IPC.files.readImage, "读取图片", async (request: { sessionId: string; path: string }) => {
+    const root = await resolveRoot(request?.sessionId);
+    return readImageContent({ root, path: request?.path });
   });
 }

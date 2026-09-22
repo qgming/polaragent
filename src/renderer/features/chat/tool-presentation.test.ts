@@ -9,9 +9,12 @@ import {
   CHIP_LIMIT,
   DIFF_MAX_LINES,
   detailsPatch,
+  isJobFinished,
   jobElapsedMs,
+  jobElapsedReading,
   parseWebFetchDetail,
   parseWebSearchDetail,
+  resolveJobView,
   resolveToolDetail,
   SUBAGENT_STATUS_LABEL_KEYS,
   shortenPath,
@@ -729,6 +732,92 @@ describe("resolveToolDetail · 后台作业", () => {
   });
 });
 
+describe("resolveToolDetail · 图片", () => {
+  const imageDetails = (patch: Record<string, unknown> = {}) => ({
+    image: {
+      path: "D:/app/shot.png",
+      mediaType: "image/png",
+      bytes: 2048,
+      width: 800,
+      height: 600,
+      ...patch,
+    },
+  });
+
+  it("read_image 的 details → 图片详情（读数一一带出）", () => {
+    const detail = resolveToolDetail("read_image", imageDetails());
+    expect(detail).toMatchObject({
+      kind: "image",
+      path: "D:/app/shot.png",
+      mediaType: "image/png",
+      bytes: 2048,
+      width: 800,
+      height: 600,
+    });
+  });
+
+  /**
+   * details 里**不该有图片字节**：它会随 part 落盘，几 MB 的 base64 会把会话库撑爆。
+   * 界面要显示时用 files.readImage 按 path 现取（见 ImageDetail 组件）。
+   */
+  it("详情不含 dataUrl：图片本体走按需加载，不进会话库", () => {
+    const detail = resolveToolDetail(
+      "read_image",
+      // 就算主进程将来真的塞了字节进来，渲染层的详情也不该带着它走
+      imageDetails({ dataUrl: "data:image/png;base64,AAAA" }),
+    );
+    expect(detail?.kind).toBe("image");
+    expect(detail).not.toHaveProperty("dataUrl");
+    expect(JSON.stringify(detail)).not.toContain("base64");
+  });
+
+  it("尺寸缺失时只是不带读数，不该丢掉整张卡", () => {
+    const detail = resolveToolDetail(
+      "read_image",
+      imageDetails({ width: undefined, height: undefined }),
+    );
+    expect(detail?.kind).toBe("image");
+    expect(detail?.kind === "image" ? detail.width : "set").toBeUndefined();
+  });
+
+  it("尺寸为 0 / 负数时按「读不出来」处理，不当成读数", () => {
+    const detail = resolveToolDetail("read_image", imageDetails({ width: 0, height: -5 }));
+    expect(detail?.kind === "image" ? detail.width : "set").toBeUndefined();
+    expect(detail?.kind === "image" ? detail.height : "set").toBeUndefined();
+  });
+
+  it("路径缺失或形状不对时退回文本详情（结果里的信封文本仍能读）", () => {
+    for (const bad of [
+      undefined,
+      {},
+      { image: {} },
+      { image: { mediaType: "image/png", bytes: 1 } }, // 缺 path
+      { image: { path: "a.png", bytes: 1 } }, // 缺 mediaType
+      { image: { path: "a.png", mediaType: "image/png" } }, // 缺 bytes
+      { image: { path: "", mediaType: "image/png", bytes: 1 } },
+    ]) {
+      const detail = resolveToolDetail("read_image", bad, false, undefined, "envelope text");
+      expect(detail?.kind).toBe("text");
+    }
+  });
+
+  /**
+   * 失败时给文本而不是图片卡：读不出来时结果文本里写着原因
+   *（格式不支持 / 太大 / 越界），那才是用户要看的东西。
+   */
+  it("失败时给文本详情，把原因摊开而不是摆一张空图框", () => {
+    const detail = resolveToolDetail(
+      "read_image",
+      imageDetails(),
+      true,
+      undefined,
+      'cannot read "a.bmp": .bmp is not a supported image format',
+    );
+    expect(detail?.kind).toBe("text");
+    expect(detail?.kind === "text" ? detail.body : "").toContain(".bmp");
+  });
+});
+
 describe("jobElapsedMs", () => {
   it("running 按 now 现算，终态冻结在 endedAt 上", () => {
     expect(jobElapsedMs(jobInfo({ startedAt: 1_000 }), 3_000)).toBe(2_000);
@@ -744,6 +833,84 @@ describe("jobElapsedMs", () => {
 
   it("时钟回拨（endedAt 早于 startedAt）时夹到 0，不出现负数读数", () => {
     expect(jobElapsedMs(jobInfo({ startedAt: 5_000, endedAt: 4_000 }), 9_999)).toBe(0);
+  });
+});
+
+/**
+ * 作业的两份数据源合并。
+ *
+ * 这是一个真实缺陷的根治点：作业的**权威状态**在 store（主进程持续推 job-changed），
+ * 但 store 只活在内存里 —— 重启后主进程的作业表是空的，而转录里那份 details 快照
+ * 永远停在启动那一刻（status: running）。两条来源同时失效，界面就一直显示「运行中」。
+ * 所以判据只能是状态本身的确定性：终态是既成事实，running 是随时会被推翻的陈旧断言。
+ */
+describe("resolveJobView", () => {
+  const snapshot = jobInfo({ status: "running", startedAt: 1_000 });
+
+  it("权威列表里有终态：终态胜过快照里的 running", () => {
+    const live = jobInfo({ status: "exited", exitCode: 0, startedAt: 1_000, endedAt: 4_000 });
+    expect(resolveJobView(snapshot, live, true).status).toBe("exited");
+  });
+
+  /**
+   * 这条优先级是**刻意不对称**的，与早先「两个方向都要成立」的写法相反。
+   *
+   * 理由：同一次运行不可能从终态回到 running —— 作业一旦结算就再也不会被拉起来
+   * （`jobs.start` 永远产生一条**新**作业；没有 resume 这回事）。
+   * 所以「终态 vs running」这对矛盾里，终态是既成事实，running 只可能是一条陈旧断言。
+   * 按「谁后到谁赢」处理会把那份陈旧断言重新放回界面，正是本次要修的毛病。
+   *
+   * （同 id 但不同 startedAt 的两条作业由 sameJobRun 拦在外面，不会走到这里。）
+   */
+  it("终态总是胜过 running，与它在哪一侧无关", () => {
+    const exited = jobInfo({ status: "killed", startedAt: 1_000, endedAt: 2_000 });
+    const running = jobInfo({ status: "running", startedAt: 1_000 });
+    expect(resolveJobView(exited, running, true).status).toBe("killed");
+    expect(resolveJobView(running, exited, true).status).toBe("killed");
+  });
+
+  it("对过账、权威列表里没有、快照还写着 running → 按已结束呈现", () => {
+    // 重启后的主路径：store 空、快照 stale
+    const view = resolveJobView(snapshot, undefined, true);
+    expect(view.status).not.toBe("running");
+    expect(view.status).toBe("exited");
+  });
+
+  it("降级不编造 endedAt：耗时读数因此是「不知道」，而不是 0", () => {
+    // 补一个 startedAt 会让 pill 显示 `0s`，读起来是「它瞬间就跑完了」——
+    // 而我们其实**不知道**它跑了多久（作业表已清、快照停在启动那一刻）。
+    // 见 jobElapsedReading：终态缺 endedAt 时不显示读数。
+    const view = resolveJobView(snapshot, undefined, true);
+    expect(view.endedAt).toBeUndefined();
+    expect(jobElapsedReading(view, 999_999)).toBeUndefined();
+  });
+
+  it("对过账、权威列表里没有、快照已是终态 → 原样保留（不覆盖它的退出码）", () => {
+    const failed = jobInfo({ status: "failed", exitCode: 3, startedAt: 1_000, endedAt: 2_000 });
+    const view = resolveJobView(failed, undefined, true);
+    expect(view).toBe(failed);
+    expect(view.exitCode).toBe(3);
+  });
+
+  it("还没对过账时不降级：running 照常显示", () => {
+    // 启动那一瞬间转录先到、jobs.list 还在飞。此时把每条 running 都判成终态
+    // 只会闪一屏假的「已退出」
+    expect(resolveJobView(snapshot, undefined, false)).toBe(snapshot);
+  });
+
+  it("store 里有它时走合并，与对账标记无关", () => {
+    const live = jobInfo({ status: "killed", startedAt: 1_000, endedAt: 3_000 });
+    expect(resolveJobView(snapshot, live, false).status).toBe("killed");
+    expect(resolveJobView(snapshot, live, true).status).toBe("killed");
+  });
+});
+
+describe("isJobFinished", () => {
+  it("只有 running 不是终态，其余三种都是", () => {
+    expect(isJobFinished("running")).toBe(false);
+    expect(isJobFinished("exited")).toBe(true);
+    expect(isJobFinished("failed")).toBe(true);
+    expect(isJobFinished("killed")).toBe(true);
   });
 });
 

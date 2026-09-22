@@ -198,7 +198,13 @@ export function RightSidebar(): React.JSX.Element {
  * 名字优先用页面标题（浏览器标签会报上来，见 BrowserPanel），没有就用视图名 ——
  * 于是「浏览器 / 浏览器」在开了多页之后自然会变成各自的页面标题。
  * 结构对齐 TerminalPanel 的 TerminalTab（同一个仓里两处标签不该长得不一样）：
- * 外层 div + 两个 button，× 在 hover / 键盘聚焦时才显形，静止时标签条是干净的。
+ * 外层 div + 两个 button。
+ *
+ * **× 一直显示**（本次改动的用户要求）：早先它只在 hover / 键盘聚焦时显形，
+ * 理由是「静止时标签条更干净」—— 但那把「这个标签能关」这条信息藏进了一次试探里：
+ * 用户得先碰一下才知道有这回事，而在触屏与触控板上根本没有 hover 这个状态。
+ * 现在它常驻，只把颜色压淡：静止时是 `text-ink-4`，hover 到整颗标签或按钮本身才转深 ——
+ * 「能关」始终可见，「正在指的是它」才靠颜色表达。
  */
 function RightPanelTabButton({
   tab,
@@ -241,7 +247,13 @@ function RightPanelTabButton({
           event.stopPropagation();
           onClose();
         }}
-        className="rounded p-0.5 text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+        className={cn(
+          "rounded p-0.5 text-ink-4 transition-colors",
+          // hover 到标签本身或按钮自己：转深，给出「就要点它了」的反馈。
+          // 不用 group-hover 控制显隐（那是旧写法），只控制颜色
+          "hover:bg-foreground/[0.08] hover:text-foreground focus-visible:ring-1 focus-visible:ring-foreground/20",
+          active ? "text-ink-3" : "group-hover:text-ink-3",
+        )}
       >
         <X className="size-3" />
       </button>

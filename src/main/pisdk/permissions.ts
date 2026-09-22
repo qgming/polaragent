@@ -7,6 +7,7 @@ import { writeFileAtomic } from "@/main/storage/atomic-write";
 import { BROWSER_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/browser";
 import { isMcpToolName } from "@/shared/contracts/mcp";
 import { WEB_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/web";
+import { TOOL_NAMES } from "./tools";
 import { BACKGROUND_JOB_TOOL_NAMES } from "./tools/jobs";
 
 /**
@@ -58,6 +59,10 @@ export interface PermissionRuleStore {
 // 也不对公开抓取要审批。见 docs/web-tools-plan.md §0 的决策记录。
 const LOW_RISK_TOOLS = new Set([
   "read",
+  // read_image 与 read 同级：同样只读、只碰守卫允许的根内文件。
+  // 它多出来的那点面是「图片字节会进上下文」，但那是**读的结果**而不是新的权限面 ——
+  // 让用户为「看一眼我让他看的图」点一次批准卡，等于把这个工具废掉。
+  TOOL_NAMES.readImage,
   "grep",
   "glob",
   "todo",

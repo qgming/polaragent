@@ -151,9 +151,6 @@ export const enUS = {
     webSourceCount: "{{count}} sources",
     webTruncated: "truncated",
     webStatus: "HTTP {{status}}",
-    // Background job panel (shown above the composer, next to the todo bar)
-    jobs: "Background jobs",
-    jobsPanelToggle: "Expand or collapse background jobs",
     inputPlaceholder: "Type a message. Enter to send, Shift+Enter for a new line",
     newChat: "New chat",
     welcome: "What would you like to do today?",
@@ -635,6 +632,8 @@ export const enUS = {
     referencesToggle: "Expand or collapse references",
     referencesEmpty: "Nothing referenced in this session yet",
     attachment: "Image attachment",
+    /** Accessible name of a file-footprint row: it opens the file in the right sidebar */
+    openFile: "Open {{path}} in the right sidebar",
   },
   /*
     Tool verbs: **base form when settled, "-ing" while running**.
@@ -665,6 +664,8 @@ export const enUS = {
     todoActive: "Updating the list",
     askUser: "Ask",
     askUserActive: "Waiting for you",
+    readImage: "View image",
+    readImageActive: "Viewing image",
     bashBackground: "Start a background job",
     bashBackgroundActive: "Starting a background job",
     jobOutput: "Read job output",
@@ -723,6 +724,7 @@ export const enUS = {
     browserRaw: "Raw result",
     /** Page body folded inside the web_fetch card */
     webFetchBody: "Page body",
+    imageUnavailable: "This image cannot be loaded right now: {{reason}}",
   },
   errors: {
     generic: "Something went wrong. Please try again",

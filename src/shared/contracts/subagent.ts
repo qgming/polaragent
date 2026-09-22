@@ -36,6 +36,9 @@ export type SubagentSource = "builtin" | "user" | "temp";
  */
 export const SUBAGENT_ASSIGNABLE_TOOLS = [
   "read",
+  // 读图片：与 read 同档（只读、只碰守卫内的文件），子智能体没有理由看不见图 ——
+  // 让它把「这张截图报错了」这种结论只靠猜，比给它读图能力糟得多
+  "read_image",
   "grep",
   "glob",
   "bash",
@@ -49,7 +52,12 @@ export const SUBAGENT_ASSIGNABLE_TOOLS = [
 export type SubagentToolName = (typeof SUBAGENT_ASSIGNABLE_TOOLS)[number];
 
 /** 没有显式指定工具时的默认集合：只读三件套（最安全的那一档） */
-export const DEFAULT_SUBAGENT_TOOLS: readonly SubagentToolName[] = ["read", "grep", "glob"];
+export const DEFAULT_SUBAGENT_TOOLS: readonly SubagentToolName[] = [
+  "read",
+  "read_image",
+  "grep",
+  "glob",
+];
 
 /** 带写权限的工具：用于决定子智能体系统提示里那句「你可以改文件」是否成立 */
 export const SUBAGENT_MUTATING_TOOLS: readonly SubagentToolName[] = ["bash", "edit", "write"];

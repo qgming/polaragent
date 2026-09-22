@@ -174,6 +174,12 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
       return inner.readTextFile(check.path, context);
     },
 
+    async openTextLineReader(requested, context) {
+      const check = guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.openTextLineReader(check.path, context);
+    },
+
     async readTextLines(requested, options, context) {
       const check = guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
