@@ -18,9 +18,6 @@ import {
   MAX_SUBAGENT_DEFINITIONS,
   MAX_SUBAGENT_PROMPT_CHARS,
   normalizeSubagentName,
-  resolveSubagentTools,
-  SUBAGENT_ASSIGNABLE_TOOLS,
-  SUBAGENT_MUTATING_TOOLS,
   SUBAGENT_NAME_PATTERN,
   type SubagentDefinition,
   type SubagentInfo,
@@ -31,7 +28,6 @@ import { errorText } from "./error-text";
 import { resolveSubagentDirs } from "./resources";
 
 const THINKING_LEVELS = new Set<string>(ALL_THINKING_LEVELS);
-const ASSIGNABLE_TOOLS = new Set<string>(SUBAGENT_ASSIGNABLE_TOOLS);
 /** 面板列表里 prompt 只显示前若干字符，避免把整段系统提示塞进列表行 */
 const PROMPT_PREVIEW_CHARS = 160;
 
@@ -443,7 +439,7 @@ ${DIAGNOSTIC_FILE_RULES}
  * **都没有 maxTurns**：轮次上限字段已整体删除（见 shared/contracts/subagent.ts
  * 里那段关于「为什么没有轮次上限」的说明）。异常检测交给重复调用守卫。
  *
- * 七个都落在 SUBAGENT_ASSIGNABLE_TOOLS 之内，不引入新的权限面。
+ * 七个都拿到**主代理同一批工具**（唯一例外是不能继续委派）—— 见 contracts/subagent.ts。
  *
  * ## `description` 的写法（比想象中重要）
  *
@@ -456,15 +452,6 @@ ${DIAGNOSTIC_FILE_RULES}
  * —— 它给每个子智能体写的正是这套结构，而且事实证明模型吃得下这个密度。
  *
  * **不要在这里重复提示词正文里的内容**：这一行进每一轮请求，越长越贵。
- *
- * ## `disabledTools` 的写法（黑名单制）
- *
- * 空数组 = **全部可分配工具都给它**。所以只有「这个角色的契约明确禁止」的工具才需要列进来 ——
- * 依据是每条 prompt 自己的措辞（「它不改任何文件」「它不改代码，也不放宽断言」），
- * 而不是抄一份工具清单。这正是黑名单制与旧白名单制的实际差别：
- * 旧写法要枚举「给什么」，新增一个工具时所有定义都得跟着改；现在默认全给。
- *
- * 副作用是内置会多拿到 `read_image` / `todo` / 部分 `web_*` —— 那是「默认全可用」的预期结果。
  */
 export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
   {
@@ -472,7 +459,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "快速的代码库探索，把结论带回来（不改任何文件）。派它：动手前要先搞清楚现状、要多路并行搜索、需要一份摘要而不是全文、范围还不确定。别派它：已经知道路径且要读内容、本来就要读整份文件、只是查一个具体的东西、马上要改这个文件。口诀：「X 在哪 / Y 怎么实现的」派它；「读这个文件」自己做。",
     prompt: EXPLORER_PROMPT,
-    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
   },
   {
@@ -480,7 +466,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "对刚完成的改动做对抗式审查，只读，结论分「确定 / 可疑 / 缺测试」三档。派它：一段实现刚做完、想要有人对着挑毛病、改动涉及边界或错误路径、评审里需要「什么输入下会出错」的具体场景。别派它：代码还没写完、只想确认「跑通了吗」（那是 verifier）、需要动手修（那是 fixer）。它找问题，不改问题。",
     prompt: CODE_REVIEWER_PROMPT,
-    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
   },
   {
@@ -488,7 +473,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "按一份自包含规格快速实现改动，能改文件、能跑命令。派它：改动非平凡或跨多个文件、可以按目录/模块拆成互不重叠的几片并行做、规格已经明确到不用再做判断。别派它：还需要调研或做技术决策、单个文件内的小改动（自己做更快）、需求还不清楚要来回试、涉及界面手感或设计判断（那是 designer）。口诀：机械式的实现派它，需要品味的别派。",
     prompt: FIXER_PROMPT,
-    disabledTools: [],
     source: "builtin",
   },
   {
@@ -496,7 +480,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "跑一条具体的测试或构建命令，只把失败清单带回来（长输出挡在主会话之外）。派它：命令已经明确、输出量很大、只关心通过还是失败以及失败在哪。别派它：还不知道该跑什么（先自己查）、需要判断「这个失败要不要修」（那是 code-reviewer 或你自己）、需要在失败后顺手修（那是 fixer）。它不改代码，也不放宽断言。",
     prompt: TEST_RUNNER_PROMPT,
-    disabledTools: ["edit", "write"],
     source: "builtin",
   },
   {
@@ -504,7 +487,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "只读的技术参谋：架构取舍、方案对比、疑难根因、改动前的风险审查。派它：影响面大的架构决定、同一问题修了两次还没好、高风险的多模块重构、代价昂贵的取舍、根因不明的疑难、以及需要有人对方案做简化审视（YAGNI）。别派它：你有把握的常规决定、第一次尝试修 bug、直截了当的取舍、需要「怎么做」而不是「该不该做」、查一下或试一下就能答的问题。口诀：需要资深架构判断或评审派它；routine 的协调与最终综合自己做。**它是升级手段，不是默认的验证步骤。**",
     prompt: ORACLE_PROMPT,
-    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
   },
   {
@@ -512,7 +494,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "界面与交互的设计、实现与评审：布局、层次、间距、动效、响应式、状态反馈、无障碍。派它：用户看得见的界面需要打磨、响应式适配、交互关键的组件（表单 / 导航 / 面板）、视觉一致性、动效与微交互、评审既有界面的体验质量。别派它：纯后端逻辑、纯数据管道、设计还不重要的早期原型。口诀：**用户看得见且好不好看有影响，一律派它** —— 包括你觉得「顺手改一下」的那种。它的弱项是文案，视觉做完后文案可以由主代理复核。",
     prompt: DESIGNER_PROMPT,
-    disabledTools: ["bash"],
     source: "builtin",
   },
   {
@@ -520,7 +501,6 @@ export const BUILTIN_SUBAGENTS: readonly SubagentDefinition[] = [
     description:
       "对已完成的实现做独立复核：先找验收标准，自己设计验证路径（不是重跑一遍现成测试），结论分「已验证 / 未验证 / 无法验证」三档。派它：一次实现告一段落、要给用户一个可信的「成了」、改动涉及难以察觉的失败模式、需要独立于实现者的人来确认。别派它：代码还在写、只是想跑一条已知命令（那是 test-runner）、需要找缺陷而不是确认行为（那是 code-reviewer）。它不改任何文件，也不放宽断言。",
     prompt: VERIFIER_PROMPT,
-    disabledTools: ["edit", "write"],
     source: "builtin",
   },
 ];
@@ -609,20 +589,8 @@ function collectFrontmatter(lines: readonly string[]): Map<string, FrontmatterVa
 }
 
 /**
- * 过滤出**可分配**的工具名并去重（禁用清单用）。
- *
- * 与旧的白名单实现有三处关键差别：
- * - **空结果不再回落**：禁用了 0 个工具就是「什么都不禁用」= 全部可用（黑名单制的本意）；
- * - **不认识的名字直接丢掉**，不会产生任何效果 —— 旧实现里一个拼错的名字会让
- *   `restrictTools` 交出空工具表（子智能体一个工具都没有）；
- * - 不做「至少留一个」的兜底：全禁用是合法配置（那就是一个什么都不能干的子智能体）。
+ * `serviceId/modelId` 按**第一个** `/` 拆分；拆不开（缺斜杠或任一侧为空）视为未指定
  */
-function normalizeDisabledTools(tools: readonly string[]): string[] {
-  const filtered = tools.map((tool) => tool.trim()).filter((tool) => ASSIGNABLE_TOOLS.has(tool));
-  return [...new Set(filtered)];
-}
-
-/** `serviceId/modelId` 按**第一个** `/` 拆分；拆不开（缺斜杠或任一侧为空）视为未指定 */
 function parseModelRef(raw: string): ModelRef | undefined {
   const slash = raw.indexOf("/");
   if (slash <= 0) return undefined;
@@ -671,23 +639,11 @@ export function parseSubagentMarkdown(
   //
   // 这里**必须忽略而不是报错**：报错会让一份完整的用户定义因为一个废弃字段
   // 整个加载失败（表现是「定义莫名消失了」），而那个字段现在没有任何作用。
-
-  /**
-   * 旧的 `tools:` 键**不能**当 `disabled_tools` 用 —— 两者语义**相反**。
-   *
-   * 老定义写 `tools: [read, grep, glob]` 的意思是「只给这三个」；按黑名单解释就变成
-   * 「除了这三个全给」，**包括 bash/edit/write** —— 静默提权。所以这里 fail-closed：
-   * 忽略该键，并把工具集收到只读四件套，同时给一条能定位到文件的诊断。
-   *
-   * （README 的立场是「开发阶段不考虑旧版本数据迁移」，所以不做自动转换 ——
-   * 但「不迁移」不等于「可以静默改变权限」，这也是唯一一处 fail-closed 的理由。）
-   */
-  const legacyTools = asList(fields.get("tools"));
-  const legacyWarning =
-    legacyTools.length > 0
-      ? `定义里的 tools: 是旧的白名单字段，已不再生效（现为 disabled_tools 黑名单）——` +
-        `本次按只读工具集加载，请改写字段`
-      : undefined;
+  //
+  // 同理，`tools:` / `disabled_tools:` 这两个键也**一概忽略**：子智能体的工具不再可配
+  //（它拿到的是主代理同一批工具，唯一例外是不能继续委派 —— 见 contracts/subagent.ts）。
+  // 老定义里留着它们不会报错、也不会产生任何效果；对用户来说「以前写 read-only 的定义
+  // 现在能写文件了」正是这次改动的本意，不需要迁移脚本。
 
   const rawThinking = readString(fields, "thinkinglevel");
   const thinkingLevel = THINKING_LEVELS.has(rawThinking)
@@ -700,18 +656,10 @@ export function parseSubagentMarkdown(
       name,
       description,
       prompt: body,
-      disabledTools:
-        legacyWarning === undefined
-          ? // 注意用**归一化后**的键：normalizeKey 会把下划线去掉（与 thinkingLevel 同款），
-            // 所以文件里写的是 disabled_tools，这里查的是 disabledtools
-            normalizeDisabledTools(asList(fields.get("disabledtools")))
-          : // fail-closed：禁掉全部可写工具，等于只读
-            [...SUBAGENT_MUTATING_TOOLS],
       ...(model === undefined ? {} : { model }),
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
       source: "user",
     },
-    ...(legacyWarning === undefined ? {} : { warning: legacyWarning }),
   };
 }
 
@@ -721,10 +669,6 @@ export function parseSubagentMarkdown(
  */
 export function serializeSubagentMarkdown(def: SubagentDefinition): string {
   const lines = [`name: ${def.name}`, `description: ${singleLine(def.description)}`];
-  // 空清单不写：黑名单制下「什么都不禁用」是默认语义，写一行空数组只是噪声
-  if (def.disabledTools.length > 0) {
-    lines.push(`disabled_tools: [${def.disabledTools.join(", ")}]`);
-  }
   if (def.model != null) lines.push(`model: ${def.model.serviceId}/${def.model.modelId}`);
   if (def.thinkingLevel !== undefined) lines.push(`thinkingLevel: ${def.thinkingLevel}`);
   return `---\n${lines.join("\n")}\n---\n\n${def.prompt.trim()}\n`;
@@ -749,10 +693,6 @@ export function toSubagentInfo(def: SubagentDefinition, settings: Settings): Sub
   return {
     name: def.name,
     description: def.description,
-    disabledTools: [...def.disabledTools],
-    // 有效清单由**同一个解析函数**给出：面板徽标与运行时注入的工具因此不可能漂移
-    //（旧实现里显示走归一化、执行走原始清单，一个拼错的工具名会让两边说法不一致）
-    effectiveTools: resolveSubagentTools(def.disabledTools),
     model: def.model ?? null,
     thinkingLevel: def.thinkingLevel ?? null,
     source: def.source,
@@ -864,7 +804,6 @@ export async function writeUserSubagentFile(request: SubagentWriteRequest): Prom
     name,
     description,
     prompt,
-    disabledTools: normalizeDisabledTools(request.disabledTools),
     ...(request.model == null ? {} : { model: request.model }),
     ...(request.thinkingLevel == null ? {} : { thinkingLevel: request.thinkingLevel }),
     source: "user",

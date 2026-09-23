@@ -66,10 +66,25 @@ export interface Settings {
   disabledSubagentNames: string[];
 
   /**
-   * MCP server 列表（外部工具来源）。连接状态不在这里 —— 它属于运行时的
+   * MCP server 列表（**用户自己新增的**外部工具来源）。连接状态不在这里 —— 它属于运行时的
    * McpServers，只在内存里，见 src/main/pisdk/mcp-servers.ts。
+   *
+   * 系统预设不占这个数组：它们住在 shared/mcp/builtin-servers.ts 的注册表里，
+   * 同 id 时用户这一份整条胜出。
    */
   mcpServers: McpServerConfig[];
+
+  /**
+   * 系统 MCP 预设的**显式**启停选择：`{ [预设 id]: boolean }`。
+   *
+   * 不在表里 = 跟随预设自己的 `defaultEnabled`（这一批全部默认开）。
+   * 之所以记「显式选择」而不是一份禁用表：预设的默认值未来可能不一致，
+   * 只记禁用的话，「默认关的那个用户打开了」这件事就无处可记。
+   *
+   * 注意这里**没有**「信任」开关：系统预设一律放行（见 builtin-servers.ts 的 isPreTrustedMcpTool），
+   * 它们是随包分发、逐条实测过的公开数据服务。
+   */
+  systemMcpServerEnabled: Record<string, boolean>;
 
   /**
    * 网络搜索 / 网页抓取（web_search / web_fetch）。

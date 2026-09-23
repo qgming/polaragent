@@ -16,7 +16,10 @@ import { describe, expect, it, vi } from "vitest";
 const paths = vi.hoisted(() => ({ data: "/data-oint" }));
 vi.mock("@/main/app/paths", () => ({ dataDir: () => paths.data }));
 
+import { BUILTIN_COMMANDS } from "@/shared/contracts/commands";
+import { PROMPT_NAME_PATTERN } from "@/shared/contracts/prompts";
 import {
+  resolveBuiltinPromptDir,
   resolveBuiltinSkillDir,
   resolvePromptTemplateDirs,
   resolveSkillDirs,
@@ -123,11 +126,22 @@ describe("resolveBuiltinSkillDir", () => {
 });
 
 describe("其余解析函数不受影响", () => {
-  it("提示模板：数据目录 → 项目（没有内置来源）", () => {
+  it("提示模板：数据目录 → 项目 → 内置（与技能同构，内置排最后）", () => {
+    // 只给 workingDir：内置层不参与（测试与不关心内置层的调用方走这条）
     expect(normalizeAll(resolvePromptTemplateDirs("/proj"))).toEqual([
       "/data-oint/prompts",
       "/proj/.oint/prompts",
     ]);
+    // 给了 appPath：内置层追加在最后，用户同名模板因此能覆盖它
+    const dirs = normalizeAll(resolvePromptTemplateDirs("/proj", "/app"));
+    expect(dirs).toEqual(["/data-oint/prompts", "/proj/.oint/prompts", "/app/resources/prompts"]);
+    expect(dirs.indexOf("/app/resources/prompts")).toBe(dirs.length - 1);
+    // 没有工作目录时只跳过项目层，数据目录与内置层照常
+    expect(normalizeAll(resolvePromptTemplateDirs(undefined, "/app"))).toEqual([
+      "/data-oint/prompts",
+      "/app/resources/prompts",
+    ]);
+    expect(resolvePromptTemplateDirs("/proj", "")).toHaveLength(2);
   });
 
   it("子智能体定义：数据目录 → 项目（内置写在代码里，不占目录）", () => {
@@ -235,6 +249,95 @@ describe("内置技能的完整性", () => {
       const frontmatter = content.slice(4, content.indexOf("\n---", 4));
       expect(frontmatter).toContain(`name: ${dir}`);
       expect(frontmatter).toMatch(/description: \S/);
+    }
+  });
+});
+
+describe("resolveBuiltinPromptDir", () => {
+  it("指向 <appPath>/resources/prompts（与内置技能同构）", () => {
+    expect(normalize(resolveBuiltinPromptDir("/app"))).toBe("/app/resources/prompts");
+    expect(normalize(resolveBuiltinPromptDir("D:\\dev\\polaragent"))).toBe(
+      "D:/dev/polaragent/resources/prompts",
+    );
+  });
+
+  /**
+   * 打包后必须返回 `app.asar.unpacked` 那一份 —— 理由与内置技能**逐字相同**
+   *（见 resolveBuiltinSkillDir 的测试注释）：asar 是归档，非 Electron 进程读不了，
+   * 而 `resources/**` 在 electron-builder.yml 里被整个 asarUnpack 出来了。
+   * 这里用临时目录造出 `.unpacked` 兄弟目录来验证分支，不依赖真的打包。
+   */
+  it("存在 app.asar.unpacked 时优先返回解包后的真实路径", async () => {
+    const base = await mkdtemp(path.join(tmpdir(), "oint-asar-prompt-"));
+    const appAsar = path.join(base, "app.asar");
+    await writeFile(appAsar, "", "utf8");
+    const unpackedPrompts = path.join(`${appAsar}.unpacked`, "resources", "prompts");
+    await mkdir(unpackedPrompts, { recursive: true });
+
+    expect(normalize(resolveBuiltinPromptDir(appAsar))).toBe(normalize(unpackedPrompts));
+    expect(normalize(resolveBuiltinPromptDir(path.join(base, "not-packed")))).toBe(
+      normalize(path.join(base, "not-packed", "resources", "prompts")),
+    );
+
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+});
+
+/**
+ * 内置魔法提示自身的完整性。
+ *
+ * 跑在**真实的 `resources/prompts` 目录**上（不是夹具），理由与内置技能那组相同：
+ * 这些 .md 是随包分发的静态内容，没有任何类型检查覆盖它们 ——
+ * 文件名不符合命名规则（斜杠菜单认不出来）、frontmatter 写坏（描述退化成正文首行）、
+ * 或正文被清空，都只能靠这里的断言拦住。
+ */
+describe("内置魔法提示的完整性", () => {
+  const builtinRoot = path.join(process.cwd(), "resources", "prompts");
+
+  async function promptFiles(): Promise<string[]> {
+    const entries = await readdir(builtinRoot, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+      .map((e) => e.name);
+  }
+
+  /** frontmatter 里的描述（没有 frontmatter 时返回空串） */
+  function frontmatterDescription(content: string): string {
+    if (!content.startsWith("---\n")) return "";
+    const end = content.indexOf("\n---", 4);
+    if (end === -1) return "";
+    const match = /^description:[ \t]*(.+)$/m.exec(content.slice(4, end));
+    return match?.[1]?.trim() ?? "";
+  }
+
+  it("内置提示至少有 12 个，文件名都符合命名规则", async () => {
+    const files = await promptFiles();
+
+    // 第一批是「工作流型」提示（14 条）：门槛取 12 是为了拦住"文件被误删/漏进包"，
+    // 而不是把数量钉死 —— 增删条目是正常维护，改这个数字比让人猜要诚实。
+    expect(files.length).toBeGreaterThanOrEqual(12);
+    for (const file of files) {
+      // 文件名去掉 .md 就是斜杠命令名：不符合规则的会被 normalizePromptName 判非法，
+      // 而内置文件不是用户敲进去的，没有机会被规范化 —— 只能在这里拦住
+      expect(PROMPT_NAME_PATTERN.test(file.replace(/\.md$/, ""))).toBe(true);
+    }
+  });
+
+  it("每个内置提示都有非空的 frontmatter 描述与像样的正文", async () => {
+    for (const file of await promptFiles()) {
+      const content = await readFile(path.join(builtinRoot, file), "utf8");
+      expect(frontmatterDescription(content).length).toBeGreaterThan(4);
+      // 正文 = frontmatter 之后的部分。门槛比"非空"高得多：内置提示的定位是
+      // **多步工作流**（有产出物、有检查点、有红线），一句话的小提示不该占这个位置。
+      const body = content.slice(content.indexOf("\n---", 4) + 4).trim();
+      expect(body.length).toBeGreaterThan(400);
+    }
+  });
+
+  it("内置提示不与内置指令同名（同名会让 /名字 出现歧义）", async () => {
+    const commandNames = new Set(BUILTIN_COMMANDS.map((spec) => spec.name.toLowerCase()));
+    for (const file of await promptFiles()) {
+      expect(commandNames.has(file.replace(/\.md$/, "").toLowerCase())).toBe(false);
     }
   });
 });

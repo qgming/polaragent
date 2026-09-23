@@ -21,7 +21,6 @@ import type { SessionCreateOptions } from "@/shared/contracts/session";
 import {
   isSubagentRunFinished,
   MAX_CONCURRENT_SUBAGENT_RUNS,
-  resolveSubagentTools,
   type SubagentEventEnvelope,
   type SubagentRun,
   type SubagentRunFinishedStatus,
@@ -157,7 +156,7 @@ export function subagentSlotHolders(sessionId: string): SubagentSlotHolder[] {
 
 /** 发出去的必须是快照：运行记录还会被继续改，活对象交给 IPC 之后拿到什么全看时机 */
 function snapshot(run: SubagentRun): SubagentRun {
-  return { ...run, tools: [...run.tools] };
+  return { ...run, ...(run.tools === undefined ? {} : { tools: [...run.tools] }) };
 }
 
 /**
@@ -319,13 +318,13 @@ async function startReservedRun(
 ): Promise<SubagentRun> {
   const definition = request.definition;
   /**
-   * run 记录里存的是**有效工具清单**（解析后的），不是禁用清单。
+   * run 记录里存的是**这次运行实际被限定的工具白名单**（只有主 AI 临时定义会有）。
    *
-   * 面板与主会话里的胶囊都显示「这个子智能体能用什么」——那是结果，只能由
-   * `resolveSubagentTools` 给出。运行时注入的工具走的是同一个函数（见 runtime 的
-   * restrictTools 调用），所以「显示的」与「真的给的」不可能对不上。
+   * 内置预设与用户定义不带 `tools`，所以记成 undefined —— 面板把这种情况显示成
+   * 「全部（不含委派）」，这正是它们拿到的。运行时按同一个字段过滤工具
+   *（见 runtime 的 restrictTools 调用），所以「显示的」与「真的给的」不可能对不上。
    */
-  const tools = resolveSubagentTools(definition.disabledTools);
+  const tools = definition.source === "temp" ? definition.tools : undefined;
   const createOptions: SessionCreateOptions = {
     cwd: parent.cwd,
     title: sessionTitle(definition.name, request.description),
@@ -354,7 +353,7 @@ async function startReservedRun(
     model: definition.model ?? null,
     modelId: definition.model ? definition.model.modelId : parent.parentModelId,
     thinkingLevel: definition.thinkingLevel ?? parent.parentThinkingLevel ?? "off",
-    tools,
+    ...(tools === undefined ? {} : { tools }),
     turns: 0,
     toolCalls: 0,
     // 重派（Task 的 resumeOf）时写下它接续的是哪一次委派；旧记录本身不动 —— 那是历史，不是要被覆盖的行

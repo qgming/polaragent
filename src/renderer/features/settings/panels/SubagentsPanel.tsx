@@ -1,9 +1,8 @@
 import { FolderOpen, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { field, ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { ghostButton, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
-import { Badge } from "@/renderer/components/ui/badge";
 import { Button } from "@/renderer/components/ui/button";
 import {
   Dialog,
@@ -22,12 +21,10 @@ import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { ALL_THINKING_LEVELS, type ModelRef, type ThinkingLevel } from "@/shared/contracts/common";
 import type { ModelServiceConfig, Settings } from "@/shared/contracts/settings";
 import {
-  SUBAGENT_ASSIGNABLE_TOOLS,
   SUBAGENT_NAME_PATTERN,
   type SubagentCatalog,
   type SubagentInfo,
   type SubagentWriteRequest,
-  subagentCanMutate,
 } from "@/shared/contracts/subagent";
 import {
   AddButton,
@@ -114,7 +111,6 @@ function SubagentEditor({
    * 新建时全不勾 = 什么都不禁用 = 拿到全部可分配工具。这与运行时的默认值一致
    *（旧的白名单制在这里预勾只读四件套，因为那时的默认是「没写就只读」）。
    */
-  const [disabledTools, setDisabledTools] = useState<string[]>(info?.disabledTools ?? []);
   const [model, setModel] = useState<ModelRef | null>(info?.model ?? null);
   const [thinking, setThinking] = useState<ThinkingLevel | null>(info?.thinkingLevel ?? null);
   // null = 正文还没读回来（编辑态）；新建时直接是空串，不必等一次 IPC
@@ -181,17 +177,6 @@ function SubagentEditor({
     );
   }
 
-  /**
-   * 勾选框 = **禁用**该工具（黑名单制）。勾上表示「这个子智能体不能用它」。
-   *
-   * 语义与旧的白名单实现相反：那时勾上 = 允许，且默认预勾只读四件套。
-   */
-  const toggleTool = (tool: string, disabled: boolean) => {
-    setDisabledTools((current) =>
-      disabled ? [...current, tool] : current.filter((item) => item !== tool),
-    );
-  };
-
   const handleModelChange = (value: string) => {
     const at = value.indexOf(MODEL_SEPARATOR);
     if (at < 0) {
@@ -220,8 +205,6 @@ function SubagentEditor({
       name: name.trim(),
       description: description.trim(),
       prompt,
-      // 按契约里的规范顺序写：同一组禁用项不因勾选先后产生不同的文件内容
-      disabledTools: SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => disabledTools.includes(tool)),
       model,
       thinkingLevel: thinking,
     };
@@ -270,10 +253,6 @@ function SubagentEditor({
       }
     >
       <div className="space-y-4">
-        {readOnly ? (
-          <p className="text-xs text-ink-3">{t("settings.subagentBuiltinHint")}</p>
-        ) : null}
-
         <FieldBlock
           label={t("settings.subagentName")}
           hint={t("settings.subagentNameHint")}
@@ -321,23 +300,12 @@ function SubagentEditor({
           />
         </FieldBlock>
 
-        <FieldBlock label={t("settings.subagentTools")} hint={t("settings.subagentToolsHint")}>
-          <div className="flex flex-wrap gap-x-4 gap-y-2">
-            {SUBAGENT_ASSIGNABLE_TOOLS.map((tool) => (
-              <label key={tool} className="flex items-center gap-1.5 text-xs text-ink-2">
-                <input
-                  type="checkbox"
-                  checked={disabledTools.includes(tool)}
-                  aria-label={tool}
-                  disabled={readOnly}
-                  onChange={(event) => toggleTool(tool, event.target.checked)}
-                  className="size-3.5 accent-foreground"
-                />
-                <span className={mono}>{tool}</span>
-              </label>
-            ))}
-          </div>
-        </FieldBlock>
+        {/*
+          这里曾有「工具」一栏（一排勾选框）。**整体移除**：子智能体拿到的是主代理同一批工具，
+          唯一例外是不能继续委派 —— 那是所有子智能体共享的一条规则，不是每个定义各自的配置。
+          想给某个临时帮手收窄工具，由主代理在派发时用 definition.tools 指定
+          （见 shared/contracts/subagent.ts 的 SubagentDefinition.tools）。
+        */}
 
         <div className="grid grid-cols-2 gap-3">
           <FieldBlock label={t("settings.subagentModel")}>
@@ -518,7 +486,6 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
             {visible.map((info) => {
               // 设置里的禁用名单是唯一事实来源，避免列表快照过期（与技能列表同口径）
               const enabled = !settings.disabledSubagentNames.includes(info.name);
-              const canWrite = subagentCanMutate(info.effectiveTools);
               return (
                 <div
                   key={`${info.source}:${info.name}`}
@@ -532,33 +499,8 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-[13.5px] font-medium">{info.name}</span>
-                      {/* 写权限是「会不会动我的文件」这件事，比工具清单本身更该一眼看到 */}
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          mono,
-                          "border-border/60 px-1.5",
-                          canWrite ? "text-amber-600 dark:text-amber-400" : "text-ink-3",
-                        )}
-                      >
-                        {canWrite
-                          ? t("settings.subagentToolsCanWrite")
-                          : t("settings.subagentToolsReadOnly")}
-                      </Badge>
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{info.description}</p>
-                    {info.effectiveTools.length === 0 ? null : (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                        {info.effectiveTools.map((tool) => (
-                          <span
-                            key={tool}
-                            className={cn(field, mono, "rounded-full px-1.5 py-0.5 text-ink-3")}
-                          >
-                            {tool}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                     <p className="mt-1 text-xs text-ink-4">
                       {t("settings.subagentModel")}
                       {" · "}
@@ -566,11 +508,6 @@ function SubagentsPanelBody({ settings }: { settings: Settings }) {
                         ? t("settings.subagentModelInherit")
                         : info.model.modelId}
                     </p>
-                    {info.source === "builtin" ? (
-                      <p className="mt-0.5 text-xs text-ink-4">
-                        {t("settings.subagentBuiltinHint")}
-                      </p>
-                    ) : null}
                   </button>
                   <div className="flex shrink-0 items-center gap-1">
                     {info.source === "user" ? (

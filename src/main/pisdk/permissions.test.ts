@@ -46,6 +46,14 @@ describe("assessToolRisk", () => {
   it("MCP 外部工具一律高风险（名字与行为都由 server 决定）", () => {
     expect(assessToolRisk("mcp__mcp-a__read_file", { path: "a.ts" })).toBe("high");
     expect(assessToolRisk("mcp__mcp-a__anything", {})).toBe("high");
+    // 聚合工具同样是 MCP 形态的名字：System 预设的免审批在 gateTool 里按 serverId 判定，
+    // 不是靠这里降级（否则用户自加 server 的聚合工具也会被一起放行）
+    expect(assessToolRisk("mcp__mcp-a__call", { tool: "read_file" })).toBe("high");
+  });
+
+  it("mcp_tools（内置详情工具）是低风险：只读本地能力清单，不发起调用", () => {
+    expect(assessToolRisk("mcp_tools", {})).toBe("low");
+    expect(assessToolRisk("mcp_tools", { server: "arxiv", tool: "arxiv_search" })).toBe("low");
   });
 });
 

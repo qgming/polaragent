@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { typePackage } from "@/renderer/components/assistant-ui/type";
+import { Badge } from "@/renderer/components/ui/badge";
 import { Button } from "@/renderer/components/ui/button";
 import {
   Dialog,
@@ -44,6 +45,65 @@ function PromptsEmpty({ source }: { source: SkillSource }) {
           : t("settings.promptTemplatesEmptyHint")}
       </span>
     </p>
+  );
+}
+
+/**
+ * 内置提示的**只读**查看器。
+ *
+ * 为什么不复用 PromptEditor：内置提示住在应用目录里，改它等于改应用自身，而且升级时会被整包
+ * 替换 —— 用户改过的那份会无声消失。所以这里不提供保存与删除，只在末尾说清「怎么才能改到它」：
+ * 新建一份**同名**提示（同名时数据目录那一份胜出，见主进程 list 的去重顺序）。
+ *
+ * 与「内置技能不可删除」同一条原则：不是不给改，而是把改的入口指向那个改得住的地方。
+ */
+function PromptViewer({ info, onClose }: { info: PromptTemplateInfo; onClose: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <SettingsDialog
+      title={t("settings.promptView")}
+      description={t("settings.promptViewDesc")}
+      onClose={onClose}
+      footer={
+        <div className="flex w-full justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            {t("common.close")}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <div className={typePackage}>{t("settings.promptName")}</div>
+          <p className={cn(mono, "text-[13px]")}>{info.name}</p>
+        </div>
+
+        {info.description === "" ? null : (
+          <div className="space-y-1.5">
+            <div className={typePackage}>{t("settings.promptDescription")}</div>
+            <p className="text-[13px]">{info.description}</p>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <div className={typePackage}>{t("settings.promptContent")}</div>
+          {/* 正文用等宽、保留换行：它是要被原样发出去的提示词，排版即语义 */}
+          <p
+            className={cn(
+              mono,
+              "rounded-xl border border-border/60 p-3 whitespace-pre-wrap text-xs leading-relaxed",
+            )}
+          >
+            {info.content}
+          </p>
+        </div>
+
+        <p className="text-xs text-ink-3">{t("settings.promptViewHint")}</p>
+        <p className={cn(mono, "truncate text-ink-4")} title={info.dir}>
+          {info.dir}
+        </p>
+      </div>
+    </SettingsDialog>
   );
 }
 
@@ -149,7 +209,7 @@ function PromptEditor({
             <Input
               value={name}
               aria-label={t("settings.promptName")}
-              placeholder="translate"
+              placeholder="plan"
               className={cn(settingsInput, "font-mono")}
               onChange={(event) => setName(event.target.value)}
             />
@@ -175,7 +235,9 @@ function PromptEditor({
               value={content}
               aria-label={t("settings.promptContent")}
               rows={10}
-              placeholder={"把下面这段内容翻译成中文：\n\n"}
+              placeholder={
+                "先只读探索，给出实现计划：\n\n1. 要改哪些文件…\n2. 怎么验证…\n\n在我确认前不要动手。\n"
+              }
               className={cn(settingsTextarea, "font-mono text-xs")}
               onChange={(event) => setContent(event.target.value)}
             />
@@ -293,11 +355,21 @@ function PromptsPanelBody() {
                 className="block w-full cursor-pointer rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-foreground/[0.03]"
                 onClick={() => setEditor({ info: template })}
               >
-                <span className="truncate text-[13.5px] font-medium">{template.name}</span>
+                <span className="flex items-center gap-2">
+                  <span className="truncate text-[13.5px] font-medium">{template.name}</span>
+                  {template.source === "builtin" ? (
+                    <Badge
+                      variant="outline"
+                      className={cn(mono, "border-border/60 px-1.5 text-ink-4")}
+                    >
+                      {t("settings.promptSystemBadge")}
+                    </Badge>
+                  ) : null}
+                </span>
                 {template.description === "" ? null : (
                   <p className="mt-0.5 line-clamp-2 text-xs text-ink-3">{template.description}</p>
                 )}
-                {/* 正文可能很长：只给固定行数的等宽预览并裁掉溢出，展开编辑在弹窗里做 */}
+                {/* 正文可能很长：只给固定行数的等宽预览并裁掉溢出，展开查看在弹窗里做 */}
                 <p className={cn(mono, "mt-1 line-clamp-4 whitespace-pre-wrap text-ink-4")}>
                   {template.content}
                 </p>
@@ -310,7 +382,10 @@ function PromptsPanelBody() {
         )}
       </SettingsSection>
 
-      {editor === null ? null : (
+      {/* 内置提示只看不改（点开的是只读查看器），用户提示走原来的编辑器 */}
+      {editor === null ? null : editor.info?.source === "builtin" ? (
+        <PromptViewer info={editor.info} onClose={() => setEditor(null)} />
+      ) : (
         <PromptEditor
           info={editor.info}
           onClose={() => setEditor(null)}

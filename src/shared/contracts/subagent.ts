@@ -19,83 +19,33 @@ import type { ModelRef, ThinkingLevel } from "./common";
 export type SubagentSource = "builtin" | "user" | "temp";
 
 /**
- * 允许分配给子智能体的工具名 —— **这是硬边界，与黑白名单无关**。
+ * ## 子智能体的工具：**全部可用，唯一例外是不能继续委派**
  *
- * 用**应用自己的小写工具名**（与 src/main/pisdk/tools.ts 的 TOOL_NAMES 同一套），
- * 不是内核的 Read/Glob/Grep —— 面板里显示的字面量必须和权限层、图标表里的键一致，
- * 否则「设置里禁用了 bash」与「实际注入的是 bash」会悄悄对不上。
+ * 早先每个定义带一份「禁用清单」（黑名单制，另有更早的白名单），面板上是一排勾选框。
+ * 那套东西**整体删除**了，理由有三条：
  *
- * 刻意**不在**列表里的：ask_user（子智能体不能卡住等用户）、作业三件套（子智能体不该自己起
- * 后台进程）、浏览器工具（不该操作用户正盯着的页面）、Task 系列（不允许嵌套委派）。
- * 这条约束在 tools.ts 的 buildTools 注释里已有对应说明，两处不要漂移。
+ * 1. **它天然与能力脱节**：内置预设一律禁掉 bash/edit/write 以求"安全"，于是
+ *    `code-reviewer` 连跑一次测试都做不到，只能把结论建立在"看起来像"上；
+ * 2. **它要用户替模型做决定**：勾选框问的是「这个子智能体该不该有网络/写文件」，
+ *    而真正该判断这件事的是主代理（它有任务上下文，用户没有）；
+ * 3. **它把 MCP 与新工具挡在门外**：白名单是硬编码的工具名列表，后来加的 MCP 工具、
+ *    浏览器工具、作业工具全都进不去 —— 子智能体因此永远比主代理"少一半手艺"。
  *
- * ⚠️ **这份名单是「可分配的上限」，不是「默认给谁」**。默认给谁由黑名单制决定：
- * 见 `resolveSubagentTools` —— 未列进禁用清单的**都可分配**。
+ * 现在子智能体拿到的是**主代理同一批工具**（bash / read / write / edit / grep / glob / todo /
+ * read_image / 作业四件套 / web / browser / **MCP**），唯一被摘掉的是 Task 系列（见下）。
  *
- * **web_search / web_fetch 在列表里**（与浏览器工具相反）：它们是无状态、无 UI 归属、
- * 可并发的网络调用 —— 不需要用户眼前的标签页，也不会把子智能体卡在等人回答上，
- * 所以上面那三条排除理由对它们都不成立。加上它们之后，
- * `deep-research` 这类技能才不必再教子智能体用 bash + curl 上网。
+ * ### 两个刻意的例外
+ *
+ * - **Task / TaskWait / TaskList / TaskStop 不给子智能体**（`subagentTools` 只在主会话装配）：
+ *   不允许嵌套委派 —— 报告要交回主代理，由主代理统一调度，否则并发与验收都没了边界；
+ * - **ask_user 不给子智能体**：它跑在一条**隐藏会话**里（不进左侧栏、不是当前会话），
+ *   提问卡没有任何地方会渲染出来，模型会永远等一个没人看得见的问题。
+ *   这不是能力限制而是「这个工具在隐藏会话里结构上不可用」—— 需要用户拍板的问题，
+ *   由子智能体写进最终报告，主代理来问（见 tools/ask.ts 顶部注释）。
+ *
+ * 权限面没有因此变大：子智能体用的仍是**同一套审批门与路径守卫**（browser / MCP / 作业
+ * 各自的边界也照旧），区别只在「它手里有哪些工具」。
  */
-export const SUBAGENT_ASSIGNABLE_TOOLS = [
-  "read",
-  // 读图片：与 read 同档（只读、只碰守卫内的文件），子智能体没有理由看不见图 ——
-  // 让它把「这张截图报错了」这种结论只靠猜，比给它读图能力糟得多
-  "read_image",
-  "grep",
-  "glob",
-  "bash",
-  "edit",
-  "write",
-  "todo",
-  "web_search",
-  "web_fetch",
-] as const;
-
-export type SubagentToolName = (typeof SUBAGENT_ASSIGNABLE_TOOLS)[number];
-
-/**
- * fail-closed 兜底集合：**只读四件套**。
- *
- * 它**不是**「默认值」（黑名单制下默认是「全部可分配」）。它只在一种情形用得上：
- * 定义里的字段没法解析 —— 最典型的是旧版本写的 `tools:`（那是**白名单**语义，
- * 原样当黑名单用会把「只给这三个」变成「除了这三个全给」，等于静默提权）。
- * 遇到这种情况宁可少给权限，也不猜用户想要什么。
- */
-export const SUBAGENT_READ_ONLY_TOOLS: readonly SubagentToolName[] = [
-  "read",
-  "read_image",
-  "grep",
-  "glob",
-];
-
-/**
- * 禁用清单 → **有效允许清单**（黑名单制的核心）。
- *
- * 语义：`disabled` 里列出的不可用，**其余全部可用**（可分配集合见 SUBAGENT_ASSIGNABLE_TOOLS）。
- *
- * 两条必须守住的边界：
- * - **不可分配的永远不给**：`ask_user` / 作业 / 浏览器 / Task 系列不在可分配集合里，
- *   所以无论禁用清单写什么，它们都不会出现在结果里；
- * - **不认识的条目静默忽略**：写错的工具名（拼错、或用内核的大写名）不会「顺便放行」
- *   什么东西，只是不产生效果 —— 与旧白名单实现相反，那时一个拼错的名字会让
- *   `restrictTools` 交出**空工具表**（子智能体一个工具都没有，而面板还显示着默认四件套）。
- *
- * **调用方必须走这个函数**：执行路径（runtime 的 restrictTools）与显示路径
- * （run 记录、设置面板、系统提示里的「可用工具」）都从这里取值，两边才不会漂移。
- */
-export function resolveSubagentTools(disabled: readonly string[]): SubagentToolName[] {
-  const denied = new Set(disabled);
-  return SUBAGENT_ASSIGNABLE_TOOLS.filter((tool) => !denied.has(tool));
-}
-
-/** 带写权限的工具：用于决定子智能体系统提示里那句「你可以改文件」是否成立 */
-export const SUBAGENT_MUTATING_TOOLS: readonly SubagentToolName[] = ["bash", "edit", "write"];
-
-/** 有效工具清单里是否有能改文件的（**吃的是 resolveSubagentTools 的结果**，不是禁用清单） */
-export function subagentCanMutate(tools: readonly string[]): boolean {
-  return tools.some((tool) => (SUBAGENT_MUTATING_TOOLS as readonly string[]).includes(tool));
-}
 
 /**
  * 目录里最多合并多少个定义（含内置）；超出部分被丢弃并在 diagnostics 里说明。
@@ -149,13 +99,22 @@ export interface SubagentDefinition {
   /** 子智能体的系统提示正文（markdown） */
   prompt: string;
   /**
-   * **禁用清单**（黑名单制）：列在这里的工具不给这个子智能体，其余全部可用。
+   * **工具白名单 —— 只对主 AI 临时定义（`source: "temp"`）生效。**
    *
-   * 空数组 = 不做任何禁用 = 拿到全部可分配工具（见 `SUBAGENT_ASSIGNABLE_TOOLS`）。
-   * 注意这**包含** bash / edit / write —— 想让一个子智能体只读，必须显式禁掉它们，
-   * 内置定义就是这么做的（见 subagent-catalog 的 BUILTIN_SUBAGENTS）。
+   * 内置预设与用户 `.md` 定义**不带**这个字段：它们拿到的就是主代理同一批工具
+   * （唯一例外是不能继续委派，见文件顶部那段说明）。白名单只留给一种场合：
+   * **主代理在派发时临时定义一个帮手，并且明确知道这次只需要哪几件工具**
+   *（例如「只读地扫一遍这几个目录」→ `["read", "grep", "glob"]`）。
+   *
+   * 为什么交给主代理而不是做成设置项：该不该有某个工具是**任务上下文**里的判断 ——
+   * 主代理知道这次要干什么，用户不知道；而一个固定的勾选框既挡不住误用，
+   * 又会让 90% 的场合被迫维护一份没人看的工具清单。
+   *
+   * 语义：`undefined` = 不限制（给全部工具）；数组 = **只给列出的这些**。
+   * 名字用应用自己的工具名（`read` / `bash` / `web_search` / …），
+   * 且必须真实存在 —— 派发时逐个校验，写错哪个会带着可用清单报错（见 tools/subagent.ts）。
    */
-  disabledTools: string[];
+  tools?: string[];
   /** 固定使用的模型；null / 缺省 = 继承父会话 */
   model?: ModelRef | null;
   /** 思考档位；缺省 = 继承父会话 */
@@ -169,15 +128,6 @@ export interface SubagentDefinition {
 export interface SubagentInfo {
   name: string;
   description: string;
-  /** 面板勾选框的状态：勾上 = 禁用该工具 */
-  disabledTools: string[];
-  /**
-   * 解析后的**有效工具清单**（`resolveSubagentTools(disabledTools)`）。
-   *
-   * 面板用它算「只读 / 可写文件」那枚徽标 —— 徽标表达的是**结果**，
-   * 而结果只能由解析函数给出，不能拿禁用清单自己去推（两处推就会漂移）。
-   */
-  effectiveTools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
   source: SubagentSource;
@@ -262,7 +212,12 @@ export interface SubagentRun {
   /** 实际使用的模型 id（面板上显示用） */
   modelId: string;
   thinkingLevel: ThinkingLevel;
-  tools: string[];
+  /**
+   * 这次运行实际被限定的工具白名单（只有临时定义会有）；缺省 = 全部工具（不含委派）。
+   *
+   * 面板把它显示出来，用户才知道「这个临时帮手能干什么」。
+   */
+  tools?: string[];
   /**
    * 已经跑过的轮次与工具调用次数。
    *
@@ -301,8 +256,6 @@ export interface SubagentWriteRequest {
   description: string;
   /** markdown 正文（prompt） */
   prompt: string;
-  /** 禁用清单（黑名单制）：见 SubagentDefinition.disabledTools */
-  disabledTools: string[];
   model: ModelRef | null;
   thinkingLevel: ThinkingLevel | null;
 }

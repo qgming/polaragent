@@ -16,15 +16,13 @@ import { type AgentHarnessToolInvocation, BACKGROUND_CONTEXT } from "@earendil-w
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_CONCURRENT_SUBAGENT_RUNS,
-  SUBAGENT_MUTATING_TOOLS,
-  SUBAGENT_READ_ONLY_TOOLS,
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
 import { BUILTIN_SUBAGENTS } from "../subagent-catalog";
 import {
   createSubagentTools,
-  normalizeSubagentTools,
+  normalizeWhitelist,
   SUBAGENT_TOOL_NAMES,
   type SubagentStartRequest,
   type SubagentToolDeps,
@@ -47,13 +45,12 @@ const INVOCATION: AgentHarnessToolInvocation = {
   setMemo: async () => {},
 };
 
-/** 一个可用的子智能体定义；默认只读三件套 */
+/** 一个可用的子智能体定义（工具不再可配：拿到的是主代理同一批） */
 function definition(name: string, patch: Partial<SubagentDefinition> = {}): SubagentDefinition {
   return {
     name,
     description: `${name} 的说明`,
     prompt: "你是子智能体，只做被派的那件事。",
-    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
     ...patch,
   };
@@ -75,7 +72,6 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: [...SUBAGENT_READ_ONLY_TOOLS],
     turns: 2,
     toolCalls: 3,
     ...patch,
@@ -139,6 +135,20 @@ function createDeps(overrides: Partial<SubagentToolDeps> = {}): SubagentToolDeps
     list: vi.fn(async () => [] as SubagentRun[]),
     stop: vi.fn(async () => [] as SubagentRun[]),
     parentModelId: () => "svc/model-x",
+    // 父会话真实拥有的工具名（白名单校验用）；含一个 MCP 工具名，证明校验不写死内置清单
+    availableToolNames: () => [
+      "read",
+      "read_image",
+      "grep",
+      "glob",
+      "write",
+      "edit",
+      "bash",
+      "todo",
+      "web_search",
+      "web_fetch",
+      "mcp__arxiv__call",
+    ],
     ...overrides,
   };
 }
@@ -174,25 +184,48 @@ function lastStart(deps: SubagentToolDeps): SubagentStartRequest {
   return call[0];
 }
 
-describe("normalizeSubagentTools（黑名单制）", () => {
-  it("未指定禁用项 = 什么都不禁用（空清单）", () => {
-    // 空清单在 resolveSubagentTools 里意味着「全部可分配工具都可用」，
-    // 与旧白名单制相反：那时 undefined 会回落到只读三件套
-    expect(normalizeSubagentTools(undefined)).toEqual([]);
-    expect(normalizeSubagentTools([])).toEqual([]);
+/**
+ * 临时定义的工具白名单（**唯一**能收窄子智能体工具的地方）。
+ *
+ * 内置预设与用户 `.md` 定义没有这个字段：它们拿到的就是主代理同一批工具。
+ * 白名单只由主代理在派发时给，因此校验必须**当次**做完并把可用清单回给它 ——
+ * 写错一个名字就让一个空转的子智能体跑完再报「我什么也做不了」，代价高得多。
+ */
+describe("normalizeWhitelist（临时定义的工具白名单）", () => {
+  const AVAILABLE = ["read", "write", "bash", "web_search", "mcp__arxiv__call"];
+
+  it("未指定 = 不限制（返回不带 tools 的结果）", () => {
+    expect(normalizeWhitelist(undefined, AVAILABLE)).toEqual({ ok: true });
+    expect(normalizeWhitelist([], AVAILABLE)).toEqual({ ok: true });
   });
 
-  it("未知工具名被丢掉，且不会被当成禁用项（拼错不产生任何效果）", () => {
-    expect(normalizeSubagentTools(["read", "teleport"])).toEqual(["read"]);
-    // 旧白名单制下这里会回落到只读三件套，是为了补救「拼错 → 空允许表 → 拿到全部工具」；
-    // 黑名单制下拼错的名字本来就不放行任何东西，不需要那种补救
-    expect(normalizeSubagentTools(["teleport"])).toEqual([]);
+  it("合法清单原样通过（含 MCP 这类运行时才存在的工具名）", () => {
+    expect(normalizeWhitelist(["read", "mcp__arxiv__call"], AVAILABLE)).toEqual({
+      ok: true,
+      tools: ["read", "mcp__arxiv__call"],
+    });
   });
 
-  it("可分配集合之外的条目会被丢掉（ask_user / 作业 / 浏览器 / Task 系列）", () => {
-    expect(normalizeSubagentTools(["bash", "Task", "browser_open", "bash_background"])).toEqual([
-      "bash",
-    ]);
+  it("去空白、去重、丢掉空串", () => {
+    expect(normalizeWhitelist([" read ", "read", "", "  "], AVAILABLE)).toEqual({
+      ok: true,
+      tools: ["read"],
+    });
+  });
+
+  it("不存在的工具名直接报错，并把可用清单回给模型", () => {
+    const result = normalizeWhitelist(["read", "teleport"], AVAILABLE);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("应当失败");
+    expect(result.reason).toContain("teleport");
+    expect(result.reason).toContain("read, write, bash");
+  });
+
+  it("不可授权的工具名同样报错：Task 系列与 ask_user 不在可用清单里", () => {
+    // 父会话注入的清单已经把这两个排除掉了，所以模型写它们时拿到的是同一条错误
+    const result = normalizeWhitelist(["Task"], AVAILABLE);
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -283,27 +316,53 @@ describe("Task", () => {
       name: "my-temp-agent", // 名字先规范化再当运行标签用
       source: "temp",
       model: null,
-      disabledTools: [],
     });
+    // 没给 tools = 不限制（临时子智能体拿到全部工具，与内置定义同款）
+    expect(request.definition).not.toHaveProperty("tools");
     // 临时定义不查目录：目录里有没有同名定义都不影响这次派发
     expect(vi.mocked(deps.definitions)).not.toHaveBeenCalled();
   });
 
-  it("临时定义里写了未知工具名：只留白名单内的，不整份丢掉", async () => {
+  it("临时定义带合法白名单：原样写进定义（运行时据此过滤工具）", async () => {
     const deps = createDeps();
 
     await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-3", {
-      description: "带工具名",
-      task: "读文件",
+      description: "带工具白名单",
+      task: "只读地扫一遍",
       definition: {
         name: "temp-2",
         description: "临时的",
         prompt: "p",
-        disabledTools: ["bash", "teleport"],
+        tools: ["read", "grep", "glob"],
       },
     });
 
-    expect(lastStart(deps).definition.disabledTools).toEqual(["bash"]);
+    expect(lastStart(deps).definition.tools).toEqual(["read", "grep", "glob"]);
+  });
+
+  /**
+   * 白名单里写了不存在的工具名 → **当次拒绝**，并把可用清单回给模型。
+   *
+   * 静默丢掉会让模型以为「我已经限制了工具」，而子智能体实际拿到的是别的组合；
+   * 让它跑完再报「我什么也做不了」更贵。所以这里走 MCP 聚合工具同一套口径：报错 + 清单。
+   */
+  it("白名单里有不存在的工具名：拒绝这次派发，并给出可用清单", async () => {
+    const deps = createDeps();
+
+    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-4", {
+      description: "带错误工具名",
+      task: "读文件",
+      definition: {
+        name: "temp-3",
+        description: "临时的",
+        prompt: "p",
+        tools: ["read", "teleport"],
+      },
+    });
+
+    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
+    expect(resultText(result)).toContain("teleport");
+    expect(resultText(result)).toContain("read"); // 可用清单
   });
 
   it("并发上限：名额已被占满时直接拒绝，不再启动", async () => {

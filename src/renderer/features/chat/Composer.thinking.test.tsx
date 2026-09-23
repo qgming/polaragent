@@ -101,6 +101,7 @@ function seedStores(options: {
       disabledSkillNames: [],
       disabledSubagentNames: [],
       mcpServers: [],
+      systemMcpServerEnabled: {},
       webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     },
     loaded: true,

@@ -43,6 +43,7 @@ function settings(over: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...over,
   };

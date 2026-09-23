@@ -88,7 +88,6 @@ function run(overrides: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: [],
     turns: 0,
     toolCalls: 0,
     ...overrides,

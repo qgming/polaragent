@@ -101,6 +101,7 @@ export const enUS = {
     subagentTranscriptEmpty: "The child session has no messages yet",
     subagentSteps: "{{turns}} turns · {{toolCalls}} tool calls",
     subagentTools: "Allowed tools",
+    subagentToolsAll: "all (no delegation)",
     subagentModel: "Model",
     subagentSource: "Source",
     subagentSourceBuiltin: "Built-in",
@@ -201,11 +202,35 @@ export const enUS = {
     noMessages: "No messages yet — start the conversation",
     modelSwitchRunning: "Cannot switch while running — stop this turn first",
     modelUnavailable: "That model is unavailable (its service or entry may be gone)",
-    slashHint: "Type / to invoke a skill or template",
+    slashHint: "Type / to invoke a command, skill or template",
+    slashCommands: "Commands",
     slashSkills: "Skills",
     slashTemplates: "Magic prompts",
-    slashEmpty: "No matching skills or templates",
+    slashEmpty: "No matching commands, skills or templates",
     slashSwitch: "Switch slash command",
+    // —— Built-in commands (separate from magic prompts: the app runs them, no model message) ——
+    commandCompactDesc: "Compact older conversation history",
+    commandCompactHint: "optional instructions (what to keep)",
+    commandUnavailableRunning:
+      "This command cannot run while the turn is running — try again after it finishes",
+    commandUnavailableCompacting: "Compaction is in progress — try again when it finishes",
+    commandNoArguments: "This command takes no arguments: /{{name}}",
+    commandBlocked: "Not available right now: {{reason}}",
+    // —— Context compaction: running / done / failed / cancelled ——
+    compacting: "Compacting",
+    compactingManual: "manual",
+    compactingAuto: "automatic",
+    compactingOverflow: "overflow recovery",
+    compacted: "Context compacted · ~{{tokens}} tokens · {{count}} kept",
+    compactedPlain: "Context compacted",
+    compactionNoPreview: "(no summary preview available for this run)",
+    compactionFailed: "Compaction failed: {{error}}",
+    compactionCancelled: "Compaction cancelled",
+    compactionUnknownError: "reason unknown",
+    compactWhileCompacting: "Compacting context — sending resumes when it finishes",
+    compactBusy: "The session is busy — compact after this turn finishes",
+    compactNothing: "No compactable history yet (the conversation is still short)",
+    compactFailed: "Compaction failed: {{error}}",
     steer: "Steer",
     queueEdit: "Edit",
     /** Progress readout on the task-list dock above the composer (done/total) */
@@ -384,8 +409,6 @@ export const enUS = {
     subagentsEmptyHint: "Create one, or drop a .md definition into the subagents data directory",
     subagentsSystemEmpty: "No built-in subagents",
     subagentsSystemEmptyHint: "Presets shipped with the app will appear here",
-    subagentBuiltinHint:
-      "Built-in preset: shipped with the app, can be disabled but not edited or deleted",
     subagentDisabled: "Disabled",
     subagentEnabled: "Enabled",
     subagentNew: "New subagent",
@@ -399,11 +422,6 @@ export const enUS = {
     subagentPrompt: "System prompt",
     subagentPromptHint:
       "The subagent's entire instruction set; its final message is the report sent back to the main AI",
-    subagentTools: "Disabled tools",
-    subagentToolsHint:
-      "Ticked tools are blocked for this subagent; anything unticked is available (including bash / edit / write, so it can change your files)",
-    subagentToolsReadOnly: "Read-only",
-    subagentToolsCanWrite: "Can write files",
     subagentModel: "Model",
     subagentModelInherit: "Follow the main session",
     subagentThinking: "Thinking level",
@@ -424,10 +442,16 @@ export const enUS = {
     promptTemplatesEmpty: "No templates discovered yet",
     promptTemplatesEmptyHint:
       "Drop a .md with name and description into the prompts folder in the data directory",
-    promptsSystemEmpty: "No built-in magic prompts",
-    promptsSystemEmptyHint: "Magic prompts shipped with the app will appear here",
+    promptsSystemEmpty: "Built-in magic prompts were not loaded",
+    promptsSystemEmptyHint:
+      "The prompt files shipped with the app are missing — reinstall the app to restore them",
     promptNew: "New magic prompt",
     promptEdit: "Edit magic prompt",
+    promptView: "View built-in magic prompt",
+    promptViewDesc: "Built-in magic prompts ship with the app and cannot be edited or deleted",
+    promptViewHint:
+      "To change the wording: switch to the User tab and create a prompt with the same name — yours wins, and the built-in file stays untouched",
+    promptSystemBadge: "built-in",
     promptEditorDesc:
       "The name becomes the slash command /<name>; picking it (or sending /<name>) posts the body as the message",
     promptName: "Name",
@@ -464,6 +488,46 @@ export const enUS = {
     mcpServers: "Servers",
     mcpServersDesc:
       "Tools from an external MCP server are exposed to the model as mcp__<server id>__<tool>",
+    mcpSystemServers: "Built-in presets",
+    mcpSystemServersDesc:
+      "Free MCP services shipped with the app: no API key, no URL to fill in, and always pre-approved. They can only be enabled or disabled here, not edited or deleted",
+    mcpSystemEmpty: "No built-in MCP presets",
+    mcpSystemEmptyHint:
+      "The presets shipped with the app are missing — reinstall the app to restore them",
+    mcpOverriddenByUser: "Overridden by your own config",
+    mcpOverridesSystem: "Replacing a built-in preset",
+    mcpPresetCategory: {
+      knowledge: "Knowledge & reference",
+      search: "Search & fetch",
+      academic: "Academic & science",
+      earth: "Earth & climate",
+      health: "Health & medicine",
+      finance: "Finance & statistics",
+      culture: "Culture & daily life",
+    },
+    mcpBuiltin: {
+      wolfram:
+        "General computation and knowledge: math, units, physical constants, population and economic data, with cited results",
+      wikipedia: "Encyclopedia articles on any topic (300+ languages), with summaries and sections",
+      wikidata: "Structured knowledge graph: entity properties and relations, plus SPARQL queries",
+      edgepedia: "Citation-backed general encyclopedia search",
+      deepwiki:
+        "Architecture explanations and Q&A for any public GitHub repository — understand a project without cloning it",
+      mdn: "Web platform docs plus cross-browser compatibility data (HTML / CSS / JavaScript / Web APIs)",
+      context7:
+        "Up-to-date docs and code examples for any library or framework, so the model stops coding against stale APIs (keyless, rate limited)",
+      exaSearch: "Semantic web search and page fetching (keyless, rate limited)",
+      grepApp: "Search real code snippets across public GitHub repos, any language",
+      arxiv: "Global preprint search (any discipline) with metadata and full text",
+      pubmed: "Global biomedical literature search with MeSH terms and citations",
+      crossref: "Global DOI metadata: journals, authors, citation links across publishers",
+      openMeteo:
+        "Weather anywhere on Earth: current, hourly/daily forecast, historical, marine and air quality",
+      whoGho: "WHO Global Health Observatory: 3,000+ indicators across 194 countries",
+      worldbank: "World Bank development indicators: 200+ countries, 29,000+ indicators, 60 years",
+      dynamicFeed:
+        "90+ live-data tools: weather alerts, hazards, space weather, CVEs, flight delays, drug shortages, sanctions screening",
+    },
     mcpReconnect: "Reconnect",
     mcpReconnecting: "Connecting…",
     mcpEmpty: "No MCP server configured yet",
@@ -494,9 +558,7 @@ export const enUS = {
     mcpHeaders: "Headers",
     mcpHeadersHint: "One KEY: VALUE per line; values are stored as plain text in the settings file",
     mcpEnabled: "Enabled",
-    mcpEnabledDesc: "Disabling drops the connection and hides that server's tools from the model",
     mcpTrust: "Trust every tool of this server",
-    mcpTrustDesc: "Skips the approval card for this server (writes an mcp__<server id>__* rule)",
     mcpTest: "Test connection",
     mcpTesting: "Connecting…",
     mcpTestOk: "Connected to {{name}}, found {{tools}} tools",
@@ -509,6 +571,7 @@ export const enUS = {
     mcpStatusConnecting: "Connecting",
     mcpStatusReady: "Connected",
     mcpStatusError: "Failed",
+    mcpMoreActions: "More actions",
     mcpRemoveDesc: 'Delete "{{name}}"? Its trust rule is removed as well.',
     mcpNotice: "Security notes",
     mcpNoticeDesc:

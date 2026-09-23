@@ -1,6 +1,10 @@
+import path from "node:path";
 import type { ExecutionEnv, PromptTemplate } from "@earendil-works/pi-agent-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PromptTemplateInfo } from "@/shared/contracts/prompts";
+
+/** 内置层目录：app.getAppPath() 返回 /app，路径按平台拼接（Windows 下是反斜杠） */
+const BUILTIN_DIR = path.join("/app", "resources", "prompts");
 
 type ListHandler = (
   event: unknown,
@@ -16,6 +20,7 @@ vi.mock("electron", () => ({
       registered.handlers.set(channel, listener);
     },
   },
+  app: { getAppPath: () => "/app" },
 }));
 
 // 目录解析依赖 dataDir()，固定成可断言的路径；exec env 与内核加载整体 mock，
@@ -62,19 +67,25 @@ beforeEach(() => {
 });
 
 describe("prompts:list", () => {
-  it("目录来源按 数据目录 → 项目目录 的顺序合并，磁盘项一律标为用户添加", async () => {
+  it("目录来源按 数据目录 → 项目目录 → 内置 的顺序合并，并各自标出来源", async () => {
     templatesByDir.set("/data-oint/prompts", [template("beta", "beta 的说明")]);
     templatesByDir.set("C:/work/.oint/prompts", [template("gamma", "gamma 的说明")]);
+    templatesByDir.set(BUILTIN_DIR, [template("explain", "内置的说明")]);
 
     const list = await listPrompts({ workingDir: "C:/work" });
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
       "/data-oint/prompts",
       "C:/work/.oint/prompts",
+      BUILTIN_DIR,
     ]);
-    expect(list.map((item) => item.name)).toEqual(["beta", "gamma"]);
-    expect(list.map((item) => item.source)).toEqual(["user", "user"]);
-    expect(list.map((item) => item.dir)).toEqual(["/data-oint/prompts", "C:/work/.oint/prompts"]);
+    expect(list.map((item) => item.name)).toEqual(["beta", "gamma", "explain"]);
+    expect(list.map((item) => item.source)).toEqual(["user", "user", "builtin"]);
+    expect(list.map((item) => item.dir)).toEqual([
+      "/data-oint/prompts",
+      "C:/work/.oint/prompts",
+      BUILTIN_DIR,
+    ]);
   });
 
   it("每个目录各建一个只放行该目录的 env（路径守卫）", async () => {
@@ -83,6 +94,7 @@ describe("prompts:list", () => {
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.allowedRoots)).toEqual([
       ["/data-oint/prompts"],
       ["C:/work/.oint/prompts"],
+      [BUILTIN_DIR],
     ]);
   });
 
@@ -92,6 +104,7 @@ describe("prompts:list", () => {
       template("only-a", "只此一处"),
     ]);
     templatesByDir.set("C:/work/.oint/prompts", [template("dup", "来自项目目录")]);
+    templatesByDir.set(BUILTIN_DIR, [template("dup", "来自内置目录")]);
 
     const list = await listPrompts({ workingDir: "C:/work" });
 
@@ -99,6 +112,20 @@ describe("prompts:list", () => {
     expect(list[0]?.description).toBe("来自数据目录");
     expect(list[0]?.source).toBe("user");
     expect(list[0]?.dir).toBe("/data-oint/prompts");
+  });
+
+  it("内置模板可被用户同名模板覆盖：覆盖后列表里只留用户那一份", async () => {
+    templatesByDir.set(BUILTIN_DIR, [template("review", "内置的走查提示")]);
+    templatesByDir.set("/data-oint/prompts", [template("review", "我自己的走查提示")]);
+
+    const list = await listPrompts();
+
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      name: "review",
+      description: "我自己的走查提示",
+      source: "user",
+    });
   });
 
   it("内核缺 description 时兜底为空串", async () => {
@@ -125,15 +152,17 @@ describe("prompts:list", () => {
     warn.mockRestore();
   });
 
-  it("workingDir 缺失时只扫描数据目录", async () => {
+  it("workingDir 缺失时跳过项目目录，但数据目录与内置层照常扫描", async () => {
     templatesByDir.set("/data-oint/prompts", [template("alpha", "alpha 的说明")]);
+    templatesByDir.set(BUILTIN_DIR, [template("translate", "内置翻译提示")]);
 
     const list = await listPrompts();
 
     expect(vi.mocked(createExecEnv).mock.calls.map(([options]) => options.cwd)).toEqual([
       "/data-oint/prompts",
+      BUILTIN_DIR,
     ]);
-    expect(list).toHaveLength(1);
+    expect(list.map((item) => item.name)).toEqual(["alpha", "translate"]);
     expect(list[0]).toMatchObject({
       name: "alpha",
       description: "alpha 的说明",

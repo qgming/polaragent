@@ -42,6 +42,13 @@ export interface ComposerCommand {
   name: string;
   description: string;
   icon: LucideIcon;
+  /**
+   * 这条命令当前不可执行（菜单里置灰，描述位显示不能执行的原因）。
+   *
+   * 为什么不是「直接从菜单里藏掉」：藏掉会让用户以为没有这个功能 ——
+   * 命令存在但此刻不可用，是与「不存在」完全不同的一件事。
+   */
+  blocked?: boolean;
 }
 
 export interface ComposerPerson {
@@ -176,6 +183,7 @@ export function ComposerMenuItem({
 export function ComposerCommandItem({
   command,
   active,
+  className,
   ...props
 }: Omit<ComponentProps<"button">, "children"> & {
   command: ComposerCommand;
@@ -187,6 +195,9 @@ export function ComposerCommandItem({
       // listbox 语义：菜单用 aria-activedescendant 指行，行必须能被指到（id 由调用方给）
       role="option"
       aria-selected={active}
+      data-blocked={command.blocked || undefined}
+      // 置灰只降不透明度：仍可读、仍可选中（选中只是把命令名填进输入框）
+      className={cn(command.blocked === true && "opacity-55", className)}
       {...props}
     >
       <command.icon className="text-ink-4 size-3.5 shrink-0" />

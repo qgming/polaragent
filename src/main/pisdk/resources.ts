@@ -73,19 +73,47 @@ export function resolveBuiltinSkillDir(appPath: string): string {
 }
 
 /**
- * 解析提示模板目录清单，顺序固定为：
+ * 解析提示模板目录清单，**顺序即优先级**（同名先出现者胜），与 resolveSkillDirs 同源同构：
  * 1. `${dataDir()}/prompts` —— 数据目录下的全局位置，始终参与扫描；
- * 2. `${workingDir}/.oint/prompts` —— 会话工作目录下的项目级模板，workingDir 缺失时跳过。
+ * 2. `${workingDir}/.oint/prompts` —— 会话工作目录下的项目级模板，workingDir 缺失时跳过；
+ * 3. `${appPath}/resources/prompts` —— **随包分发的内置魔法提示**，appPath 缺失时跳过。
  *
- * 与 resolveSkillDirs 同源同构。注意 pi 的 `loadPromptTemplates` 只读目录的**直接子级** .md
- * （不递归），与 loadSkills 的递归遍历不同。
+ * **内置层排在最后**：用户永远能用同名模板覆盖内置的（与技能、子智能体同一条原则）；
+ * 它也不拷贝到数据目录，升级时整包替换即完成更新 —— 数据目录里因此不存在「用户改过的旧副本」。
+ *
+ * appPath 是**可选**参数（与 resolveSkillDirs 同一手法）：不给就只扫数据目录与项目目录，
+ * 测试与不关心内置层的调用方可以省略。
+ *
+ * ⚠️ 调用方还有第二处必须同步：`runtime.ts` 的 `sessionAllowedRoots` 要把内置模板目录也加进
+ * 允许根，否则内核的 listDir 会被路径守卫拒绝 —— 症状是「目录存在却 0 个内置模板」，
+ * 而且只有 diagnostics 里一行警告（见 ipc/prompts.ts 里 scanPromptDir 的注释）。
+ *
+ * 注意 pi 的 `loadPromptTemplates` 只读目录的**直接子级** .md（不递归），与 loadSkills 的递归遍历不同。
  */
-export function resolvePromptTemplateDirs(workingDir?: string): string[] {
+export function resolvePromptTemplateDirs(workingDir?: string, appPath?: string): string[] {
   const dirs = [`${dataDir()}/prompts`];
   if (workingDir !== undefined && workingDir !== "") {
     dirs.push(`${workingDir}/.oint/prompts`);
   }
+  if (appPath !== undefined && appPath !== "") {
+    dirs.push(resolveBuiltinPromptDir(appPath));
+  }
   return dirs;
+}
+
+/**
+ * 内置魔法提示目录：`${appPath}/resources/prompts`。
+ *
+ * 与 `resolveBuiltinSkillDir` **逐字同构**（原因也相同，见那个函数的注释）：内置技能与内置提示
+ * 都住在同一份 `resources/` 下，打包后被整个 `asarUnpack` 出来，所以这里同样优先返回
+ * `app.asar.unpacked` 那一份真实路径 —— 两种资源的读法一致，排查时不必再想一遍。
+ *
+ * 同样**不 import electron**：appPath 由调用方注入（开发期是仓库根，打包后是 asar 根）。
+ */
+export function resolveBuiltinPromptDir(appPath: string): string {
+  const packed = path.join(appPath, "resources", "prompts");
+  const unpacked = path.join(`${appPath}.unpacked`, "resources", "prompts");
+  return existsSync(unpacked) ? unpacked : packed;
 }
 
 /**

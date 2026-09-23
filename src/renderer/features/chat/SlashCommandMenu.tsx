@@ -1,4 +1,4 @@
-import { LayoutTemplate, ListTodo } from "lucide-react";
+import { LayoutTemplate, ListTodo, SquareSlash } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,8 +10,9 @@ import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
 import { cn } from "@/renderer/lib/utils";
 import { optionKey, orderSlashCommands, SLASH_GROUPS, type SlashCommand } from "./slash-commands";
 
-/** 两栏各自的行图标与眉题词条；SLASH_GROUPS 的顺序即渲染顺序 */
+/** 三栏各自的行图标与眉题词条；SLASH_GROUPS 的顺序即渲染顺序 */
 const GROUP_META = {
+  command: { icon: SquareSlash, labelKey: "chat.slashCommands" },
   skill: { icon: ListTodo, labelKey: "chat.slashSkills" },
   template: { icon: LayoutTemplate, labelKey: "chat.slashTemplates" },
 } as const satisfies Record<SlashCommand["kind"], { icon: typeof ListTodo; labelKey: string }>;
@@ -34,6 +35,7 @@ export function SlashCommandMenu({
   matches,
   activeKey,
   onSelect,
+  blockedReason,
 }: {
   /** listbox 的 id：输入框要靠它做 aria-controls / aria-activedescendant，由 Composer 持有 */
   listId: string;
@@ -42,6 +44,14 @@ export function SlashCommandMenu({
   /** 当前高亮行的 optionKey（kind + name），null = 没有高亮行 */
   activeKey: string | null;
   onSelect: (command: SlashCommand) => void;
+  /**
+   * 这条命令现在**为什么不能执行**（i18n 后的文案）；返回 null 表示可用。
+   *
+   * 只影响呈现与提示：置灰的行仍然可以被高亮与选中（选中只是把命令名填进输入框，
+   * 真正执行在发送时判定），这样用户能看到命令存在、也能看到不能用的原因 ——
+   * 直接从菜单里藏掉会让人以为没有这个功能。
+   */
+  blockedReason?: (command: SlashCommand) => string | null;
 }) {
   const { t } = useTranslation();
   const optionId = (command: SlashCommand) => `${listId}-${optionKey(command)}`;
@@ -87,24 +97,29 @@ export function SlashCommandMenu({
                 <span aria-hidden className={cn(typeEyebrow, "px-2.5 pt-2 pb-1")}>
                   {t(meta.labelKey)}
                 </span>
-                {items.map((command) => (
-                  <ComposerCommandItem
-                    key={optionKey(command)}
-                    id={optionId(command)}
-                    // 焦点必须留在 textarea 上（combobox 模式）：Tab 不该走进 listbox，
-                    // 否则菜单一收起焦点就掉到 body
-                    tabIndex={-1}
-                    command={toCommandItem(command, meta.icon)}
-                    active={optionKey(command) === activeKey}
-                    onMouseDown={(event) => {
-                      // preventDefault：别让按钮抢走 textarea 的焦点（菜单一关光标就丢）
-                      // stopPropagation：Root 会接管「点空白处聚焦输入框」，而菜单在它外面
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                    onClick={() => onSelect(command)}
-                  />
-                ))}
+                {items.map((command) => {
+                  const blocked = blockedReason?.(command) ?? null;
+                  return (
+                    <ComposerCommandItem
+                      key={optionKey(command)}
+                      id={optionId(command)}
+                      // 焦点必须留在 textarea 上（combobox 模式）：Tab 不该走进 listbox，
+                      // 否则菜单一收起焦点就掉到 body
+                      tabIndex={-1}
+                      command={toCommandItem(command, meta.icon, blocked)}
+                      active={optionKey(command) === activeKey}
+                      // 置灰只是视觉与读屏提示：选中仍然允许（见 blockedReason 的说明）
+                      aria-disabled={blocked !== null}
+                      onMouseDown={(event) => {
+                        // preventDefault：别让按钮抢走 textarea 的焦点（菜单一关光标就丢）
+                        // stopPropagation：Root 会接管「点空白处聚焦输入框」，而菜单在它外面
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={() => onSelect(command)}
+                    />
+                  );
+                })}
               </div>
             );
           })}
@@ -114,7 +129,21 @@ export function SlashCommandMenu({
   );
 }
 
-/** SlashCommand → Elements 的行数据模型；图标不进数据层，由菜单按栏决定 */
-function toCommandItem(command: SlashCommand, icon: typeof ListTodo): ComposerCommand {
-  return { name: command.name, description: command.description, icon };
+/**
+ * SlashCommand → Elements 的行数据模型；图标不进数据层，由菜单按栏决定。
+ *
+ * 不可用时把原因**替换**掉描述：用户此刻需要知道的是「为什么不能用」，
+ * 而不是这条命令本来做什么（描述已经在别处看过一次）。
+ */
+function toCommandItem(
+  command: SlashCommand,
+  icon: typeof ListTodo,
+  blocked: string | null,
+): ComposerCommand {
+  return {
+    name: command.name,
+    description: blocked ?? command.description,
+    icon,
+    ...(blocked === null ? {} : { blocked: true }),
+  };
 }

@@ -9,10 +9,12 @@ import type {
   ChatMessage,
   ChatPart,
   ChatStreamSnapshot,
+  CompactOutcome,
   ContextBreakdown,
   JobInfo,
   ModelRef,
   QueuedMessage,
+  SessionCompaction,
   SessionStats,
   SessionSummary,
   SessionTokenUsage,
@@ -416,8 +418,16 @@ interface ChatState {
    * 启动瞬间转录先到、`jobs.list` 后到，提前下结论会让满屏历史作业先闪一屏假的终态。
    */
   jobsReconciledSessions: Record<string, true>;
-  /** 各会话最近一次压缩摘要 */
-  compactionNotices: Record<string, string>;
+  /**
+   * 各会话的压缩状态（最近一次）。
+   *
+   * 为什么是一个结构而不是「摘要字符串」：渲染层要区分**进行中 / 已完成 / 失败 / 已取消**
+   * 四种结局。早先用空串表示「进行中」，而失败的结局也被写成空串 —— 于是一次失败的压缩
+   * 会让顶部永久停在「运行中」。
+   *
+   * 完成后的状态**刻意保留**：顶部那条压缩条平时就是「最近一次压缩」的摘要入口。
+   */
+  compactions: Record<string, SessionCompaction>;
   loading: boolean;
 
   loadSessions(): Promise<void>;
@@ -450,7 +460,22 @@ interface ChatState {
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
   /** 撤销一条还没被消费的排队消息（entryId 即 QueuedMessage.id）；失败只记日志 */
   cancelQueued(entryId: string): Promise<void>;
-  compact(instructions?: string): Promise<void>;
+  /**
+   * 手动压缩上下文（`/compact` 指令的动作）。
+   *
+   * 返回结果对象而不是抛错：`busy` / `nothing` 是正常结局，调用方（指令执行器）
+   * 要按 code 给不同的话。**乐观态**：调用一发出就先写「进行中」，
+   * 因为 IPC 往返 + 内核准入之间有一段没有任何事件的窗口，那段时间界面不能是一片空白
+   * （真值仍以内核事件为准：事件一到就覆盖）。
+   */
+  compact(instructions?: string): Promise<CompactOutcome>;
+  /**
+   * 收起当前会话的压缩条。
+   *
+   * 只用于「没有可展开正文」的结局（失败 / 取消）：它们是**一次性提示**，
+   * 用户点一下就收掉。完成态不清 —— 那条摘要就是它存在的意义。
+   */
+  clearCompaction(): void;
   /** 重新生成最后一条助手回复：截断到最后一条用户消息并重发 */
   reload(): Promise<void>;
   /** 核心 reducer：按事件类型更新状态，未知事件忽略不抛错 */
@@ -633,7 +658,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   pendingAsks: [],
   jobsBySession: {},
   jobsReconciledSessions: {},
-  compactionNotices: {},
+  compactions: {},
   loading: false,
 
   async loadSessions() {
@@ -794,7 +819,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       breakdownBySession: omitSession(state.breakdownBySession, id),
       jobsBySession: omitSession(state.jobsBySession, id),
       jobsReconciledSessions: omitSession(state.jobsReconciledSessions, id),
-      compactionNotices: omitSession(state.compactionNotices, id),
+      compactions: omitSession(state.compactions, id),
       pendingApprovals: state.pendingApprovals.filter((item) => item.sessionId !== id),
       pendingAsks: state.pendingAsks.filter((item) => item.sessionId !== id),
     }));
@@ -874,8 +899,63 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   async compact(instructions) {
     const sessionId = get().activeSessionId;
+    if (!sessionId) return { ok: false, code: "failed", message: "没有活动会话" };
+    /**
+     * 乐观态：先写「进行中」。
+     *
+     * 从这一步到内核的第一个 `compaction_start` 事件之间隔着 IPC 往返与内核准入，
+     * 那段时间没有任何事件 —— 不先写这一笔，用户按下 `/compact` 后会看到界面毫无反应。
+     * 真值仍以内核事件为准：事件一到就覆盖它（见 applyEvent 的 compaction-* 分支）。
+     */
+    const startedAt = Date.now();
+    set((state) => ({
+      compactions: {
+        ...state.compactions,
+        [sessionId]: { phase: "running", reason: "manual", startedAt },
+      },
+    }));
+    try {
+      const outcome = await window.oint.chat.compact(sessionId, instructions);
+      if (!outcome.ok) {
+        /**
+         * 被拒（lane 忙 / 没什么可压）：把乐观态收掉。
+         *
+         * 但**只在没有收到任何事件时**收 —— 内核可能已经受理并跑完了这一轮压缩
+         * （事件先到、结果后到），此时把状态清掉会把刚出现的摘要抹掉。
+         */
+        set((state) => {
+          const current = state.compactions[sessionId];
+          if (current === undefined || current.phase !== "running") return state;
+          return {
+            compactions: {
+              ...state.compactions,
+              [sessionId]: { phase: "failed", reason: "manual", startedAt, error: outcome.message },
+            },
+          };
+        });
+      }
+      return outcome;
+    } catch (failure) {
+      // IPC 自身失败（进程边界异常）：同样只在乐观态还没被事件覆盖时收尾
+      const message = failure instanceof Error ? failure.message : String(failure);
+      set((state) => {
+        const current = state.compactions[sessionId];
+        if (current === undefined || current.phase !== "running") return state;
+        return {
+          compactions: {
+            ...state.compactions,
+            [sessionId]: { phase: "failed", reason: "manual", startedAt, error: message },
+          },
+        };
+      });
+      return { ok: false, code: "failed", message };
+    }
+  },
+
+  clearCompaction() {
+    const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await window.oint.chat.compact(sessionId, instructions);
+    set((state) => ({ compactions: omitSession(state.compactions, sessionId) }));
   },
 
   async reload() {
@@ -1053,12 +1133,56 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         });
         break;
       case "compaction-started":
-        set((state) => ({ compactionNotices: { ...state.compactionNotices, [sessionId]: "" } }));
-        break;
-      case "compaction-ended":
         set((state) => ({
-          compactionNotices: { ...state.compactionNotices, [sessionId]: event.summaryPreview },
+          compactions: {
+            ...state.compactions,
+            [sessionId]: {
+              phase: "running",
+              reason: event.reason,
+              startedAt: event.startedAt,
+            },
+          },
         }));
+        break;
+      /**
+       * 压缩结束：**四种结局分开落**。
+       *
+       * 早先这里无条件把摘要写成字符串（空串=进行中），于是 failed / declined / aborted
+       * 都把界面留在「运行中」—— 一次失败的压缩会让顶部永久转圈。
+       */
+      case "compaction-ended":
+        set((state) => {
+          const startedAt = state.compactions[sessionId]?.startedAt ?? event.endedAt;
+          const phase =
+            event.status === "completed"
+              ? ("completed" as const)
+              : event.status === "failed"
+                ? ("failed" as const)
+                : ("cancelled" as const);
+          return {
+            compactions: {
+              ...state.compactions,
+              [sessionId]: {
+                phase,
+                reason: event.reason,
+                startedAt,
+                endedAt: event.endedAt,
+                ...(phase === "completed"
+                  ? {
+                      summaryPreview: event.summaryPreview,
+                      ...(event.tokensBefore === undefined
+                        ? {}
+                        : { tokensBefore: event.tokensBefore }),
+                      ...(event.retainedCount === undefined
+                        ? {}
+                        : { retainedCount: event.retainedCount }),
+                    }
+                  : {}),
+                ...(event.error === undefined ? {} : { error: event.error }),
+              },
+            },
+          };
+        });
         break;
       case "run-ended":
         set((state) => ({

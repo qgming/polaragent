@@ -21,7 +21,8 @@ import type { ChatMessage, SessionSummary } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import type { SkillInfo } from "@/shared/contracts/skills";
 import { Composer } from "./Composer";
-import { buildSlashCommands, expandSlashInput } from "./slash-commands";
+import { dispatchSlashInput } from "./slash-commands";
+import { loadSlashCommands } from "./use-slash-commands";
 
 // vitest 未开 globals，RTL 的自动清理不会注册，必须手动
 afterEach(cleanup);
@@ -77,13 +78,13 @@ function stubBridge() {
 }
 
 /** 把 store 灌成「有一个带工作目录的活跃会话」；settings 用最小可用形状 */
-function seedStores() {
+function seedStores(options: { running?: boolean } = {}) {
   useChatStore.setState({
     sessions: [SESSION],
     activeSessionId: SESSION.id,
     messagesBySession: {},
     loadedSessions: {},
-    runningBySession: {},
+    runningBySession: options.running === true ? { [SESSION.id]: true } : {},
     queueBySession: {},
   });
   useSettingsStore.setState({
@@ -101,21 +102,31 @@ function seedStores() {
 
 /**
  * 应用里 Composer 的位置：runtime provider 之下。
- * onNew 走的是与 OintRuntimeProvider 同一条路径（发送前展开斜杠命令），
- * 并把最终文本交给 onSend —— 断言展开结果就看它。
+ *
+ * onNew 走的是与 OintRuntimeProvider **同一条**路径（同一个 loadSlashCommands +
+ * dispatchSlashInput）：指令被认领后交给 onCommand（应用侧动作），其余文本交给 onSend
+ * —— 断言「一条 /compact 到底是执行了还是被当成消息发出去」就看这两个 spy 谁被调用。
  */
-function Harness({ onSend }: { onSend: (text: string) => void }) {
+function Harness({
+  onSend,
+  onCommand,
+}: {
+  onSend: (text: string) => void;
+  onCommand?: (name: string, rest: string) => void;
+}) {
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages: EMPTY_MESSAGES,
     isRunning: false,
     convertMessage: toThreadMessage,
     onNew: async (message) => {
       const text = message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-      const [skills, templates] = await Promise.all([
-        window.oint.skills.list(SESSION.cwd),
-        window.oint.prompts.list(SESSION.cwd),
-      ]);
-      onSend(expandSlashInput(text, buildSlashCommands(skills, templates)));
+      const commands = await loadSlashCommands(SESSION.cwd, (key) => key);
+      const dispatch = dispatchSlashInput(text, commands);
+      if (dispatch.kind === "command") {
+        onCommand?.(dispatch.command.name, dispatch.rest);
+        return;
+      }
+      onSend(dispatch.text);
     },
   });
 
@@ -147,13 +158,15 @@ describe("Composer 的斜杠菜单", () => {
     seedStores();
   });
 
-  it("敲 / 打开菜单：技能与魔法提示分两栏，各带名称与描述", async () => {
+  it("敲 / 打开菜单：指令、技能与魔法提示分三栏，各带名称与描述", async () => {
     render(<Harness onSend={() => {}} />);
     await type("/");
 
     expect(await screen.findByRole("listbox", { name: "切换斜杠命令" })).toBeTruthy();
+    expect(screen.getByText("指令")).toBeTruthy();
     expect(screen.getByText("技能")).toBeTruthy();
     expect(screen.getByText("魔法提示")).toBeTruthy();
+    expect(screen.getByText("/compact")).toBeTruthy();
     expect(screen.getByText("/review")).toBeTruthy();
     expect(screen.getByText("看一遍改动")).toBeTruthy();
     expect(screen.getByText("/translate")).toBeTruthy();
@@ -171,7 +184,7 @@ describe("Composer 的斜杠菜单", () => {
     render(<Harness onSend={() => {}} />);
     await type("/zzz");
 
-    expect(await screen.findByText("没有匹配的技能或模板")).toBeTruthy();
+    expect(await screen.findByText("没有匹配的指令、技能或模板")).toBeTruthy();
   });
 
   it("普通输入不打开菜单", async () => {
@@ -198,13 +211,18 @@ describe("Composer 的斜杠菜单", () => {
     expect(listPrompts).toHaveBeenCalledWith(SESSION.cwd);
   });
 
-  it("↑↓ 在一栏内移动高亮，不含技能与模板的边界", async () => {
+  it("↑↓ 在清单里顺序移动高亮（含指令栏），到底绕回第一条", async () => {
     render(<Harness onSend={() => {}} />);
     const input = await type("/");
     await screen.findByText("/review");
 
-    // 初始高亮第一条（技能栏的 /review）
-    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/review");
+    // 初始高亮第一条（指令栏的 /compact）
+    expect(screen.getByRole("option", { selected: true }).textContent).toContain("/compact");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { selected: true }).textContent).toContain("/review"),
+    );
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     await waitFor(() =>
@@ -214,7 +232,7 @@ describe("Composer 的斜杠菜单", () => {
     // 到底再往下绕回第一条
     fireEvent.keyDown(input, { key: "ArrowDown" });
     await waitFor(() =>
-      expect(screen.getByRole("option", { selected: true }).textContent).toContain("/review"),
+      expect(screen.getByRole("option", { selected: true }).textContent).toContain("/compact"),
     );
 
     fireEvent.keyDown(input, { key: "ArrowUp" });
@@ -269,5 +287,54 @@ describe("Composer 的斜杠菜单", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("/usr/bin/env node"));
+  });
+});
+
+/**
+ * 内置指令：与魔法提示**分开**的一类 —— 它由应用执行，整条命令不会变成模型消息。
+ */
+describe("Composer 的内置指令", () => {
+  beforeEach(() => {
+    stubBridge();
+    seedStores();
+  });
+
+  it("/compact 被认领为指令：不发送任何消息，参数原样交给指令", async () => {
+    const onSend = vi.fn();
+    const onCommand = vi.fn();
+    render(<Harness onSend={onSend} onCommand={onCommand} />);
+    const input = await type("/compact 保留数据库相关的讨论");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(onCommand).toHaveBeenCalledWith("compact", "保留数据库相关的讨论"));
+    expect(onSend).not.toHaveBeenCalled();
+    // 库在 onNew 之前就清空了输入框（指令不留下草稿）
+    await waitFor(() => expect(input.value).toBe(""));
+  });
+
+  it("运行中不可用：菜单里置灰并给出原因，回车不发消息、草稿保留", async () => {
+    seedStores({ running: true });
+    const onSend = vi.fn();
+    const onCommand = vi.fn();
+    render(<Harness onSend={onSend} onCommand={onCommand} />);
+
+    // 先敲前缀让菜单开着（名称写全时菜单按设计收起，见 Composer 的 slash 派生）
+    const input = await type("/comp");
+    const blockedRow = await screen.findByRole("option", { selected: true });
+    expect(blockedRow.textContent).toContain("/compact");
+    expect(blockedRow.getAttribute("aria-disabled")).toBe("true");
+    // 置灰的行把描述换成「为什么不能用」
+    expect(blockedRow.textContent).toContain("运行中不能执行这条指令");
+
+    // 写全命令再回车：不发消息、不执行，只给一行提示，草稿留着
+    await type("/compact");
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const notice = await screen.findByRole("status");
+    expect(notice.textContent).toContain("现在不能执行");
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(input.value).toBe("/compact");
   });
 });

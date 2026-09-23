@@ -5,7 +5,7 @@ import path, { isAbsolute } from "node:path";
 import { assessCommand } from "@/main/security/command-guard";
 import { writeFileAtomic } from "@/main/storage/atomic-write";
 import { BROWSER_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/browser";
-import { isMcpToolName } from "@/shared/contracts/mcp";
+import { isMcpToolName, MCP_CATALOG_TOOL_NAME } from "@/shared/contracts/mcp";
 import { WEB_READ_ONLY_TOOL_NAMES } from "@/shared/contracts/web";
 import { TOOL_NAMES } from "./tools";
 import { BACKGROUND_JOB_TOOL_NAMES } from "./tools/jobs";
@@ -67,6 +67,14 @@ const LOW_RISK_TOOLS = new Set([
   "glob",
   "todo",
   "ask_user",
+  /**
+   * `mcp_tools`：读 MCP 能力清单与参数 schema 的**内置**工具（见 tools/mcp-catalog.ts）。
+   *
+   * 低风险的理由：它只读连接管理器内存里那份「已经连接过、已经列过工具」的快照，
+   * 不发起任何外部请求、不碰工作区、不改任何状态。要审批就等于让「看一眼这台 server 有哪些工具」
+   * 变成一次弹卡 —— 而这个工具恰恰是聚合形态下每次调用前的必经一步。
+   */
+  MCP_CATALOG_TOOL_NAME,
   ...WEB_READ_ONLY_TOOL_NAMES,
   ...BROWSER_READ_ONLY_TOOL_NAMES,
   BACKGROUND_JOB_TOOL_NAMES.output,

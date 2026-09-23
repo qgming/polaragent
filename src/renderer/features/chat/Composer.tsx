@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/renderer/components/u
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
+import { useUiStore } from "@/renderer/stores/ui-store";
 import type {
   AgentMode,
   ChatMessage,
@@ -33,9 +34,10 @@ import type {
 } from "@/shared/contracts";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { ComposerDock, QueueDock, TodoDock } from "./ComposerDock";
+import { commandSpec, unavailableReason } from "./commands";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import {
-  expandSlashInput,
+  dispatchSlashInput,
   filterSlashCommands,
   insertSlashCommand,
   optionKey,
@@ -575,6 +577,19 @@ export function Composer() {
   );
   const canSend = useAuiState((s) => s.composer.canSend);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  /**
+   * 这个会话是否正在压缩上下文（手动或自动）。
+   *
+   * 与 `running` 分开读：压缩不是一轮 run，`runningBySession` 不包含它 ——
+   * 而「压缩中不能发送」是必须的（压缩占着 lane，发出去的消息会把压缩顶掉，
+   * 见主进程 abortStaleOperation 的说明）。
+   */
+  const compacting = useChatStore(
+    (s) => s.activeSessionId !== null && s.compactions[s.activeSessionId]?.phase === "running",
+  );
+  /** 输入框上方那一行瞬时提示（指令被拒 / 执行结果）；由 ui-store 承载，见 notifyComposer */
+  const composerNotice = useUiStore((s) => s.composerNotice);
+  const dismissComposerNotice = useUiStore((s) => s.dismissComposerNotice);
   const sessionUsage = useChatStore(selectSessionUsage);
   /** 主进程推来的三段分解；没有（尚未跑过一轮）时环退化为单段总占用 */
   const sessionBreakdown = useChatStore((s) =>
@@ -744,21 +759,94 @@ export function Composer() {
   };
 
   /**
-   * 输入框按键：先归斜杠菜单（上下 / Enter / Esc），再归运行中的排队。
+   * 一条指令此刻**为什么不能执行**（已翻译的文案）；null = 可用。
    *
-   * 两条都不靠 preventDefault 之外的机制：库只在「Enter 且非合成中」时发送，
+   * 菜单置灰与回车拦截读的是同一个判定，所以不会出现「菜单里点得动、发送时却被拒」。
+   * 发送收口（OintRuntimeProvider）用的是同一个命令模块 —— 三处一条口径。
+   */
+  const commandBlockedReason = (command: SlashCommand): string | null => {
+    if (command.kind !== "command") return null;
+    const spec = commandSpec(command.name);
+    if (spec === undefined) return null;
+    const reason = unavailableReason(spec, { running, compacting });
+    return reason === null ? null : t(reason.messageKey);
+  };
+
+  /** 输入框当前文本是不是一条指令（且已写完整）；用于发送键与回车的拦截 */
+  const commandDraft = useMemo(
+    () => dispatchSlashInput(composerText, slashCommands),
+    [composerText, slashCommands],
+  );
+
+  /** 当前草稿是一条**不可用**的指令：发送键也要禁掉（点击不经过 keydown 拦截） */
+  const commandBlocked =
+    commandDraft.kind === "command" && commandBlockedReason(commandDraft.command) !== null;
+
+  /**
+   * 用户一开始打字就收起提示：提示解释的是「刚才那次没发出去」，不是一条常驻状态。
+   * 依赖只有输入文本：提示写进来的那一刻文本没有变，所以它不会把自己立刻清掉。
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: composerText 只是「又打字了」的触发器，不参与计算
+  useEffect(() => {
+    dismissComposerNotice();
+  }, [composerText, dismissComposerNotice]);
+
+  /**
+   * 输入框按键：先归斜杠菜单（上下 / Enter / Esc），再归指令与运行中的排队。
+   *
+   * 三条都不靠 preventDefault 之外的机制：库只在「Enter 且非合成中」时发送，
    * 这里接管的那几种键都 preventDefault 了，库的处理器据此跳过，不会双触发。
+   *
+   * 为什么指令的「不可用」必须拦在这里而不是发送收口：库在调用 onNew **之前**就把
+   * 输入框清空了，等在收口里拒绝，用户敲的说明（`/compact 保留…`）已经没了。
    */
   const handleInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // 输入法合成期间按键属于候选词，任何一条都不该接管
     if (event.nativeEvent.isComposing) return;
     if (handleSlashKey(event)) return;
 
+    const plainEnter = event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey;
+
+    // ---- 指令：不可用就拦下（草稿原样保留），可用则放行给库的发送路径 ----
+    if (commandDraft.kind === "command") {
+      const blocked = commandBlockedReason(commandDraft.command);
+      if (blocked !== null) {
+        if (plainEnter) {
+          event.preventDefault();
+          useUiStore.getState().notifyComposer({
+            messageKey: "chat.commandBlocked",
+            params: { reason: blocked },
+            level: "error",
+          });
+        }
+        return;
+      }
+    }
+
+    // ---- 压缩中（且没有在跑）：不发消息 —— 压缩占着 lane，发出去会把压缩顶掉 ----
+    if (compacting && !running) {
+      if (plainEnter) {
+        event.preventDefault();
+        useUiStore
+          .getState()
+          .notifyComposer({ messageKey: "chat.compactWhileCompacting", level: "info" });
+      }
+      return;
+    }
+
     // ---- 运行中：Enter 排队，Ctrl(⌘)+Enter 插话 ----
     if (!running) return;
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    const text = expandSlashInput(composerText, slashCommands).trim();
+    // 运行中到达这里的指令：目前没有「运行中也能执行」的指令（availability 只有 idle），
+    // 所以这是给将来留的兜底 —— 队列里存的是**文本**，指令不能原样排队（发出去会变成消息）。
+    if (commandDraft.kind === "command") {
+      useUiStore
+        .getState()
+        .notifyComposer({ messageKey: "chat.commandUnavailableRunning", level: "error" });
+      return;
+    }
+    const text = commandDraft.text.trim();
     if (text.length === 0) return;
     const mode = event.ctrlKey || event.metaKey ? "steer" : "followUp";
     void useChatStore.getState().queue(text, mode);
@@ -817,7 +905,24 @@ export function Composer() {
               matches={slash.matches}
               activeKey={activeCommand === null ? null : optionKey(activeCommand)}
               onSelect={selectSlashCommand}
+              blockedReason={commandBlockedReason}
             />
+          )}
+          {/*
+            瞬时提示（指令被拒 / 压缩中不能发送）：贴在输入框上方一行，窄而克制。
+            放这里而不是做成全局 toast：它解释的是**这次输入为什么没发出去**，
+            就该出现在输入框边上。
+          */}
+          {composerNotice === null ? null : (
+            <p
+              role="status"
+              className={cn(
+                "px-2.5 pt-1 text-xs",
+                composerNotice.level === "error" ? "text-destructive" : "text-ink-3",
+              )}
+            >
+              {t(composerNotice.messageKey, composerNotice.params)}
+            </p>
           )}
           <ComposerPrimitive.Input
             submitMode="enter"
@@ -892,10 +997,13 @@ export function Composer() {
                 </Button>
               ) : (
                 <ComposerPrimitive.Send asChild>
-                  {/* 空输入时禁用（前景 40% 不透明） */}
+                  {/*
+                    空输入、不可用的指令、以及「压缩中且没在跑」都禁用：
+                    后两种发出去也会被拒（或被压缩顶掉），禁用比错误提示更早一步。
+                  */}
                   <button
                     type="button"
-                    disabled={!canSend}
+                    disabled={!canSend || commandBlocked || compacting}
                     aria-label={t("chat.send")}
                     className={cn(
                       inkButton,

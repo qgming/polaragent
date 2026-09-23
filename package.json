@@ -31,6 +31,7 @@
     "probe:dev": "node scripts/probe-dev-render.mjs",
     "probe:kernel": "node scripts/probe-upgrade-087.mjs",
     "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
+    "probe:system": "node scripts/probe-system-resources.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",

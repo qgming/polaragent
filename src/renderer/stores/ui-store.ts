@@ -1,5 +1,24 @@
 import { create } from "zustand";
 
+/**
+ * 输入框上方一行的**瞬时提示**（指令被拒、压缩没什么可压…）。
+ *
+ * 为什么放在 store 而不是某个组件里：写它的有两处 —— 输入框（回车拦截）与发送收口
+ * （真正的执行结果），而显示它的只有输入框一处。谁先写不重要，用户看到的都是同一行。
+ *
+ * token 只增不减：同一条提示连写两次（例如连按两次回车）也要能重新计时/重新出现。
+ */
+export interface ComposerNotice {
+  /** i18n 键；字段名被 scripts/check-i18n.mjs 扫描，拼错/漏词条会在门禁上红 */
+  messageKey: string;
+  /** 插值参数 */
+  params?: Record<string, string | number>;
+  level: "info" | "error";
+  token: number;
+}
+
+let composerNoticeSeq = 0;
+
 /** 右侧面板的视图 */
 export type RightPanelView = "review" | "files" | "file" | "subagent" | "browser" | "terminal";
 
@@ -163,6 +182,8 @@ interface UiState {
   resolveDeleteSession: ((confirmed: boolean) => void) | null;
   /** 正在编辑的用户消息 id（null = 未编辑）；由 ChatView 渲染编辑模态 */
   editingMessageId: string | null;
+  /** 输入框上方那一行瞬时提示；null = 没有 */
+  composerNotice: ComposerNotice | null;
 
   /**
    * 右侧面板是否展开。与左侧栏同一套「展开 / 完全隐藏」两态（没有窄轨道）。
@@ -278,6 +299,10 @@ interface UiState {
   /** 打开某条用户消息的编辑模态 */
   beginEditMessage(id: string): void;
   closeEditMessage(): void;
+  /** 写一行输入框提示（指令被拒 / 执行结果）；同一条文案连写两次也会重新出现 */
+  notifyComposer(notice: Omit<ComposerNotice, "token">): void;
+  /** 收起提示（用户一开始打字就调，提示不该赖在屏幕上） */
+  dismissComposerNotice(): void;
 }
 
 export const useUiStore = create<UiState>()((set, get) => ({
@@ -296,6 +321,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   pendingDeleteSessionId: null,
   resolveDeleteSession: null,
   editingMessageId: null,
+  composerNotice: null,
 
   toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
 
@@ -480,4 +506,13 @@ export const useUiStore = create<UiState>()((set, get) => ({
 
   beginEditMessage: (id) => set({ editingMessageId: id }),
   closeEditMessage: () => set({ editingMessageId: null }),
+
+  notifyComposer: (notice) => {
+    composerNoticeSeq += 1;
+    set({ composerNotice: { ...notice, token: composerNoticeSeq } });
+  },
+  dismissComposerNotice: () => {
+    // 已经是 null 就不换引用：每次按键都 set 一次会让订阅它的组件白白重渲染
+    if (get().composerNotice !== null) set({ composerNotice: null });
+  },
 }));

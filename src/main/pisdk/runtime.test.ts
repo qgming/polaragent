@@ -48,6 +48,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     agentMode: "standard",
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     disabledSkillNames: [],
     ...overrides,
@@ -566,10 +567,26 @@ describe("getChatRuntime", () => {
  * 真 lane 需要模型与存储，留给端到端验收。
  */
 describe("遗留操作清理", () => {
-  /** 只用到 abort 的假 lane */
-  function fakeLane(outcome: { ok: true } | { ok: false; error: unknown } | Error) {
+  /**
+   * 假 lane：`inspectExecution` 报告当前压着什么操作（null = 没有），abort 记调用次数。
+   *
+   * 两个都要：判定「是不是遗留操作」靠 inspectExecution，收敛靠 abort ——
+   * 只看 abort 的次数测不出「压缩期间不该被清掉」这条新口径。
+   */
+  function fakeLane(
+    outcome: { ok: true } | { ok: false; error: unknown } | Error,
+    current: { kind: "run" | "compaction" | "navigation" } | null = null,
+  ) {
     let calls = 0;
     const lane = {
+      inspectExecution: async () => ({
+        lane: "main",
+        tipId: null,
+        current:
+          current === null
+            ? null
+            : { id: "op1", kind: current.kind, startedAt: 0, status: "running" as const },
+      }),
       abort: async () => {
         calls += 1;
         if (outcome instanceof Error) throw outcome;
@@ -599,6 +616,29 @@ describe("遗留操作清理", () => {
   it("abort 抛异常时吞掉异常并返回 false（关闭流程不该被它带崩）", async () => {
     const { lane } = fakeLane(new Error("存储写入失败"));
     await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
+  });
+
+  /**
+   * 本函数被调用的场景是「prompt 被 LaneBusy 拒了 → 清掉遗留再重试」。
+   * 而 LaneBusy 也会由**正在跑的压缩/导航**触发：那时 abort 会把用户刚发起的
+   * `/compact` 直接杀掉，所以必须只收敛 run 类残留。
+   */
+  it("lane 上压着压缩时不 abort（否则一次发送会杀掉正在跑的压缩）", async () => {
+    const { lane, calls } = fakeLane({ ok: true }, { kind: "compaction" });
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
+    expect(calls()).toBe(0);
+  });
+
+  it("lane 上压着导航时同样不 abort", async () => {
+    const { lane, calls } = fakeLane({ ok: true }, { kind: "navigation" });
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
+    expect(calls()).toBe(0);
+  });
+
+  it("压着的确实是遗留的 run 时照常收敛", async () => {
+    const { lane, calls } = fakeLane({ ok: true }, { kind: "run" });
+    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(true);
+    expect(calls()).toBe(1);
   });
 });
 

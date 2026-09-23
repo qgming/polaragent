@@ -7,7 +7,7 @@
  *   · 工具栏的「新建」与点击已有模板共用同一个编辑弹窗（保存走 write，重命名带原名）。
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "@/renderer/i18n";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
@@ -55,6 +55,7 @@ function settingsFixture(overrides: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
@@ -101,8 +102,38 @@ describe("PromptsPanel", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "系统" }));
 
-    expect(screen.getByText("还没有内置魔法提示")).toBeTruthy();
+    expect(screen.getByText("内置魔法提示没有加载到")).toBeTruthy();
     expect(screen.queryByText("还没有发现模板")).toBeNull();
+  });
+
+  /**
+   * 内置提示**只能看不能改**：它们住在应用目录里，改它等于改应用自身，升级时还会被整包替换。
+   * 所以点开的是只读查看器 —— 没有保存、没有删除，并且明说「想改就新建同名提示」。
+   */
+  it("点内置模板打开只读查看器：没有保存与删除，并给出同名覆盖的指引", async () => {
+    stubBridge([BUILTIN_TEMPLATE]);
+    render(<PromptsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "系统" }));
+    fireEvent.click(screen.getByRole("button", { name: /explain/ }));
+
+    expect(await screen.findByText("查看内置魔法提示")).toBeTruthy();
+    // 列表里也有这条正文预览，所以断言要落在弹窗内部
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("逐行解释选中的代码：")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
+    expect(within(dialog).getByText(/新建一份同名提示/)).toBeTruthy();
+  });
+
+  it("系统页签不给「新建」入口（新建只作用于用户目录）", async () => {
+    stubBridge([USER_TEMPLATE, BUILTIN_TEMPLATE]);
+    render(<PromptsPanel />);
+
+    expect(await screen.findByRole("button", { name: "新建魔法提示" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "系统" }));
+    expect(screen.queryByRole("button", { name: "新建魔法提示" })).toBeNull();
   });
 
   it("新建：工具栏按钮打开同一个弹窗，保存走 write 并带上规范化后的名称", async () => {

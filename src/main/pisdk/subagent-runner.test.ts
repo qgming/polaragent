@@ -13,8 +13,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_CONCURRENT_SUBAGENT_RUNS,
-  SUBAGENT_MUTATING_TOOLS,
-  SUBAGENT_READ_ONLY_TOOLS,
   type SubagentDefinition,
   type SubagentEventEnvelope,
   type SubagentRun,
@@ -62,12 +60,16 @@ const PARENT: SubagentRunnerParent = {
   parentModelId: "svc/model-x",
 };
 
+/**
+ * 一个内置定义：**不带工具配置**（子智能体拿到的是主代理同一批工具）。
+ *
+ * 白名单只属于主 AI 临时定义那条路径，所以需要它的用例各自覆盖 `tools`。
+ */
 function definition(name = "scout"): SubagentDefinition {
   return {
     name,
     description: `${name} 的说明`,
     prompt: "你是子智能体，只做被派的那件事。",
-    disabledTools: [...SUBAGENT_MUTATING_TOOLS],
     source: "builtin",
   };
 }
@@ -88,7 +90,6 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: [...SUBAGENT_READ_ONLY_TOOLS],
     turns: 0,
     toolCalls: 0,
     ...patch,
@@ -96,11 +97,14 @@ function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
 }
 
 /** 起一次真实运行：起点的那次落盘也在这条链上 */
-async function startRun(toolCallId = "d-live"): Promise<SubagentRun> {
+async function startRun(
+  toolCallId = "d-live",
+  def: SubagentDefinition = definition(),
+): Promise<SubagentRun> {
   return startSubagentRun(
     {
       toolCallId,
-      definition: definition(),
+      definition: def,
       description: "调研重试逻辑",
       task: "看 src/retry.ts 的重试逻辑",
     },
@@ -167,7 +171,13 @@ describe("运行记录的落盘", () => {
   });
 
   it("起一次运行就落一次盘：状态 running、计数为 0、updatedAt 已写", async () => {
-    const run = await startRun();
+    // 用带白名单的**临时**定义：它是唯一会往运行记录里写 tools 的那种定义
+    const temp: SubagentDefinition = {
+      ...definition("temp-helper"),
+      source: "temp",
+      tools: ["read", "grep"],
+    };
+    const run = await startRun("d-live", temp);
 
     expect(store.create).toHaveBeenCalledTimes(1);
     expect(store.saveSubagentRun).toHaveBeenCalledTimes(1);
@@ -178,11 +188,19 @@ describe("运行记录的落盘", () => {
       status: "running",
       turns: 0,
       toolCalls: 0,
+      tools: ["read", "grep"],
     });
     expect(typeof first.run.updatedAt).toBe("number");
     // 写进去的必须是快照：活对象随后还会被推进，落盘那份不能跟着变
     expect(first.run).not.toBe(run);
     expect(first.run.tools).not.toBe(run.tools);
+  });
+
+  it("内置 / 用户定义不带工具白名单：运行记录里就没有 tools（面板显示「全部」）", async () => {
+    const run = await startRun();
+
+    expect(run.tools).toBeUndefined();
+    expect(written(0).run.tools).toBeUndefined();
   });
 
   it("每轮助手消息落一次盘，工具调用不落盘，终态再落一次（最后写下的就是结论）", async () => {

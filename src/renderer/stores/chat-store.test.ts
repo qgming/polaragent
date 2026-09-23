@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/shared/contracts/session";
 import { mergeLoadedPage, planRewrite, useChatStore } from "./chat-store";
 
@@ -202,5 +202,199 @@ describe("mergeLoadedPage", () => {
     };
     const merged = mergeLoadedPage([msg("m1")], [streaming]);
     expect(merged.map((item) => item.id)).toEqual(["m1", "live"]);
+  });
+});
+
+/**
+ * 压缩状态机：`/compact`（手动）与内核的自动压缩共用同一套事件。
+ *
+ * 两条不变式在这里钉住：
+ * 1. **四种结局必须分开落** —— 早先失败的结局也被写成「进行中」，顶部会永久显示运行中；
+ * 2. **乐观态可以被事件覆盖，但事件不会被过期的失败结果覆盖** —— 手动压缩的 IPC 返回
+ *    可能晚于内核事件到达（压缩已经跑完了），那时不能把刚出现的摘要抹掉。
+ */
+describe("压缩状态机", () => {
+  const SESSION_ID = "s1";
+
+  function seed() {
+    useChatStore.setState({
+      sessions: [
+        {
+          id: SESSION_ID,
+          title: "会话",
+          createdAt: 1,
+          updatedAt: 1,
+          cwd: "",
+          archived: false,
+          pinned: false,
+          messageCount: 0,
+          model: null,
+        },
+      ],
+      activeSessionId: SESSION_ID,
+      compactions: {},
+    });
+  }
+
+  /** 事件驱动的四个分支 */
+  it("compaction-started：按 reason 落成进行中，并带上开始时间", () => {
+    seed();
+    useChatStore
+      .getState()
+      .applyEvent(SESSION_ID, { type: "compaction-started", reason: "threshold", startedAt: 100 });
+    expect(useChatStore.getState().compactions[SESSION_ID]).toEqual({
+      phase: "running",
+      reason: "threshold",
+      startedAt: 100,
+    });
+  });
+
+  it("completed：带上摘要、压缩前 tokens 与保留条数", () => {
+    seed();
+    const store = useChatStore.getState();
+    store.applyEvent(SESSION_ID, { type: "compaction-started", reason: "manual", startedAt: 100 });
+    store.applyEvent(SESSION_ID, {
+      type: "compaction-ended",
+      reason: "manual",
+      status: "completed",
+      endedAt: 200,
+      summaryPreview: "摘要预览",
+      tokensBefore: 123_456,
+      retainedCount: 7,
+    });
+    expect(useChatStore.getState().compactions[SESSION_ID]).toEqual({
+      phase: "completed",
+      reason: "manual",
+      startedAt: 100,
+      endedAt: 200,
+      summaryPreview: "摘要预览",
+      tokensBefore: 123_456,
+      retainedCount: 7,
+    });
+  });
+
+  // 回归：这一条正是「压缩失败后顶部永久转圈」的成因
+  it("failed：落成失败并带原因，绝不停在「进行中」", () => {
+    seed();
+    const store = useChatStore.getState();
+    store.applyEvent(SESSION_ID, { type: "compaction-started", reason: "manual", startedAt: 100 });
+    store.applyEvent(SESSION_ID, {
+      type: "compaction-ended",
+      reason: "manual",
+      status: "failed",
+      endedAt: 200,
+      summaryPreview: "",
+      error: "模型超时",
+    });
+    const state = useChatStore.getState().compactions[SESSION_ID];
+    expect(state?.phase).toBe("failed");
+    expect(state?.error).toBe("模型超时");
+  });
+
+  it("declined / aborted 都归到「已取消」", () => {
+    for (const status of ["declined", "aborted"] as const) {
+      seed();
+      useChatStore.getState().applyEvent(SESSION_ID, {
+        type: "compaction-ended",
+        reason: "threshold",
+        status,
+        endedAt: 200,
+        summaryPreview: "",
+      });
+      expect(useChatStore.getState().compactions[SESSION_ID]?.phase).toBe("cancelled");
+    }
+  });
+
+  it("没有 started 事件时（例如刚订阅就收到结束）也能落一个完整状态", () => {
+    seed();
+    useChatStore.getState().applyEvent(SESSION_ID, {
+      type: "compaction-ended",
+      reason: "threshold",
+      status: "completed",
+      endedAt: 200,
+      summaryPreview: "s",
+    });
+    expect(useChatStore.getState().compactions[SESSION_ID]).toMatchObject({
+      phase: "completed",
+      startedAt: 200,
+    });
+  });
+
+  it("clearCompaction：只清当前会话（完成态由用户点掉，失败/取消同理）", () => {
+    seed();
+    useChatStore.setState({
+      compactions: {
+        [SESSION_ID]: { phase: "failed", reason: "manual", startedAt: 1 },
+        s2: { phase: "completed", reason: "manual", startedAt: 1 },
+      },
+    });
+    useChatStore.getState().clearCompaction();
+    expect(useChatStore.getState().compactions[SESSION_ID]).toBeUndefined();
+    expect(useChatStore.getState().compactions.s2).toBeDefined();
+  });
+
+  describe("compact()（手动压缩的动作）", () => {
+    it("先写乐观态（IPC 往返期间界面不能毫无反应），成功后交给事件收尾", async () => {
+      seed();
+      let release: ((value: { ok: true }) => void) | undefined;
+      const pending = new Promise<{ ok: true }>((resolve) => {
+        release = resolve;
+      });
+      vi.stubGlobal("window", {
+        oint: { chat: { compact: () => pending } },
+      });
+      try {
+        const call = useChatStore.getState().compact("保留数据库相关的讨论");
+        expect(useChatStore.getState().compactions[SESSION_ID]?.phase).toBe("running");
+        release?.({ ok: true });
+        await expect(call).resolves.toEqual({ ok: true });
+        // 内核事件还没到：乐观态先留着（真值以内核事件为准）
+        expect(useChatStore.getState().compactions[SESSION_ID]?.phase).toBe("running");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("被拒时收成失败，并把结果对象交回调用方（文案由上层按 code 决定）", async () => {
+      seed();
+      const outcome = { ok: false as const, code: "nothing" as const, message: "没有可压缩的历史" };
+      vi.stubGlobal("window", { oint: { chat: { compact: async () => outcome } } });
+      try {
+        await expect(useChatStore.getState().compact()).resolves.toEqual(outcome);
+        const state = useChatStore.getState().compactions[SESSION_ID];
+        expect(state?.phase).toBe("failed");
+        expect(state?.error).toBe("没有可压缩的历史");
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("内核事件先到（压缩已经跑完）时，迟到的失败结果不覆盖它", async () => {
+      seed();
+      let reject: (() => void) | undefined;
+      const pending = new Promise<{ ok: false; code: "busy"; message: string }>((resolve) => {
+        reject = () => resolve({ ok: false, code: "busy", message: "会话正忙" });
+      });
+      vi.stubGlobal("window", { oint: { chat: { compact: () => pending } } });
+      try {
+        const call = useChatStore.getState().compact();
+        // 事件先到：这一轮压缩已经完成
+        useChatStore.getState().applyEvent(SESSION_ID, {
+          type: "compaction-ended",
+          reason: "manual",
+          status: "completed",
+          endedAt: 200,
+          summaryPreview: "摘要",
+        });
+        reject?.();
+        await call;
+        expect(useChatStore.getState().compactions[SESSION_ID]).toMatchObject({
+          phase: "completed",
+          summaryPreview: "摘要",
+        });
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

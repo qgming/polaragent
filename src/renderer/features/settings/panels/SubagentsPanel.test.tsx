@@ -15,11 +15,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import i18n from "@/renderer/i18n";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
 import type { Settings } from "@/shared/contracts/settings";
-import {
-  SUBAGENT_ASSIGNABLE_TOOLS,
-  type SubagentCatalog,
-  type SubagentInfo,
-  type SubagentWriteRequest,
+import type {
+  SubagentCatalog,
+  SubagentInfo,
+  SubagentWriteRequest,
 } from "@/shared/contracts/subagent";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { SubagentsPanel } from "./SubagentsPanel";
@@ -35,9 +34,6 @@ beforeAll(async () => {
 const USER_ROW: SubagentInfo = {
   name: "helper",
   description: "改代码的小工",
-  // 禁用清单为空 = 全部可用；effectiveTools 是解析结果，面板用它算「可写文件」徽标
-  disabledTools: [],
-  effectiveTools: [...SUBAGENT_ASSIGNABLE_TOOLS],
   model: null,
   thinkingLevel: null,
   source: "user",
@@ -49,9 +45,6 @@ const USER_ROW: SubagentInfo = {
 const BUILTIN_ROW: SubagentInfo = {
   name: "explore",
   description: "调研代码库",
-  // 只读：禁掉全部可写工具（黑名单制下「只读」必须显式声明）
-  disabledTools: ["bash", "edit", "write"],
-  effectiveTools: ["read", "read_image", "grep", "glob", "todo", "web_search", "web_fetch"],
   model: { serviceId: "svc", modelId: "m1" },
   thinkingLevel: "medium",
   source: "builtin",
@@ -84,6 +77,7 @@ function settingsFixture(overrides: Partial<Settings>): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
@@ -137,15 +131,17 @@ describe("SubagentsPanel", () => {
     expect(await screen.findByText("helper")).toBeTruthy();
     // 内置预设不在用户页签里露面
     expect(screen.queryByText("explore")).toBeNull();
-    // 只读 / 可写的摘要徽标按工具清单判定：helper 带 bash
-    expect(screen.getByText("可写文件")).toBeTruthy();
+    // 行内不再有「只读 / 可写」徽标：子智能体拿到的是主代理同一批工具，
+    // 面板没有可显示、也没有可编辑的工具清单
+    expect(screen.queryByText("可写文件")).toBeNull();
+    expect(screen.queryByText("只读")).toBeNull();
     expect(screen.getByRole("button", { name: "在文件夹中显示" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "新建子智能体" })).toBeTruthy();
     expect(screen.getAllByRole("switch", { name: /helper/ })).toHaveLength(1);
   });
 
-  it("切到「系统」页签：只列内置预设，只有开关与提示、没有行内动作", async () => {
+  it("切到「系统」页签：只列内置预设，只有开关、没有行内动作", async () => {
     stubBridge({ subagents: [USER_ROW, BUILTIN_ROW], diagnostics: [] });
     render(<SubagentsPanel />);
 
@@ -153,8 +149,6 @@ describe("SubagentsPanel", () => {
 
     expect(screen.getByText("explore")).toBeTruthy();
     expect(screen.queryByText("helper")).toBeNull();
-    expect(screen.getByText("只读")).toBeTruthy();
-    expect(screen.getByText("内置预设：随应用提供，可禁用但不可编辑或删除")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "在文件夹中显示" })).toBeNull();
     expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
     // 新建只会落在数据目录（用户定义），系统页签不给入口
@@ -218,7 +212,6 @@ describe("SubagentsPanel", () => {
       name: "helper",
       prompt: "先看再改",
       // 黑名单制：保存的是**禁用清单**（这一行没禁用任何工具）
-      disabledTools: [],
     });
   });
 });

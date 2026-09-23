@@ -1,7 +1,12 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { BrowserEvent, BrowserStatus } from "./browser";
-import type { ChatEventEnvelope, ChatSendOptions, ChatStreamSnapshot } from "./chat";
+import type {
+  ChatEventEnvelope,
+  ChatSendOptions,
+  ChatStreamSnapshot,
+  CompactOutcome,
+} from "./chat";
 import type { AgentMode, ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent, ImageContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
@@ -100,7 +105,17 @@ export interface OintApi {
      * 恰好被取走是正常竞态，为它弹一个错误只会让人以为操作失败。
      */
     cancelQueued(sessionId: string, entryId: string): Promise<void>;
-    compact(sessionId: string, instructions?: string): Promise<void>;
+    /**
+     * 手动压缩上下文（`/compact` 指令的后端）。
+     *
+     * **用结果对象而不是抛异常**：`busy` / `nothing` 都是正常结局（lane 上压着别的操作、
+     * 对话还短得没什么可压），不是故障；把它们的 code 交给渲染层，界面才能用自己的语言
+     * 给出稳定文案（主进程的中文 message 只作未知 code 的兜底）。
+     *
+     * 压缩过程本身通过 `compaction-started` / `compaction-ended` 事件汇报，
+     * 所以这个调用只是「提交请求」，不等待整段压缩跑完的交互语义。
+     */
+    compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
     /**
      * 当前流式消息的完整快照（没有在流时为 null）。
      *
@@ -187,6 +202,13 @@ export interface OintApi {
     list(): Promise<McpServerView[]>;
     /** 按当前设置重新连接（连上该连的、断开该断的），返回最新状态 */
     reload(): Promise<McpServerView[]>;
+    /**
+     * 只重连一台 server，返回全部 server 的最新状态。
+     *
+     * 与 reload 的差别是「不打扰别人」：reload 会按设置对账整张连接表，
+     * 而这一条只针对某台 server 断线重连 —— 面板上每张卡片右上角那个按钮用它。
+     */
+    reconnect(serverId: string): Promise<McpServerView[]>;
     /** 用草稿配置试连一次：不写设置、不影响已有连接 */
     probe(config: McpServerConfig): Promise<McpProbeResult>;
   };

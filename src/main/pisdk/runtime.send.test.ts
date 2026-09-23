@@ -14,10 +14,22 @@ import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 
 /** 记录假 lane 上的每一次调用 */
 const harness = vi.hoisted(() => ({
-  calls: { prompts: [], aborts: 0, promptResults: [], createOptions: [], setTools: [] } as {
+  calls: {
+    prompts: [],
+    aborts: 0,
+    promptResults: [],
+    compactCalls: [],
+    compactResults: [],
+    createOptions: [],
+    setTools: [],
+  } as {
     prompts: string[];
     aborts: number;
     promptResults: unknown[];
+    /** 每次 `lane.compact` 收到的参数（`{ customInstructions }` 或 undefined） */
+    compactCalls: unknown[];
+    /** 依次交给 `lane.compact` 的返回值；用光后回落到成功 */
+    compactResults: unknown[];
     /**
      * 每次 `AgentHarness.create` 收到的 options。
      *
@@ -63,6 +75,13 @@ const harness = vi.hoisted(() => ({
   /** 向运行时投递 harness 事件 */
   emit: (_type: string, _event: unknown) => undefined as undefined,
   /**
+   * `session.getEntry` 的返回值。
+   *
+   * 压缩结束时主进程要回读那条 `compaction` 条目，把「压缩前 tokens / 保留条数 / 摘要预览」
+   * 放进事件里 —— 没有这一份，事件里那三个字段就永远测不到。
+   */
+  compactionEntry: undefined as unknown,
+  /**
    * 钩子登记表：`hooks.on(type, handler)` 收下来的处理器。
    *
    * 早期这里是 `hooks: { on: () => () => undefined }` —— 处理器被直接丢掉，
@@ -99,7 +118,11 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
     inspectExecution: async () => ({ current: null }),
     appendCustomEntry: async () => undefined,
     findEntry: async () => undefined,
-    compact: async () => ({ ok: true, value: {} }),
+    compact: async (options: unknown) => {
+      harness.calls.compactCalls.push(options);
+      const next = harness.calls.compactResults.shift();
+      return next ?? { ok: true, value: {} };
+    },
     navigateTree: async () => ({ ok: true, value: {} }),
     getValue: async () => undefined,
     setValue: async () => undefined,
@@ -189,6 +212,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     ...overrides,
   };
@@ -204,7 +228,8 @@ function makeSessionStore(sessionMode: "standard" | "orchestrate" | null = null)
     setValue: async () => undefined,
     deleteValue: async () => undefined,
     getStats: async () => ({ messageCount: 0 }),
-    getEntry: async () => undefined,
+    // 压缩结束时回读那条 compaction 条目（内容由各用例按需设置）
+    getEntry: async () => harness.compactionEntry,
     setName: async () => undefined,
     close: async () => undefined,
   };
@@ -281,6 +306,9 @@ function resetHarness(): void {
   harness.calls.prompts = [];
   harness.calls.aborts = 0;
   harness.calls.promptResults = [];
+  harness.calls.compactCalls = [];
+  harness.calls.compactResults = [];
+  harness.compactionEntry = undefined;
   harness.calls.createOptions = [];
   harness.calls.setTools = [];
   harness.gate.release = null;
@@ -1162,6 +1190,177 @@ describe("运行以 failed 收场时的错误呈现", () => {
       (event) => event.type === "message-updated" && event.messageId === firstAssistantId,
     );
     expect(patched).toBeUndefined();
+
+    await runtime.dispose();
+  });
+});
+
+/**
+ * `/compact` 的后端：结果映射 + 事件转发。
+ *
+ * 放在这个文件里是因为它复用同一套假 harness（真 lane 需要模型与存储）。
+ * 两组断言各自钉住一处容易错的地方：
+ * - **结果映射**：busy / nothing 是正常结局，要让渲染层能按 code 给出自己的语言；
+ * - **事件转发**：压缩条靠它显示「压缩中 / 已压缩 / 失败」——reason 与 status 缺一不可
+ *   （早先两者都被丢掉，失败的压缩在界面上永远停在「运行中」）。
+ */
+describe("手动压缩（/compact 后端）", () => {
+  async function collectEvents(options: { withSession?: boolean } = {}) {
+    const events: { type: string; [key: string]: unknown }[] = [];
+    const runtime = makeRuntime({
+      onEvent: (_sessionId, event) => events.push(event as { type: string }),
+    });
+    /**
+     * 事件订阅是在**会话运行时创建时**才挂上的（registerEvents）；不先把它建出来，
+     * emit 出来的内核事件一个都到不了这里 —— 而这正是「事件适配」要测的东西。
+     */
+    if (options.withSession === true) await runtime.compact("s1");
+    return { runtime, events };
+  }
+
+  it("成功：返回 { ok: true }，并把 customInstructions 原样交给 lane", async () => {
+    resetHarness();
+    const { runtime } = await collectEvents();
+
+    await expect(runtime.compact("s1", "保留数据库相关的讨论")).resolves.toEqual({ ok: true });
+    expect(harness.calls.compactCalls).toEqual([{ customInstructions: "保留数据库相关的讨论" }]);
+
+    await runtime.dispose();
+  });
+
+  it("说明为空白时等同于无参数（不传一个空串给内核）", async () => {
+    resetHarness();
+    const { runtime } = await collectEvents();
+
+    await runtime.compact("s1", "   ");
+    expect(harness.calls.compactCalls).toEqual([undefined]);
+
+    await runtime.dispose();
+  });
+
+  it("lane 忙 → code: busy（用户看到的应是「会话正忙」，不是一句压缩失败）", async () => {
+    resetHarness();
+    harness.calls.compactResults = [
+      { ok: false, error: { _tag: "LaneBusy", message: "already has an active operation" } },
+    ];
+    const { runtime } = await collectEvents();
+
+    const outcome = await runtime.compact("s1");
+    expect(outcome).toMatchObject({ ok: false, code: "busy" });
+
+    await runtime.dispose();
+  });
+
+  it("没什么可压 → code: nothing", async () => {
+    resetHarness();
+    harness.calls.compactResults = [
+      { ok: false, error: { _tag: "NothingToCompact", message: "nothing to compact" } },
+    ];
+    const { runtime } = await collectEvents();
+
+    const outcome = await runtime.compact("s1");
+    expect(outcome).toMatchObject({ ok: false, code: "nothing" });
+
+    await runtime.dispose();
+  });
+
+  it("其他失败 → code: failed，并带上原因（不吞掉内核那句话）", async () => {
+    resetHarness();
+    harness.calls.compactResults = [{ ok: false, error: new Error("summary request timed out") }];
+    const { runtime } = await collectEvents();
+
+    const outcome = await runtime.compact("s1");
+    expect(outcome).toMatchObject({ ok: false, code: "failed" });
+    expect(outcome.ok === false && outcome.message).toContain("summary request timed out");
+
+    await runtime.dispose();
+  });
+
+  it("compaction_start：把 reason 透传给渲染层（自动 / 手动要分得开）", async () => {
+    resetHarness();
+    const { runtime, events } = await collectEvents({ withSession: true });
+
+    harness.emit("compaction_start", { reason: "threshold", startedAt: 1234, runId: "op1" });
+    await flushEvents();
+
+    expect(events.find((event) => event.type === "compaction-started")).toEqual({
+      type: "compaction-started",
+      reason: "threshold",
+      startedAt: 1234,
+    });
+
+    await runtime.dispose();
+  });
+
+  it("compaction_end（completed）：回读条目，带上摘要预览、压缩前 tokens 与保留条数", async () => {
+    resetHarness();
+    harness.compactionEntry = {
+      type: "compaction",
+      summary: "这是一段摘要",
+      tokensBefore: 123_456,
+      retainedTail: [{ role: "user" }, { role: "assistant" }],
+    };
+    const { runtime, events } = await collectEvents({ withSession: true });
+
+    harness.emit("compaction_end", {
+      reason: "manual",
+      status: "completed",
+      entryId: "e1",
+      endedAt: 2000,
+      runId: "op1",
+    });
+    await flushEvents();
+
+    expect(events.find((event) => event.type === "compaction-ended")).toEqual({
+      type: "compaction-ended",
+      reason: "manual",
+      status: "completed",
+      endedAt: 2000,
+      summaryPreview: "这是一段摘要",
+      tokensBefore: 123_456,
+      retainedCount: 2,
+    });
+
+    await runtime.dispose();
+  });
+
+  // 回归：failed 曾经和 completed 一样落成「空预览」，界面把它当成「还在压缩」
+  it("compaction_end（failed）：status 与原因都要出来，且不带 tokens", async () => {
+    resetHarness();
+    const { runtime, events } = await collectEvents({ withSession: true });
+
+    harness.emit("compaction_end", {
+      reason: "manual",
+      status: "failed",
+      error: new Error("模型超时"),
+      endedAt: 2000,
+      runId: "op1",
+    });
+    await flushEvents();
+
+    const ended = events.find((event) => event.type === "compaction-ended");
+    expect(ended).toMatchObject({ status: "failed", error: "模型超时", summaryPreview: "" });
+    expect(ended).not.toHaveProperty("tokensBefore");
+
+    await runtime.dispose();
+  });
+
+  it("compaction_end（aborted / declined）：如实汇报，不伪装成完成", async () => {
+    resetHarness();
+    const { runtime, events } = await collectEvents({ withSession: true });
+
+    harness.emit("compaction_end", {
+      reason: "threshold",
+      status: "aborted",
+      endedAt: 2000,
+      runId: "op1",
+    });
+    await flushEvents();
+
+    expect(events.find((event) => event.type === "compaction-ended")).toMatchObject({
+      status: "aborted",
+      summaryPreview: "",
+    });
 
     await runtime.dispose();
   });

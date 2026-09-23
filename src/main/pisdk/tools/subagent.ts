@@ -21,7 +21,6 @@ import { type TSchema, Type } from "typebox";
 import {
   MAX_CONCURRENT_SUBAGENT_RUNS,
   normalizeSubagentName,
-  SUBAGENT_ASSIGNABLE_TOOLS,
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
@@ -83,6 +82,17 @@ export interface SubagentToolDeps {
   stop: (delegationIds: string[]) => Promise<SubagentRun[]>;
   /** 父会话当前使用的模型 id，用于「继承主会话」的显示 */
   parentModelId: () => string;
+  /**
+   * 父会话此刻**真实拥有**的工具名（供临时定义的 `tools` 白名单校验）。
+   *
+   * 由 runtime 注入而不是在这里写死一份常量：MCP 工具名是运行时才存在的
+   *（`mcp__<server>__call` 与 `mcp_tools`），写死的清单必然漏掉它们 ——
+   * 而「漏掉」的表现是模型想给临时帮手开一个 MCP 工具却被判非法。
+   *
+   * 传进来的清单里**不含** Task 系列与 ask_user（子智能体本来就拿不到），
+   * 所以模型也不会被提示去授一个授不出去的工具。
+   */
+  availableToolNames: () => string[];
 }
 
 export interface SubagentStartRequest {
@@ -142,7 +152,9 @@ const definitionSchema = Type.Object({
   tools: Type.Optional(
     Type.Array(Type.String({ minLength: 1 }), {
       description:
-        "Tools the temporary subagent may use, by app tool name. Defaults to the read-only set. Unknown names are dropped by the allowlist.",
+        "Tool whitelist for THIS temporary subagent only: it gets exactly these tools and nothing else. " +
+        "Omit it to give the temporary subagent every tool the main agent has (minus delegation). " +
+        "Names must exist in this session (see the tool list in the Task description); an unknown name fails the call.",
     }),
   ),
 });
@@ -239,13 +251,16 @@ const TASK_DESCRIPTION =
   "我们也没有任何错误信息 —— **结果未知**。接下来怎么办由你决定：这件事还重要就用 resumeOf 重新\n" +
   "派一次（不用把任务全文再抄一遍），否则如实告诉用户它被打断了、以及你已经知道的部分。\n\n" +
   "可用的子智能体：见系统提示里的 <available_subagents> 清单（内置的与用户自定义的都在那里），\n" +
-  "只干一次的特殊分工也可以用 definition 临时定义一个。\n\n" +
+  "只干一次的特殊分工也可以用 definition 临时定义一个。\n" +
+  "**内置与用户定义的子智能体拿到的工具和你一样全**（唯一例外是不能继续委派），\n" +
+  "所以「这个子智能体有没有能力跑测试」这类判断不用你操心；只有**临时定义**可以按需收窄工具。\n\n" +
   "参数：\n" +
   "- description：**必填且用户可见**（用 resumeOf 时可省略，沿用原来那句），一句话说明这次派发在做什么；\n" +
   "  写「调研 X 模块的重试逻辑」这样的一行。\n" +
   "- agent：要派的子智能体名，取自 <available_subagents> 清单（例如 explorer / fixer）。\n" +
   "- definition：或者临时定义一个子智能体（name / description / prompt / tools），只活在这次运行里、不落盘；\n" +
-  "  与 agent 二选一。工具名只认应用内置的那几个，写了别的会被忽略。\n" +
+  "  与 agent 二选一。其中 tools 是**可选的白名单**：给了就只给那几个工具，不给就给全部；\n" +
+  "  名字必须真实存在（用错名字这次派发会被拒绝，并把可用清单回给你）。\n" +
   "- task：交给它的任务全文，要自包含 —— 目标、范围、判定标准、要交付什么都要写清（用 resumeOf 时可省略）。\n" +
   "- resumeOf：重派一次意外终止的运行：给它那个运行的 id，就按原来那份 agent / task / description 重新跑，\n" +
   "  并记下「接续的是哪一次」（旧记录留在列表里，是历史，不会被覆盖）。**还在跑的运行不要用它** ——\n" +
@@ -304,17 +319,45 @@ const STOP_DESCRIPTION =
   "输出：每个运行停止后的状态（aborted = 已停止；已经结束的不受影响）。";
 
 /**
- * 把定义里的禁用清单收敛到**可分配**的集合（黑名单制）。
+ * 临时定义的工具白名单归一化：去空白、去重、丢掉空串。
  *
- * 与旧白名单实现的差别值得记一笔，因为它是这次语义反转最实质的收益：
- * 旧实现在这里回落到「只读四件套」是为了**补救一个 bug** —— `restrictTools` 把
- * 「空允许表」当「不限制」，于是一个拼错的工具名会让子智能体拿到**全部**工具。
- * 黑名单制下空清单的含义本来就是「什么都不禁用」，不再需要那种补救；
- * 而拼错的名字只是被丢掉、不产生效果，也不会误放行别的工具。
+ * **不做「认识的才留」的过滤** —— 那件事要用父会话此刻真实拥有的工具名来判断，
+ * 只有 Task 的执行路径知道（`deps.availableToolNames()`），见下面的 `normalizeWhitelist`。
+ * 空数组与 undefined 同义：不限制。
  */
-export function normalizeSubagentTools(disabled: readonly string[] | undefined): string[] {
-  if (disabled === undefined) return [];
-  return disabled.filter((tool) => (SUBAGENT_ASSIGNABLE_TOOLS as readonly string[]).includes(tool));
+function normalizeToolList(tools: readonly string[] | undefined): string[] | undefined {
+  if (tools === undefined) return undefined;
+  const cleaned = [...new Set(tools.map((tool) => tool.trim()).filter((tool) => tool !== ""))];
+  return cleaned.length === 0 ? undefined : cleaned;
+}
+
+/**
+ * 白名单校验：返回规范化后的白名单，或者一条给模型看的错误。
+ *
+ * 三条规则都是刻意的：
+ * - **不认识的名字直接报错**（而不是静默丢掉）：名字是主模型写的，把可用清单回给它，
+ *   下一轮就能改对；静默丢掉会让它以为「我已经限制了工具」，而子智能体实际拿到了别的组合。
+ *   这与 MCP 聚合工具对未知工具名的处理是同一套口径；
+ * - **以父会话真实工具名为准**：清单由 runtime 注入（含 MCP 工具），这里不写死常量 ——
+ *   写死的清单必然漏掉运行时才存在的工具名；
+ * - **过滤后为空也算错**：白名单全被丢掉等于「什么工具都不给」，那不是模型想要的结果，
+ *   子智能体也会白跑一轮 —— 直接拒绝比让它空转好。
+ */
+export function normalizeWhitelist(
+  tools: readonly string[] | undefined,
+  available: readonly string[],
+): { ok: true; tools?: string[] } | { ok: false; reason: string } {
+  const wanted = normalizeToolList(tools);
+  if (wanted === undefined) return { ok: true };
+  const known = new Set(available);
+  const unknown = wanted.filter((tool) => !known.has(tool));
+  if (unknown.length > 0) {
+    return {
+      ok: false,
+      reason: `tools 里有这个会话里不存在的工具：${unknown.join(", ")}。可用的工具：${available.join(", ")}。`,
+    };
+  }
+  return { ok: true, tools: wanted };
 }
 
 /** 失败回执：文本给模型，isError 给渲染层与测试（内核只把工具抛错当错误，见文件头注释） */
@@ -330,14 +373,14 @@ function temporaryDefinition(input: {
   name: string;
   description: string;
   prompt: string;
-  disabledTools?: string[];
+  tools?: string[];
 }): SubagentDefinition {
   return {
     // 名字要能被面板与日志安全地当标识用；归一后为空（例如给了一串符号）时兜一个固定名
     name: normalizeSubagentName(input.name) || "temp",
     description: input.description.trim(),
     prompt: input.prompt,
-    disabledTools: normalizeSubagentTools(input.disabledTools),
+    ...(input.tools === undefined ? {} : { tools: input.tools }),
     model: null,
     source: "temp",
   };
@@ -493,7 +536,21 @@ export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<Ap
 
       let definition: SubagentDefinition;
       if (params.definition !== undefined) {
-        definition = temporaryDefinition(params.definition);
+        /**
+         * 临时定义可以带工具白名单：这是**唯一**能收窄子智能体工具的地方。
+         *
+         * 校验放在这里（而不是装配子会话时）是为了能把错误**当次**回给主模型：
+         * 它写错工具名时立刻拿到可用清单，下一轮就能改对，而不是让一个空转的子智能体
+         * 跑完再回一份「我什么也做不了」的报告。
+         */
+        const whitelist = normalizeWhitelist(params.definition.tools, deps.availableToolNames());
+        if (!whitelist.ok) {
+          return errorResult<SubagentToolErrorDetails>({ error: "tools 不合法" }, whitelist.reason);
+        }
+        definition = temporaryDefinition({
+          ...params.definition,
+          ...(whitelist.tools === undefined ? {} : { tools: whitelist.tools }),
+        });
       } else {
         // 重派时按**旧记录里的名字**重新解析定义：文件可能被改过或删了，
         // 沿用当时那一份会让「设置里看到的定义」与「实际跑的是什么」悄悄对不上

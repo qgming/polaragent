@@ -398,7 +398,11 @@ function RunHeader({
         {t("rightPanel.subagentModel")} {run.modelId}
       </p>
       <p className={cn(mono, "text-ink-4 truncate")}>
-        {t("rightPanel.subagentTools")} {run.tools.length === 0 ? "—" : run.tools.join("、")}
+        {/* 只有主 AI 临时定义的子智能体才会带工具白名单；其余拿到的是主代理同一批工具 */}
+        {t("rightPanel.subagentTools")}{" "}
+        {run.tools === undefined || run.tools.length === 0
+          ? t("rightPanel.subagentToolsAll")
+          : run.tools.join("、")}
       </p>
       <p className={cn(mono, "text-ink-4")}>
         {t("rightPanel.subagentSteps", { turns: run.turns, toolCalls: run.toolCalls })}

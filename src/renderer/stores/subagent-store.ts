@@ -169,7 +169,14 @@ export function parseSubagentRun(value: unknown): SubagentRun | null {
     model: asModelRef(value.model),
     modelId: asString(value.modelId, ""),
     thinkingLevel: asThinkingLevel(value.thinkingLevel),
-    tools: asStringArray(value.tools),
+    /**
+     * `tools` 是**可选**的：只有主 AI 临时定义的子智能体带工具白名单，
+     * 内置 / 用户定义的运行记录里没有这个字段（它们拿到的是主代理同一批工具）。
+     *
+     * 这里曾无条件写 `tools: asStringArray(value.tools)` —— 缺失时会被补成 `[]`，
+     * 于是面板把「全部工具」显示成「工具：—」（一个空清单），与事实正好相反。
+     */
+    ...(Array.isArray(value.tools) ? { tools: asStringArray(value.tools) } : {}),
     turns: asNumber(value.turns, 0),
     toolCalls: asNumber(value.toolCalls, 0),
     ...(typeof report === "string" && report !== "" ? { report } : {}),
@@ -276,8 +283,8 @@ function sameRun(a: SubagentRun, b: SubagentRun): boolean {
     a.toolCalls === b.toolCalls &&
     a.report === b.report &&
     a.error === b.error &&
-    a.tools.length === b.tools.length &&
-    a.tools.every((tool, index) => tool === b.tools[index])
+    a.tools?.length === b.tools?.length &&
+    (a.tools ?? []).every((tool, index) => tool === (b.tools ?? [])[index])
   );
 }
 

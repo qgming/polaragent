@@ -62,6 +62,7 @@ export const DEFAULT_SETTINGS: Settings = {
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
+  systemMcpServerEnabled: {},
   webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
 };
 
@@ -84,6 +85,7 @@ function cloneDefaults(): Settings {
     disabledSkillNames: [],
     disabledSubagentNames: [],
     mcpServers: [],
+    systemMcpServerEnabled: {},
     webSearch: cloneWebSearchSettings(DEFAULT_WEB_SEARCH_SETTINGS),
   };
 }
@@ -135,6 +137,8 @@ function mergeWithDefaults(raw: unknown, crypto: Crypto | null, warn: Warn): Set
       : base.disabledSubagentNames,
     // MCP server 列表：逐条归一（命令/参数/环境变量可能是任意 JSON），非法条目直接丢掉
     mcpServers: normalizeMcpServers(raw.mcpServers),
+    // 系统预设的显式启停：只留布尔值；非法值与空键直接丢掉（丢掉的会回落到预设默认值）
+    systemMcpServerEnabled: normalizeBooleanRecord(raw.systemMcpServerEnabled),
     // 网络搜索：provider 子对象逐字段归一，apiKey 走与 services 相同的解密路径
     webSearch: normalizeWebSearch(raw.webSearch, crypto, warn),
   };
@@ -185,6 +189,21 @@ function normalizeStringRecord(value: unknown): Record<string, string> {
   const record: Record<string, string> = {};
   for (const [key, item] of Object.entries(value)) {
     if (key !== "" && typeof item === "string") record[key] = item;
+  }
+  return record;
+}
+
+/**
+ * 布尔键值表归一（系统 MCP 预设的启停表）。
+ *
+ * 只留真正的布尔值：磁盘上的 JSON 可能被手改过，一个 `"false"` 字符串若被当成真值，
+ * 用户会看到「明明关了却还在连」—— 丢掉它反而是对的（回落到预设默认值，行为可预期）。
+ */
+function normalizeBooleanRecord(value: unknown): Record<string, boolean> {
+  if (!isRecord(value)) return {};
+  const record: Record<string, boolean> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "" && typeof item === "boolean") record[key] = item;
   }
   return record;
 }

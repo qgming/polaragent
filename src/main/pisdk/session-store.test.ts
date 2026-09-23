@@ -500,7 +500,6 @@ describe("session-store", () => {
         model: null,
         modelId: "svc/model-x",
         thinkingLevel: "medium",
-        tools: ["read", "grep"],
         turns: 2,
         toolCalls: 3,
         updatedAt: 2_000,
@@ -531,6 +530,42 @@ describe("session-store", () => {
       expect(runs).toHaveLength(1);
       // 全字段往返，不只是 id：面板与 TaskList 都直接读这份记录
       expect(runs[0]).toEqual(run);
+    });
+
+    /**
+     * `tools` 是可选的：内置 / 用户定义的运行记录里没有它（只有主 AI 临时定义的子智能体带白名单）。
+     *
+     * 这条断言守的是一个**真的会发生的**回归：读回时曾要求 `tools` 必须是数组，
+     * 于是新写的记录（没有这个字段）会被判成坏记录整条丢掉 ——
+     * 表现是「重启后子智能体运行列表空了」，而写盘那一侧一切正常。
+     */
+    it("没有 tools 字段的记录同样能往返（内置/用户定义的运行）", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const child = await makeChild("d-1", parent.id);
+      const run = makeRun({ sessionId: parent.id, childSessionId: child.id });
+      expect(run.tools).toBeUndefined();
+
+      await store.saveSubagentRun(child.id, run);
+      const runs = await store.listSubagentRunsFor(parent.id);
+
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.tools).toBeUndefined();
+    });
+
+    it("带 tools 白名单的记录照常往返（临时定义的运行）", async () => {
+      const parent = await store.create({ title: "父会话" });
+      const child = await makeChild("d-1", parent.id);
+      const run = makeRun({
+        sessionId: parent.id,
+        childSessionId: child.id,
+        agentSource: "temp",
+        tools: ["read", "grep"],
+      });
+
+      await store.saveSubagentRun(child.id, run);
+      const runs = await store.listSubagentRunsFor(parent.id);
+
+      expect(runs[0]?.tools).toEqual(["read", "grep"]);
     });
 
     it("只认自己的父会话，别的会话与 kind 不匹配的条目都不出现", async () => {

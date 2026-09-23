@@ -12,6 +12,28 @@ export const MCP_TOOL_PREFIX = "mcp__";
 /** 限定名里的分隔符（前缀之后第一个双下划线就是 server 与工具的分界） */
 export const MCP_NAME_SEPARATOR = "__";
 
+/**
+ * 聚合工具的固定"工具名"（第三段）。**每台 server 恒定只暴露这样一个工具。**
+ *
+ * 工具多了会灌爆上下文：一个 server 可能给出 94 个工具，每个工具的 JSON Schema 每轮都要进请求体。
+ * 所以远端工具不逐个展开，而是统一收敛成 `mcp__<serverId>__call`（入参 `{ tool, arguments }`），
+ * 细节按需用内置工具 `mcp_tools` 读取。
+ *
+ * 刻意保留限定名的三段形状（而不是另起一个 `mcp_gateway` 之类的名字），图的是两件事：
+ * 1. `parseMcpToolName` 照常解析出 serverId —— UI 的工具卡片、日志、按 server 统计都不用改；
+ * 2. 权限规则 `mcp__<serverId>__*` 是**前缀匹配**，天然覆盖聚合工具 ——
+ *    「信任这台 server」这条链路一行都不用改。
+ */
+export const MCP_GATEWAY_TOOL_NAME = "call";
+
+/**
+ * 详情工具名（内置工具，不是 MCP server 提供的）。
+ *
+ * 模型用它读某台 server 的工具清单与完整参数 schema：`mcp_tools()` / `({server})` /
+ * `({server, tool})` 三级，只读本地已缓存的能力清单，不额外发网络请求，因此是低风险、免审批的。
+ */
+export const MCP_CATALOG_TOOL_NAME = "mcp_tools";
+
 /** serverId 允许的字符集：字母数字加 `_` / `-`，不以分隔符开头；双下划线在 isValidMcpServerId 里单独排除 */
 const SERVER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -63,10 +85,23 @@ export interface McpServerState {
   connectedAt?: number;
 }
 
+/**
+ * server 配置的来源：
+ * - `system`：随应用分发的预设（见 shared/mcp/builtin-servers.ts），不可编辑/删除，只能启停；
+ * - `user`：用户自己新增的配置，住在 settings.mcpServers 里，可增删改。
+ */
+export type McpServerSource = "system" | "user";
+
 /** 设置面板要的一行：配置 + 运行时状态（配置来自 settings，状态来自连接管理器） */
 export interface McpServerView {
   config: McpServerConfig;
   state: McpServerState;
+  source: McpServerSource;
+  /**
+   * 被另一层同 id 的配置盖住：同 id 时**用户配置整条胜出**（与技能、子智能体的
+   * 「同名用户覆盖内置」同一条原则）。面板据此加一枚徽标，解释「为什么改了它没生效」。
+   */
+  overridden: boolean;
 }
 
 /** 试连结果：不回抛异常，失败时给人类可读原因（对齐 services:fetch-models 的判别联合） */
@@ -127,6 +162,17 @@ export function parseMcpToolName(
  */
 export function mcpServerRuleName(serverId: string): string {
   return `${MCP_TOOL_PREFIX}${serverId}${MCP_NAME_SEPARATOR}*`;
+}
+
+/** 聚合工具的限定名：`mcp__<serverId>__call` */
+export function mcpGatewayToolName(serverId: string): string {
+  return qualifyMcpToolName(serverId, MCP_GATEWAY_TOOL_NAME);
+}
+
+/** 这个限定名是不是某台 server 的聚合工具 */
+export function isMcpGatewayToolName(qualifiedName: string): boolean {
+  const parsed = parseMcpToolName(qualifiedName);
+  return parsed !== null && parsed.toolName === MCP_GATEWAY_TOOL_NAME;
 }
 
 /** 展示用的服务器标题：没起名字时回落到 id */

@@ -31,7 +31,6 @@ function runFixture(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: ["read", "grep", "glob"],
     turns: 0,
     toolCalls: 0,
     ...patch,

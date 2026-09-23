@@ -10,7 +10,6 @@ import { BUILTIN_SUBAGENTS } from "./subagent-catalog";
 import {
   buildDelegationPrompt,
   buildSubagentSystemPrompt,
-  describeSubagentTools,
   formatSubagentsForSystemPrompt,
 } from "./subagent-prompt";
 
@@ -19,38 +18,31 @@ function def(overrides: Partial<SubagentDefinition> = {}): SubagentDefinition {
     name: "helper",
     description: "做一件事",
     prompt: "你是子智能体。",
-    disabledTools: [],
     source: "user",
     ...overrides,
   };
 }
 
 describe("formatSubagentsForSystemPrompt", () => {
-  it("生成 <available_subagents> 索引，每项带名字、描述、工具与来源", () => {
+  it("生成 <available_subagents> 索引，每项带名字、描述与来源", () => {
     const text = formatSubagentsForSystemPrompt([def({ source: "builtin" })]);
 
     expect(text).toContain("<available_subagents>");
     expect(text).toContain("</available_subagents>");
     expect(text).toContain("<name>helper</name>");
     expect(text).toContain("<description>做一件事</description>");
-    // 索引里的工具是**解析后的有效清单**（黑名单制）：禁用清单为空 = 全部可分配工具可用，
-    // 所以这里只断言工具段存在且含 read，不再断言「只有 read」
-    expect(text).toContain("<tools>");
-    expect(text).toContain("read");
     expect(text).toContain("<source>builtin</source>");
   });
 
-  it("索引里的工具反映禁用清单（黑名单制真的生效）", () => {
-    const readOnly = formatSubagentsForSystemPrompt([
-      def({ disabledTools: ["bash", "edit", "write"] }),
-    ]);
+  /**
+   * 索引里**不再有 <tools> 段**：子智能体拿到的是主代理同一批工具（唯一例外是不能委派），
+   * 那是所有子智能体共享的一条规则，写进索引就是 N 份重复 —— 而索引每轮都付 token。
+   */
+  it("索引里不列工具（工具对所有子智能体都一样，不属于每条定义）", () => {
+    const text = formatSubagentsForSystemPrompt([def({ source: "builtin" })]);
 
-    expect(readOnly).toContain("<tools>");
-    expect(readOnly).toContain("read");
-    // 禁掉的可写工具不该出现在索引里 —— 索引是主模型挑选子智能体的依据之一
-    expect(readOnly).not.toContain("bash");
-    expect(readOnly).not.toContain("edit");
-    expect(readOnly).not.toContain("write");
+    expect(text).not.toContain("<tools>");
+    expect(text).not.toContain("disabled_tools");
   });
 
   it("没有可用定义时返回空串（一份空索引会让模型反复尝试派发）", () => {
@@ -158,25 +150,31 @@ describe("buildDelegationPrompt", () => {
 });
 
 describe("buildSubagentSystemPrompt", () => {
-  it("只读定义：明确说「不要声称自己做了改动」", () => {
-    const text = buildSubagentSystemPrompt(def({ disabledTools: ["bash", "edit", "write"] }), "/w");
+  it("框定身份：看不到用户、不能提问、不能再委派", () => {
+    const text = buildSubagentSystemPrompt(def(), "/w");
 
     expect(text).toContain("/w");
-    expect(text).toContain("不要声称自己做了这类改动");
+    expect(text).toContain("看不到用户");
+    expect(text).toContain("不能再委派");
   });
 
-  it("可写定义：允许改文件但限定范围", () => {
-    const text = buildSubagentSystemPrompt(def({ disabledTools: ["bash"] }), "/w");
+  /**
+   * 工具与主代理一致这件事要**明说**：否则子智能体会沿用旧印象
+   *（"我是子智能体，大概只有只读工具"）而不敢跑命令、不敢验证 ——
+   * 那正是这次改动要修掉的行为。
+   */
+  it("明说工具与主代理完全一致，并鼓励动手验证", () => {
+    const text = buildSubagentSystemPrompt(def(), "/w");
+
+    expect(text).toContain("完全一致");
+    expect(text).toContain("该跑的命令要跑");
+  });
+
+  it("允许改文件但限定范围", () => {
+    const text = buildSubagentSystemPrompt(def(), "/w");
 
     expect(text).toContain("可以修改文件");
     expect(text).toContain("只改任务真正涉及的那些");
-  });
-
-  it("框定身份：看不到用户、不能提问、不能再委派（后两条是契约禁止的）", () => {
-    const text = buildSubagentSystemPrompt(def(), "/w");
-
-    expect(text).toContain("看不到用户");
-    expect(text).toContain("不能再委派");
   });
 
   it("定义正文原样接在后面，最后一条消息即报告", () => {
@@ -184,12 +182,5 @@ describe("buildSubagentSystemPrompt", () => {
 
     expect(text).toContain("只在沙漠里找水。");
     expect(text).toContain("最后一条消息");
-  });
-});
-
-describe("describeSubagentTools", () => {
-  it("空清单给「（无）」而不是空串：空串在提示里读起来像漏了一行", () => {
-    expect(describeSubagentTools([])).toBe("（无）");
-    expect(describeSubagentTools(["read", "grep"])).toBe("read、grep");
   });
 });

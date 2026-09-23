@@ -26,8 +26,16 @@ const sampleEvents: ChatEvent[] = [
   },
   { type: "approval-resolved", id: "a1", decision: "allow_once" },
   { type: "approval-reviewed", id: "a1", reason: "命中危险命令" },
-  { type: "compaction-started" },
-  { type: "compaction-ended", summaryPreview: "sum" },
+  { type: "compaction-started", reason: "manual", startedAt: 1 },
+  {
+    type: "compaction-ended",
+    reason: "threshold",
+    status: "completed",
+    endedAt: 2,
+    summaryPreview: "sum",
+    tokensBefore: 120_000,
+    retainedCount: 12,
+  },
   { type: "run-ended", runId: "r1", reason: "stop" },
   { type: "session-titled", sessionId: "s1", title: "修复登录超时" },
 ];

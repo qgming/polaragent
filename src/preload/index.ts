@@ -118,6 +118,7 @@ const api = {
   mcp: {
     list: () => ipcRenderer.invoke(IPC.mcp.list),
     reload: () => ipcRenderer.invoke(IPC.mcp.reload),
+    reconnect: (serverId) => ipcRenderer.invoke(IPC.mcp.reconnect, { serverId }),
     probe: (config) => ipcRenderer.invoke(IPC.mcp.probe, config),
   },
   services: {

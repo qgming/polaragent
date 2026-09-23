@@ -1,58 +1,76 @@
 /**
- * 斜杠命令的**纯逻辑**：数据模型、过滤、解析与展开。
+ * 斜杠命令的**纯逻辑**：数据模型、过滤、解析、展开与派发。
  *
- * 为什么单独一个文件：菜单（SlashCommandMenu）与输入框（Composer）都要用它，而它自己不碰
- * React、不碰 IPC —— 因此能在 node project 下直接喂普通对象做断言（与 TodoPanel 的
- * latestTodo 同一个口径）。
+ * 为什么单独一个文件：菜单（SlashCommandMenu）与输入框（Composer）、以及发送收口
+ * （OintRuntimeProvider）都要用它，而它自己不碰 React、不碰 IPC —— 因此能在 node project
+ * 下直接喂普通对象做断言（与 TodoPanel 的 latestTodo 同一个口径）。
+ *
+ * 三类命令的分界只看**谁执行**：
+ * - `command`（内置指令）：应用执行，整条命令不会变成模型消息（见 shared/contracts/commands）；
+ * - `skill`（技能）：只有元数据，选中填 `/名称 `，正文留在磁盘上由模型按需读；
+ * - `template`（魔法提示）：正文随列表下发，选中即展开成消息正文。
  *
  * 模板**没有参数**：魔法提示就是一段现成的提示词，选中（或敲 `/名称` 发送）时把正文原样
  * 作为消息内容；命令名之后多敲的文字按普通正文接在后面，不做任何占位符替换 ——
  * 正文里出现 `$1` 之类只是普通字符（写 shell 片段、价格时不会被吃掉）。
+ * 指令的参数归**指令自己**解析（见 dispatchSlashInput 返回的 rest）。
  */
 
+import type { CommandSpec } from "@/shared/contracts/commands";
 import type { PromptTemplateInfo } from "@/shared/contracts/prompts";
 import type { SkillInfo } from "@/shared/contracts/skills";
 
 /**
  * 一条菜单项。
  *
- * 技能与模板在菜单里是两栏，选中后的行为却不同：
- * - 技能只有元数据（正文留在磁盘上，由模型按需读），所以只能把 `/name` 填进输入框；
- * - 模板的正文随列表一起下发，所以选中即可展开成最终正文。
- * 用 kind 把这条差别显式化，而不是让菜单自己去看 name 撞没撞。
+ * 技能、模板与指令在菜单里分三栏，选中后的行为各不相同（见文件头）。
+ * 用 kind 把差别显式化，而不是让菜单自己去看 name 撞没撞。
  */
 export interface SlashCommand {
-  kind: "skill" | "template";
+  kind: "command" | "skill" | "template";
   name: string;
   description: string;
-  /** 仅模板有：正文，选中时用来展开（技能没有正文，见上） */
+  /** 仅模板有：正文，选中时用来展开（技能与指令没有正文，见上） */
   template?: string;
 }
 
 /**
  * 菜单里一行的身份：kind + name。
  *
- * 技能与提示模板可以同名（分属两栏，都保留），只用 name 会让两条撞成同一个 DOM id、
+ * 三类命令可以同名（分属三栏，都保留），只用 name 会让两条撞成同一个 DOM id、
  * 同时高亮，而且后一条永远选不中。
  */
 export function optionKey(command: SlashCommand): string {
   return `${command.kind}/${command.name}`;
 }
 
-/** 菜单里两栏的顺序固定：技能在前、提示模板在后 */
-export const SLASH_GROUPS = ["skill", "template"] as const;
+/** 菜单里三栏的顺序固定：指令在前（最"重"），技能居中，魔法提示最后 */
+export const SLASH_GROUPS = ["command", "skill", "template"] as const;
 
 /**
- * 把两个 IPC 列表拍成一份菜单项。
+ * 把两个 IPC 列表与内置指令拍成一份菜单项。
  *
- * 同名的技能与模板都保留（分属两栏），不在这里去重 —— 用户看得见它们的栏位，
+ * `translate` 只用在指令上：技能与模板的描述来自清单（磁盘上的原文），
+ * 只有内置指令的摘要住在语言包里。传 `(key) => key` 也能用 —— 派发路径不需要文案。
+ *
+ * 同名的三类命令都保留（分属三栏），不在这里去重 —— 用户看得见它们的栏位，
  * 选哪个是明确的。
  */
 export function buildSlashCommands(
   skills: readonly SkillInfo[],
   templates: readonly PromptTemplateInfo[],
+  commands: readonly CommandSpec[],
+  translate: (key: string) => string,
 ): SlashCommand[] {
   return [
+    ...commands.map((command) => ({
+      kind: "command" as const,
+      name: command.name,
+      description:
+        command.hintKey === undefined
+          ? translate(command.descriptionKey)
+          : `${translate(command.descriptionKey)} · ${translate(command.hintKey)}`,
+    })),
     ...skills.map((skill) => ({
       kind: "skill" as const,
       name: skill.name,
@@ -150,11 +168,11 @@ export function parseSlashInvocation(
 /**
  * 菜单里选中一条命令后，输入框该变成什么。
  *
- * 技能：只有元数据，填 `/name `（尾随空格让人直接接着敲说明）。
- * 模板：正文已经在手上，直接原样插入，用户接着往下写要处理的内容。
+ * 技能与指令都只有元数据（指令的执行由发送路径认领），填 `/name `（尾随空格让人直接接着
+ * 敲参数或说明）；模板的正文已经在手上，直接原样插入。
  */
 export function insertSlashCommand(command: SlashCommand): string {
-  if (command.kind === "skill" || command.template === undefined) return `/${command.name} `;
+  if (command.kind !== "template" || command.template === undefined) return `/${command.name} `;
   return command.template;
 }
 
@@ -163,7 +181,8 @@ export function insertSlashCommand(command: SlashCommand): string {
  *
  * 模板 → 正文原样发出；命令名之后多敲的文字接在正文后面（空一行隔开），不丢用户输入。
  * 技能 → `/name 说明` 原样保留（正文在磁盘上，由模型自己按需读，展开成别的东西反而与
- * 它看到的一致）。认不出来就原样返回，绝不在这里吞掉用户输入。
+ * 它看到的一致）。指令 → 原样返回（它**不该走到这里**，见 dispatchSlashInput）。
+ * 认不出来就原样返回，绝不在这里吞掉用户输入。
  */
 export function expandSlashInput(value: string, commands: readonly SlashCommand[]): string {
   const invocation = parseSlashInvocation(value, commands);
@@ -171,4 +190,32 @@ export function expandSlashInput(value: string, commands: readonly SlashCommand[
   const { command, rest } = invocation;
   if (command.kind !== "template" || command.template === undefined) return value;
   return rest === "" ? command.template : `${command.template}\n\n${rest}`;
+}
+
+/**
+ * 发送前派发的结果。
+ *
+ * 为什么要和 `expandSlashInput` 分开：那个函数只回答「展开成什么文本」，而指令根本
+ * **不该变成文本**。把「认领」这一步显式化，调用方就必须处理 `command` 分支 ——
+ * 否则一条 `/compact` 会被当成普通消息发出去。
+ */
+export type SlashDispatch =
+  | { kind: "message"; text: string }
+  | { kind: "command"; command: SlashCommand; rest: string };
+
+/**
+ * 发送前的**唯一收口**：认出指令、展开模板、放行普通消息。
+ *
+ * 技能不认领（它就是要发出去的文本：`/名称 说明`），只有 `kind === "command"` 才拦截。
+ */
+export function dispatchSlashInput(
+  value: string,
+  commands: readonly SlashCommand[],
+): SlashDispatch {
+  const invocation = parseSlashInvocation(value, commands);
+  if (invocation === null) return { kind: "message", text: value };
+  if (invocation.command.kind === "command") {
+    return { kind: "command", command: invocation.command, rest: invocation.rest };
+  }
+  return { kind: "message", text: expandSlashInput(value, commands) };
 }

@@ -54,7 +54,8 @@ export function registerChatIpc(): void {
     IPC.chat.compact,
     "压缩上下文",
     async (request: { sessionId: string; instructions?: string }) => {
-      await getChatRuntime().compact(request.sessionId, request.instructions);
+      // 结果对象原样回传：busy / nothing 是正常结局，不是需要包装成异常的失败
+      return getChatRuntime().compact(request.sessionId, request.instructions);
     },
   );
   handle(IPC.chat.snapshot, "读取流式快照", async (request: { sessionId: string }) => {

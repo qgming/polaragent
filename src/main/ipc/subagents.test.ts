@@ -69,6 +69,7 @@ const BASE_SETTINGS: Settings = {
   disabledSkillNames: [],
   disabledSubagentNames: [],
   mcpServers: [],
+  systemMcpServerEnabled: {},
   webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
 };
 
@@ -92,7 +93,6 @@ function runFixture(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: ["read", "grep", "glob"],
     turns: 1,
     toolCalls: 2,
     ...patch,
@@ -105,7 +105,6 @@ function writeRequest(patch: Partial<SubagentWriteRequest> = {}): SubagentWriteR
     name: "changelog-writer",
     description: "写 CHANGELOG",
     prompt: "你是子智能体。",
-    disabledTools: ["bash", "edit", "write"],
     model: null,
     thinkingLevel: null,
     ...patch,
@@ -154,18 +153,14 @@ describe("subagents:list", () => {
       source: "builtin",
       model: null,
       thinkingLevel: null,
-      // 黑名单制：只读的内置显式禁掉全部可写工具
-      disabledTools: ["bash", "edit", "write"],
       enabled: true,
     });
     const explorer = catalog.subagents[0];
-    // 面板拿到的 effectiveTools 是**解析结果**：只读 = 有 read、没有 bash
-    expect(explorer?.effectiveTools).toContain("read");
-    expect(explorer?.effectiveTools).not.toContain("bash");
-    // explorer 带网络工具：它的工作就是「搞清楚现状」，而现状常常在代码库之外
-    expect(explorer?.effectiveTools).toContain("web_search");
-    expect(explorer?.effectiveTools).toContain("web_fetch");
-    expect(catalog.subagents[0]?.promptPreview).not.toBe("");
+    expect(explorer?.promptPreview).not.toBe("");
+    // 面板行里**不再有工具字段**：子智能体拿到的是主代理同一批工具
+    //（唯一例外是不能继续委派），面板没有可显示、也没有可编辑的工具清单
+    expect(explorer).not.toHaveProperty("disabledTools");
+    expect(explorer).not.toHaveProperty("effectiveTools");
     // 定义目录是固定的两处（数据目录 + 会话目录下的 .oint/subagents），读取走普通 fs：
     // 这里不再有 ExecutionEnv 可断言 —— 「数据目录里的用户定义能被列出来」由上面的 filePath 覆盖
   });

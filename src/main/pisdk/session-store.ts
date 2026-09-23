@@ -266,8 +266,16 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
     !isSubagentRunStatus(record.status) ||
     !isSubagentSource(record.agentSource) ||
     !isThinkingLevel(record.thinkingLevel) ||
-    !Array.isArray(tools) ||
-    !tools.every((tool) => typeof tool === "string")
+    /**
+     * `tools` 是**可选**的：只有主 AI 临时定义的子智能体带工具白名单，
+     * 内置 / 用户定义的运行记录里没有这个字段。
+     *
+     * 这里曾经要求它必须是数组 —— 那样一来新写的记录（没有 tools）会在读回时
+     * 被判为坏记录整条丢掉，表现为「重启后子智能体运行列表空了」。
+     * 写了就必须是字符串数组（那才是坏数据），没写就是合法的。
+     */
+    (tools !== undefined &&
+      (!Array.isArray(tools) || !tools.every((tool) => typeof tool === "string")))
   ) {
     return undefined;
   }
@@ -290,7 +298,7 @@ function parseSubagentRun(raw: unknown): SubagentRun | undefined {
     model,
     modelId,
     thinkingLevel: record.thinkingLevel,
-    tools,
+    ...(tools === undefined ? {} : { tools }),
     turns,
     toolCalls,
   };

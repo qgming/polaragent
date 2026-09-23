@@ -37,6 +37,7 @@ import type {
   ChatEventEnvelope,
   ChatSendOptions,
   ChatStreamSnapshot,
+  CompactOutcome,
   QueuedMessage,
 } from "@/shared/contracts/chat";
 import { type AgentMode, DEFAULT_AGENT_MODE, type ModelRef } from "@/shared/contracts/common";
@@ -56,10 +57,10 @@ import type { Settings } from "@/shared/contracts/settings";
 import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
 import {
   isSubagentRunFinished,
-  resolveSubagentTools,
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
+import { isPreTrustedMcpTool } from "@/shared/mcp/builtin-servers";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { renderPrompt } from "@/shared/prompts/template";
 import type { BrowserAutomation } from "../browser/types";
@@ -87,7 +88,12 @@ import {
   softRepeatNotice,
 } from "./repeat-guard";
 import { buildSubagentResult } from "./report-delivery";
-import { resolveBuiltinSkillDir, resolvePromptTemplateDirs, resolveSkillDirs } from "./resources";
+import {
+  resolveBuiltinPromptDir,
+  resolveBuiltinSkillDir,
+  resolvePromptTemplateDirs,
+  resolveSkillDirs,
+} from "./resources";
 import {
   deriveContextBreakdown,
   estimateTokens,
@@ -128,9 +134,9 @@ import {
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { type AppToolContext, buildTools, restrictTools, TOOL_NAMES } from "./tools";
-import { createAskTool } from "./tools/ask";
+import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
-import { createSubagentTools } from "./tools/subagent";
+import { createSubagentTools, SUBAGENT_TOOL_NAMES } from "./tools/subagent";
 import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
 export interface ChatRuntimeDeps {
@@ -237,7 +243,13 @@ export interface ChatRuntime {
    * 的正常竞态，为它抛错只会让界面弹一个没有意义的失败提示。
    */
   cancelQueued(sessionId: string, entryId: string): Promise<void>;
-  compact(sessionId: string, instructions?: string): Promise<void>;
+  /**
+   * 手动压缩上下文（`/compact` 指令）。
+   *
+   * 返回**结果对象**而不是抛错：lane 忙、没什么可压都是正常结局，界面要按 code 给文案
+   * （见 shared/contracts/chat 的 CompactOutcome）。
+   */
+  compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
   /**
    * 该会话当前流式消息的完整快照；没有在流的消息时为 null。
    *
@@ -518,6 +530,11 @@ export function isLaneBusy(error: unknown): boolean {
   );
 }
 
+/** pi 的带 tag 错误对象（不是 Error 子类）按 `_tag` 识别，与 isLaneBusy 同一手法 */
+export function isTaggedError(error: unknown, tag: string): boolean {
+  return typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === tag;
+}
+
 /**
  * 收敛 lane 里遗留的操作，返回是否成功。
  *
@@ -525,9 +542,20 @@ export function isLaneBusy(error: unknown): boolean {
  * currentOperationId 清空，已落盘的消息不受影响 —— 正适合清「上一次进程没收尾留下的」操作。
  * 没有活跃操作时 abort 会返回 NoActiveOperation，此时返回 false 让调用方决定怎么处理。
  * （导出是为了让单测能直接盖住这条判断，主进程内部不该有别处调用。）
+ *
+ * **只收敛 `run` 类操作**：本函数的调用场景是「prompt 被 LaneBusy 拒了 → 清掉遗留再重试」，
+ * 而 LaneBusy 也会由**正经的压缩/导航**触发（用户在跑 `/compact`，或分支正在收尾）。
+ * 早先这里无条件 abort，于是「压缩期间按发送」会**把正在跑的压缩杀掉**再发消息 ——
+ * 用户看到的是「压缩莫名其妙没了」。压缩与导航都有明确的发起方，不该被一次发送顺手清掉。
  */
 export async function abortStaleOperation(lane: AgentLane, sessionId: string): Promise<boolean> {
   try {
+    const info = await lane.inspectExecution(BACKGROUND_CONTEXT);
+    const current = info.current;
+    if (current !== null && current.kind !== "run") {
+      console.warn(`会话 ${sessionId} 的 lane 上压着 ${current.kind} 操作，不按遗留操作清理`);
+      return false;
+    }
     const result = await lane.abort(BACKGROUND_CONTEXT);
     if (result.ok) return true;
     console.warn(`清理会话 ${sessionId} 的遗留操作失败：${errorText(result.error)}`);
@@ -922,7 +950,9 @@ export async function loadAgentResources(
   try {
     const result = await loadPromptTemplates(
       env,
-      resolvePromptTemplateDirs(cwd).map((dir) => path.resolve(cwd, dir)),
+      // 目录顺序即优先级（同名先出现者胜）：数据目录 → 项目 → 内置；
+      // 内置层与设置面板、斜杠菜单必须同源，否则会出现「菜单里看得见、模板却打不开」。
+      resolvePromptTemplateDirs(cwd, appPath).map((dir) => path.resolve(cwd, dir)),
       BACKGROUND_CONTEXT,
     );
     for (const diagnostic of result.diagnostics) {
@@ -1042,6 +1072,7 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
  * 三个来源的必要性：
  * - cwd：会话工作目录，技能/模板可能落在它下面的 `.oint/` 里；
  * - skills / prompts / subagents：数据目录里的全局资源，`loadAgentResources` 要经守卫读取；
+ * - 内置技能与内置提示目录（appPath 给了才加）：见下面那段注释；
  * - tmpdir：bash spill 的硬要求 —— 超长输出由内核写到 `os.tmpdir()/tmp-*` 下，
  *   工具结果里会附 "Full output: <path>"，那条路径不在允许根内时 read 会直接拒绝，
  *   模型只能退回去用 bash cat（等于 spill 白落，还多一次工具往返）。
@@ -1059,15 +1090,15 @@ export function sessionAllowedRoots(cwd: string, appPath?: string): string[] {
     tmpdir(),
   ];
   /**
-   * 内置技能目录（`<appPath>/resources/skills`）也必须在允许根里。
+   * 内置资源目录（`<appPath>/resources/skills` 与 `<appPath>/resources/prompts`）也必须在允许根里。
    *
-   * 漏掉它的症状与「技能目录不在 allowedRoots 内」完全一样：目录存在却 0 个技能，
-   * 而 diagnostics 里只有一行 list_failed，很容易被当成「应用没带内置技能」。
-   * 只放行 `resources/skills` 这一层，不放行整个 appPath —— 那是应用代码目录，
+   * 漏掉它的症状与「资源目录不在 allowedRoots 内」完全一样：目录存在却 0 个技能 / 0 个模板，
+   * 而 diagnostics 里只有一行 list_failed，很容易被当成「应用没带内置资源」。
+   * 只放行 `resources/` 下这两个子目录，不放行整个 appPath —— 那是应用代码目录，
    * 没有理由让模型的 read 直接翻。
    */
   if (appPath !== undefined && appPath !== "") {
-    roots.push(resolveBuiltinSkillDir(appPath));
+    roots.push(resolveBuiltinSkillDir(appPath), resolveBuiltinPromptDir(appPath));
   }
   return roots;
 }
@@ -1708,20 +1739,29 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSafe(runtime.sessionId, { type: "queue-updated", items });
   }
 
-  /** 压缩摘要预览：取不到时返回空串，不阻塞事件流 */
-  async function compactionPreview(
+  /**
+   * 压缩条目的展示信息：摘要预览 + 压缩前的估算 tokens + 保留的近期消息条数。
+   *
+   * 读不到就返回 undefined（不阻塞事件流）：压缩本身已经成功落盘，展示信息只是锦上添花，
+   * 为它抛错会把一次成功的压缩变成界面上的失败。
+   */
+  async function compactionDetails(
     runtime: SessionRuntime,
     entryId: string | undefined,
-  ): Promise<string> {
-    if (entryId === undefined) return "";
+  ): Promise<{ summaryPreview: string; tokensBefore: number; retainedCount: number } | undefined> {
+    if (entryId === undefined) return undefined;
     try {
       const entry = await runtime.session.getEntry(entryId, BACKGROUND_CONTEXT);
-      if (entry?.type === "compaction") return entry.summary.slice(0, 200);
+      if (entry?.type !== "compaction") return undefined;
+      return {
+        summaryPreview: entry.summary.slice(0, 200),
+        tokensBefore: entry.tokensBefore,
+        retainedCount: entry.retainedTail.length,
+      };
     } catch {
       // 摘要读取失败不影响压缩结果展示
-      return "";
+      return undefined;
     }
-    return "";
   }
 
   async function touchSession(runtime: SessionRuntime): Promise<void> {
@@ -1840,13 +1880,33 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
     subscribe(runtime, "usage", (event) => handleUsage(runtime, event));
     subscribe(runtime, "queue_update", (event) => handleQueueUpdate(runtime, event));
-    subscribe(runtime, "compaction_start", () =>
-      emitSafe(runtime.sessionId, { type: "compaction-started" }),
+    subscribe(runtime, "compaction_start", (event) =>
+      emitSafe(runtime.sessionId, {
+        type: "compaction-started",
+        reason: event.reason,
+        startedAt: event.startedAt,
+      }),
     );
     subscribe(runtime, "compaction_end", async (event) => {
-      const preview =
-        event.status === "completed" ? await compactionPreview(runtime, event.entryId) : "";
-      emitSafe(runtime.sessionId, { type: "compaction-ended", summaryPreview: preview });
+      /**
+       * 只有 `completed` 才有条目可读；失败/放弃/中止都要如实汇报。
+       *
+       * 早先这里把所有非 completed 的结局都写成空预览，而渲染层把「空预览」当成
+       * 「压缩还在进行」—— 一次失败的压缩会让界面永久停在「运行中」。
+       */
+      const details =
+        event.status === "completed" ? await compactionDetails(runtime, event.entryId) : undefined;
+      emitSafe(runtime.sessionId, {
+        type: "compaction-ended",
+        reason: event.reason,
+        status: event.status,
+        endedAt: event.endedAt,
+        summaryPreview: details?.summaryPreview ?? "",
+        ...(details === undefined
+          ? {}
+          : { tokensBefore: details.tokensBefore, retainedCount: details.retainedCount }),
+        ...(event.status === "failed" ? { error: errorText(event.error) } : {}),
+      });
     });
   }
 
@@ -1916,6 +1976,16 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (settings.permissionMode === "full") return undefined;
     const risk = assessToolRisk(toolName, args);
     if (risk === "low") return undefined;
+
+    /**
+     * 系统 MCP 预设：**一律免审批**。
+     *
+     * 这些端点是随包分发的、逐条实测过的公开数据服务（见 shared/mcp/builtin-servers.ts），
+     * 用户既没有申请 Key、也没有手填地址，弹审批卡只会让「查一下维基百科」变成一次点击。
+     * 判定只看 serverId 是不是预设，所以聚合工具（`mcp__<id>__call`）与它背后的每个内层工具同款生效。
+     * **用户自己加的 server 不走这条路径**，它们仍按下面的规则 / 审批卡处理。
+     */
+    if (isPreTrustedMcpTool(toolName)) return undefined;
 
     // 「始终允许」规则优先于审批；三种模式均生效
     const argsText = safeStringify(args);
@@ -2036,11 +2106,20 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 「本会话现在用哪个模型 / 哪一档」走 runtimeRef：装配时 runtime 还没建好（与 laneRef 同一个套路）。
      */
     let runtimeRef: SessionRuntime | undefined;
+    /**
+     * 父会话真实拥有的工具名，供 Task 的临时定义校验白名单。
+     *
+     * 用「先声明、后填充」的可变引用而不是把 tools 提到前面：`subagentTools` 是 `buildTools`
+     * 的一个入参，而工具表要在它之后才装配得出来（先有鸡还是先有蛋）。
+     * 这个闭包只在 **Task 调用时**求值，那时下面的 `tools` 早已赋值。
+     */
+    let parentToolNames: string[] = [];
     const subagentTools =
       spec === undefined
         ? createSubagentTools({
             sessionId,
             cwd: () => env.cwd,
+            availableToolNames: () => parentToolNames,
             // 定义每次现读：中途新增 / 启用了定义，下一次 Task 就能派它，不用重建会话
             definitions: async () => loadEnabledSubagents(await deps.getSettings(), env.cwd),
             /**
@@ -2123,42 +2202,36 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 先算一次：上下文分解的固定项要一个具体数字，而函数形式拿不到「当前值」以外的东西
     const systemPrompt = await resolvePrompt();
     /**
-     * 工具表：
-     * - 主会话：全套（子智能体工具由第 5 个参数传入 —— 它们需要会话 id 与运行管理器）；
-     * - 子智能体：**同一批工具对象**按定义里的 tools 过滤（restrictTools），
-     *   于是「定义里写了 bash」与「子智能体拿到的是 bash」不可能漂移；ask_user / 作业 / 浏览器 /
-     *   MCP / Task 系列都不在可分配名单里，过滤后自然拿不到（见 tools.ts 的注释）。
+     * 工具表：**子智能体拿到的与主会话是同一批**，唯一被摘掉的是 Task 系列（不允许嵌套委派）
+     * 与 ask_user（它跑在隐藏会话里，提问卡没有任何地方渲染得出来 —— 见 contracts/subagent.ts）。
      *
-     * 注意 web 工具在**两条路径上都传**：子智能体应该能联网（它们不需要用户眼前的 UI，
-     * 也不会卡住等人），是否真的拿到由 SUBAGENT_ASSIGNABLE_TOOLS 的白名单决定。
-     * 这与 browser 的取舍相反 —— 那个是刻意不给子智能体的。
+     * 唯一的例外是**主 AI 临时定义的子智能体**：它可以带一份工具白名单
+     *（`definition.tools`，派发时已按父会话的真实工具名校验过），这里按它过滤。
+     * 内置预设与用户 `.md` 定义没有这个字段，因此永远拿全套。
+     *
+     * 过去这里对所有子智能体都按定义里的禁用清单做过滤，那套东西已整体删除：
+     * 它让子智能体永远比主代理少一半手艺（内置预设一律禁掉 bash/edit/write，
+     * code-reviewer 连跑一次测试都做不到），而该不该有某个工具是**任务上下文**里的判断 ——
+     * 该由派发它的主代理决定，不该变成用户要维护的勾选框。
+     *
+     * 权限面没有因此变大：子智能体用的仍是同一套审批门与路径守卫。
      */
+    const builtTools = buildTools(
+      deps.mcp?.tools() ?? [],
+      spec === undefined ? createAskTool({ sessionId, interactions }) : undefined,
+      jobToolsFor(sessionId),
+      deps.browser,
+      spec === undefined ? subagentTools : [],
+      deps.web,
+    );
+    // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
+    const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
+    parentToolNames = builtTools
+      .filter((tool) => !undelegatable.has(tool.name))
+      .map((tool) => tool.name);
+    const subagentWhitelist = spec?.definition.tools;
     const tools =
-      spec === undefined
-        ? buildTools(
-            deps.mcp?.tools() ?? [],
-            createAskTool({ sessionId, interactions }),
-            jobToolsFor(sessionId),
-            deps.browser,
-            subagentTools,
-            deps.web,
-          )
-        : restrictTools(
-            buildTools(
-              deps.mcp?.tools() ?? [],
-              createAskTool({ sessionId, interactions }),
-              jobToolsFor(sessionId),
-              deps.browser,
-              [],
-              deps.web,
-            ),
-            /**
-             * **执行路径**的工具过滤：与显示路径（run 记录、设置面板、系统提示）
-             * 共用同一个 `resolveSubagentTools` —— 两处各推一份就会漂移，
-             * 而漂移的表现是「面板说它只有只读工具，实际它拿到了 bash」这类静默错位。
-             */
-            resolveSubagentTools(spec.definition.disabledTools),
-          );
+      subagentWhitelist === undefined ? builtTools : restrictTools(builtTools, subagentWhitelist);
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
     const toolsTokens = estimateToolsTokens(tools);
@@ -2955,14 +3028,32 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     console.info(`排队消息未撤销（${result.value.kind}）：${entryId}`);
   }
 
-  async function compact(sessionId: string, instructions?: string): Promise<void> {
+  /**
+   * 手动压缩上下文（`/compact` 指令的后端）。
+   *
+   * `busy` / `nothing` 是**正常结局**，不是故障：lane 上压着别的操作（正在跑一轮、
+   * 已经在压缩、或正在导航）与「对话还短得没什么可压」都会走到这里。把它们抛成异常
+   * 会让渲染层只能显示一句主进程的中文，且要自己从字符串里猜该给什么提示 ——
+   * 所以这里返回带 code 的结果对象，文案由界面按语言决定。
+   *
+   * 真正的压缩过程通过 `compaction-started` / `compaction-ended` 事件汇报（见 registerEvents）。
+   */
+  async function compact(sessionId: string, instructions?: string): Promise<CompactOutcome> {
     const runtime = await ensureRuntime(sessionId);
     const options =
-      instructions === undefined || instructions === ""
+      instructions === undefined || instructions.trim() === ""
         ? undefined
-        : { customInstructions: instructions };
+        : { customInstructions: instructions.trim() };
     const result = await runtime.lane.compact(options, BACKGROUND_CONTEXT);
-    if (!result.ok) throw new Error(`压缩上下文失败：${errorText(result.error)}`);
+    if (result.ok) return { ok: true };
+    const failure = result.error;
+    if (isLaneBusy(failure)) {
+      return { ok: false, code: "busy", message: "会话正忙，暂时无法压缩上下文" };
+    }
+    if (isTaggedError(failure, "NothingToCompact")) {
+      return { ok: false, code: "nothing", message: "没有可压缩的历史" };
+    }
+    return { ok: false, code: "failed", message: `压缩上下文失败：${errorText(failure)}` };
   }
 
   function isRunning(sessionId: string): boolean {

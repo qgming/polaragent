@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
-import { resolveSubagentTools, SUBAGENT_ASSIGNABLE_TOOLS } from "@/shared/contracts/subagent";
 import { WEB_TOOL_NAMES } from "@/shared/contracts/web";
 import type { BrowserAutomation } from "../browser/types";
 import type { WebService } from "../web/types";
@@ -222,32 +221,59 @@ describe("网络工具", () => {
   });
 
   /**
-   * 静态检查 runtime.ts 的三个 buildTools 调用点都传了 web 依赖。
+   * 静态检查 runtime.ts 的 buildTools 调用点都传了 web 依赖。
    *
    * 为什么用读源码而不是行为测试：漏传第 6 个参数时**没有任何运行期症状**，
    * 直到用户发现「MCP 一刷新，web 工具就没了」。源码断言能立刻抓住它，
-   * 而行为测试要构造三个调用点的完整运行时（harness + 会话 + MCP）才能覆盖。
+   * 而行为测试要构造完整运行时（harness + 会话 + MCP）才能覆盖。
+   *
+   * 调用点从三个收敛成一个（主会话与子智能体共用同一次装配，只在 Task 系列与 ask_user
+   * 上分叉 —— 见 runtime 的 tools 装配），断言跟着改：数量不重要，
+   * 重要的是**每一个调用点都带上了它**。
    */
   it("runtime.ts 的每个 buildTools 调用点都传了 deps.web", async () => {
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("./runtime.ts", import.meta.url), "utf8");
-    // 取每个 buildTools( 之后到匹配右括号为止的片段，数其中有没有 deps.web
     const calls = source.match(/buildTools\(/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
     const webArgs = source.match(/deps\.web,?\s*\)|deps\.web,/g) ?? [];
-    expect(webArgs.length).toBeGreaterThanOrEqual(3);
+    expect(webArgs.length).toBeGreaterThanOrEqual(calls.length);
+  });
+
+  /**
+   * 子智能体的工具口径：**与主会话同一批**，只摘掉 Task 系列（不能嵌套委派）与 ask_user
+   *（隐藏会话里没人看得到提问卡），再按主 AI 临时定义的白名单收窄。
+   *
+   * 同样用读源码的方式钉住，理由与上一条相同：「给子智能体少一半工具」在运行期**没有任何症状** ——
+   * 模型只是变得笨一点，没有地方会报错。而它正是这次改动要根除的行为，值得一条反向断言。
+   */
+  it("runtime.ts 不再按定义过滤子智能体的工具（只摘 Task 系列与 ask_user，白名单另算）", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./runtime.ts", import.meta.url), "utf8");
+
+    // ask_user 与 Task 系列只在主会话注入
+    expect(source).toContain(
+      "spec === undefined ? createAskTool({ sessionId, interactions }) : undefined",
+    );
+    expect(source).toContain("spec === undefined ? subagentTools : []");
+    // 唯一的过滤来自主 AI 临时定义的白名单
+    expect(source).toContain("restrictTools(builtTools, subagentWhitelist)");
+    // 旧的「按定义里的清单过滤」不该留下任何痕迹
+    expect(source).not.toContain("resolveSubagentTools");
+    expect(source).not.toContain("disabledTools");
   });
 });
 
 /**
- * `restrictTools` 的「空允许表」语义。
+ * `restrictTools` 的语义：**白名单，空就是空**。
  *
- * 这是个踩过的坑，值得单独钉住：旧实现在空清单时**原样返回整张表**，理由是「空数组表示
- * 没指定」。但子智能体的调用路径上，空清单还可能来自「用户写的工具名全拼错了」——
- * 于是过滤后为空 → 原样返回 → 子智能体拿到**全部**工具（连浏览器与作业工具都在内）。
+ * 它现在只有一个调用方 —— 主 AI 临时定义的子智能体带白名单时（`definition.tools`）。
+ * 内置与用户定义不走这里：它们拿到的是主代理同一批工具。
  *
- * 现在调用方（runtime）永远传 `resolveSubagentTools(...)` 的**显式**结果，
- * 所以空就是纯粹的「一个都不给」，不再有歧义。
+ * 之所以把「空清单 = 什么都不给」钉住：旧实现在空清单时**原样返回整张表**，
+ * 理由是「空数组表示没指定」，而那个歧义在子智能体那条路径上会变成静默提权。
+ * 现在调用方（runtime）只在 `tools` 存在时才调用它，而派发时已经校验过
+ * 「清单里的名字都真实存在且非空」，所以空 = 一个都不给，没有歧义。
  */
 describe("restrictTools", () => {
   const tools = buildTools();
@@ -266,44 +292,11 @@ describe("restrictTools", () => {
   it("不认识的名字不匹配任何工具（拼错不会顺便放行）", () => {
     expect(restrictTools(tools, ["teleport"])).toEqual([]);
   });
-});
 
-/**
- * 黑名单制的端到端语义：`disabledTools` → 有效工具清单。
- *
- * 这是本次语义反转的核心，所以把「空清单 = 全给」与「禁用即不给」两条都钉住 ——
- * 它们与旧白名单制**正好相反**，是最容易被后来者按旧直觉改错的地方。
- */
-describe("子智能体工具的黑名单制", () => {
-  it("禁用清单为空 = 拿到全部可分配工具（含 bash / edit / write）", () => {
-    const effective = resolveSubagentTools([]);
-    expect(effective).toContain("bash");
-    expect(effective).toContain("edit");
-    expect(effective).toContain("write");
-    expect(effective).toHaveLength(SUBAGENT_ASSIGNABLE_TOOLS.length);
-  });
-
-  it("禁用的工具不在有效清单里，其余的照旧可用", () => {
-    const effective = resolveSubagentTools(["bash", "edit", "write"]);
-    expect(effective).not.toContain("bash");
-    expect(effective).not.toContain("edit");
-    expect(effective).not.toContain("write");
-    expect(effective).toContain("read");
-    expect(effective).toContain("grep");
-  });
-
-  it("不可分配的工具永远不给，无论禁用清单怎么写", () => {
-    // 空禁用清单已经是最宽松的情形，ask_user / 作业 / 浏览器 / Task 系列仍不在结果里
-    const effective = resolveSubagentTools([]) as readonly string[];
-    for (const name of ["ask_user", "bash_background", "browser_open", "Task"]) {
-      expect(effective).not.toContain(name);
+  it("过滤结果是原表的子集：不会因为白名单凭空造出工具", () => {
+    const narrowed = restrictTools(tools, [TOOL_NAMES.read, "mcp__arxiv__call", TOOL_NAMES.bash]);
+    for (const tool of narrowed) {
+      expect(tools).toContain(tool);
     }
-  });
-
-  it("全禁用是合法配置（结果为空，交给 restrictTools 得到空工具表）", () => {
-    expect(resolveSubagentTools([...SUBAGENT_ASSIGNABLE_TOOLS])).toEqual([]);
-    expect(
-      restrictTools(buildTools(), resolveSubagentTools([...SUBAGENT_ASSIGNABLE_TOOLS])),
-    ).toEqual([]);
   });
 });

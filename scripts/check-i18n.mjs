@@ -49,11 +49,15 @@ function walk(dir) {
  *   1. `t("a.b.c")` 字面量调用（含 `t('...')` 与模板串形式）；
  *   2. `labelKey: "a.b.c"` 这类**按键名间接调用**的字段 —— 它们会被
  *      `t(section.labelKey)` 消费，光看 t() 调用点抓不到。
+ *      内置指令的 `descriptionKey` / `hintKey`（shared/contracts/commands.ts）与
+ *      输入框提示的 `messageKey`（features/chat/commands.ts）都是同一形态，
+ *      必须一并收进来，否则加一条指令 / 一条提示时漏了词条没人发现。
  *
  * 带 `{ count }` 的调用要按复数解析（见文件头）。
  */
 const CALL_RE = /\bt\(\s*["'`]([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)["'`]\s*(?:,\s*(\{[^}]*\}))?/g;
-const KEY_FIELD_RE = /\b(?:labelKey|resting|active)\s*:\s*["'`]([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)["'`]/g;
+const KEY_FIELD_RE =
+  /\b(?:labelKey|resting|active|descriptionKey|hintKey|messageKey)\s*:\s*["'`]([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)["'`]/g;
 
 function collectUsedKeys() {
   const used = new Map();

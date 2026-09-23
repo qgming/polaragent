@@ -61,7 +61,6 @@ function subagentRun(patch: Partial<SubagentRun> = {}): SubagentRun {
     model: null,
     modelId: "svc/model-x",
     thinkingLevel: "medium",
-    tools: ["read", "grep", "glob"],
     turns: 4,
     toolCalls: 6,
     ...patch,

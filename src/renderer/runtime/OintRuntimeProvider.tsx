@@ -7,9 +7,10 @@ import {
 } from "@assistant-ui/react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { buildSlashCommands, expandSlashInput } from "@/renderer/features/chat/slash-commands";
+import { commandSpec, runCommand, unavailableReason } from "@/renderer/features/chat/commands";
+import { dispatchSlashInput } from "@/renderer/features/chat/slash-commands";
 import { JobToolUIs, SubagentToolUIs } from "@/renderer/features/chat/ToolParts";
-import { resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
+import { loadSlashCommands, resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { SUBAGENT_TOOL_NAMES, useSubagentStore } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
@@ -23,27 +24,36 @@ import {
 } from "./message-converter";
 
 /**
- * 发送前把斜杠命令展开成真正发给模型的内容（提示模板 → 替换占位符后的正文）。
+ * 发送前的**唯一收口**：认出指令、展开斜杠命令、放行普通消息。
  *
  * 为什么落在这里而不是 Composer：库的发送主路径是 ComposerPrimitive.Send → 本 provider 的
  * onNew，Composer 想拦它就得放弃 Send primitive 自己重写一遍发送；而 onNew 是**唯一的**
  * 收口，两条发送路径（发送键、键盘回车）都会经过它。
  *
- * workingDir 与菜单取数时同源（见 resolveWorkingDir）—— 否则项目级模板会「菜单里看得见、
- * 发送时认不出来」。只在文本真的以斜杠开头时才去问两个列表：绝大多数消息不付这次 IPC。
- * 读不到清单就原样发送：宁可不展开，也不能吞掉用户输入。
+ * 清单与菜单同源（同一个 loadSlashCommands），否则会出现「菜单里看得见、发送时认不出来」
+ * —— 对指令来说那意味着一条 `/compact` 会被当成普通消息发给模型。
+ *
+ * 读不到清单时不展开、也不吞输入：`loadSlashCommands` 会把内置指令补上，
+ * 因此 `/compact` 在任何情况下都还认得出来。
  */
-async function expandSlashMessage(text: string, workingDir: string | undefined): Promise<string> {
-  if (!text.startsWith("/")) return text;
-  try {
-    const [skills, templates] = await Promise.all([
-      window.oint.skills.list(workingDir),
-      window.oint.prompts.list(workingDir),
-    ]);
-    return expandSlashInput(text, buildSlashCommands(skills, templates));
-  } catch {
-    return text;
-  }
+async function resolveSlashMessage(
+  text: string,
+  workingDir: string | undefined,
+): Promise<
+  | { kind: "message"; text: string }
+  | { kind: "command"; name: string; rest: string; source: string }
+> {
+  if (!text.startsWith("/")) return { kind: "message", text };
+  const commands = await loadSlashCommands(workingDir, (key) => key);
+  const dispatch = dispatchSlashInput(text, commands);
+  if (dispatch.kind === "message") return dispatch;
+  return {
+    kind: "command",
+    name: dispatch.command.name,
+    rest: dispatch.rest,
+    // 原文留着：万一指令名查不到规格（代码与菜单不同步），宁可当普通消息发出去，也不能吞掉
+    source: text,
+  };
 }
 
 /** 稳定的空数组常量：zustand v5 基于 useSyncExternalStore，
@@ -84,7 +94,36 @@ export function OintRuntimeProvider({
   }, []);
   const onNew = useCallback(
     async (message: AppendMessage) => {
-      const text = await expandSlashMessage(appendMessageToText(message), workingDir);
+      const resolved = await resolveSlashMessage(appendMessageToText(message), workingDir);
+      /**
+       * 指令**不产生模型消息**：整条命令在这里被消费掉。
+       *
+       * 不可用（正在跑一轮 / 已经在压缩）时不执行、也不发送 —— 给一行提示。
+       * Composer 的按键路径已经拦过一道（那里能保住草稿），这里是发送键那条路的兜底。
+       */
+      if (resolved.kind === "command") {
+        const spec = commandSpec(resolved.name);
+        if (spec !== undefined) {
+          const state = useChatStore.getState();
+          const sessionId = state.activeSessionId;
+          const reason = unavailableReason(spec, {
+            running: sessionId !== null && state.runningBySession[sessionId] === true,
+            compacting: sessionId !== null && state.compactions[sessionId]?.phase === "running",
+          });
+          const notify = useUiStore.getState().notifyComposer;
+          if (reason !== null) {
+            notify(reason);
+            return;
+          }
+          const feedback = await runCommand(spec, resolved.rest, {
+            compact: (instructions) => useChatStore.getState().compact(instructions),
+          });
+          if (feedback.notice !== undefined) notify(feedback.notice);
+          return;
+        }
+        // 规格查不到（菜单与代码不同步）：按普通消息发出去，绝不静默吞掉用户输入
+      }
+      const text = resolved.kind === "command" ? resolved.source : resolved.text;
       const images = appendMessageToImages(message);
       await useChatStore.getState().send(text, images);
     },

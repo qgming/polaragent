@@ -79,6 +79,61 @@ export interface ChatStreamSnapshot {
   createdAt: number;
 }
 
+/**
+ * 压缩为什么发生。内核的 `compaction_start` / `compaction_end` 都带这个字段：
+ * - `manual`：用户敲了 `/compact`；
+ * - `threshold`：自动——估算上下文超过 `contextWindow − reserveTokens`；
+ * - `overflow`：自动——供应商报了上下文溢出后的兜底（每代限一次）。
+ *
+ * 界面必须把它显示出来：同样是「压缩中」，用户主动触发的和后台自动发生的，
+ * 解释完全不同。
+ */
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
+/** 压缩的结局。`declined` 是内核主动放弃（例如准备阶段发现没什么可压） */
+export type CompactionStatus = "completed" | "declined" | "aborted" | "failed";
+
+/**
+ * `/compact` 的失败原因（IPC 用结果对象传递，不用抛异常）。
+ *
+ * 为什么要有稳定的 code：错误文案要按语言渲染，而主进程抛出的中文 message
+ * 在英文界面里是错的语言；渲染层拿到 code 自己查词条，未知 code 再回落到 message。
+ */
+export type CompactFailureCode =
+  /** lane 上压着别的操作（正在跑一轮、或已在压缩） */
+  | "busy"
+  /** 没有可压缩的历史（对话还很短） */
+  | "nothing"
+  /** 其他失败：message 里是主进程给出的人话原因 */
+  | "failed";
+
+export type CompactOutcome =
+  | { ok: true }
+  | { ok: false; code: CompactFailureCode; message: string };
+
+/**
+ * 渲染层维护的「这个会话最近一次压缩」。
+ *
+ * 由 `compaction-started` / `compaction-ended` 驱动（见 chat-store 的 applyEvent）。
+ * 放在契约里而不是 store 里：store 与压缩条（ThreadToolbar）都要用，两处各写一份形状
+ * 迟早会漂移。
+ */
+export interface SessionCompaction {
+  /** 进行中 / 已完成 / 失败 / 已取消（declined 与 aborted 都归到 cancelled） */
+  phase: "running" | "completed" | "failed" | "cancelled";
+  reason: CompactionReason;
+  startedAt: number;
+  endedAt?: number;
+  /** 完成时的摘要预览（前 200 字） */
+  summaryPreview?: string;
+  /** 完成时：压缩前估算的上下文 tokens */
+  tokensBefore?: number;
+  /** 完成时：压缩后保留的近期消息条数 */
+  retainedCount?: number;
+  /** 失败原因（主进程给的人话） */
+  error?: string;
+}
+
 /** 主进程 → 渲染进程的聊天事件；渲染进程只消费，不反向发送 */
 export type ChatEvent =
   | { type: "run-started"; runId: string }
@@ -111,8 +166,25 @@ export type ChatEvent =
   | { type: "job-changed"; job: JobInfo }
   /** 作业被淘汰，或随会话关闭 / 进程退出被清理：渲染层把它从列表里删掉 */
   | { type: "job-removed"; id: string }
-  | { type: "compaction-started" }
-  | { type: "compaction-ended"; summaryPreview: string }
+  | {
+      type: "compaction-started";
+      reason: CompactionReason;
+      startedAt: number;
+    }
+  | {
+      type: "compaction-ended";
+      reason: CompactionReason;
+      status: CompactionStatus;
+      endedAt: number;
+      /** 完成时的摘要预览（前 200 字）；其他状态是空串 */
+      summaryPreview: string;
+      /** 完成时：压缩前估算的上下文 tokens（内核的 CompactionEntry.tokensBefore） */
+      tokensBefore?: number;
+      /** 完成时：压缩后保留的近期消息条数 */
+      retainedCount?: number;
+      /** 失败时的可读原因（主进程已经把内核的带 tag 错误转成人话） */
+      error?: string;
+    }
   /**
    * 会话级统计更新：turn/step 计数与 LLM/工具/TTFT/解码耗时。
    * 渲染层据此刷新输入框下方的状态条与「会话统计」弹层。

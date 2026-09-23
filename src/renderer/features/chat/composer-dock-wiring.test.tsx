@@ -62,6 +62,7 @@ beforeEach(() => {
       disabledSkillNames: [],
       disabledSubagentNames: [],
       mcpServers: [],
+      systemMcpServerEnabled: {},
       webSearch: DEFAULT_WEB_SEARCH_SETTINGS,
     } satisfies Settings,
     loaded: true,

@@ -100,6 +100,8 @@ export const IPC = {
   mcp: {
     list: "mcp:list",
     reload: "mcp:reload",
+    /** 只重连一台 server（卡片右上角那个按钮） */
+    reconnect: "mcp:reconnect",
     probe: "mcp:probe",
   },
   services: {
