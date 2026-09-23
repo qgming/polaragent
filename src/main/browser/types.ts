@@ -115,6 +115,31 @@ export interface BrowserScreenshot {
 /** 页面内求值结果：成功带值，失败带错误文本 */
 export type BrowserEvaluateResult = { ok: true; value: string } | { ok: false; error: string };
 
+/** 视口坐标系里的一个点（CSS 像素，与 getBoundingClientRect 同一套） */
+export interface BrowserPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * 坐标点击的参数。
+ *
+ * 为什么需要「按坐标点」这条路：ref 是**语义定位**（找元素中心、必要时滚动到位、
+ * 还能校验落点是不是它），它覆盖不了三种页面 —— canvas / WebGL 画布（整块只有一个
+ * 节点，里面的按钮页面自己画）、图片热区与地图、以及页面自己合成的浮层
+ * （快照的选择器扫不到）。这些页面里模型唯一的把手就是像素坐标。
+ *
+ * 代价必须写清：坐标点击**不做落点语义校验**（没有人告诉它「这一点上本该是什么」），
+ * 所以它只报「谁收到了事件」；点错地方不会失败，只会点到别的东西上。
+ * 因此工具的用法是「先用 ref，ref 不行才用坐标」。
+ */
+export interface BrowserPointClickOptions {
+  /** 按键；缺省左键 */
+  button?: "left" | "right" | "middle";
+  /** 连击次数：1 = 单击，2 = 双击；缺省 1 */
+  clicks?: 1 | 2;
+}
+
 /**
  * 一个浏览器标签上的操作集合。
  *
@@ -133,12 +158,32 @@ export interface BrowserTabOperations {
   snapshot(): Promise<BrowserSnapshot>;
   /** 按 ref 点击（含链接跳转、表单提交按钮） */
   click(ref: string): Promise<BrowserActionOutcome>;
+  /**
+   * 按**视口坐标**点击（不依赖 ref / 快照）。
+   *
+   * 给 canvas、图片热区、地图、页面自绘浮层用 —— 那些地方快照给不出可点的 ref。
+   * 坐标由模型从 snapshot 的 x/y 或截图上量出来；越界或超出视口会被拒（并回报当前视口），
+   * 因为那几乎总是「页面已经滚过了」或「照着过期坐标点」。
+   */
+  clickPoint(
+    x: number,
+    y: number,
+    options?: BrowserPointClickOptions,
+  ): Promise<BrowserActionOutcome>;
+  /**
+   * 按住并拖到另一点（滑块、地图平移、画布绘制、拖放排序）。
+   *
+   * 走的是真实的 down → move×N → up（少一步拖拽都不成立），落点同样不依赖 ref。
+   */
+  drag(from: BrowserPoint, to: BrowserPoint): Promise<BrowserActionOutcome>;
   /** 按 ref 输入文本；submit 为 true 时再按一次回车 */
   type(ref: string, text: string, submit: boolean): Promise<BrowserActionOutcome>;
   /** 按键；给了 ref 就先点它一下把焦点放上去。key 支持 "Control+A" 这类组合键 */
   press(key: string, ref?: string): Promise<BrowserPressOutcome>;
   /** 把鼠标移到元素上（触发 hover 菜单、tooltip、下拉展开） */
   hover(ref: string): Promise<BrowserActionOutcome>;
+  /** 把鼠标移到**视口坐标**上（不依赖 ref 的悬停，给 canvas 一类的自绘界面用） */
+  hoverPoint(x: number, y: number): Promise<BrowserActionOutcome>;
   /** 选择下拉框的一项（按 value / label / index 匹配） */
   select(ref: string, match: BrowserOptionMatch): Promise<BrowserSelectOutcome>;
   /** 在视口中心滚动页面（deltaY > 0 向下）；返回滚动前后的位置以便如实回报 */

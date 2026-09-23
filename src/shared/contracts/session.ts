@@ -135,8 +135,29 @@ export interface ToolCallPart {
   partialOutput?: string;
   /** 工具自己声明的结构化详情（如 edit 的 diff/patch）；形状由工具决定，渲染层按工具名取用 */
   details?: unknown;
+  /**
+   * 工具产出的**图片本体**（界面用）：目前只有 `browser_screenshot` 会带。
+   *
+   * 与 read_image 的分工必须说清，否则两条路会被混成一条：
+   *   · read_image 的图**不在这里** —— 它给一个 path，界面展开时用 `files.readImage`
+   *     现取（见 tool-presentation.ts 的 ImageDetailData）。那是最省内存的一条路。
+   *   · 截图没有可回读的路径：它只存在于这次工具结果里，而结果文本（detail 面板要显示的
+   *     读数）盖住了 content 里的 image 块。所以图片只能随 part 走一趟。
+   *
+   * **不落盘**：这里的数据只活在渲染层的内存里（主进程侧同样只写进内存中的 part），
+   * 会话库里的图片来自 pi 的 toolResult 条目本身 —— 历史回读时由 message-mapper
+   * 从那条消息的 content 里重新取出，所以刷新窗口、重开应用之后它照样在。
+   */
+  images?: ToolPartImage[];
   isError?: boolean;
   status: "running" | "done" | "error" | "pending-approval" | "denied";
+}
+
+/** 工具结果里的图片块 → 界面可直接渲染的形态（与 ImagePart 同形，但不占消息的 parts 槽位） */
+export interface ToolPartImage {
+  mimeType: string;
+  /** `data:<mimeType>;base64,...`；CSP 只放行 data:/blob:，file:// 会被拦掉 */
+  dataUrl: string;
 }
 
 export interface ImagePart {

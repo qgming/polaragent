@@ -384,7 +384,22 @@ if (isError === true) return null;
 
 ---
 
-### D8 · P2 —— `browser_screenshot` 的图片被丢弃
+### D8 · P2 —— `browser_screenshot` 的图片被丢弃 ✅ 已修（见下）
+
+> **状态**：已实现，作为 F9 落地。实现方式与原建议略有不同、理由记在这段后面，
+> 完整说明见 `docs/browser-automation-and-preview.md` §4。
+>
+> - 收口在 `main/pisdk/tool-images.ts`（`toolPartImages`），两条路径共用：
+>   `runtime.ts` 的 `applyToolEnd`（流式）与 `message-mapper.ts` 的 `applyToolResult`（历史回读）；
+> - 图片挂 `ToolCallPart.images`，经 `providerMetadata.oint.images` 到渲染层
+>   （**不进 details**：那会随 pi 的 toolResult 条目落盘，等于每截一张图多存一份 base64）；
+> - 只对 `browser_screenshot` 开这条通道 —— `read_image` 刻意继续走 `path` + `files.readImage` 现取；
+> - 详情里是**读数 + 缩略图**，点开是会话内的大图模态（`renderer/components/ui/image-viewer.tsx`，
+>   与设置模态同族但更大）。
+>
+> 与原建议的唯一差别：没有复用 `ChatPart.image` 通道，而是给工具 part 加了自己的
+> `images` 字段 —— 那个通道是**消息正文**的图片（用户附图），把它塞进工具结果会让
+> 「这条消息有哪些图」与「某次调用产出了什么」两件事混在一起。
 
 `browser.ts:1011-1020` 返回两个 content 块：
 
@@ -488,7 +503,7 @@ ToolParts.tsx:965          props.artifact 已经在手上
 ### 第三批 —— 可选（先记录，不急）
 
 - **F8**：失败态也允许专属详情，靠 `isError` 给面板染红而不是取消详情（D7）—— 与 F1 叠加后收益下降，可缓。
-- **F9**：工具结果里的 `image` 块单独建一条通道（`ChatPart.image` 已有形状，`message-converter.ts:98-99` 已有映射），用于 `browser_screenshot`（D8）。
+- **F9** ✅：工具结果里的 `image` 块单独建一条通道（`ChatPart.image` 已有形状，`message-converter.ts:98-99` 已有映射），用于 `browser_screenshot`（D8）。**已落地**，实际走的是 `ToolCallPart.images` + `providerMetadata.oint.images`（见 D8 的状态段与 `docs/browser-automation-and-preview.md` §4）。
 - **F10**：`web_fetch` 卡片显示 `truncated`（D10）。
 - **F11**：展开状态持久化（按 `toolCallId` 存进 `ui-store`）—— 切会话/重挂载不丢（§2 末尾）。
 

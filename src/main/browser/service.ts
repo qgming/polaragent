@@ -36,6 +36,7 @@ import type {
   BrowserNetworkEntry,
   BrowserNetworkReport,
   BrowserPageState,
+  BrowserPointerEvent,
   BrowserSnapshot,
   BrowserStatus,
   BrowserTabInfo,
@@ -80,6 +81,7 @@ import type {
   BrowserDialogOutcome,
   BrowserEvaluateResult,
   BrowserOptionMatch,
+  BrowserPoint,
   BrowserPressOutcome,
   BrowserScreenshot,
   BrowserSelectOutcome,
@@ -156,6 +158,15 @@ const NETWORK_PENDING_LIMIT = 500;
 const HIT_RETRY_DELAY_MS = 300;
 /** 悬停后等浮层展开的时间：菜单过渡动画基本都在这个量级内结束 */
 const HOVER_SETTLE_MS = 250;
+/**
+ * 拖拽的插值步数与每步间隔。
+ *
+ * 12 步 × 8ms：一次拖拽大约 100ms 走完 —— 比人手快，但足够让「按 mousemove 累加」
+ * 的组件（滑块、地图、画布）算出连续轨迹。步数太少（比如 2~3 步）时，
+ * 依赖中间点的组件会跳变甚至判成无效拖动。
+ */
+const DRAG_STEPS = 12;
+const DRAG_STEP_MS = 8;
 /** wait 的默认与最大上限（毫秒） */
 const WAIT_DEFAULT_TIMEOUT_MS = 5_000;
 const WAIT_MAX_MS = 30_000;
@@ -239,6 +250,82 @@ function emit(event: BrowserEvent): void {
   } catch (error) {
     console.warn(`发送浏览器事件失败：${String(error)}`);
   }
+}
+
+/**
+ * 把模型的一次鼠标动作报给渲染层：面板据此在页面上画一个**可见光标**。
+ *
+ * 为什么值得单独一条事件：自动化本身是看不见的 —— 页面自己滚动、自己点击，用户只看到
+ * 结果变了，分不清「模型点了哪里」与「页面自己跳了」。落点报出来之后，面板能画光标与
+ * 涟漪，出错时也有一份「它到底点了哪」的现场（排查「点错了」时这是唯一的一手材料）。
+ *
+ * **失败不影响动作**：事件只是给人看的旁路，emit 已经吞掉渲染层的异常，
+ * 这里也不做任何等待 —— 自动化不能因为「界面没画出来」而失败或变慢。
+ */
+function emitPointer(
+  tab: BrowserTabState,
+  event: Omit<BrowserPointerEvent, "type" | "tabId">,
+): void {
+  emit({ type: "pointer", tabId: tab.tabId, ...event });
+}
+
+/**
+ * 探针读到的东西 → 一句「落点上是谁」。
+ *
+ * 优先用**收到事件的目标**（那才是这次点击真正打到的东西），拿不到时退回
+ * `elementAtPoint`（读探针那一刻坐标上是谁）。两个都没有就回空串 ——
+ * 编一个「(某个元素)」会让模型以为它知道点了什么。
+ */
+function describeHitTarget(report: ProbeReport | null): string {
+  const first = report?.events?.[0];
+  const ref = typeof first?.targetRef === "string" && first.targetRef !== "" ? first.targetRef : "";
+  const tag = typeof first?.targetTag === "string" && first.targetTag !== "" ? first.targetTag : "";
+  const role =
+    typeof first?.targetRole === "string" && first.targetRole !== "" ? first.targetRole : "";
+  if (tag !== "" || ref !== "") {
+    const head = [ref, tag === "" ? "" : `<${tag}>`].filter((piece) => piece !== "").join(" ");
+    return role === "" ? head : `${head} role=${role}`;
+  }
+  const point = report?.elementAtPoint;
+  if (point === undefined || point === null) return "";
+  const id = point.id === undefined || point.id === "" ? "" : `#${point.id}`;
+  const firstClass = (point.cls ?? "").trim().split(/\s+/)[0] ?? "";
+  return `<${point.tag}${id}${firstClass === "" ? "" : `.${firstClass}`}>`;
+}
+
+/**
+ * 坐标动作的落点校验：必须是有限数，且落在视口内。
+ *
+ * 越界几乎总是两种情况，而且两种的下一步动作不同，所以文案要分开说：
+ *   · **快照过期**：页面滚动 / 重排过，手里的 x,y 是上一屏的（重新 snapshot 即可）；
+ *   · **照着一张缩放过的截图量的坐标**（截图是按视口 1:1 出的，按显示尺寸估的会偏）。
+ * 拦在这里而不是照发：越界的坐标会静默落到别的元素上（甚至页面外），
+ * 而「点到了别处」比「点不到」更难查。
+ */
+function requirePointInViewport(
+  viewport: { width: number; height: number },
+  point: { x: number; y: number },
+  action: string,
+): { x: number; y: number } {
+  const x = Math.round(point.x);
+  const y = Math.round(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new BrowserToolError(
+      "INVALID_ARGUMENT",
+      `${action}的坐标必须是数字（收到 x=${String(point.x)}, y=${String(point.y)}）。`,
+      { x: point.x, y: point.y },
+    );
+  }
+  if (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height) {
+    throw new BrowserToolError(
+      "INVALID_ARGUMENT",
+      `${action}的坐标 (${x}, ${y}) 不在视口内（当前视口 ${viewport.width}×${viewport.height}）。` +
+        "坐标点击不做自动滚动，所以要么先用 browser_act 的 scroll 动作把它滚进视口并重新 snapshot，" +
+        "要么改用元素的 ref（ref 动作会自己滚动到位）。",
+      { x, y, viewport },
+    );
+  }
+  return { x, y };
 }
 
 /** 某个标签的页面状态当前值（供 IPC 的 status 通道与事件复用） */
@@ -1355,9 +1442,29 @@ async function requireHit(
  *      少了这一下，按下与抬起会落在上一次的坐标上（表现为随机点错东西）。
  *   2. `buttons` 要跟着按键状态走：按下是 1、抬起与移动是 0。给错时页面读到的
  *      `event.buttons` 与实际不符，拖拽类组件会直接不认这次点击。
+ *      中键与右键的位是 4 / 2（CDP 的 buttons 是位掩码，不是「第几个键」）。
  *   3. `clickCount: 1` 必须显式给：缺省值在 blob 上不是 1，双击类控件会判错。
+ *      双击是**两轮** press/release（第二轮 clickCount: 2）—— 浏览器正是靠这个计数
+ *      合成 dblclick 事件的；只发一轮 clickCount: 2 页面收不到 dblclick。
  */
-async function clickAt(session: CdpSession, x: number, y: number): Promise<void> {
+interface PointerPress {
+  button: "left" | "right" | "middle";
+  clicks: 1 | 2;
+}
+
+/** CDP 的 buttons 位掩码：左 1 / 右 2 / 中 4 */
+function buttonsMask(button: PointerPress["button"]): number {
+  if (button === "right") return 2;
+  if (button === "middle") return 4;
+  return 1;
+}
+
+async function clickAt(
+  session: CdpSession,
+  x: number,
+  y: number,
+  press: PointerPress = { button: "left", clicks: 1 },
+): Promise<void> {
   await session.send("Input.dispatchMouseEvent", {
     type: "mouseMoved",
     x,
@@ -1366,18 +1473,79 @@ async function clickAt(session: CdpSession, x: number, y: number): Promise<void>
     buttons: 0,
   });
   await delay(INPUT_SETTLE_MS);
+  const buttons = buttonsMask(press.button);
+  for (let count = 1; count <= press.clicks; count += 1) {
+    await session.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: press.button,
+      buttons,
+      clickCount: count,
+    });
+    await session.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button: press.button,
+      buttons: 0,
+      clickCount: count,
+    });
+    // 两轮之间留一点间隔：双击的判定窗口是几百毫秒，贴着发也能过，
+    // 但中间那 30ms 让页面的第一轮处理先跑完（受控组件常在 click 里改 DOM）
+    if (count < press.clicks) await delay(INPUT_SETTLE_MS);
+  }
+}
+
+/**
+ * 按住并拖到另一点：down → move×N → up。
+ *
+ * 为什么必须分步 move：绝大多数拖拽组件（滑块、地图、画布、排序列表）是在
+ * **mousemove** 上一点点更新状态的，只发 down + up 会被它们当成「点了一下」——
+ * 表现是「拖拽没有生效」而工具却报成功。步数取 12：够让线性插值的组件算出稳定轨迹，
+ * 又不至于把每一帧都塞满 IPC。
+ *
+ * 落点之间的插值用整数像素，且**最后一步精确落在 to 上**（不靠浮点收尾）：
+ * 差一个像素的落点会让「拖到边界」这类操作差一个像素。
+ */
+async function dragAt(
+  session: CdpSession,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): Promise<void> {
+  const steps = DRAG_STEPS;
+  await session.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: from.x,
+    y: from.y,
+    button: "none",
+    buttons: 0,
+  });
+  await delay(INPUT_SETTLE_MS);
   await session.send("Input.dispatchMouseEvent", {
     type: "mousePressed",
-    x,
-    y,
+    x: from.x,
+    y: from.y,
     button: "left",
     buttons: 1,
     clickCount: 1,
   });
+  for (let step = 1; step <= steps; step += 1) {
+    const ratio = step / steps;
+    await session.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: Math.round(from.x + (to.x - from.x) * ratio),
+      y: Math.round(from.y + (to.y - from.y) * ratio),
+      button: "left",
+      // 拖动过程中左键是**按住**状态：这个位给错，HTML5 的 drag 与 canvas 都不会认
+      buttons: 1,
+    });
+    await delay(DRAG_STEP_MS);
+  }
   await session.send("Input.dispatchMouseEvent", {
     type: "mouseReleased",
-    x,
-    y,
+    x: to.x,
+    y: to.y,
     button: "left",
     buttons: 0,
     clickCount: 1,
@@ -1635,6 +1803,16 @@ export function createBrowserAutomation(): BrowserAutomation {
               // since 让模型知道手里的 ref 有多老：刚出现的元素 follow-up 里还指得准，
               // 而来自几代之前的 ref 大概率已经不可用了（配合 STALE_REF/REF_DRIFT 一起看）
               ...(tab.refs.since(ref) === undefined ? {} : { since: tab.refs.since(ref) }),
+              // 中心点坐标（视口 CSS 像素）：坐标点击的唯一来源，见 BrowserElement 的说明。
+              // 页面脚本没给（老版本注入残留 / 元素没有盒子）时就不写，而不是编一个 0,0 ——
+              // 0,0 会在模型那边变成一个看起来合法的落点（左上角），点下去就是点错地方。
+              // NaN 同样要挡掉：它 `typeof` 是 number，会一路混进工具输出里变成 `@ NaN,NaN`。
+              ...(typeof el.x === "number" &&
+              typeof el.y === "number" &&
+              Number.isFinite(el.x) &&
+              Number.isFinite(el.y)
+                ? { x: el.x, y: el.y }
+                : {}),
             });
           }
           const viewport = asRecord(raw.viewport);
@@ -1701,7 +1879,9 @@ export function createBrowserAutomation(): BrowserAutomation {
           // arm → 派发 → 等 80ms → read：探针必须在**派发之前**装上，
           // 否则「事件到底有没有发生」就无从得知了。
           const armed = await armProbe(contents, "click", ref);
+          emitPointer(tab, { action: "click", x, y, phase: "start", target: label });
           await clickAt(session, x, y);
+          emitPointer(tab, { action: "click", x, y, phase: "end", target: label });
           await delay(PROBE_SETTLE_MS);
           const probe = armed ? await readProbe(contents) : null;
 
@@ -1723,6 +1903,185 @@ export function createBrowserAutomation(): BrowserAutomation {
             outcome.detail =
               "页面没有给出可读的事件探针（注入失败或页面正在导航）：这次点击的结果无法断言。";
           }
+          return outcome;
+        });
+      },
+
+      /**
+       * 按**视口坐标**点击：不依赖 ref，也不依赖快照里有这个元素。
+       *
+       * 与 click(ref) 的分工必须说清，因为两者的「诚实程度」不同：
+       *   · ref 路径知道**该是谁**收下这次点击，所以能报 WRONG_TARGET（被浮层盖住 /
+       *     编号漂移）—— 它回答的是「点到你要的那个东西了吗」；
+       *   · 坐标路径没有这个知识（没有人告诉它这一点上本该是什么），所以它只报
+       *     「有没有事件发生」+「谁收下了」，答不了「这是不是你要点的」。
+       * 因此工具的用法是「能用 ref 就用 ref，ref 够不到（canvas / 图片热区 / 自绘浮层）
+       * 才给坐标」，而结果里必须把命中者写出来给模型自己核对。
+       *
+       * 落点越界直接拒（见 requirePointInViewport）：坐标动作不滚动页面，
+       * 照一个过期坐标发出去只会静默点到别的元素上。
+       */
+      clickPoint(x, y, options): Promise<BrowserActionOutcome> {
+        return enqueue(tab, async () => {
+          const viewport = await requireViewport(contents, "坐标点击");
+          const session = await requireCdp(tab);
+          const point = requirePointInViewport(viewport, { x, y }, "坐标点击");
+          const button = options?.button ?? "left";
+          const clicks = options?.clicks ?? 1;
+          const action: BrowserPointerEvent["action"] =
+            clicks === 2
+              ? "double-click"
+              : button === "right"
+                ? "right-click"
+                : button === "middle"
+                  ? "middle-click"
+                  : "click";
+          const label = `坐标 (${point.x}, ${point.y})`;
+          const before = contents.getURL();
+          // 探针装成「无目标」形态：ref 传空串，判定时按 null 走 —— 它仍然能回答
+          // 「有没有事件」与「谁收下了」，只是不会判 WRONG_TARGET（那需要知道目标是谁）。
+          const armed = await armProbe(contents, "click", "");
+          emitPointer(tab, { action, x: point.x, y: point.y, phase: "start" });
+          await clickAt(session, point.x, point.y, { button, clicks });
+          emitPointer(tab, { action, x: point.x, y: point.y, phase: "end" });
+          await delay(PROBE_SETTLE_MS);
+          const probe = armed ? await readProbe(contents) : null;
+          const target = describeHitTarget(probe);
+
+          await waitForIdle(contents, 5_000).catch(() => undefined);
+          const navigated = before !== contents.getURL();
+          if (navigated) return { name: target, navigated, effect: "hit" };
+
+          const verdict = judgeProbe("click", null, probe);
+          const probeOutcome = requireProbeEffect(verdict, label, "");
+          const outcome: BrowserActionOutcome = {
+            name: target,
+            navigated,
+            effect: probeOutcome.effect,
+          };
+          if (probeOutcome.warnings.length > 0) outcome.warnings = probeOutcome.warnings;
+          // 命中者写进 detail：坐标点击唯一能给的「你点到了什么」，模型据此自己核对
+          outcome.detail =
+            target === ""
+              ? `${label}：页面收到了这次点击，但没有回报是哪个元素收下的。`
+              : `${label}：这次点击由 ${target} 收下。`;
+          if (verdict.effect === "unknown") {
+            outcome.detail += "（页面没有给出可读的事件探针，无法断言它是否落到了预期的位置。）";
+          }
+          return outcome;
+        });
+      },
+
+      /**
+       * 按住并拖到另一点（滑块、地图平移、画布绘制、拖放排序）。
+       *
+       * 为什么单独一个动作而不是让模型拼 down/move/up：拖拽的成立条件是**中间那些
+       * mousemove**（见 dragAt 的说明），分三个工具调用拼出来只会得到「按住了、然后
+       * 松开在别处」——页面把它当成一次普通点击，而工具每一步都报成功。
+       */
+      drag(from: BrowserPoint, to: BrowserPoint): Promise<BrowserActionOutcome> {
+        return enqueue(tab, async () => {
+          const viewport = await requireViewport(contents, "拖拽");
+          const session = await requireCdp(tab);
+          const start = requirePointInViewport(viewport, from, "拖拽起点");
+          const end = requirePointInViewport(viewport, to, "拖拽终点");
+          const label = `拖拽 (${start.x}, ${start.y}) → (${end.x}, ${end.y})`;
+          const before = contents.getURL();
+          const armed = await armProbe(contents, "click", "");
+          const pointer = {
+            action: "drag" as const,
+            x: end.x,
+            y: end.y,
+            fromX: start.x,
+            fromY: start.y,
+            steps: DRAG_STEPS,
+          };
+          emitPointer(tab, { ...pointer, phase: "start" });
+          await dragAt(session, start, end);
+          emitPointer(tab, { ...pointer, phase: "end" });
+          await delay(PROBE_SETTLE_MS);
+          const probe = armed ? await readProbe(contents) : null;
+          const target = describeHitTarget(probe);
+
+          await waitForIdle(contents, 5_000).catch(() => undefined);
+          const navigated = before !== contents.getURL();
+          if (navigated) return { name: target, navigated, effect: "hit" };
+
+          const verdict = judgeProbe("click", null, probe);
+          // 拖拽的「没生效」与点击不同：按下/抬起本身必然产生事件，一个都没有说明
+          // 输入根本没投递到页面（视口、崩溃、坐标），那正是 NO_EFFECT 该说的话。
+          const probeOutcome = requireProbeEffect(verdict, label, "");
+          const outcome: BrowserActionOutcome = {
+            name: target,
+            navigated,
+            effect: probeOutcome.effect,
+          };
+          if (probeOutcome.warnings.length > 0) outcome.warnings = probeOutcome.warnings;
+          outcome.detail =
+            target === ""
+              ? `${label}：按下的位置收到了事件，但页面没有回报是谁收下的。`
+              : `${label}：按下落在 ${target} 上。`;
+          if (verdict.effect !== "hit") {
+            outcome.detail +=
+              " 注意：拖拽是否真的改变了页面状态（滑块位置、地图中心、列表顺序）无法由事件判定，" +
+              "请重新 snapshot 或用 browser_evaluate 读当前状态确认。";
+          }
+          return outcome;
+        });
+      },
+
+      /**
+       * 把鼠标移到**视口坐标**上（不依赖 ref 的悬停）。
+       *
+       * 与 hover(ref) 同一条通道、同一个探针，只是落点由模型给出 ——
+       * 给 canvas 一类的自绘界面用（悬停高亮、tooltip 都由页面自己画）。
+       */
+      hoverPoint(x, y): Promise<BrowserActionOutcome> {
+        return enqueue(tab, async () => {
+          const viewport = await requireViewport(contents, "坐标悬停");
+          const session = await requireCdp(tab);
+          const point = requirePointInViewport(viewport, { x, y }, "坐标悬停");
+          const label = `坐标 (${point.x}, ${point.y})`;
+          const before = contents.getURL();
+          await armProbe(contents, "hover", "");
+          const approach = { x: Math.max(0, point.x - 2), y: Math.max(0, point.y - 2) };
+          emitPointer(tab, { action: "hover", x: approach.x, y: approach.y, phase: "start" });
+          await session.send("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: approach.x,
+            y: approach.y,
+            button: "none",
+            buttons: 0,
+          });
+          await delay(INPUT_SETTLE_MS);
+          await session.send("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: point.x,
+            y: point.y,
+            button: "none",
+            buttons: 0,
+          });
+          await delay(HOVER_SETTLE_MS);
+          // 探针**只读一次**：readProbe 读走之后就把监听拆了（见 script.ts 的说明），
+          // 读第二次会拿到 armed: false，把一次正常悬停判成「无法断言」。
+          const probe = await readProbe(contents);
+          const target = describeHitTarget(probe);
+          emitPointer(tab, { action: "hover", x: point.x, y: point.y, phase: "end" });
+          const verdict = judgeProbe("hover", null, probe);
+          await waitForIdle(contents, 5_000).catch(() => undefined);
+          const navigated = before !== contents.getURL();
+          if (navigated) return { name: target, navigated, effect: "hit" };
+          const probeOutcome = requireProbeEffect(verdict, label, "");
+          const outcome: BrowserActionOutcome = {
+            name: target,
+            navigated,
+            effect: probeOutcome.effect,
+          };
+          if (probeOutcome.warnings.length > 0) outcome.warnings = probeOutcome.warnings;
+          outcome.detail =
+            target === ""
+              ? `${label}：页面收到了悬停，但没回报是谁收下的。`
+              : `${label}：悬停落在 ${target} 上。`;
           return outcome;
         });
       },
@@ -1777,13 +2136,24 @@ export function createBrowserAutomation(): BrowserAutomation {
 
           const before = contents.getURL();
           const label = describeElement(ref, located);
+          /**
+           * 输入的「可见光标」：聚焦那一下是一次真实点击（见 fillField），
+           * 所以面板上该看到光标落到这个字段上 —— 否则模型在输入时页面上什么都没有，
+           * 人只会看到文本凭空出现在某个框里。重试时会重新定位，所以每次现取坐标。
+           */
+          const emitTypeFocus = (phase: "start" | "end") => {
+            const point = coordsOf(located);
+            emitPointer(tab, { action: "type", x: point.x, y: point.y, phase, target: label });
+          };
           // 探针必须在**输入之前**装上：Ctrl+A 与 insertText 产生的事件都要记下来，
           // 否则「值进去了但框架没收到事件」这种半成功就无从分辨。
           const armed = await armProbe(contents, "input", ref);
           // 输入前先读一次当前值：回读校验要靠它区分「字段自己加了前缀（值变了）」与
           // 「字段里本来就有这段文字（没变，说明这次输入根本没落进去）」。
           let previous = await readFieldValue(contents, ref);
+          emitTypeFocus("start");
           let read = await fillField(session, contents, ref, located, text);
+          emitTypeFocus("end");
           let verdict = judgeFieldRead(read, previous, located, text);
           let retried = false;
           if (!verdict.ok && read !== null) {
@@ -1793,7 +2163,9 @@ export function createBrowserAutomation(): BrowserAutomation {
             await delay(HIT_RETRY_DELAY_MS);
             located = await requireHit(tab, ref, await locateForAction(tab, ref, "输入"), "输入");
             previous = await readFieldValue(contents, ref);
+            emitTypeFocus("start");
             read = await fillField(session, contents, ref, located, text);
+            emitTypeFocus("end");
             verdict = judgeFieldRead(read, previous, located, text);
           }
 
@@ -1898,7 +2270,10 @@ export function createBrowserAutomation(): BrowserAutomation {
             // 探针必须在点击**之前**装上：聚焦那一次点击本身也会产生事件，
             // 而按键的效果判定要看 keydown 落到了谁身上（焦点错误是「按键没反应」的头号原因）。
             await armProbe(contents, "key", targetRef);
+            // 聚焦那一下也是真实点击：面板上要看得见光标落到哪里（与 type 同一条口径）
+            emitPointer(tab, { action: "click", x, y, phase: "start", target: name });
             await clickAt(session, x, y);
+            emitPointer(tab, { action: "click", x, y, phase: "end", target: name });
             await delay(INPUT_SETTLE_MS);
           } else {
             await armProbe(contents, "key", "");
@@ -1944,10 +2319,12 @@ export function createBrowserAutomation(): BrowserAutomation {
           await armProbe(contents, "hover", ref);
           // 先移到元素附近、再压到中心：一次性「瞬移」也能触发 mouseenter，但有些菜单挂在
           // mousemove 上，得让鼠标走一段路才会展开。坐标仍由页面侧给出，只是改用 CDP 派发。
+          const approach = { x: Math.max(0, x - 2), y: Math.max(0, y - 2) };
+          emitPointer(tab, { action: "hover", x: approach.x, y: approach.y, phase: "start" });
           await session.send("Input.dispatchMouseEvent", {
             type: "mouseMoved",
-            x: Math.max(0, x - 2),
-            y: Math.max(0, y - 2),
+            x: approach.x,
+            y: approach.y,
             button: "none",
             buttons: 0,
           });
@@ -1959,6 +2336,7 @@ export function createBrowserAutomation(): BrowserAutomation {
             button: "none",
             buttons: 0,
           });
+          emitPointer(tab, { action: "hover", x, y, phase: "end", target: label });
           // 悬停要等浮层展开再读探针（见 HOVER_SETTLE_MS 的说明），否则会把
           // 「菜单还没弹出来」判成「页面毫无反应」
           await delay(HOVER_SETTLE_MS);
@@ -2089,15 +2467,23 @@ export function createBrowserAutomation(): BrowserAutomation {
           const viewport = await requireViewport(contents, "滚动");
           const session = await requireCdp(tab);
           const before = await readScrollY(contents);
-          await session.send("Input.dispatchMouseEvent", {
-            type: "mouseWheel",
+          const centre = {
             x: Math.round(viewport.width / 2),
             y: Math.round(viewport.height / 2),
+          };
+          // 滚轮也报给面板：模型滚动时用户看到的是「页面自己动了」，
+          // 有个光标停在落点上，才知道是模型在滚（滚轮落点决定了滚哪个容器）
+          emitPointer(tab, { action: "scroll", x: centre.x, y: centre.y, phase: "start" });
+          await session.send("Input.dispatchMouseEvent", {
+            type: "mouseWheel",
+            x: centre.x,
+            y: centre.y,
             deltaX,
             deltaY,
             button: "none",
             buttons: 0,
           });
+          emitPointer(tab, { action: "scroll", x: centre.x, y: centre.y, phase: "end" });
           await delay(PROBE_SETTLE_MS);
           const after = await readScrollY(contents);
           const moved = before !== null && after !== null && after !== before;

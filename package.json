@@ -29,6 +29,8 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "probe:csp": "node scripts/probe-csp.mjs",
     "probe:dev": "node scripts/probe-dev-render.mjs",
+    "probe:guest": "node scripts/probe-browser-guest.mjs",
+    "probe:viewport": "node scripts/probe-browser-viewport.mjs",
     "probe:kernel": "node scripts/probe-upgrade-087.mjs",
     "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
     "probe:system": "node scripts/probe-system-resources.mjs",

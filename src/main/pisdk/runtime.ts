@@ -133,6 +133,7 @@ import {
   waitSubagentRuns,
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
+import { toolPartImages } from "./tool-images";
 import { type AppToolContext, buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
@@ -690,6 +691,13 @@ export function applyToolEnd(
 ): void {
   part.result = toolResultValue(result);
   if (result.details !== undefined) part.details = result.details;
+  /**
+   * 图片本体（目前只有 browser_screenshot）：**只写进内存里的 part**，
+   * 落盘的那份在 pi 的 toolResult 条目里（历史回读时由 message-mapper 重新取出）。
+   * 该不该带、带多大的判断都在 toolPartImages 里，两条路径共用同一个函数。
+   */
+  const images = toolPartImages(part.toolName, result.content);
+  if (images !== undefined) part.images = images;
   part.isError = isError;
   part.status = isError ? "error" : "done";
 }

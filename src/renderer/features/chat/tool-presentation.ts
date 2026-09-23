@@ -709,6 +709,46 @@ export interface BrowserDetailData {
   omittedText?: string;
   /** 结果正文（浏览器工具的结果本身就是给人看的文本，原样保留一份） */
   body?: string;
+  /**
+   * 截图本体（只有 `browser_screenshot` 会有）。
+   *
+   * 为什么它必须显示出来：这个工具的**结果就是那张图** —— 用户点开详情想看的是
+   * 「模型当时看到了什么」，而只给一行 `viewport 380×639` 等于什么都没说。
+   * 图片不走 details（那会随 pi 的 toolResult 条目落盘、每截一张就多存一份 base64），
+   * 而是由主进程随 part 带过来（见 shared/contracts/session.ts 的 ToolCallPart.images）。
+   */
+  image?: ToolImageData;
+}
+
+/** 工具结果里的图片本体（渲染层唯一能直接塞进 <img src> 的形态：CSP 只放行 data:/blob:） */
+export interface ToolImageData {
+  mimeType: string;
+  dataUrl: string;
+}
+
+/**
+ * 从 part 的 `providerMetadata.oint.images` 里取图片。
+ *
+ * 形状由主进程给（见 main/pisdk/tool-images.ts），这里是渲染层的验收入口：
+ * 从 IPC 过来的东西一律是 unknown，非 dataUrl、缺 mimeType 的条目直接丢掉 ——
+ * 一个坏条目会让 `<img>` 静默失败，而失败的样子看起来像「页面截图坏了」。
+ */
+export function parseProviderImages(providerMetadata: unknown): ToolImageData[] | undefined {
+  if (!isRecord(providerMetadata)) return undefined;
+  const oint = providerMetadata.oint;
+  if (!isRecord(oint)) return undefined;
+  const images = oint.images;
+  if (!Array.isArray(images)) return undefined;
+
+  const parsed: ToolImageData[] = [];
+  for (const image of images) {
+    if (!isRecord(image)) continue;
+    const mimeType = typeof image.mimeType === "string" ? image.mimeType : "";
+    const dataUrl = typeof image.dataUrl === "string" ? image.dataUrl : "";
+    if (mimeType === "" || !/^data:/i.test(dataUrl)) continue;
+    parsed.push({ mimeType, dataUrl });
+  }
+  return parsed.length === 0 ? undefined : parsed;
 }
 
 /** WebSource 的逐项校验：details 从主进程过来是 unknown，必须自己验 */
@@ -934,11 +974,17 @@ export function parseBrowserDetail(
   toolName: string,
   details: unknown,
   result: unknown,
+  images?: ToolImageData[],
 ): BrowserDetailData | null {
   const fields: BrowserDetailData["fields"] = [];
   const entries: BrowserDetailData["entries"] = [];
   let omittedText: string | undefined;
   let tabId: string | undefined;
+  /**
+   * 截图：把 part 带来的图片挂到详情上（见 BrowserDetailData.image）。
+   * 只认 `browser_screenshot` —— 别的浏览器工具没有图，误挂上去等于给它们凭空加一张。
+   */
+  const image = toolName === BROWSER_TOOL_NAMES.screenshot ? images?.[0] : undefined;
 
   const record = isRecord(details) ? details : null;
 
@@ -1076,7 +1122,18 @@ export function parseBrowserDetail(
    * 一个字段一个条目都没有，只剩这句「省略了多少」—— 而那句话恰恰是唯一的信息
    *（不说的话，读到的就是「页面就这么多」这个错误结论）。
    */
-  if (fields.length === 0 && entries.length === 0 && body === "" && omittedText === undefined) {
+  /**
+   * 空详情的判据里**不看 image**：一张只有图的详情不是空详情。
+   * （截图的 details 里本来也有 viewport 读数，这条是为将来「只给图」的工具留的口径 ——
+   * 判空只看文字字段，会把那种卡片整张丢掉。）
+   */
+  if (
+    fields.length === 0 &&
+    entries.length === 0 &&
+    body === "" &&
+    omittedText === undefined &&
+    image === undefined
+  ) {
     return null;
   }
 
@@ -1087,6 +1144,7 @@ export function parseBrowserDetail(
     ...(entries.length === 0 ? {} : { entries }),
     ...(omittedText === undefined ? {} : { omittedText }),
     ...(body === "" ? {} : { body }),
+    ...(image === undefined ? {} : { image }),
   };
 }
 /**
@@ -1120,6 +1178,14 @@ export function resolveToolDetail(
   isError?: boolean,
   args?: unknown,
   result?: unknown,
+  /**
+   * part 上带的图片（目前只有 browser_screenshot 有，见 parseProviderImages）。
+   *
+   * 放在最后一个可选参数而不是塞进 details：图片**不属于 details** ——
+   * details 会随 pi 的 toolResult 条目落盘，几 MB 的 base64 放在那里等于每截一张图
+   * 就往会话库里存一份。这里只是让解析函数能把它挂到渲染数据上。
+   */
+  images?: ToolImageData[],
 ): ToolDetail | null {
   const failed = isError === true;
 
@@ -1200,7 +1266,7 @@ export function resolveToolDetail(
    * 比纯文本更好读的东西。放在通用兜底之后它们就永远走不到了。
    */
   if (BROWSER_TOOL_NAMES_VALUES.includes(toolName)) {
-    const browser = parseBrowserDetail(toolName, details, result);
+    const browser = parseBrowserDetail(toolName, details, result, images);
     return browser ?? parseTextDetail(result);
   }
 

@@ -12,6 +12,7 @@ import {
   isJobFinished,
   jobElapsedMs,
   jobElapsedReading,
+  parseProviderImages,
   parseWebFetchDetail,
   parseWebSearchDetail,
   resolveJobView,
@@ -728,6 +729,75 @@ describe("resolveToolDetail · 后台作业", () => {
     // 正是为了确保失败态也能显示成「失败」而不是红叉工具行。
     const detail = resolveToolDetail("bash_background", { job: jobInfo() }, true);
     expect(detail?.kind).toBe("job");
+  });
+});
+
+describe("resolveToolDetail · 截图里的真实图片", () => {
+  const SCREENSHOT_DETAILS = { width: 380, height: 639, tabId: "t1" };
+  const IMAGE = { mimeType: "image/png", dataUrl: "data:image/png;base64,AAAA" };
+
+  it("browser_screenshot 的详情带上 part 里的图片（点开详情就看得到截图）", () => {
+    const detail = resolveToolDetail(
+      "browser_screenshot",
+      SCREENSHOT_DETAILS,
+      false,
+      {},
+      "Screenshot of the visible viewport (380×639).",
+      [IMAGE],
+    );
+
+    expect(detail?.kind).toBe("browser");
+    expect(detail?.kind === "browser" ? detail.image : undefined).toEqual(IMAGE);
+    // 读数照旧：图答「看起来什么样」，读数答「多大、哪个标签」
+    expect(detail?.kind === "browser" ? detail.fields : []).toContainEqual({
+      label: "viewport",
+      value: "380×639",
+    });
+  });
+
+  /**
+   * 图片只认截图：别的浏览器工具挂上一张图会把「这次调用产出了什么」讲错 ——
+   * 比如 browser_snapshot 的详情里凭空多出一张图，用户会以为那是页面现在的样子。
+   */
+  it("别的浏览器工具不会被挂上图片", () => {
+    const detail = resolveToolDetail(
+      "browser_snapshot",
+      { url: "https://example.com/", title: "Example", elements: [], truncated: false },
+      false,
+      {},
+      "…",
+      [IMAGE],
+    );
+    expect(detail?.kind).toBe("browser");
+    expect(detail?.kind === "browser" ? detail.image : undefined).toBeUndefined();
+  });
+
+  it("part 上没有图片时（旧会话 / 超过体积上限）只有读数，不摆空图框", () => {
+    const detail = resolveToolDetail(
+      "browser_screenshot",
+      SCREENSHOT_DETAILS,
+      false,
+      {},
+      "Screenshot of the visible viewport (380×639).",
+    );
+    expect(detail?.kind).toBe("browser");
+    expect(detail?.kind === "browser" ? detail.image : undefined).toBeUndefined();
+  });
+
+  /**
+   * providerMetadata 从 IPC 过来是 unknown：形状不对的条目必须丢掉。
+   * 一个坏条目会让 `<img>` 静默失败，而失败的样子看起来像「页面截图坏了」。
+   */
+  it("parseProviderImages 只收 dataUrl 形态的条目", () => {
+    expect(
+      parseProviderImages({
+        oint: { images: [IMAGE, { mimeType: "image/png" }, { dataUrl: "x" }] },
+      }),
+    ).toEqual([IMAGE]);
+    expect(parseProviderImages({ oint: { images: [] } })).toBeUndefined();
+    expect(parseProviderImages({ oint: { partialOutput: "…" } })).toBeUndefined();
+    expect(parseProviderImages({ other: { images: [IMAGE] } })).toBeUndefined();
+    expect(parseProviderImages(null)).toBeUndefined();
   });
 });
 

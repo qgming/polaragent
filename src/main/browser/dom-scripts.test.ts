@@ -78,19 +78,31 @@ function installIsContentEditable(): void {
  * jsdom 没有布局：getBoundingClientRect 恒返回 0 尺寸，
  * 于是实现里的可见性判定会永远说「存在但不可见」。按需给元素一个真实尺寸。
  */
-function stubRect(el: Element, width: number, height: number): void {
-  el.getBoundingClientRect = () => ({ width, height }) as DOMRect;
+function stubRect(el: Element, width: number, height: number, left = 0, top = 0): void {
+  el.getBoundingClientRect = () => ({ left, top, width, height }) as DOMRect;
 }
 
 /**
  * 页面侧 ref 注册表的字段（与 script.ts 注入的代码同一套）：
  * 新模型里 ref 的权威位置是 `window.__ointEls`（Map<ref, Element>）与
  * `window.__ointUid`（WeakMap<Element, ref>），**不再**是 DOM 属性。
- */
-interface OintPageGlobals {
+ */ interface OintPageGlobals {
   __ointEls?: Map<string, Element>;
   __ointUid?: WeakMap<Element, string>;
   __ointRefSeq?: number;
+}
+
+/** 快照脚本的返回形状（只列测试用到的字段） */
+interface SnapshotOutcome {
+  elements: { ref: string; role: string; name: string; x?: number; y?: number }[];
+}
+
+/** 从快照结果里按 ref 取一项；取不到就是这次没发到号（fixture 写错了） */
+function snapshotElement(
+  snapshot: SnapshotOutcome,
+  ref: string,
+): SnapshotOutcome["elements"][number] | undefined {
+  return snapshot.elements.find((item) => item.ref === ref);
 }
 
 /** window 上那几个字段的带类型视图（注入脚本写的就是它们） */
@@ -640,5 +652,40 @@ describe("ref 模型 v2：页面侧发号的不变式", () => {
     const read = evaluate<ReadOutcome>(buildReadValueExpression(aRef));
     expect(read.ok).toBe(false);
     expect(read.reason).toBe("not-found");
+  });
+});
+
+/**
+ * 快照里的中心点坐标：`browser_act` 的 x/y 点击**唯一**的坐标来源。
+ *
+ * 为什么值得单独钉：canvas / 图片热区 / 页面自绘的浮层在快照里没有可点的 ref，
+ * 模型只能按坐标点 —— 而坐标一旦错了，动作本身不会失败（点到了别处而已），
+ * 所以「坐标算得对不对」是这条链上唯一能被自动验证的关卡。
+ */
+describe("快照元素的中心点坐标", () => {
+  it("x / y 是 getBoundingClientRect 的中心（视口坐标，已取整）", () => {
+    document.body.innerHTML = `<button id="a">A</button>`;
+    const a = element("#a");
+    stubRect(a, 200, 20, 30, 40);
+
+    const before = evaluate<SnapshotOutcome>(buildSnapshotExpression());
+    const item = snapshotElement(before, refOf(a));
+
+    expect(item?.x).toBe(130); // 30 + 200 / 2
+    expect(item?.y).toBe(50); // 40 + 20 / 2
+  });
+
+  it("算不出中心时不写坐标：NaN / 0,0 到了模型那边都像一个合法的落点", () => {
+    document.body.innerHTML = `<button id="a">A</button>`;
+    const a = element("#a");
+    // 有尺寸（所以算可见）但 rect 没有 left / top —— 老引擎或异常实现的样子
+    a.getBoundingClientRect = () => ({ width: 200, height: 20 }) as DOMRect;
+
+    const before = evaluate<SnapshotOutcome>(buildSnapshotExpression());
+    const item = snapshotElement(before, refOf(a));
+
+    expect(item).toBeDefined();
+    expect(item?.x).toBeUndefined();
+    expect(item?.y).toBeUndefined();
   });
 });

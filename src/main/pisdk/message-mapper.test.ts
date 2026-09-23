@@ -130,6 +130,63 @@ describe("mapEntriesToMessages", () => {
     ]);
   });
 
+  /**
+   * 截图的历史回读：图片本体从 pi 的 toolResult 条目里重新取出。
+   *
+   * 这条路径就是「刷新窗口 / 重开应用之后，会话里的截图还在」的全部实现 ——
+   * part 上的 images 只在内存里（流式那份由 runtime 的 applyToolEnd 写），磁盘上的那份
+   * 是这条 toolResult 消息的 image 内容块。两条路径共用同一个 toolPartImages 判断，
+   * 所以这里同时钉住「截图带图」与「read_image 不带图」这一对相反的口径。
+   */
+  it("截图的 toolResult 回读时带上图片；read_image 刻意不带（它给 path，界面现取）", () => {
+    const entries: Entry[] = [
+      messageEntry(
+        "a1",
+        1,
+        assistantMessage([
+          { type: "toolCall", id: "call-1", name: "browser_screenshot", arguments: {} },
+          { type: "toolCall", id: "call-2", name: "read_image", arguments: { file_path: "a.png" } },
+        ]),
+      ),
+      messageEntry(
+        "t1",
+        2,
+        toolResultMessage({
+          toolCallId: "call-1",
+          toolName: "browser_screenshot",
+          content: [
+            { type: "text", text: "Screenshot of the visible viewport (380×639)." },
+            { type: "image", data: "QUJD", mimeType: "image/png" },
+          ],
+        }),
+      ),
+      messageEntry(
+        "t2",
+        3,
+        toolResultMessage({
+          toolCallId: "call-2",
+          toolName: "read_image",
+          content: [{ type: "image", data: "QUJD", mimeType: "image/png" }],
+        }),
+      ),
+    ];
+
+    const { messages } = mapEntriesToMessages(entries);
+    const parts = messages[0]?.parts ?? [];
+    const screenshot = parts.find(
+      (part): part is ToolCallPart =>
+        part.type === "tool-call" && part.toolName === "browser_screenshot",
+    );
+    const readImage = parts.find(
+      (part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "read_image",
+    );
+
+    expect(screenshot?.images).toEqual([
+      { mimeType: "image/png", dataUrl: "data:image/png;base64,QUJD" },
+    ]);
+    expect(readImage?.images).toBeUndefined();
+  });
+
   it("无结果的调用保持 running，出错结果标记 error", () => {
     const entries: Entry[] = [
       messageEntry(

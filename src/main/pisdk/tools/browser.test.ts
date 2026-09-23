@@ -41,6 +41,10 @@ function trackingAutomation(
     console?: BrowserConsoleReport;
     /** 覆盖 screenshot 的 warning：全白图告警的用例按需给 */
     screenshotWarning?: string;
+    /** 坐标点击 / 悬停 / 拖拽报回来的「谁收下了」（默认 "canvas" / "slider"） */
+    clickPointHit?: string;
+    hoverPointHit?: string;
+    dragHit?: string;
   } = {},
 ) {
   const events: string[] = [];
@@ -93,6 +97,37 @@ function trackingAutomation(
     click: async (ref: string): Promise<BrowserActionOutcome> => {
       await act(`click:${ref}`);
       return { name: "button", navigated: false, effect: "hit" };
+    },
+    /**
+     * 坐标点击的假实现：把落点记进事件流（测试据此断言「ref 路径与坐标路径没有串味」），
+     * 命中者用 options.clickPointHit 覆盖（默认 "canvas"，即那种 ref 够不到的目标）。
+     */
+    clickPoint: async (x: number, y: number): Promise<BrowserActionOutcome> => {
+      await act(`clickPoint:${x},${y}`);
+      return {
+        name: options.clickPointHit ?? "canvas",
+        navigated: false,
+        effect: "hit",
+        detail: `坐标 (${x}, ${y})：这次点击由 canvas 收下。`,
+      };
+    },
+    drag: async (from, to): Promise<BrowserActionOutcome> => {
+      await act(`drag:${from.x},${from.y}->${to.x},${to.y}`);
+      return {
+        name: options.dragHit ?? "slider",
+        navigated: false,
+        effect: "hit",
+        detail: `拖拽 (${from.x}, ${from.y}) → (${to.x}, ${to.y})：按下落在 slider 上。`,
+      };
+    },
+    hoverPoint: async (x: number, y: number): Promise<BrowserActionOutcome> => {
+      await act(`hoverPoint:${x},${y}`);
+      return {
+        name: options.hoverPointHit ?? "canvas",
+        navigated: false,
+        effect: "hit",
+        detail: `坐标 (${x}, ${y})：悬停落在 canvas 上。`,
+      };
     },
     type: async (ref: string): Promise<BrowserActionOutcome> => {
       await act(`type:${ref}`);
@@ -394,6 +429,69 @@ describe("浏览器工具", () => {
       "enter:select:e5:value",
       "enter:scroll:600:0",
     ]);
+  });
+
+  /**
+   * 坐标路径：canvas / 图片热区这一类**没有可点 ref** 的目标只能按 x/y 点。
+   *
+   * 这里钉三件事：
+   *   1. 坐标动作走的是主进程的坐标通道（clickPoint / hoverPoint / drag），不是 ref 那条；
+   *   2. 结果文本里必须写出落点与**谁收下了**（`canvas`）—— 坐标点击没有语义目标，
+   *      这一句是模型唯一能核对的证据（ref 点击错了会报 WRONG_TARGET，坐标点击不会）；
+   *   3. 拖拽把四个坐标原样交下去（起点 / 终点都不许被改写）。
+   */
+  it("browser_act 的坐标路径：x/y 点击、悬停与拖拽各走各的通道", async () => {
+    const { automation, events } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    const clickText = await callText(tools, "browser_act", { action: "click", x: 120, y: 240 });
+    await call(tools, "browser_act", { action: "click", x: 10, y: 20, clicks: 2 });
+    await call(tools, "browser_act", { action: "click", x: 30, y: 40, button: "right" });
+    await call(tools, "browser_act", { action: "hover", x: 50, y: 60 });
+    const dragText = await callText(tools, "browser_act", {
+      action: "drag",
+      fromX: 5,
+      fromY: 6,
+      toX: 105,
+      toY: 206,
+    });
+
+    expect(events.filter((event) => event.startsWith("enter:"))).toEqual([
+      "enter:clickPoint:120,240",
+      "enter:clickPoint:10,20",
+      "enter:clickPoint:30,40",
+      "enter:hoverPoint:50,60",
+      "enter:drag:5,6->105,206",
+    ]);
+    expect(clickText).toContain("(120, 240)");
+    expect(clickText).toContain("canvas");
+    expect(dragText).toContain("(5, 6)");
+    expect(dragText).toContain("(105, 206)");
+  });
+
+  it("browser_act 的坐标参数校验：ref 与 x/y 互斥、坐标要成对、拖拽四个点齐全", async () => {
+    const { automation } = trackingAutomation();
+    const tools = createBrowserTools(automation);
+
+    // ref 与坐标同时给：无法判断按哪个 —— 拒绝而不是猜一个
+    expect(
+      await callError(tools, "browser_act", { action: "click", ref: "e1", x: 1, y: 2 }),
+    ).toContain("只能给一个");
+    expect(
+      await callError(tools, "browser_act", { action: "hover", ref: "e1", x: 1, y: 2 }),
+    ).toContain("只能给一个");
+    // 只给一半：补 0 会点成页面左上角，所以必须报错
+    expect(await callError(tools, "browser_act", { action: "click", x: 1 })).toContain("成对");
+    expect(await callError(tools, "browser_act", { action: "hover", y: 2 })).toContain("成对");
+    // 拖拽缺一个点就没有可用的落点
+    const drag = await callError(tools, "browser_act", {
+      action: "drag",
+      fromX: 1,
+      fromY: 2,
+      toX: 3,
+    });
+    expect(drag).toContain("drag");
+    expect(drag).toContain("toY");
   });
 
   it("browser_act 的参数校验：缺参的动作必须当场拒绝，不能把 undefined 送进主进程", async () => {

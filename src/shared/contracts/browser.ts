@@ -53,6 +53,20 @@ export interface BrowserElement {
   expanded?: boolean;
   /** 该元素首次出现的快照代次；越小说明这个 ref 越老 */
   since?: number;
+  /**
+   * 元素中心在**视口坐标系**里的位置（快照那一刻的 `getBoundingClientRect` 中心，四舍五入）。
+   *
+   * 存在的理由：**坐标点击**。canvas、图片热区、地图、可视化图表这些元素在快照里
+   * 只有一个 ref 甚至没有 ref，模型只能给出像素坐标；而它无法凭空知道坐标 ——
+   * 让它可以量、可以点，是这一类页面唯一的自动化通路。
+   *
+   * 两个必须知道的限制（工具描述里也写着）：
+   *   · **只对快照那一刻成立**：页面滚动或被重排后这些数字就过期了；
+   *   · 视口外的元素照样给出坐标（快照不限视口），那些值可能是负数或大于视口尺寸 ——
+   *     ref 动作会自己 scrollIntoView，坐标动作不会，所以点之前得先滚到看得见。
+   */
+  x?: number;
+  y?: number;
 }
 
 /** 一次页面快照：可见文本 + 可交互元素清单 */
@@ -148,6 +162,50 @@ export interface BrowserStatus {
   agentActive: boolean;
 }
 
+/**
+ * 模型在页面上做的一次鼠标动作（给界面画「可见光标」用）。
+ *
+ * 为什么要有它：自动化是**看不见的** —— 页面自己滚动、自己点击，用户只看到结果变了，
+ * 分不清「模型点了哪里」与「页面自己跳了」。把落点报出来，面板就能画一个光标与涟漪，
+ * 让人在几秒内看懂模型在做什么（也是出错时唯一能复现落点的地方）。
+ *
+ * 坐标是**视口 CSS 像素**，与快照里元素的 x/y 同一套，与 `getBoundingClientRect` 一致；
+ * 面板若对 guest 做了缩放（设备预览），渲染时要自己乘上缩放比。
+ */
+export type BrowserPointerAction =
+  /** 左键单击（含按下 → 抬起两个相位） */
+  | "click"
+  /** 双击 */
+  | "double-click"
+  | "right-click"
+  | "middle-click"
+  /** 悬停 / 移入 */
+  | "hover"
+  /** 滚轮滚动 */
+  | "scroll"
+  /** 拖拽（from → 目标点） */
+  | "drag"
+  /** 输入聚焦那一下的点击 */
+  | "type";
+
+export interface BrowserPointerEvent {
+  type: "pointer";
+  tabId: string;
+  action: BrowserPointerAction;
+  /** 落点（视口 CSS 像素） */
+  x: number;
+  y: number;
+  /** 拖拽起点（action 为 "drag" 时给出） */
+  fromX?: number;
+  fromY?: number;
+  /** 同一个动作的相位：start = 按下 / 开始，end = 抬起 / 结束 */
+  phase: "start" | "end";
+  /** 落点上是谁（"e12 button \"Save\"" 这类可读描述）；读不到时缺省 */
+  target?: string;
+  /** 拖拽途经的步数（仅 drag 且 phase 为 end 时有意义） */
+  steps?: number;
+}
+
 /** 主进程 → 渲染进程的单向推送 */
 export type BrowserEvent =
   /** 某个标签的页面状态变化：导航、加载开始/结束、标题变化、加载失败 */
@@ -161,7 +219,9 @@ export type BrowserEvent =
    */
   | { type: "open-request"; requestId: string; newTab: boolean; tabId?: string }
   /** 模型开始 / 结束操作某个标签的页面，面板据此在该标签上显示提示条 */
-  | { type: "agent"; active: boolean; note?: string; tabId?: string };
+  | { type: "agent"; active: boolean; note?: string; tabId?: string }
+  /** 模型在页面上做的一次鼠标动作：面板据此画可见光标与涟漪（见 BrowserPointerEvent） */
+  | BrowserPointerEvent;
 
 /**
  * 工具名常量：权限层、UI 图标表与测试都按它登记，避免三处各写一份字面量。
@@ -170,8 +230,10 @@ export type BrowserEvent =
  * 而浏览器动作 90% 落在同一组语义上。合并的口径是按**问题**分而不是按**事件**分：
  *   · open / history —— 到哪个页面（history 管 back/forward/reload）；
  *   · snapshot —— 页面长什么样（带 ref 的可交互元素清单，后面所有动作都靠 ref）；
- *   · act —— 改变页面状态：click / type / press / hover / select / scroll 六合一，
- *     它们的参数天然互斥（ref / text / key / 值），一个 action 字段就能讲清；
+ *   · act —— 改变页面状态：click / type / press / hover / select / scroll / drag 七合一，
+ *     它们的参数天然互斥（ref / x,y / text / key / 值），一个 action 字段就能讲清；
+ *     click 与 hover 既能按 ref（语义定位、会自己滚动到位）也能按 x,y（canvas、
+ *     图片热区、快照表达不了的落点）—— 两条路都是真实鼠标事件；
  *   · wait —— 等异步渲染落定（SPA 的头号问题）；
  *   · screenshot —— 看起来是什么样；
  *   · logs —— 页面自己报了什么错、发了什么请求（console / network 两种视图）；

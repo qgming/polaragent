@@ -584,6 +584,9 @@ export function buildWaitExpression(
  *   元素还在但语义变了 = 编号被框架复用到了别的节点上，必须报 REF_DRIFT 而不是照点。
  * - 判定可见用「盒子有尺寸 + 不是 display:none/visibility:hidden/opacity:0」。
  *   只看 offsetParent 会把 position:fixed 的元素误判成不可见。
+ * - 每个元素带**中心点的视口坐标**（x / y）：ref 表达不了的地方（canvas、图片热区、
+ *   自绘浮层、页面自己画出来的按钮）模型只能按坐标点，而它没有别的途径知道坐标。
+ *   坐标只对这一刻成立 —— 页面一滚就过期，工具描述里写着这条。
  * - 返回 `omitted` 与 `viewport`：不说「还有多少没列出来」，模型会以为页面就这么多；
  *   不说视口尺寸，它也不知道自己正处在一个 0×0 的面板里（那时一切坐标动作都会失败）。
  */
@@ -600,11 +603,12 @@ export function buildSnapshotExpression(): string {
     "    '[contenteditable=\"true\"]', '[contenteditable=\"\"]', '[onclick]', 'summary'",
     "  ].join(',');",
     "",
-    "  const visible = (el) => {",
+    "  const boxOf = (el) => {",
     "    const rect = el.getBoundingClientRect();",
-    "    if (rect.width <= 1 && rect.height <= 1) return false;",
+    "    if (rect.width <= 1 && rect.height <= 1) return null;",
     "    const style = window.getComputedStyle(el);",
-    "    return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';",
+    "    if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return null;",
+    "    return rect;",
     "  };",
     "",
     ...metaLines(),
@@ -631,13 +635,24 @@ export function buildSnapshotExpression(): string {
     "    if (elements.length >= MAX_ELEMENTS) {",
     "      scanned += 1;",
     "      if (scanned > OMIT_SCAN_LIMIT) break;",
-    "      if (visible(el)) omittedElements += 1;",
+    "      if (boxOf(el)) omittedElements += 1;",
     "      continue;",
     "    }",
-    "    if (!visible(el)) continue;",
+    "    const box = boxOf(el);",
+    "    if (!box) continue;",
     "    const tag = tagOf(el);",
     "    const type = typeOf(el);",
     "    const item = { ref: allocRef(el), role: roleOf(el), name: nameOf(el, true), tag: tag, signature: signatureOf(el) };",
+    // 中心点的视口坐标：坐标点击（click / hover 的 x,y）唯一的来源。
+    // 取中心而不是左上角，是因为「点元素」在语义上就是点它的中心（ref 定位也用中心）。
+    // 只在两个数都算得出来时才写：读不到布局时（老引擎 / 异常 rect）宁可没有 x,y ——
+    // 一个 NaN 或 0,0 传到模型那边看起来都是「合法的落点」，照着点就是点错地方。
+    "    const centreX = Math.round(box.left + box.width / 2);",
+    "    const centreY = Math.round(box.top + box.height / 2);",
+    "    if (Number.isFinite(centreX) && Number.isFinite(centreY)) {",
+    "      item.x = centreX;",
+    "      item.y = centreY;",
+    "    }",
     "    if (type && type !== 'text') item.type = type;",
     "    if (typeof el.value === 'string' && el.value !== '' && (tag === 'input' || tag === 'textarea' || tag === 'select')) {",
     "      item.value = part(el.value).slice(0, MAX_NAME);",

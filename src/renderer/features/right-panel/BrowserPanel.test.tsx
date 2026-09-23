@@ -15,7 +15,7 @@
 //   2. **模型操作提示只出现在事件指定的标签上**（agent 事件带 tabId 时）。
 // 隐藏/常驻（display:none 而不是卸载）由 RightSidebar 负责，见 RightSidebar.test.tsx。
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel } from "@/renderer/features/right-panel/BrowserPanel";
 import i18n from "@/renderer/i18n";
@@ -342,6 +342,118 @@ describe("BrowserPanel 与主进程的标签登记", () => {
 
     rerender(<BrowserPanel tabId="t1" active />);
     expect(bridge.activateTab).toHaveBeenCalledWith("t1");
+  });
+});
+
+/**
+ * 设备视口：把页面自己的布局视口换成某个设备尺寸（响应式检查）。
+ *
+ * 断言口径是**元素上的实际尺寸**而不是「菜单里点了什么」：布局视口就是 webview 元素的
+ * CSS 尺寸，而这个尺寸决定了页面里 media query 与 window.innerWidth 的值 ——
+ * 那才是「适配不同设备」这件事的实质。
+ *
+ * jsdom 没有布局（clientWidth 恒为 0），所以缩放比在这里恒为 1；缩放那部分属于
+ * 视觉层，靠真实 Electron 里的目视验证（见文件头的说明：这里只测能自动断言的不变量）。
+ */
+describe("BrowserPanel 的设备视口", () => {
+  /** 打开设备菜单并点某一项（Radix 的菜单在 pointerdown 上打开，见 McpPanel.test.tsx） */
+  async function pickDevice(name: string): Promise<void> {
+    fireEvent.pointerDown(screen.getByRole("button", { name: "设备视口" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(name) }));
+  }
+
+  function frame(): HTMLElement {
+    const element = document.querySelector<HTMLElement>('[data-slot="browser-viewport-frame"]');
+    if (element === null) throw new Error("面板没有渲染设备框");
+    return element;
+  }
+
+  it("默认是自适应：铺满面板，不给 webview 固定尺寸", () => {
+    stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    expect(frame().dataset.device).toBe("fit");
+    expect(frame().style.width).toBe("");
+  });
+
+  it("选手机后 webview 的布局视口变成 390×844（页面按手机断点渲染）", async () => {
+    stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    await pickDevice("手机");
+
+    expect(frame().dataset.device).toBe("phone");
+    expect(frame().style.width).toBe("390px");
+    expect(frame().style.height).toBe("844px");
+  });
+
+  it("换回自适应会撤掉固定尺寸（不留一个「半设备」状态）", async () => {
+    stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    await pickDevice("桌面");
+    expect(frame().style.width).toBe("1440px");
+
+    await pickDevice("自适应面板");
+    expect(frame().dataset.device).toBe("fit");
+    expect(frame().style.width).toBe("");
+  });
+});
+
+/**
+ * 模型的可见光标：`pointer` 事件 → 页面上的光标 + 涟漪。
+ *
+ * 这一组的价值在于「自动化是看不见的」那件事：模型点完之后页面自己变了，
+ * 没有光标的话用户分不清「模型点了这里」与「页面自己跳了」。
+ */
+describe("BrowserPanel 的模型光标", () => {
+  function cursor(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('[data-slot="agent-pointer"]');
+  }
+
+  it("收到 pointer 事件后在落点画光标（坐标按视口像素原样用）", () => {
+    const bridge = stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    expect(cursor()).toBeNull();
+    act(() => {
+      bridge.emit({
+        type: "pointer",
+        tabId: "t1",
+        action: "click",
+        x: 120,
+        y: 240,
+        phase: "start",
+      });
+    });
+
+    expect(cursor()?.style.transform).toContain("translate3d(120px, 240px, 0)");
+  });
+
+  it("别的标签的鼠标动作不会画在本标签上（多标签同时开着时尤其要紧）", () => {
+    const bridge = stubBrowserBridge();
+    stubWebviewElement();
+    render(<BrowserPanel tabId="t1" active />);
+
+    act(() => {
+      bridge.emit({
+        type: "pointer",
+        tabId: "t2",
+        action: "click",
+        x: 10,
+        y: 20,
+        phase: "start",
+      });
+    });
+
+    expect(cursor()).toBeNull();
   });
 });
 

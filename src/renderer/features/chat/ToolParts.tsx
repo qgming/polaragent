@@ -40,7 +40,6 @@ import type {
 } from "@/renderer/components/assistant-ui/elements/agent-status";
 import { AgentStatusList } from "@/renderer/components/assistant-ui/elements/agent-status";
 import { CodeDiff } from "@/renderer/components/assistant-ui/elements/code-diff";
-import { ImageZoom } from "@/renderer/components/assistant-ui/elements/image";
 import { MarkdownBlock } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import { mono, paper } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TerminalBlock } from "@/renderer/components/assistant-ui/elements/terminal-block";
@@ -51,6 +50,7 @@ import {
   ToolTimeline,
 } from "@/renderer/components/assistant-ui/elements/tool-timeline";
 import { Button } from "@/renderer/components/ui/button";
+import { ImagePreview } from "@/renderer/components/ui/image-viewer";
 import { formatBytes, formatDuration } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
@@ -74,6 +74,7 @@ import {
   type JobDetailData,
   jobElapsedReading,
   parseJobDetail,
+  parseProviderImages,
   resolveJobView,
   resolveToolDetail,
   SUBAGENT_STATUS_LABEL_KEYS,
@@ -81,6 +82,7 @@ import {
   sameJobRun,
   subagentElapsedMs,
   type ToolDetail,
+  type ToolImageData,
   type ToolRow,
   toolChip,
   toolResultText,
@@ -441,13 +443,13 @@ function ImageDetail({ detail }: { detail: Extract<ToolDetail, { kind: "image" }
             <Loader2Icon className="text-ink-4 size-5 animate-spin motion-reduce:animate-none" />
           </div>
         ) : (
-          <ImageZoom src={src} alt={detail.path}>
-            <img
-              src={src}
-              alt={detail.path}
-              className="mx-auto block h-auto max-h-[28rem] w-auto max-w-full rounded-lg object-contain"
-            />
-          </ImageZoom>
+          /*
+            图片本体：**缩略图 + 点开看大图**（用户明确要求）。
+            这里曾经直接用 Image 元素的 Zoom（一个铺满窗口的黑底浮层）—— 现在换成
+            与设置模态同族的查看器（见 ui/image-viewer.tsx），两张图的交互因此在会话里统一：
+            截图详情（BrowserDetail）与读图详情（这里）点开的都是同一个组件。
+          */
+          <ImagePreview src={src} alt={detail.path} title={detail.path} />
         )}
       </div>
     </div>
@@ -486,6 +488,21 @@ function BrowserDetail({ detail }: { detail: Extract<ToolDetail, { kind: "browse
             </div>
           ))}
         </dl>
+      )}
+
+      {/*
+        截图本体：**点开详情就是那张图**（用户明确要求）。
+        放在读数之后、清单之前 —— 先给「多大、哪个标签」这几个数，再给图本身；
+        缩略图点开是同一个窗口里的大图（见 ui/image-viewer.tsx）。
+      */}
+      {detail.image !== undefined && (
+        <div className="border-border/50 border-b p-3">
+          <ImagePreview
+            src={detail.image.dataUrl}
+            alt={t("tools.screenshotImage")}
+            title={t("tools.screenshotImage")}
+          />
+        </div>
       )}
 
       {detail.entries !== undefined && detail.entries.length > 0 && (
@@ -1314,6 +1331,7 @@ function PartDetail({
   args,
   result,
   details,
+  images,
   isError,
   running,
 }: {
@@ -1321,12 +1339,14 @@ function PartDetail({
   args: unknown;
   result: unknown;
   details: unknown;
+  /** part 上带的图片（见 parseProviderImages）：只有截图会有，其它工具传 undefined */
+  images?: ToolImageData[] | undefined;
   isError: boolean;
   running: boolean;
 }) {
   const detail = useMemo(
-    () => resolveToolDetail(toolName, details, isError, args, result),
-    [toolName, details, isError, args, result],
+    () => resolveToolDetail(toolName, details, isError, args, result, images),
+    [toolName, details, isError, args, result, images],
   );
   if (detail === null) return null;
   return (
@@ -1362,6 +1382,7 @@ function StepDetail({ index, open }: { index: number; open: boolean }) {
       args={part.args}
       result={part.result}
       details={part.artifact}
+      images={parseProviderImages(part.providerMetadata)}
       isError={part.isError === true}
       running={part.status.type === "running"}
     />
@@ -1414,9 +1435,11 @@ export const ToolCallPart: ToolCallMessagePartComponent = (props) => {
   const [open, setOpen] = useState(false);
 
   const isError = props.isError === true;
+  const images = parseProviderImages(props.providerMetadata);
   const detail = useMemo(
-    () => resolveToolDetail(props.toolName, props.artifact, isError, props.args, props.result),
-    [props.toolName, props.artifact, isError, props.args, props.result],
+    () =>
+      resolveToolDetail(props.toolName, props.artifact, isError, props.args, props.result, images),
+    [props.toolName, props.artifact, isError, props.args, props.result, images],
   );
 
   const labels = toolLabelKeys(props.toolName);

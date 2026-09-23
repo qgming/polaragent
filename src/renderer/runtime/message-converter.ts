@@ -94,10 +94,23 @@ function toThreadPart(part: ChatPart, resolveChild?: ChildMessageResolver): Thre
          * 与 artifact 同理：自造字段会被归一化丢掉，而 artifact 已经被工具 details 占了
          *（混进去会污染 `parseToolDetail` 的输入）。嵌套在 `oint` 命名空间下，
          * 与类型要求的 `{ [providerName]: ReadonlyJSONObject }` 形状一致。
+         *
+         * 工具的**图片本体**（目前只有 browser_screenshot）走同一个槽位的另一个键：
+         * 它同样不能进 artifact（那会随 pi 的 toolResult 条目落盘，每截一张图就多存一份
+         * base64），而渲染层要的只是「点开详情时能看见那张图」。
          */
-        ...(part.partialOutput === undefined
+        ...(part.partialOutput === undefined && part.images === undefined
           ? {}
-          : { providerMetadata: { oint: { partialOutput: part.partialOutput } } }),
+          : {
+              providerMetadata: {
+                oint: {
+                  ...(part.partialOutput === undefined
+                    ? {}
+                    : { partialOutput: part.partialOutput }),
+                  ...(part.images === undefined ? {} : { images: part.images }),
+                },
+              },
+            }),
         // 嵌套是 assistant-ui 为「工具调用自己开了一条会话」预留的槽位（见库的
         // ToolCallMessagePart.messages 注释），sub-agent 正好就是这种形状：把子会话
         // 转录挂上去，PartPrimitive.Messages 才能把它渲染成一条真实的会话。

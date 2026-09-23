@@ -127,6 +127,18 @@ export const zhCN = {
     browserHint:
       "内置浏览器，供你查阅资料；也可以让 Oint 替你操作它（打开网址、读页面、点击、输入、截图）。",
     browserAgentActive: "Oint 正在操作这个页面…",
+    /**
+     * 设备视口：把页面自己的布局视口换成某个设备的尺寸（响应式检查用）。
+     * 名字后面那个尺寸就是**布局视口**的 CSS 像素，不是窗口大小。
+     */
+    browserDevice: "设备视口",
+    browserDeviceFit: "自适应面板",
+    browserDevicePhone: "手机",
+    browserDeviceTablet: "平板",
+    browserDeviceLaptop: "笔记本",
+    browserDeviceDesktop: "桌面",
+    /** 设备比面板宽时整台设备被缩小放进面板；这里报出缩放比，免得看起来像「页面变小了」 */
+    browserDeviceScale: "缩放 {{percent}}%",
     // 终端
     terminalNew: "新建终端",
     terminalClose: "关闭终端",
@@ -776,6 +788,13 @@ export const zhCN = {
      * 那是一张空图框之外唯一能给用户的线索。
      */
     imageUnavailable: "这张图片现在读不出来：{{reason}}",
+    /**
+     * 图片缩略图右上角那枚徽标：它是「这张图能点开看大图」的唯一提示。
+     * 必须常驻可见（不是 hover 才出现）—— 触屏与触控板上没有 hover 这个状态。
+     */
+    imageOpen: "查看大图",
+    /** 截图详情的图片替代文本（无障碍名称，也是加载失败时的替代显示） */
+    screenshotImage: "页面截图",
   },
   errors: {
     generic: "出错了，请稍后重试",

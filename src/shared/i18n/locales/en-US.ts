@@ -128,6 +128,19 @@ export const enUS = {
     browserHint:
       "Built-in browser for looking things up; Oint can also drive it for you (open pages, read, click, type, screenshot).",
     browserAgentActive: "Oint is driving this page…",
+    /**
+     * Device viewport: swaps the page's own layout viewport for a device size so
+     * responsive layouts can be checked. The number next to each name is the layout
+     * viewport in CSS pixels, not the window size.
+     */
+    browserDevice: "Device viewport",
+    browserDeviceFit: "Fit the panel",
+    browserDevicePhone: "Phone",
+    browserDeviceTablet: "Tablet",
+    browserDeviceLaptop: "Laptop",
+    browserDeviceDesktop: "Desktop",
+    /** Shown when a device wider than the panel is scaled down to fit inside it */
+    browserDeviceScale: "{{percent}}% scale",
     // Terminal
     terminalNew: "New terminal",
     terminalClose: "Close terminal",
@@ -788,6 +801,13 @@ export const enUS = {
     /** Page body folded inside the web_fetch card */
     webFetchBody: "Page body",
     imageUnavailable: "This image cannot be loaded right now: {{reason}}",
+    /**
+     * The badge on an image thumbnail: the only hint that the image opens full size.
+     * It stays visible instead of appearing on hover — touch devices have no hover state.
+     */
+    imageOpen: "View full size",
+    /** Alt text for the screenshot in a browser_screenshot detail */
+    screenshotImage: "Page screenshot",
   },
   errors: {
     generic: "Something went wrong. Please try again",

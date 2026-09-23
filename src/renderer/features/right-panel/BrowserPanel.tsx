@@ -1,10 +1,34 @@
-import { ArrowLeft, ArrowRight, Bot, ExternalLink, Globe, RotateCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  CheckIcon,
+  ExternalLink,
+  Globe,
+  Laptop,
+  type LucideIcon,
+  MaximizeIcon,
+  Monitor,
+  MousePointer2,
+  RotateCw,
+  Smartphone,
+  Tablet,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { field } from "@/renderer/components/assistant-ui/elements/surfaces";
+import { field, mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { Button } from "@/renderer/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/renderer/components/ui/dropdown-menu";
 import { cn } from "@/renderer/lib/utils";
 import { useUiStore } from "@/renderer/stores/ui-store";
+import type { BrowserPointerAction } from "@/shared/contracts/browser";
 import { PanelEmpty } from "./panel-view";
 
 /**
@@ -118,6 +142,327 @@ function useAgentActivity(tabId: string): string | null {
   return note;
 }
 
+/**
+ * 设备视口预设：把**页面自己的布局视口**改成某个设备的尺寸。
+ *
+ * 为什么要有它：响应式布局的全部行为都由视口宽度决定 —— 一个 1440×900 的页面在
+ * 380px 宽的右侧栏里永远是桌面版，用户根本看不到手机版长什么样；而模型要验证
+ * 「手机上这个按钮会不会被挤掉」时，也必须在真实的窄视口里截图才有意义。
+ *
+ * 这里改的是**布局视口**（webview 元素的 CSS 尺寸），不是页面缩放：
+ *   · 页面里的 media query、`window.innerWidth`、懒加载的断点全都跟着变 —— 那才是「适配」；
+ *   · guest 自身的 zoom 保持 1，所以主进程按坐标投递的输入（点击 / 拖拽）
+ *     与页面里 `getBoundingClientRect` 的坐标系依然一致（见 browser/service.ts）。
+ *     若改用 setZoomFactor，布局视口会跟着变，但输入坐标的换算会多出一层缩放 ——
+ *     那正是「静默点错地方」的来源。
+ *
+ * 预设比面板宽时用 CSS `transform: scale()` **只在视觉上**缩小（纯合成层变换，
+ * 不参与布局）：布局视口仍是设备尺寸，看到的是整台设备被放进面板。
+ */
+interface DevicePreset {
+  id: string;
+  labelKey: string;
+  /** 设备视口尺寸（CSS 像素）；自适应档没有尺寸（铺满面板） */
+  width?: number;
+  height?: number;
+  Icon: LucideIcon;
+}
+
+/**
+ * 自适应档（铺满面板）。单独取一个常量是因为它同时是**默认值**与查找的兜底：
+ * 写成数组字面量里的第一个元素会让「默认是哪个」这件事在两处各写一遍。
+ */
+const FIT_PRESET: DevicePreset = {
+  id: "fit",
+  labelKey: "rightPanel.browserDeviceFit",
+  Icon: MaximizeIcon,
+};
+
+const DEVICE_PRESETS: readonly DevicePreset[] = [
+  FIT_PRESET,
+  {
+    id: "phone",
+    labelKey: "rightPanel.browserDevicePhone",
+    width: 390,
+    height: 844,
+    Icon: Smartphone,
+  },
+  {
+    id: "tablet",
+    labelKey: "rightPanel.browserDeviceTablet",
+    width: 834,
+    height: 1112,
+    Icon: Tablet,
+  },
+  {
+    id: "laptop",
+    labelKey: "rightPanel.browserDeviceLaptop",
+    width: 1280,
+    height: 800,
+    Icon: Laptop,
+  },
+  {
+    id: "desktop",
+    labelKey: "rightPanel.browserDeviceDesktop",
+    width: 1440,
+    height: 900,
+    Icon: Monitor,
+  },
+];
+
+/** 设备框与面板边缘之间的留白（两侧各一份，算可用宽度时要减掉） */
+const DEVICE_FRAME_GUTTER = 16;
+
+/**
+ * 观察一块元素的尺寸（设备预览要按容器可用空间算缩放比）。
+ *
+ * 用 ResizeObserver 而不是 window 的 resize：右侧栏本身可以被拖动改宽、面板也会被
+ * 「收起 / 展开」，这些都不会触发窗口 resize，但可用空间确实变了。
+ */
+function useElementSize(): {
+  ref: React.RefObject<HTMLDivElement | null>;
+  width: number;
+  height: number;
+} {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null) return undefined;
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, width: size.width, height: size.height };
+}
+
+/** 页面上一次鼠标动作留下的痕迹（涟漪 / 拖拽线 / 落点标签），到点自动消失 */
+interface AgentPointerEffect {
+  id: number;
+  action: BrowserPointerAction;
+  x: number;
+  y: number;
+  fromX?: number;
+  fromY?: number;
+  target?: string;
+}
+
+/** 光标当前的位置（视口 CSS 像素）与是否处于按下状态（拖拽中） */
+interface AgentPointer {
+  x: number;
+  y: number;
+  pressed: boolean;
+}
+
+/** 涟漪停留时间；拖拽线留得久一点（它是「从哪拖到哪」的唯一记录） */
+const POINTER_EFFECT_MS = 900;
+const POINTER_DRAG_MS = 1600;
+/**
+ * 最后一次动作之后光标还留多久。
+ *
+ * 不是永驻：模型停手之后页面上留着一个「它在这儿」的光标会让人以为它还在动。
+ * 2.4s 够把最后一下的落点看清楚，又不会赖着不走。
+ */
+const POINTER_HIDE_MS = 2400;
+
+/**
+ * 订阅模型在页面上的鼠标动作，产出「光标 + 涟漪」要画的东西。
+ *
+ * 与 useAgentActivity 的分工：那个给的是**一句话**（正在点击 e12），
+ * 这个给的是**落点**。两者都要：文字说清在做什么，光标说清落在哪儿 ——
+ * 只报文字时，用户看到页面自己动了却不知道动的是哪一块。
+ *
+ * 事件按 tabId 过滤：多个浏览器标签同时开着时，A 标签的操作不该在 B 标签上画光标。
+ */
+function useAgentPointer(tabId: string): {
+  pointer: AgentPointer | null;
+  effects: AgentPointerEffect[];
+} {
+  const [pointer, setPointer] = useState<AgentPointer | null>(null);
+  const [effects, setEffects] = useState<AgentPointerEffect[]>([]);
+  const seq = useRef(0);
+  const hideToken = useRef(0);
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  const schedule = useCallback((run: () => void, ms: number) => {
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      run();
+    }, ms);
+    timers.current.add(timer);
+  }, []);
+
+  // 卸载（关标签）时把待触发的定时器全部撤掉：它们会 setState 到一个已经不在的组件上
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    return window.oint.browser.onEvent((event) => {
+      if (event.type !== "pointer" || event.tabId !== tabId) return;
+
+      seq.current += 1;
+      const id = seq.current;
+      const atStart = event.phase === "start";
+      const dragging = event.action === "drag";
+      // 拖拽的起点坐标在事件里（fromX / fromY）：按下那一刻光标该在起点，
+      // 抬起时事件带的 x / y 才是终点 —— 光标因此会从起点滑到终点
+      const position =
+        dragging && atStart && event.fromX !== undefined && event.fromY !== undefined
+          ? { x: event.fromX, y: event.fromY }
+          : { x: event.x, y: event.y };
+      setPointer({ ...position, pressed: dragging && atStart });
+
+      // 涟漪只画在「按下」那一相：抬起再画一次会让一次点击看起来像点了两下。
+      // 悬停不画涟漪（它本来就没有按下这件事），只有光标移过去。
+      if (atStart && event.action !== "hover") {
+        const effect: AgentPointerEffect = {
+          id,
+          action: event.action,
+          x: event.x,
+          y: event.y,
+          ...(event.fromX === undefined ? {} : { fromX: event.fromX }),
+          ...(event.fromY === undefined ? {} : { fromY: event.fromY }),
+          ...(event.target === undefined || event.target === "" ? {} : { target: event.target }),
+        };
+        setEffects((list) => [...list, effect]);
+        schedule(
+          () => setEffects((list) => list.filter((item) => item.id !== id)),
+          dragging ? POINTER_DRAG_MS : POINTER_EFFECT_MS,
+        );
+      }
+
+      hideToken.current += 1;
+      const token = hideToken.current;
+      schedule(() => {
+        if (hideToken.current === token) setPointer(null);
+      }, POINTER_HIDE_MS);
+    });
+  }, [tabId, schedule]);
+
+  return { pointer, effects };
+}
+
+/**
+ * 模型的光标与落点痕迹（覆盖在页面上，**不接收鼠标事件**）。
+ *
+ * 画在设备框内部（与 guest 同一个坐标系），于是坐标可以 1:1 用 —— 设备预览把整个框
+ * 缩放了多少，这里就反向缩放多少，光标因此始终是屏幕上同样大小的一枚。
+ */
+function AgentPointerLayer({
+  pointer,
+  effects,
+  scale,
+}: {
+  pointer: AgentPointer | null;
+  effects: AgentPointerEffect[];
+  scale: number;
+}): React.JSX.Element {
+  // 反向缩放：设备预览把页面缩到 0.3 倍时，光标不该跟着变成 5px 的一粒
+  const inverse = scale > 0 && scale !== 1 ? 1 / scale : 1;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
+      {effects.map((effect) => (
+        <PointerEffect key={effect.id} effect={effect} inverse={inverse} />
+      ))}
+      {pointer !== null && (
+        <span
+          data-slot="agent-pointer"
+          className="absolute top-0 left-0 transition-transform duration-200 ease-out motion-reduce:transition-none"
+          style={{
+            transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0) scale(${inverse})`,
+            transformOrigin: "top left",
+          }}
+        >
+          <MousePointer2
+            className={cn(
+              "text-live size-4 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]",
+              pointer.pressed && "scale-90",
+            )}
+            fill="currentColor"
+            strokeWidth={1.5}
+          />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 一次动作的痕迹：按类型画涟漪 / 拖拽线 / 落点标签 */
+function PointerEffect({
+  effect,
+  inverse,
+}: {
+  effect: AgentPointerEffect;
+  inverse: number;
+}): React.JSX.Element {
+  const dragging = effect.action === "drag";
+  const from = { x: effect.fromX ?? effect.x, y: effect.fromY ?? effect.y };
+  const dx = effect.x - from.x;
+  const dy = effect.y - from.y;
+  const length = Math.hypot(dx, dy);
+  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  // 右键 / 中键用琥珀色：它们与左键的语义不同（一个是上下文菜单、一个是新开标签），
+  // 颜色是这里唯一能表达区别的东西 —— 涟漪的形状对三种键是一样的。
+  const otherButton = effect.action === "right-click" || effect.action === "middle-click";
+  const accent = otherButton ? "text-amber-500 border-amber-500/70" : "text-live border-live/70";
+
+  return (
+    <>
+      {dragging && length > 1 && (
+        <span
+          className="absolute top-0 left-0 origin-top-left"
+          style={{ transform: `translate3d(${from.x}px, ${from.y}px, 0) rotate(${angle}deg)` }}
+        >
+          <span className="bg-live/60 block h-0.5 rounded-full" style={{ width: `${length}px` }} />
+        </span>
+      )}
+      <span
+        className="absolute top-0 left-0"
+        style={{
+          transform: `translate3d(${effect.x}px, ${effect.y}px, 0) scale(${inverse})`,
+          transformOrigin: "top left",
+        }}
+      >
+        {/* 涟漪：一个从落点扩散开的圆环（1s 内放大并淡出，效果到点后被摘掉） */}
+        <span
+          className={cn(
+            "absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2",
+            "size-10 animate-ping motion-reduce:animate-none",
+            accent,
+          )}
+        />
+        <span
+          className={cn(
+            "absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full",
+            otherButton ? "bg-amber-500" : "bg-live",
+          )}
+        />
+        {effect.target !== undefined && effect.target !== "" && (
+          <span
+            className={cn(
+              mono,
+              "bg-background/92 border-border/70 text-ink-2 absolute top-3 left-3 max-w-56 truncate",
+              "rounded-md border px-1.5 py-0.5 text-[10px] whitespace-nowrap",
+            )}
+          >
+            {effect.target}
+          </span>
+        )}
+      </span>
+    </>
+  );
+}
+
 export function BrowserPanel({
   tabId,
   active,
@@ -148,6 +493,32 @@ export function BrowserPanel({
   const [canGoForward, setCanGoForward] = useState(false);
   /** 模型正在操作页面时的说明文案；为 null 表示模型没在动它（只认本标签的事件） */
   const agentNote = useAgentActivity(tabId);
+  /** 模型的鼠标落点（可见光标 + 涟漪），同样只认本标签的事件 */
+  const { pointer, effects } = useAgentPointer(tabId);
+  /**
+   * 设备视口。刻意**留在组件内**（不进 ui-store、不落盘）：
+   * 它是「这个标签现在用多大尺寸看」，与标签同生共死 —— 换个标签重新选一次是合理的默认，
+   * 而把它做成全局设置会让「我在手机上量过」这件事在别的标签上莫名其妙地继续生效。
+   */
+  const [deviceId, setDeviceId] = useState<string>(FIT_PRESET.id);
+  const device = DEVICE_PRESETS.find((preset) => preset.id === deviceId) ?? FIT_PRESET;
+  /** 设备框所在容器的可用空间（面板宽度 / 高度变化时由 ResizeObserver 更新） */
+  const frameBox = useElementSize();
+  const deviceWidth = device.width;
+  const deviceHeight = device.height;
+  const deviceMode = deviceWidth !== undefined && deviceHeight !== undefined;
+  /**
+   * 设备框的视觉缩放比：装不下时整体缩小，永不放大（放大只会让画面发虚）。
+   * 它**只作用于 transform** —— 布局视口仍是设备尺寸，页面按设备断点渲染，见 DEVICE_PRESETS。
+   */
+  const frameScale =
+    deviceMode && frameBox.width > 0 && frameBox.height > 0
+      ? Math.min(
+          1,
+          Math.max(0.1, (frameBox.width - DEVICE_FRAME_GUTTER * 2) / deviceWidth),
+          Math.max(0.1, (frameBox.height - DEVICE_FRAME_GUTTER * 2) / deviceHeight),
+        )
+      : 1;
   /**
    * 用户点 HTML 卡片产生的「打开这个地址」请求。
    *
@@ -497,6 +868,58 @@ export function BrowserPanel({
           />
         </form>
 
+        {/*
+          设备视口：把页面自己的布局视口换成某个设备的尺寸（手机 / 平板 / 桌面…），
+          用来检查响应式布局，也让模型在同一个视口里截图、点击。
+          菜单里顺带报出当前缩放比 —— 设备比面板宽时整台设备被缩小放进面板，
+          不说出来会让人以为「页面怎么变小了」。
+        */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("rightPanel.browserDevice")}
+              title={
+                deviceWidth === undefined || deviceHeight === undefined
+                  ? t(device.labelKey)
+                  : `${t(device.labelKey)} · ${deviceWidth}×${deviceHeight}`
+              }
+              className="shrink-0"
+            >
+              <device.Icon className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuLabel className="text-ink-4 flex items-center justify-between gap-2 text-[11px] font-normal">
+              <span>{t("rightPanel.browserDevice")}</span>
+              {deviceMode && frameScale < 1 && (
+                <span className={cn(mono, "tabular-nums")}>
+                  {t("rightPanel.browserDeviceScale", { percent: Math.round(frameScale * 100) })}
+                </span>
+              )}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {DEVICE_PRESETS.map((preset) => (
+              <DropdownMenuItem
+                key={preset.id}
+                onSelect={() => setDeviceId(preset.id)}
+                className="text-[12.5px]"
+              >
+                <preset.Icon className="size-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">{t(preset.labelKey)}</span>
+                {preset.width !== undefined && preset.height !== undefined && (
+                  <span className={cn(mono, "text-ink-4 text-[10px] tabular-nums")}>
+                    {preset.width}×{preset.height}
+                  </span>
+                )}
+                {preset.id === device.id && <CheckIcon className="size-3.5 shrink-0" />}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <Button
           type="button"
           variant="ghost"
@@ -535,11 +958,46 @@ export function BrowserPanel({
         元素由上面的 effect 创建一次，页面在不在只影响它是否加载了 URL。
         每次切换页面都重建元素会把浏览会话（cookie、滚动位置）一并丢掉。
 
-        空态叠在上面（absolute）：这样「还没有页面」时看到提示，
-        一旦有 URL，webview 就在它下班。
+        设备模式（选了具体尺寸）下多两层：
+          · 外层是「放设备的台面」（居中 + 溢出裁掉，可见空间由它量出来）；
+          · 内层是**设备框本身**，尺寸就是设备视口尺寸；装不下时用 transform 整体缩小。
+        模型的光标层画在内层里 —— 与 guest 同一个坐标系，所以坐标可以 1:1 用，
+        缩放由这一层统一承担（见 AgentPointerLayer 的反向缩放）。
+
+        空态永远是**最外层的覆盖层**：它盖住的是整个视口区，而不是某一台设备。
       */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <div ref={hostRef} className="h-full w-full" />
+        <div
+          ref={frameBox.ref}
+          className={cn(
+            "flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden",
+            deviceMode && "bg-foreground/[0.04]",
+          )}
+        >
+          <div
+            data-slot="browser-viewport-frame"
+            data-device={deviceMode ? device.id : "fit"}
+            className={cn(
+              "relative",
+              deviceMode
+                ? "border-border/60 shrink-0 overflow-hidden rounded-xl border bg-background shadow-sm"
+                : "h-full w-full",
+            )}
+            style={
+              deviceMode
+                ? {
+                    width: `${deviceWidth}px`,
+                    height: `${deviceHeight}px`,
+                    transform: `scale(${frameScale})`,
+                    transformOrigin: "center center",
+                  }
+                : undefined
+            }
+          >
+            <div ref={hostRef} className="h-full w-full" />
+            <AgentPointerLayer pointer={pointer} effects={effects} scale={frameScale} />
+          </div>
+        </div>
         {!hasPage && (
           <div className="absolute inset-0 flex flex-col bg-background">
             <PanelEmpty

@@ -5,6 +5,7 @@ import type {
   ChatPart,
   ToolCallPart,
 } from "@/shared/contracts/session";
+import { toolPartImages } from "./tool-images";
 
 type UserMessage = Extract<AgentMessage, { role: "user" }>;
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
@@ -132,6 +133,15 @@ function applyToolResult(message: ToolResultMessage, pending: PendingToolCalls):
   part.result = toolResultValue(message);
   // 文本结果会盖住 details，两者都留：工具的结构化详情（edit 的 patch 等）只有 details 里有
   if (message.details !== undefined) part.details = message.details;
+  /**
+   * 图片本体：与流式路径（runtime 的 applyToolEnd）同一个判断函数。
+   *
+   * 这一步就是「刷新窗口 / 重开应用之后，会话里的截图还在」的全部实现 ——
+   * part 上的 images 只在内存里，磁盘上的那份是 pi 的 toolResult 条目（含 image 内容块），
+   * 回读时从这里重新取出。哪一类工具该带、带多大，都由 toolPartImages 说了算。
+   */
+  const images = toolPartImages(part.toolName, message.content);
+  if (images !== undefined) part.images = images;
   part.isError = message.isError;
   part.status = message.isError ? "error" : "done";
 }

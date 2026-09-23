@@ -211,8 +211,8 @@ const historySchema = Type.Object({
 
 const snapshotSchema = Type.Object({ tab: tabParam });
 
-/** browser_act 的六种动作：参数互斥，所以一个 action 字段就能讲清 */
-const ACT_ACTIONS = ["click", "type", "press", "hover", "select", "scroll"] as const;
+/** browser_act 的七种动作：参数互斥，所以一个 action 字段就能讲清 */
+const ACT_ACTIONS = ["click", "type", "press", "hover", "select", "scroll", "drag"] as const;
 type ActAction = (typeof ACT_ACTIONS)[number];
 
 const actSchema = Type.Object({
@@ -224,20 +224,62 @@ const actSchema = Type.Object({
       Type.Literal("hover"),
       Type.Literal("select"),
       Type.Literal("scroll"),
+      Type.Literal("drag"),
     ],
     {
       description:
-        "click {ref} | type {ref, text, submit?} | press {key, ref?} | hover {ref} | " +
-        "select {ref, value|label|index} | scroll {deltaY, deltaX?}",
+        "click {ref} or {x, y, button?, clicks?} | type {ref, text, submit?} | press {key, ref?} | " +
+        "hover {ref} or {x, y} | select {ref, value|label|index} | scroll {deltaY, deltaX?} | " +
+        "drag {fromX, fromY, toX, toY}",
     },
   ),
   ref: Type.Optional(
     Type.String({
       minLength: 1,
       description:
-        'Element ref from the most recent browser_snapshot, e.g. "e12". Required for click / type / hover / ' +
-        "select; optional for press (given, the element is clicked first to move focus onto it).",
+        'Element ref from the most recent browser_snapshot, e.g. "e12". Required for type / select, and for ' +
+        "click / hover unless x and y are given instead; optional for press (given, the element is clicked " +
+        "first to move focus onto it). Prefer the ref: it locates the element, scrolls it into view and " +
+        "verifies that the event reached it. Use x / y only where a ref cannot work (canvas, image maps, " +
+        "page-drawn overlays).",
     }),
+  ),
+  x: Type.Optional(
+    Type.Number({
+      description:
+        "For click / hover without a ref: x in viewport pixels (the x of an element in the latest snapshot, " +
+        "or a position measured on a screenshot). Must be inside the current viewport — coordinate actions " +
+        "do not scroll, so scroll and snapshot again first when the target is off-screen.",
+    }),
+  ),
+  y: Type.Optional(
+    Type.Number({
+      description: "For click / hover without a ref: y in viewport pixels, same rules as x.",
+    }),
+  ),
+  button: Type.Optional(
+    Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")], {
+      description: 'For a coordinate click: which mouse button. Default "left".',
+    }),
+  ),
+  clicks: Type.Optional(
+    Type.Union([Type.Literal(1), Type.Literal(2)], {
+      description:
+        "For a coordinate click: 1 = single click, 2 = double click (for zoom, text selection, map " +
+        "double-tap zoom). Default 1.",
+    }),
+  ),
+  fromX: Type.Optional(
+    Type.Number({ description: "For drag: x of the start point, in viewport pixels." }),
+  ),
+  fromY: Type.Optional(
+    Type.Number({ description: "For drag: y of the start point, in viewport pixels." }),
+  ),
+  toX: Type.Optional(
+    Type.Number({ description: "For drag: x of the end point, in viewport pixels." }),
+  ),
+  toY: Type.Optional(
+    Type.Number({ description: "For drag: y of the end point, in viewport pixels." }),
   ),
   text: Type.Optional(
     Type.String({
@@ -389,31 +431,45 @@ const SNAPSHOT_DESCRIPTION =
   "When NOT to use it: when you only need to know whether the page finished loading " +
   "(browser_open already reports that).\n\n" +
   `Output: the tab, url, title, the visible text (truncated at ${SNAPSHOT_TEXT_LIMIT} characters), and elements as ` +
-  'lines of `ref role "name"` in document order. Refs are valid only for this snapshot: after the page changes, ' +
-  "snapshot again before acting.\n" +
+  'lines of `ref role "name" … @ x,y` in document order, where x,y is the element centre in viewport pixels at ' +
+  "the moment of this snapshot (use it for coordinate clicks on targets a ref cannot reach; it expires as soon as " +
+  "the page scrolls). Refs are valid only for this snapshot: after the page changes, snapshot again before acting.\n" +
   "The text is what the user sees: it does not include hidden menus, collapsed sections, or content behind a click.";
 
 const ACT_DESCRIPTION =
-  "Act on a page: click, type, press, hover, select, or scroll.\n\n" +
+  "Act on a page: click, type, press, hover, select, scroll, or drag.\n\n" +
   "When to use it: to change what the page shows — follow a link, fill and submit a form, open a menu, pick a " +
   "dropdown option, or scroll to content that is below the fold.\n" +
   "Pick the action and give its arguments:\n" +
   "  · click {ref} — follow a link, press a button, tick a box, open a menu, submit a filled-in form.\n" +
+  "  · click {x, y, button?, clicks?} — click a position instead of an element: canvas / WebGL apps, image maps, " +
+  "maps and charts, or anything the page draws itself. clicks: 2 is a double click; button right/middle opens " +
+  "context menus and middle-click behaviour.\n" +
   "  · type {ref, text, submit?} — replace the content of a field; submit: true presses Enter right after " +
   "(search boxes, login forms).\n" +
   '  · press {key, ref?} — a key or combination ("Enter", "Escape", "Tab", "PageDown", "Control+A"); with a ref ' +
   "the element is clicked first to put focus on it.\n" +
-  "  · hover {ref} — move the mouse over an element to open a hover menu / tooltip; snapshot again to see what appeared.\n" +
+  "  · hover {ref} or {x, y} — move the mouse over a target to open a hover menu / tooltip; snapshot again to see " +
+  "what appeared.\n" +
   "  · select {ref, exactly one of value / label / index} — choose an option of a real <select> dropdown.\n" +
   "  · scroll {deltaY, deltaX?} — wheel-scroll the page at the viewport centre (positive = down); use it to reach " +
-  "content that is below the fold.\n\n" +
+  "content that is below the fold.\n" +
+  "  · drag {fromX, fromY, toX, toY} — press at one point, move through the path and release at another: sliders, " +
+  "map panning, canvas drawing, drag-and-drop reordering.\n\n" +
+  "Coordinates are viewport pixels — take the `@ x,y` at the end of a snapshot element line, or measure on a " +
+  "browser_screenshot. They are only valid for the moment they were taken: after the page scrolls or reflows, " +
+  "snapshot again. Coordinate actions do not scroll for you, and a point outside the current viewport is rejected.\n\n" +
+  "Prefer a ref whenever one exists: a ref locates the element, scrolls it into view and verifies the event " +
+  "reached it (WRONG_TARGET when an overlay swallowed the click). A coordinate click has no such knowledge — it " +
+  "only reports which element received it, so read that back and check it is the one you meant.\n\n" +
   "When NOT to use it: on an element you have not just seen in a snapshot (the page may have re-rendered and the " +
   "ref gone stale); to read what a field holds (the snapshot reports it).\n\n" +
   "Notes: every action is a real input event followed by a page-side check — when the page shows no reaction the " +
-  "call fails with NO_EFFECT instead of pretending success, and a click whose coordinates land on a different " +
+  "call fails with NO_EFFECT instead of pretending success, and a ref click whose coordinates land on a different " +
   'element fails with WRONG_TARGET rather than clicking the wrong thing. Press "Escape" to close an overlay that ' +
   "is blocking a target.\n" +
-  "Output: what was acted on and whether the interaction caused a navigation. Snapshot again to see the result.";
+  "Output: what was acted on (for a coordinate action: which element received it) and whether the interaction " +
+  "caused a navigation. Snapshot again to see the result.";
 
 const WAIT_DESCRIPTION =
   "Wait until the page shows a piece of text or an element, or for a fixed number of milliseconds.\n\n" +
@@ -513,6 +569,16 @@ function formatSnapshot(snapshot: BrowserSnapshot): string {
   if (snapshot.elements.length === 0) {
     lines.push("(none — the page may still be loading, or everything on it is plain text)");
   } else {
+    /**
+     * 元素行末尾的 `@ x,y` 是**中心点的视口坐标**（本次快照那一刻的值）。
+     *
+     * 为什么要印出来：canvas、图片热区、页面自绘的浮层在快照里没有可点的 ref，
+     * 模型唯一能做的是按坐标点 —— 而坐标它自己量不出来（截图与视口未必同尺度）。
+     * 成本是每行十来个字符，换来的是「这一类页面终于有把手」。
+     *
+     * 视口外的元素照样有坐标（快照不限定视口），所以同一个 x,y 可能是负数或超过视口 ——
+     * 那正是「先滚动再点」的信号，工具描述里写着这条纪律。
+     */
     for (const element of snapshot.elements) {
       const parts = [`- ${element.ref}`, element.role, `"${element.name}"`];
       if (element.type !== undefined) parts.push(`type=${element.type}`);
@@ -520,6 +586,9 @@ function formatSnapshot(snapshot: BrowserSnapshot): string {
       if (element.checked !== undefined) parts.push(element.checked ? "checked" : "unchecked");
       if (element.disabled === true) parts.push("disabled");
       if (element.href !== undefined) parts.push(`-> ${element.href}`);
+      if (element.x !== undefined && element.y !== undefined) {
+        parts.push(`@ ${element.x},${element.y}`);
+      }
       lines.push(parts.join(" "));
     }
   }
@@ -759,21 +828,105 @@ function waitNote(options: BrowserWaitOptions): string {
 }
 
 /** browser_act 面板提示条文案：一句话说清这次在做什么 */
-function actNote(input: { action: ActAction; ref?: string; key?: string }): string {
+function actNote(input: {
+  action: ActAction;
+  ref?: string;
+  key?: string;
+  x?: number;
+  y?: number;
+  clicks?: number;
+  button?: string;
+}): string {
+  const at =
+    input.x === undefined || input.y === undefined
+      ? ""
+      : `(${Math.round(input.x)}, ${Math.round(input.y)})`;
   switch (input.action) {
     case "click":
-      return `正在点击 ${input.ref ?? ""}`;
+      if (input.ref === undefined) {
+        if (input.clicks === 2) return `正在双击 ${at}`;
+        if (input.button === "right") return `正在右键点击 ${at}`;
+        if (input.button === "middle") return `正在中键点击 ${at}`;
+        return `正在点击 ${at}`;
+      }
+      return `正在点击 ${input.ref}`;
     case "type":
       return `正在输入到 ${input.ref ?? ""}`;
     case "press":
       return `正在按键 ${input.key ?? ""}`;
     case "hover":
-      return `正在悬停到 ${input.ref ?? ""}`;
+      return `正在悬停到 ${input.ref ?? at}`;
     case "select":
       return "正在选择下拉项";
     case "scroll":
       return "正在滚动页面";
+    case "drag":
+      return "正在拖拽";
   }
+}
+
+/**
+ * click / hover 的坐标参数：**必须成对给出**。
+ *
+ * 只给一个就报错（而不是拿 0 补另一个）：补出来的落点是页面左上角 ——
+ * 那上面通常是 logo 或「返回首页」，是最容易被误点的地方，
+ * 而一次静默的错误点击比一次明确的参数错误贵得多。
+ */
+function pickPoint(
+  input: { x?: number; y?: number },
+  action: string,
+): { x: number; y: number } | null {
+  if (input.x === undefined && input.y === undefined) return null;
+  if (input.x === undefined || input.y === undefined) {
+    const missing = input.x === undefined ? "x" : "y";
+    throw new Error(
+      `${action} 的坐标要成对给出：x 与 y 缺一不可（现在缺 ${missing}）。` +
+        "坐标只给一半时无法判断你想点哪里，补 0 会点成页面左上角。",
+    );
+  }
+  if (!Number.isFinite(input.x) || !Number.isFinite(input.y)) {
+    throw new Error(`${action} 的 x / y 必须是数字。`);
+  }
+  return { x: input.x, y: input.y };
+}
+
+/** drag 的起点 / 终点：四个参数必须齐全（缺一个就没有可用的落点） */
+function pickDragPoint(
+  input: { fromX?: number; fromY?: number; toX?: number; toY?: number },
+  which: "from" | "to",
+): { x: number; y: number } {
+  const x = which === "from" ? input.fromX : input.toX;
+  const y = which === "from" ? input.fromY : input.toY;
+  if (x === undefined || y === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(
+      `drag 需要完整的 fromX / fromY / toX / toY（视口像素坐标），现在缺 ${which}X 或 ${which}Y。`,
+    );
+  }
+  return { x, y };
+}
+
+/**
+ * 坐标点击结果里的目标描述：**必须带上「谁收下了这次点击」**。
+ *
+ * ref 点击不需要这一句 —— 它本来就知道目标是谁，错了会报 WRONG_TARGET。
+ * 坐标点击没有这个知识，所以「落点上报的是谁」是模型唯一能核对的东西：
+ * 它给出的是 canvas 而模型以为点的是按钮，那就该换落点重来。
+ */
+function describePointClick(
+  point: { x: number; y: number },
+  input: { button?: string; clicks?: number },
+  outcome: BrowserActionOutcome,
+): string {
+  const verb =
+    input.clicks === 2
+      ? "double-click at"
+      : input.button === "right"
+        ? "right-click at"
+        : input.button === "middle"
+          ? "middle-click at"
+          : "at";
+  const hit = outcome.name === "" ? "(no element reported receiving it)" : `on ${outcome.name}`;
+  return `${verb} (${Math.round(point.x)}, ${Math.round(point.y)}) ${hit}`;
 }
 
 /**
@@ -884,15 +1037,35 @@ export function createBrowserTools(
           const header = tabLine(automation, ops.tabId);
           switch (params.action) {
             case "click": {
-              if (params.ref === undefined) throw new Error("click 需要 ref（来自最近一次快照）。");
-              const outcome = await ops.click(params.ref);
-              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-              const text = withActionNotes(
-                outcome.navigated
-                  ? `Clicked ${target}. The page navigated; snapshot again to see the new content.`
-                  : `Clicked ${target}. The page did not navigate; snapshot again to see what changed.`,
-                outcome,
-              );
+              const point = pickPoint(params, "click");
+              if (params.ref === undefined && point === null) {
+                throw new Error(
+                  "click 需要 ref（来自最近一次快照），或者 x 与 y 坐标（canvas / 图片热区这类没有 ref 的目标）。",
+                );
+              }
+              if (params.ref !== undefined && point !== null) {
+                throw new Error(
+                  "click 的 ref 与 x/y 只能给一个：ref 会自己定位并滚动到位，坐标不会 —— " +
+                    "同时给两个时无法判断你想按哪一个。",
+                );
+              }
+              const outcome =
+                point === null
+                  ? await ops.click(params.ref as string)
+                  : await ops.clickPoint(point.x, point.y, {
+                      ...(params.button === undefined ? {} : { button: params.button }),
+                      ...(params.clicks === undefined ? {} : { clicks: params.clicks }),
+                    });
+              const target =
+                point === null
+                  ? outcome.name === ""
+                    ? (params.ref as string)
+                    : `${params.ref} ("${outcome.name}")`
+                  : describePointClick(point, params, outcome);
+              const suffix = outcome.navigated
+                ? "The page navigated; snapshot again to see the new content."
+                : "The page did not navigate; snapshot again to see what changed.";
+              const text = withActionNotes(`Clicked ${target}. ${suffix}`, outcome);
               return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
             }
             case "type": {
@@ -926,15 +1099,29 @@ export function createBrowserTools(
               return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
             }
             case "hover": {
-              if (params.ref === undefined) throw new Error("hover 需要 ref（来自最近一次快照）。");
-              const outcome = await ops.hover(params.ref);
-              const target = outcome.name === "" ? params.ref : `${params.ref} ("${outcome.name}")`;
-              const text = withActionNotes(
-                outcome.navigated
-                  ? `Hovered ${target}. The page navigated; snapshot again to see the new content.`
-                  : `Hovered ${target}. The page did not navigate; snapshot again to see what appeared.`,
-                outcome,
-              );
+              const point = pickPoint(params, "hover");
+              if (params.ref === undefined && point === null) {
+                throw new Error(
+                  "hover 需要 ref（来自最近一次快照），或者 x 与 y 坐标（canvas 这类没有 ref 的目标）。",
+                );
+              }
+              if (params.ref !== undefined && point !== null) {
+                throw new Error("hover 的 ref 与 x/y 只能给一个（同 click 的口径）。");
+              }
+              const outcome =
+                point === null
+                  ? await ops.hover(params.ref as string)
+                  : await ops.hoverPoint(point.x, point.y);
+              const target =
+                point === null
+                  ? outcome.name === ""
+                    ? (params.ref as string)
+                    : `${params.ref} ("${outcome.name}")`
+                  : describePointClick(point, params, outcome);
+              const suffix = outcome.navigated
+                ? "The page navigated; snapshot again to see the new content."
+                : "The page did not navigate; snapshot again to see what appeared.";
+              const text = withActionNotes(`Hovered ${target}. ${suffix}`, outcome);
               return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
             }
             case "select": {
@@ -960,6 +1147,21 @@ export function createBrowserTools(
               const outcome = await ops.scroll(deltaY, params.deltaX ?? 0);
               const text = withActionNotes(
                 `Scrolled ${deltaY > 0 ? "down" : "up"} ${Math.abs(deltaY)}px.`,
+                outcome,
+              );
+              return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
+            }
+            case "drag": {
+              const start = pickDragPoint(params, "from");
+              const end = pickDragPoint(params, "to");
+              const outcome = await ops.drag(start, end);
+              const text = withActionNotes(
+                `Dragged from (${Math.round(start.x)}, ${Math.round(start.y)}) to ` +
+                  `(${Math.round(end.x)}, ${Math.round(end.y)})` +
+                  `${outcome.name === "" ? "" : ` onto ${outcome.name}`}.` +
+                  (outcome.navigated
+                    ? " The page navigated; snapshot again to see the new content."
+                    : " The page did not navigate; snapshot again (or browser_evaluate) to see whether the drag actually moved anything."),
                 outcome,
               );
               return { content: [{ type: "text", text: `${header}\n${text}` }], details: outcome };
