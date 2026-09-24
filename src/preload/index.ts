@@ -3,6 +3,7 @@ import type { OintApi } from "@/shared/contracts/api";
 import type { BrowserEvent } from "@/shared/contracts/browser";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import { IPC } from "@/shared/contracts/ipc";
+import type { PluginSurfaceClosedEvent } from "@/shared/contracts/plugin";
 import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
 import type { TerminalEvent } from "@/shared/contracts/terminal";
 
@@ -168,6 +169,32 @@ const api = {
   web: {
     // 用草稿配置做一次真实检索：「测试连接」与「是否已保存」解耦
     test: (request) => ipcRenderer.invoke(IPC.web.test, request),
+  },
+  plugins: {
+    list: () => ipcRenderer.invoke(IPC.plugins.list),
+    enable: (id) => ipcRenderer.invoke(IPC.plugins.enable, { id }),
+    disable: (id) => ipcRenderer.invoke(IPC.plugins.disable, { id }),
+    reload: (id) => ipcRenderer.invoke(IPC.plugins.reload, { id }),
+    install: () => ipcRenderer.invoke(IPC.plugins.install),
+    uninstall: (id, keepData) => ipcRenderer.invoke(IPC.plugins.uninstall, { id, keepData }),
+    loadDev: () => ipcRenderer.invoke(IPC.plugins.loadDev),
+    openSurface: (id, surfaceId) => ipcRenderer.invoke(IPC.plugins.openSurface, { id, surfaceId }),
+    onSurfaceClosed: (callback) => {
+      // 与 chat / terminal / subagents 的 onEvent 同一套：透传事件本体 + 返回取消订阅
+      const listener = (_event: Electron.IpcRendererEvent, payload: PluginSurfaceClosedEvent) =>
+        callback(payload);
+      ipcRenderer.on(IPC.plugins.surfaceClosed, listener);
+      return () => ipcRenderer.removeListener(IPC.plugins.surfaceClosed, listener);
+    },
+    revealData: (id) => ipcRenderer.invoke(IPC.plugins.revealData, { id }),
+    diagnostics: () => ipcRenderer.invoke(IPC.plugins.diagnostics),
+    commands: () => ipcRenderer.invoke(IPC.plugins.commands),
+    // 工作目录由渲染层给（主进程不知道"当前会话在看哪个目录"）
+    runCommand: (id, args, workspaceDir) =>
+      ipcRenderer.invoke(IPC.plugins.runCommand, id, args, workspaceDir),
+    broadcastTheme: (theme) => ipcRenderer.invoke(IPC.plugins.broadcastTheme, theme),
+    export: (id) => ipcRenderer.invoke(IPC.plugins.export, { id }),
+    setWorkspace: (dir) => ipcRenderer.invoke(IPC.plugins.setWorkspace, dir),
   },
 } satisfies OintApi;
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "oint-git-status",
+  "version": "1.0.0",
+  "description": "右侧面板里看当前仓库的分支、改动文件与领先/落后，不用切到终端",
+  "author": "Oint",
+  "license": "MIT",
+  "extensions": {
+    "dev.oint": {
+      "id": "dev.oint.git-status",
+      "apiVersion": "1",
+      "permissions": ["ui.panel", "shell.exec", "ui.theme"],
+      "shell": {
+        "exec": ["git"]
+      },
+      "surfaces": [
+        {
+          "id": "git",
+          "kind": "panel",
+          "title": { "en": "Git", "zh-CN": "Git 状态" },
+          "entry": "./ui/index.html",
+          "order": 10
+        }
+      ]
+    }
+  }
+}

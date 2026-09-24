@@ -277,24 +277,48 @@ export interface ResolvedMcpServer {
 }
 
 /**
- * 把「系统预设 + 用户配置」解析成面板要的一行行清单：**系统在前（注册表顺序），用户在后
- * （保持设置文件里的顺序）**。
+ * 把「系统预设 + 插件声明 + 用户配置」解析成面板要的一行行清单。
  *
- * 这是系统/用户两层唯一的合并口径 —— 运行时取工具（mcp-servers.ts）与设置面板都走它，
+ * 顺序：**系统（注册表顺序）→ 插件（插件顺序）→ 用户（设置文件里的顺序）**。
+ * 这个顺序不是优先级，是**展示顺序**；优先级由 `overridden` 表达 ——
+ * 后面同 id 的层盖住前面的。
+ *
+ * 这是三层唯一的合并口径 —— 运行时取工具（mcp-servers.ts）与设置面板都走它，
  * 所以「面板里显示的」与「实际连接、实际给模型的」不会漂移。
+ *
+ * `pluginServers` 由调用方注入（主进程从插件注册表算出来）。**这个函数不能自己去读**：
+ * 它在 `shared/` 里，而插件注册表是主进程 + 异步的。
+ * 注入点只有一处（mcp-servers.ts 的局部包装），所以不存在"四处各算一遍"。
  */
-export function resolveMcpServerEntries(settings: Settings): ResolvedMcpServer[] {
+export function resolveMcpServerEntries(
+  settings: Settings,
+  pluginServers: McpServerConfig[] = [],
+): ResolvedMcpServer[] {
   const userIds = new Set(settings.mcpServers.map((config) => config.id));
+  const pluginIds = new Set(pluginServers.map((config) => config.id));
+
   const entries: ResolvedMcpServer[] = BUILTIN_MCP_SERVERS.map((preset) => ({
     config: builtinMcpConfig(preset, isSystemServerEnabled(settings, preset)),
     source: "system" as const,
-    overridden: userIds.has(preset.id),
+    // 系统预设被**任何**后面的层盖住。两层都要看：只看用户那一层的话，
+    // 插件盖住了预设而面板仍显示它是生效的
+    overridden: userIds.has(preset.id) || pluginIds.has(preset.id),
   }));
+
+  for (const config of pluginServers) {
+    entries.push({
+      config,
+      source: "plugin",
+      // 用户配置盖住插件：用户手写的那一份永远优先（与"用户覆盖插件技能"同一条原则）
+      overridden: userIds.has(config.id),
+    });
+  }
+
   for (const config of settings.mcpServers) {
     entries.push({
       config,
       source: "user",
-      overridden: findBuiltinMcpServer(config.id) !== undefined,
+      overridden: findBuiltinMcpServer(config.id) !== undefined || pluginIds.has(config.id),
     });
   }
   return entries;
@@ -323,16 +347,22 @@ export function isSystemServerTrusted(serverId: string): boolean {
 }
 
 /**
- * 运行时实际要连接、要暴露工具的配置：同 id 用户配置胜出，且只保留启用中的那些。
+ * 运行时实际要连接、要暴露工具的配置：同 id 时用户配置胜出，且只保留启用中的那些。
  *
  * 注意「排重后仍可能一条都不剩」是正常的 —— 用户把某个预设停用、又没配自己的 server 时就是这样。
  */
-export function effectiveMcpServerConfigs(settings: Settings): McpServerConfig[] {
+export function effectiveMcpServerConfigs(
+  settings: Settings,
+  pluginServers: McpServerConfig[] = [],
+): McpServerConfig[] {
   const configs: McpServerConfig[] = [];
-  for (const entry of resolveMcpServerEntries(settings)) {
+  for (const entry of resolveMcpServerEntries(settings, pluginServers)) {
     if (!entry.config.enabled) continue;
-    // 系统预设被用户配置盖住：跳过它，让下面那份用户配置进列表（id 相同，运行时只认一个）
-    if (entry.source === "system" && entry.overridden) continue;
+    /*
+      被后面某一层盖住的**前面的层**跳过，让盖住它的那一份进列表（id 相同，运行时只认一个）。
+      用户那一层永远不被盖（它是最后一层），所以它的 overridden 只用于界面提示。
+    */
+    if (entry.source !== "user" && entry.overridden) continue;
     if (!isValidMcpServerId(entry.config.id)) continue;
     configs.push(entry.config);
   }

@@ -32,6 +32,13 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import { dataDir } from "@/main/app/paths";
+import { pluginContributionDirs } from "@/main/plugins/contributions";
+import { previewToolText } from "@/main/plugins/hooks";
+import {
+  dispatchPluginHooks,
+  pluginTools,
+  pluginToolsGeneration,
+} from "@/main/plugins/process-host";
 import type {
   ChatEvent,
   ChatEventEnvelope,
@@ -89,6 +96,7 @@ import {
 } from "./repeat-guard";
 import { buildSubagentResult } from "./report-delivery";
 import {
+  agentsSkillsDir,
   resolveBuiltinPromptDir,
   resolveBuiltinSkillDir,
   resolvePromptTemplateDirs,
@@ -423,6 +431,14 @@ interface SessionRuntime {
    */
   mcpToolsStale?: boolean;
   /**
+   * 建这张工具表时，插件工具集合的代号。
+   *
+   * 与 `mcpToolsStale` 并列而不是合成一个：MCP 那边是**事件驱动**的
+   *（reload 时置位），插件这边是**状态比对**（启停会改工具集合，但没人"通知"会话）。
+   * 合成一个的话，插件启停就没有置位的机会，工具表会一直停在旧的那份。
+   */
+  pluginToolsGeneration?: number;
+  /**
    * 会话级统计折叠状态：turn/step 计数与 LLM/工具/TTFT/解码耗时。
    * 由 session-stats.ts 的纯函数增量维护，变化时经 emitSessionStats 推送渲染层。
    */
@@ -461,6 +477,16 @@ interface SessionRuntime {
    * 内核没有 dsh 的 `additionalContexts`，所以这里是唯一的投递路径（见 repeat-guard 文件头）。
    */
   pendingRepeatNotice?: string;
+  /**
+   * 待注入的**插件钩子**补充说明（`PostToolUse` / `PostToolUseFailure` 的
+   * `additionalContext`，见 main/plugins/hooks.ts）。
+   *
+   * 与 `pendingRepeatNotice` 同一格中转、同一个理由（检测在 `after_tool`，
+   * 投递必须在 `transform_context`）、同一条注入路径（custom 条目，用户看不到）。
+   * 单独一格而不是复用上面那一格：两者的内容与来源不同，而注入后的清理时机也不同 ——
+   * 合成一格会让"重复提醒把插件的说明挤掉"这种静默丢失成为可能。
+   */
+  pendingPluginContext?: string;
 }
 
 /** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
@@ -1080,6 +1106,7 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
  * 三个来源的必要性：
  * - cwd：会话工作目录，技能/模板可能落在它下面的 `.oint/` 里；
  * - skills / prompts / subagents：数据目录里的全局资源，`loadAgentResources` 要经守卫读取；
+ * - 跨工具共享的技能目录（`~/.agents/skills`，缺省恒在）：见下面那段注释；
  * - 内置技能与内置提示目录（appPath 给了才加）：见下面那段注释；
  * - tmpdir：bash spill 的硬要求 —— 超长输出由内核写到 `os.tmpdir()/tmp-*` 下，
  *   工具结果里会附 "Full output: <path>"，那条路径不在允许根内时 read 会直接拒绝，
@@ -1088,13 +1115,29 @@ async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void>
  * 注意：子目录此时可能还不存在（首次启动前）。`validatePathAccess` 是纯字符串判断、
  * 不做文件系统访问，所以不存在的根不会报错，只是永远匹配不上。
  */
-export function sessionAllowedRoots(cwd: string, appPath?: string): string[] {
+export function sessionAllowedRoots(
+  cwd: string,
+  appPath?: string,
+  pluginDirs: readonly string[] = allPluginContributionDirs(),
+): string[] {
   const data = dataDir();
   const roots = [
     cwd,
     path.join(data, "skills"),
     path.join(data, "prompts"),
     path.join(data, "subagents"),
+    /**
+     * **跨工具共享的技能目录同样必须在这里**（`~/.agents/skills`）。
+     *
+     * 与下面插件目录那一段是同一个坑的另一半：`resolveSkillDirs` 把它加进扫描清单之后，
+     * 允许根没跟着加的话，内核的 `fileInfo` 会被路径守卫拒绝，而 `loadSkills` 只在
+     * **非 not_found** 的失败上留一行诊断 —— 症状就是「用户在 `~/.agents/skills` 里
+     * 明明有技能，Oint 里一个都不显示」，且那行诊断看起来像路径写错了。
+     *
+     * 这个目录**通常不存在**（多数用户还没用那套约定）：`loadSkills` 对缺失目录是
+     * 静默跳过（`not_found` 不留诊断），所以放行它不产生任何噪音。
+     */
+    agentsSkillsDir(),
     tmpdir(),
   ];
   /**
@@ -1108,7 +1151,24 @@ export function sessionAllowedRoots(cwd: string, appPath?: string): string[] {
   if (appPath !== undefined && appPath !== "") {
     roots.push(resolveBuiltinSkillDir(appPath), resolveBuiltinPromptDir(appPath));
   }
+  /**
+   * **插件贡献的目录同样必须在这里。**
+   *
+   * 这是本方案 §3.6 特意点出来的那个坑：`resolveSkillDirs` 把插件目录加进去之后，
+   * 如果允许根没跟着加，内核的 listDir 会被路径守卫拒绝 —— 症状是
+   * **「插件装上了、目录也存在、却一个技能都没有」**，而 diagnostics 里只有一行
+   * `list_failed`。前面那次「内置技能加进来时忘了同步这里」已经踩过同一个坑。
+   *
+   * 顺序无关：这是一张"能不能进"的白名单，不是优先级表。
+   */
+  roots.push(...pluginDirs);
   return roots;
+}
+
+/** 当前插件贡献的全部目录（去重后拼成一张表，供允许根用） */
+function allPluginContributionDirs(): string[] {
+  const dirs = pluginContributionDirs();
+  return [...dirs.skills, ...dirs.prompts, ...dirs.subagents];
 }
 
 /**
@@ -1677,8 +1737,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 一轮问答结束：会话还没名字时，用这轮内容生成标题
     void maybeTitleSession(runtime, event.status);
     // 本轮跑动期间 MCP 工具集合变过：现在这一轮结束了，可以安全换工具（下一轮生效）
-    if (runtime.mcpToolsStale === true && deps.mcp !== undefined) {
-      void applyMcpTools(runtime, deps.mcp);
+    if (
+      runtime.mcpToolsStale === true ||
+      runtime.pluginToolsGeneration !== pluginToolsGeneration()
+    ) {
+      void applyExtraTools(runtime);
     }
   }
 
@@ -1927,11 +1990,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    * 工具表是**整表替换**：这里必须把会话的 ask 工具一并重建传进去，
    * 否则 MCP 刷新一次，ask_user 就会凭空消失（见 tools.ts 的 buildTools 注释）。
    */
-  async function applyMcpTools(runtime: SessionRuntime, mcp: McpToolSource): Promise<void> {
+  async function applyExtraTools(runtime: SessionRuntime): Promise<void> {
     runtime.mcpToolsStale = false;
+    runtime.pluginToolsGeneration = pluginToolsGeneration();
     try {
       const nextTools = buildTools(
-        mcp.tools(),
+        /*
+          MCP 工具与插件工具走**同一个 extraTools 槽**。
+          插件的代码进不了内核，它只能通过这条路径把自己的工具交给模型 ——
+          而"谁是插件工具"由 process-host 的前缀（plugin__）区分。
+        */
+        [...(deps.mcp?.tools() ?? []), ...pluginTools()],
         createAskTool({ sessionId: runtime.sessionId, interactions }),
         jobToolsFor(runtime.sessionId),
         deps.browser,
@@ -1952,6 +2021,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
          */
         runtime.subagentTools,
         deps.web,
+        /**
+         * grep / glob 的检索围栏。
+         *
+         * **必须带上**：`setTools` 是整表替换，而这两个工具的围栏是**构造时闭包捕获**的 ——
+         * 漏掉这一项，热替换之后的 grep/glob 就退回成"零确认越界读"
+         *（tools/search.ts 的 resolveSearchRoot 里写了那条路径为什么危险）。
+         *
+         * 用 `runtime.env.cwd` 而不是重新解析：会话的工作目录就是执行环境的 cwd，
+         * 两者不可能不一致（它由 createRuntime 一次算好）。
+         */
+        { searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath) },
       );
       await runtime.harness.setTools(nextTools, BACKGROUND_CONTEXT);
       /**
@@ -1968,7 +2048,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         toolsTokens: estimateToolsTokens(nextTools),
       };
     } catch (error) {
-      console.warn(`刷新 MCP 工具失败：${errorText(error)}`);
+      console.warn(`刷新工具表失败：${errorText(error)}`);
     }
   }
 
@@ -2225,12 +2305,25 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 权限面没有因此变大：子智能体用的仍是同一套审批门与路径守卫。
      */
     const builtTools = buildTools(
-      deps.mcp?.tools() ?? [],
+      /*
+        **插件工具必须在这里就带上**，不能只在 `applyExtraTools` 里加。
+
+        踩过：早先只改了刷新那条路，于是**新会话的第一条消息里模型看不到任何插件工具** ——
+        它们要到第一轮结束（`pluginToolsGeneration` 对不上，触发刷新）之后才出现。
+        而用户的第一句往往正是"用那个插件的工具帮我做 X"。
+      */
+      [...(deps.mcp?.tools() ?? []), ...pluginTools()],
       spec === undefined ? createAskTool({ sessionId, interactions }) : undefined,
       jobToolsFor(sessionId),
       deps.browser,
       spec === undefined ? subagentTools : [],
       deps.web,
+      /*
+        grep / glob 的检索围栏（见 tools/search.ts 的 resolveSearchRoot）。
+        子智能体拿到的是同一批工具对象，所以它也自动受同一个围栏约束 ——
+        这正是「过滤发生在已装配好的那份工具表上」的好处（见 restrictTools 的说明）。
+      */
+      { searchRoots: sessionAllowedRoots(env.cwd, deps.appPath) },
     );
     // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
     const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
@@ -2281,6 +2374,40 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     await restoreTodoState(lane, todo);
 
     /**
+     * **把「这个会话能用哪些工具」对齐到 lane 上。**
+     *
+     * ## 不对齐会怎样（这是一个线上真实报错）
+     *
+     * 内核在 lane **已有存储配置**时直接恢复那份配置、完全忽略 seed
+     *（harness.js 的 `stored.kind === "lane"` 分支）—— 与上面那段模型注释同一个机制。
+     * 而 `activeToolNames` **就在那份存储配置里**（它是按事件持久化的，见 reducer 的
+     * `snapshot.configuration.activeToolNames = event.value`）。
+     *
+     * 于是：一个会话第二次打开时，它拿到的是**上次存下的工具名清单**。
+     * 只要工具表在此期间变过，清单里就会出现表里没有的名字，此后**每一次发送**都以
+     * `One or more configured tools are unavailable in this process` 失败 ——
+     * 报错在生成阶段，与"你发了什么"无关，所以看起来像会话坏了。
+     *
+     * 触发它不需要插件：任何工具集合的变动都会。而插件让它变得**日常** ——
+     * 插件可以启用/停用、进程可以崩溃、工具名可以改版（本轮就把 `plugin__…__<工具>`
+     * 改成了 `plugin__…__call`）。
+     *
+     * ## 为什么每次创建 runtime 都写一遍
+     *
+     * 与 `applyModel` 同一个理由：**内核信存储、不信 seed**，所以"对齐"这件事必须由
+     * 我们这边每次显式做。不这样做的话，`activeToolNames` 会永远停在会话第一次附着时的
+     * 那份快照上。
+     *
+     * 注意它与下面 `applyExtraTools` 的分工：那一条管的是"本轮之后工具表变了"，
+     * 这一条管的是"打开会话时先与当前表对齐"。两条缺一不可 ——
+     * 只有前一条时，坏掉的清单会一直拦着请求，而修复要等到某一轮成功结束之后。
+     */
+    await lane.setActiveTools(
+      builtTools.map((tool) => tool.name),
+      BACKGROUND_CONTEXT,
+    );
+
+    /**
      * 用 **lane 实际恢复出来的模型**初始化 runtime 的模型视图，而不是「我们期望的那个值」。
      *
      * 这一步是必需的：内核在 lane 已有存储配置时完全忽略 seed（harness.js 的
@@ -2328,12 +2455,82 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.unsubscribers.push(
       created.harness.hooks.on("before_tool", async (event) => {
         try {
+          /*
+            **插件钩子排在宿主的权限门之前，而且只能加限制。**
+
+            顺序是刻意的：插件拦下的调用**不该再弹审批卡**（用户批准一次注定被拒的操作
+            只会让人困惑）。反过来的顺序（先审批再让插件拦）会让"我点了允许但它还是没跑"
+            变成一个没有解释的现象。
+
+            能力边界由类型保证：钩子的返回值里**没有 `allow`**（见 hooks.ts 的注释）——
+            它不可能放行宿主的门本来要拦的东西。那个门永远是最后一道。
+          */
+          const verdict = await dispatchPluginHooks("PreToolUse", {
+            toolName: event.toolName,
+            args: event.args,
+            workspaceDir: runtime.env.cwd,
+          });
+          for (const failure of verdict.failures) {
+            console.warn(
+              `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
+            );
+          }
+          if (verdict.block !== undefined) {
+            return { block: { reason: verdict.block } };
+          }
           return await gateTool(runtime, event.toolName, event.toolCallId, event.args);
         } catch (error) {
-          // 任何异常都按安全侧默认拒绝
-          console.warn(`工具权限校验失败（${event.toolName}）：${errorText(error)}`);
-          return { block: { reason: "权限校验失败，已拒绝该操作" } };
+          /*
+            任何异常都按安全侧默认拒绝。
+
+            这一段现在盖住两件事：**插件钩子的分发**与**宿主的权限门**。
+            钩子自身的失败**不会**走到这里（`dispatchHooks` 把每条失败都变成结论，
+            见 hooks.ts），所以到这里的只有实现层面的意外 —— 那时按拒绝处理是对的，
+            但文案要如实覆盖两件事，不能只说"权限校验失败"。
+          */
+          console.warn(`工具前置校验失败（${event.toolName}）：${errorText(error)}`);
+          return { block: { reason: "工具前置校验失败，已拒绝该操作" } };
         }
+      }),
+    );
+
+    /**
+     * **插件的工具事件钩子**（`PostToolUse` / `PostToolUseFailure`）。
+     *
+     * 只观察，永不改写工具结果 —— 返回 `undefined` 是刻意的，与上面那个重复调用守卫
+     * 同一条口径（四家共识：只提醒 / 只中止，不篡改调用本身）。
+     *
+     * 与"重复调用守卫"分成两个注册而不是合成一个：两者的失败语义与数据来源都不同，
+     * 合成一个会让"钩子崩了"与"守卫崩了"在日志里长得一样（两者都必须不能影响工具结果，
+     * 所以各自 catch 各自的）。
+     */
+    runtime.unsubscribers.push(
+      created.harness.hooks.on("after_tool", async (event) => {
+        try {
+          const eventName = event.isError ? "PostToolUseFailure" : "PostToolUse";
+          const verdict = await dispatchPluginHooks(eventName, {
+            toolName: event.toolName,
+            args: event.args,
+            workspaceDir: runtime.env.cwd,
+            isError: event.isError,
+            ...(previewToolText(event.content) === undefined
+              ? {}
+              : { text: previewToolText(event.content) }),
+          });
+          for (const failure of verdict.failures) {
+            console.warn(
+              `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
+            );
+          }
+          if (verdict.additionalContext !== undefined) {
+            // 只暂存，投递交给 transform_context（与重复提醒同一条路径、同一个理由）
+            runtime.pendingPluginContext = verdict.additionalContext;
+          }
+        } catch (error) {
+          // 钩子只是增强：它自己出错绝不能影响工具调用的结果
+          console.warn(`插件钩子分发失败（${event.toolName}）：${errorText(error)}`);
+        }
+        return undefined;
       }),
     );
 
@@ -2431,14 +2628,24 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.unsubscribers.push(
       created.harness.hooks.on("transform_context", (event) => {
         const notice = runtime.pendingRepeatNotice;
-        if (notice === undefined) return;
+        const pluginContext = runtime.pendingPluginContext;
+        if (notice === undefined && pluginContext === undefined) return;
         runtime.pendingRepeatNotice = undefined;
-        return {
-          messages: [
-            ...event.messages,
-            createCustomMessage("repeat-notice", notice, false, undefined, Date.now()),
-          ],
-        };
+        runtime.pendingPluginContext = undefined;
+        /*
+          两条暂存各自成一条 custom 条目，不是拼成一段：
+          它们的**来源不同**（宿主守卫 vs 插件钩子），合成一段之后
+          模型与读日志的人都分不出"这句话是谁说的"，而排查时那正是第一个要问的问题。
+        */
+        const extra = [
+          ...(notice === undefined
+            ? []
+            : [createCustomMessage("repeat-notice", notice, false, undefined, Date.now())]),
+          ...(pluginContext === undefined
+            ? []
+            : [createCustomMessage("plugin-hook", pluginContext, false, undefined, Date.now())]),
+        ];
+        return { messages: [...event.messages, ...extra] };
       }),
     );
 
@@ -2452,7 +2659,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             runtime.mcpToolsStale = true;
             return;
           }
-          void applyMcpTools(runtime, mcp);
+          void applyExtraTools(runtime);
         }),
       );
     }

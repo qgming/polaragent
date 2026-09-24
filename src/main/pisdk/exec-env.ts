@@ -7,7 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ExecutionEnv, err, FileError } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
-import { normalizePath, validatePathAccess } from "@/main/security/path-guard";
+import { buildChildEnv } from "@/main/security/child-env";
+import { isInsidePath, normalizePath, resolveRealPath } from "@/main/security/path-guard";
 
 /** bash 路径解析缓存：undefined 同样缓存，表示该平台已确认不可用 */
 const bashPathCache = new Map<NodeJS.Platform, string | undefined>();
@@ -126,31 +127,48 @@ function outsideRootError(absolutePath: string, reason: string): FileError {
  *
  * 两条边界，能力完全不同，不要混为一谈：
  *
- * 1. **路径类方法有守卫**：readFile / writeFile / listDir 等先校验目标落在 allowedRoots 内，
- *    越界返回 FileError（见 guard）。
+ * 1. **路径类方法有守卫**：readFile / writeFile / listDir 等先校验目标落在 allowedRoots 内
+ *    （**先解析 realpath**，见 guard），越界返回 FileError。
  *
- * 2. **`exec` 完全不受守卫约束**：它直接透传给 NodeExecutionEnv，可以跑任意命令、
- *    读写任意路径 —— 路径守卫在这一层**不构成任何限制**。管住它的是上层权限门
- *    （pisdk/permissions.ts）：shell 工具一律判为 high，必须用户点头。
- *
- * 另外**没有传 shellEnv**，所以子进程继承整个主进程环境（内核 getShellEnv 会展开
- * `process.env`）—— 包括 OINT_HOME 与进程里存在的各类凭据。
- * 这是当前的既成事实，不是有意设计：收紧成白名单需要先确认不影响依赖 env 的开发命令
- *（npm registry token 等），见 docs/remediation-plan.md 的 P3-5。
- * jobs.ts 里那条同样继承环境的注释与本处口径一致。
+ * 2. **`exec` 不受路径守卫约束**：它仍然可以跑任意命令、读写任意路径 —— 路径守卫
+ *    在这一层**不构成任何限制**。管住它的是上层权限门（pisdk/permissions.ts）：
+ *    shell 工具一律判为 high，必须用户点头。
+ *    **但它受限的地方是环境变量**：子进程只拿到白名单（见 exec 的说明与
+ *    main/security/child-env.ts），所以「跑一条 env 把凭据读出来」这条路已经封了。
+ *    jobs.ts 里那条后台作业走同一个 exec，因此同款生效。
  */
 export async function createExecEnv(options: CreateExecEnvOptions): Promise<ExecutionEnv> {
   const cwd = normalizePath(options.cwd);
   const roots = [cwd, ...(options.allowedRoots ?? [])].map((root) => normalizePath(root));
   const inner = new NodeExecutionEnv({ cwd, shellPath: resolveBashPath() });
 
-  /** 校验请求路径：归一化后必须位于任一允许根内 */
-  function guard(requested: string): GuardedPath {
+  /**
+   * 允许根本身的 realpath，**只在第一次校验时算一遍**。
+   *
+   * 为什么要 memo：每个文件操作都要判包含，而根在一次会话里不会变。不缓存的话
+   * 每次 read/write/list 都要为每个根各跑一次 realpath —— 对一个热路径来说是纯浪费。
+   */
+  let realRootsPromise: Promise<string[]> | undefined;
+  const realRoots = (): Promise<string[]> =>
+    (realRootsPromise ??= Promise.all(roots.map((root) => resolveRealPath(root))));
+
+  /**
+   * 校验请求路径：**解析 realpath 之后**必须位于任一允许根内。
+   *
+   * 与旧实现的差别只有一处，但那处是安全边界：旧的是纯字符串比较，一个指向禁区
+   *（如 `~/.oint/settings.json`）的符号链接，其字面路径在根内就会被放行。现在两侧
+   * 都过 realpath 再比，链接会被解析到真实目标、包含判定随之失败。
+   *
+   * 目标不存在时 `resolveRealPath` 会退到「最近的存在祖先」，所以「新建文件」照常放行 ——
+   * 这与「拒绝越界」不冲突：越界的判断发生在解析之后，而不是「存在与否」上。
+   */
+  async function guard(requested: string): Promise<GuardedPath> {
     const absolute = toAbsolutePath(requested, cwd);
-    const access = validatePathAccess(absolute, roots);
-    return access.ok
-      ? { ok: true, path: access.resolved }
-      : { ok: false, error: outsideRootError(absolute, access.reason) };
+    const resolved = await resolveRealPath(absolute);
+    const allowed = (await realRoots()).some((root) => isInsidePath(resolved, root));
+    return allowed
+      ? { ok: true, path: resolved }
+      : { ok: false, error: outsideRootError(absolute, `路径不在允许的工作目录内: ${resolved}`) };
   }
 
   return {
@@ -159,7 +177,7 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
     },
 
     async absolutePath(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.absolutePath(check.path, context);
     },
@@ -169,81 +187,81 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
     },
 
     async readTextFile(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.readTextFile(check.path, context);
     },
 
     async openTextLineReader(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.openTextLineReader(check.path, context);
     },
 
     async readTextLines(requested, options, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.readTextLines(check.path, options, context);
     },
 
     async readBinaryFile(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.readBinaryFile(check.path, context);
     },
 
     async writeFile(requested, content, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.writeFile(check.path, content, context);
     },
 
     async appendFile(requested, content, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.appendFile(check.path, content, context);
     },
 
     async renameFile(source, destination, context) {
-      const sourceCheck = guard(source);
+      const sourceCheck = await guard(source);
       if (!sourceCheck.ok) return err<never, FileError>(sourceCheck.error);
-      const destinationCheck = guard(destination);
+      const destinationCheck = await guard(destination);
       if (!destinationCheck.ok) return err<never, FileError>(destinationCheck.error);
       return inner.renameFile(sourceCheck.path, destinationCheck.path, context);
     },
 
     async fileInfo(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.fileInfo(check.path, context);
     },
 
     async listDir(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.listDir(check.path, context);
     },
 
     async canonicalPath(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.canonicalPath(check.path, context);
     },
 
     async exists(requested, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.exists(check.path, context);
     },
 
     async createDir(requested, options, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.createDir(check.path, options, context);
     },
 
     async remove(requested, options, context) {
-      const check = guard(requested);
+      const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.remove(check.path, options, context);
     },
@@ -256,8 +274,26 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
       return inner.createTempFile(options, context);
     },
 
+    /**
+     * 跑 shell 命令。
+     *
+     * **环境变量：`inheritEnv: false` + 白名单**（见 main/security/child-env.ts）。
+     *
+     * 这一步不能省，而且不能只靠构造 `NodeExecutionEnv` 时传 `shellEnv`：内核的
+     * `getShellEnv` 在默认参数下是 `{...process.env, ...baseEnv, ...extraEnv}` ——
+     * `process.env` 铺在最底下，所以传 `shellEnv` 只是**覆盖**，没被覆盖到的凭据
+     * 照样进子进程。只有 `inheritEnv: false` 才是**排除**。
+     *
+     * 收紧之前，一条被批准的 `env` 或 `cat ~/.oint/settings.json` 就能把主进程里的
+     * `OINT_HOME` 与各类 `*_TOKEN` 读走；而现在子进程拿到的只有白名单里那几项，
+     * 加上调用方通过 `options.env` 显式给的。
+     */
     exec(command, options, context) {
-      return inner.exec(command, options, context);
+      return inner.exec(
+        command,
+        { ...options, inheritEnv: false, env: buildChildEnv(process.env, options?.env) },
+        context,
+      );
     },
 
     cleanup(context) {

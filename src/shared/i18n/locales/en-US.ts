@@ -46,6 +46,9 @@ export const enUS = {
     /** The line under the chooser: which views can be opened more than once */
     chooserHint:
       "The browser can keep several tabs open; every other view stays single — opening it again just switches back.",
+    /** A tab is still open but its panel is no longer registered (plugin disabled or removed) */
+    unavailable:
+      "This panel is no longer available (the plugin providing it was disabled or removed)",
     review: "Review",
     files: "Files",
     /** Single-file viewer: the tab label is replaced by the file name; this only covers the empty case */
@@ -321,6 +324,143 @@ export const enUS = {
     showLess: "Show less",
     branchOf: "Branch",
   },
+  plugins: {
+    title: "Plugins",
+    /** Placeholder while a plugin panel loads (the webview guest starts slower than React renders) */
+    surfaceLoading: "Loading the interface…",
+    surfaceFailed: "This interface failed to load",
+    /** Fallback label key for plugin panels; the real title comes from PanelDescriptor.labelText */
+    panelFallbackLabel: "Plugin panel",
+    /** Header line: the thing worth explaining up front is the disabled-by-default rule */
+    subtitle:
+      "Plugins add skills for the model and panels for the UI. Plugins you install start disabled — check the permissions they ask for before enabling.",
+    sectionManage: "Manage",
+    sectionDiagnostics: "Diagnostics",
+    tabSystem: "System",
+    tabUser: "User",
+    sourceBuiltin: "Built-in",
+    /** Source shown in the detail dialog (cards omit it — everything there is user-installed) */
+    sourceUser: "Installed by you",
+    /** Development plugins must be marked: uninstalling one does **not** delete files */
+    sourceDev: "Dev",
+    /** Row action: package the plugin as a zip (same container as install) */
+    share: "Share",
+    /** Accessible name for the "more" menu on a narrow card */
+    moreActions: "More actions",
+    /** Permission risk tiers, spelled out in the detail dialog */
+    riskHigh: "High risk",
+    riskMedium: "Medium risk",
+    riskLow: "Low risk",
+    /** Appended after a permission id the host does not recognise */
+    unknownPermission: "(permission not recognised by the host)",
+    /** Surface list in the detail dialog */
+    surfaces: "Surfaces",
+    surfacePanel: "panel",
+    surfaceModal: "modal",
+    surfaceWindow: "window",
+    /** Accessibility text for the plugin's modal surface (`DialogDescription`) */
+    surfaceModalDescription: "Interface provided by {{plugin}}",
+    countLabel: "{{n}} total",
+    detail: "Show details",
+
+    empty: "No plugins installed yet",
+    emptyHint: "Plugins can add skill packs, panels, tools, or standalone windows to Oint.",
+    installPackage: "Install package",
+    loadDev: "Load development plugin",
+    /** Shown when the list/diagnostics **cannot be read** (the real error follows) */
+    unavailable: "Could not read plugin information",
+    systemEmpty: "No bundled plugins",
+    systemEmptyHint:
+      "Built-in plugins ship with the app — they can be disabled but not deleted. This is empty when the install is incomplete.",
+
+    enable: "Enable",
+    disable: "Disable",
+    reload: "Reload",
+    uninstall: "Uninstall",
+    revealData: "Data folder",
+    openSurface: "Open",
+    refresh: "Refresh",
+
+    contributions: "Contributions",
+    permissions: "Permissions",
+    newPermission: "new",
+    /**
+     * Permissions with no enforcement point yet (see UNENFORCED_PLUGIN_PERMISSIONS
+     * in shared/contracts/plugin.ts). This badge is disclosure, not alarm.
+     */
+    notEnforced: "not enforced yet",
+    notEnforcedHint:
+      "Permissions marked “not enforced yet” have no enforcement point in the host — declaring them has no effect today.",
+    /**
+     * The trust boundary (plan §4.11). Wording follows PI-Desktop's author guide:
+     * "It is not yet an operating-system sandbox for raw Node APIs."
+     */
+    trustBoundary:
+      "This plugin ships its own code. It runs in a separate process, but that is crash isolation, not an OS sandbox — it can still read and write files and reach the network directly. The permission list above covers what the host hands it, not everything it can do.",
+    noContributions: "No contributions",
+    noPermissions: "Requests no permissions",
+    contributionCount: "{{n}} contribution(s)",
+    /** Hooks section: what this plugin does on tool calls */
+    hooks: "Intervenes in",
+    hookAllTools: "all tools",
+    hookFailsClosed: "blocks on failure",
+    hooksDesc:
+      "Hooks can only add restrictions: PreToolUse may block a call but can never bypass permissions or approval; the other two events only observe, never change the result.",
+
+    state: {
+      disabled: "Disabled",
+      loading: "Loading",
+      running: "Ready",
+      loadError: "Load failed",
+      invalid: "Invalid package",
+      crashed: "Crashed",
+    },
+    contrib: {
+      panels: "Panels",
+      modals: "Modals",
+      windows: "Windows",
+      commands: "Commands",
+      skills: "Skills",
+      prompts: "Prompts",
+      subagents: "Subagents",
+      mcpServers: "MCP servers",
+      tools: "Tools",
+    },
+    /** The names line under the contribution chips: `{{label}}: {{names}}` */
+    contributionNames: "{{label}}: {{names}}",
+    contributionNameSeparator: ", ",
+    perm: {
+      uiPanel: "Show a panel",
+      uiView: "Show a view in the right panel",
+      uiWindow: "Open a standalone window",
+      uiModal: "Open a modal",
+      uiTheme: "Change the theme",
+      notify: "Send notifications",
+      storage: "Store its own settings",
+      skillsContribute: "Contribute skills",
+      promptsContribute: "Contribute prompt templates",
+      subagentsContribute: "Contribute subagent definitions",
+      commandsRegister: "Register commands",
+      agentToolRegister: "Add tools for the model",
+      fsRead: "Read files",
+      fsWrite: "Write files",
+      fsDelete: "Delete files",
+      shellExec: "Run commands",
+      shellOpenExternal: "Open links in the default app",
+      netFetch: "Access the network",
+      mcpServerLocal: "Start a local MCP server",
+      mcpServerRemote: "Connect to a remote MCP server",
+      hostHooksRegister: "Intervene in tool calls",
+      clipboardWrite: "Write to the clipboard",
+      sessionRead: "Read the current session",
+    },
+
+    diagnosticsEmpty: "No load errors or crashes recorded",
+    levelError: "Error",
+    levelWarn: "Warning",
+    sourcesPendingHint:
+      "Until then you can install a local .ointplug package or load a development folder.",
+  },
   settings: {
     general: "General",
     services: "Model services",
@@ -390,9 +530,14 @@ export const enUS = {
     defaultModelDesc: "Model used by new sessions",
     noServices: "No model services configured yet",
     noServicesHint: "Add an OpenAI-compatible service to start chatting",
-    // Source switcher: System = shipped with the app, User = placed in the data directory / project
+    // Source switcher: System = shipped with the app, Global = cross-tool shared dir,
+    // User = placed in the data directory / project
     sourceLabel: "Source",
     sourceTabSystem: "System",
+    /** Cross-tool shared skills dir (`~/.agents/skills`): Claude Code / Codex / Cursor scan it too */
+    sourceTabGlobal: "Global",
+    /** Third tab of the MCP panel: servers a plugin declared in mcp.json (read-only) */
+    sourceTabPlugin: "Plugins",
     sourceTabUser: "User",
     skillsList: "Skills",
     // The slash menu is wired now: disabled skills stay out of the model's list but remain callable from it
@@ -402,6 +547,9 @@ export const enUS = {
     skillsEmptyHint: "Drop a SKILL.md into the skills folder in the data directory to register one",
     skillsSystemEmpty: "No built-in skills",
     skillsSystemEmptyHint: "Skills shipped with the app will appear here",
+    skillsGlobalEmpty: "No skills in the cross-tool shared folder",
+    skillsGlobalEmptyHint:
+      "Put a skill into ~/.agents/skills (the same folder Claude Code / Codex / Cursor use) to see and enable it here",
     skillImport: "Import skills (.zip)",
     skillImportDone: "Imported {{files}} files, found {{skills}} skills",
     skillImportNoSkill:
@@ -414,6 +562,8 @@ export const enUS = {
     skillEnabled: "Enabled",
     skillBuiltinHint:
       "Built-in skills ship with the app and update with it; disable one if you don't need it",
+    skillSharedHint:
+      "This skill lives in the cross-tool shared folder — deleting it would remove it from your other tools too; disable it instead",
     // Subagents section
     subagentsList: "Available subagents",
     subagentsListDesc:
@@ -509,6 +659,14 @@ export const enUS = {
       "The presets shipped with the app are missing — reinstall the app to restore them",
     mcpOverriddenByUser: "Overridden by your own config",
     mcpOverridesSystem: "Replacing a built-in preset",
+    mcpPluginServers: "From plugins",
+    mcpPluginServersDesc:
+      "MCP servers a plugin declared in its own mcp.json. Both the config and the on/off state follow the plugin, so this view is read-only — disable the plugin that provides one to turn it off",
+    mcpPluginEmpty: "No plugin provides an MCP server",
+    mcpPluginEmptyHint:
+      "A plugin must declare it in mcp.json and request the mcp.server.local or mcp.server.remote permission to show up here",
+    mcpPluginOverridden: "Overridden by your own config",
+    mcpPluginManaged: "Provided by a plugin: disable that plugin to turn it off",
     mcpPresetCategory: {
       knowledge: "Knowledge & reference",
       search: "Search & fetch",

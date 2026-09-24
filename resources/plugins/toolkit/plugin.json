@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "oint-toolkit",
+  "version": "1.0.0",
+  "description": "给模型的四个确定性小工具：哈希、编码转换、UUID、时间解析。全部是插件内置的纯函数，不联网、不读写文件、不执行命令",
+  "author": "Oint",
+  "license": "MIT",
+  "extensions": {
+    "dev.oint": {
+      "id": "dev.oint.toolkit",
+      "apiVersion": "1",
+      "permissions": ["agent.tool.register", "skills.contribute"],
+      "main": "./main.cjs"
+    }
+  }
+}

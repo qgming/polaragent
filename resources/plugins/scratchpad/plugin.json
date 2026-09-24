@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "oint-scratchpad",
+  "version": "1.0.0",
+  "description": "模态窗里的速记本：随手记几笔、搜索、一键复制。数据只存在插件自己的目录里，不联网、不读工作区、不执行命令",
+  "author": "Oint",
+  "license": "MIT",
+  "extensions": {
+    "dev.oint": {
+      "id": "dev.oint.scratchpad",
+      "apiVersion": "1",
+      "permissions": ["ui.modal", "ui.theme", "storage", "clipboard.write"],
+      "surfaces": [
+        {
+          "id": "scratchpad",
+          "kind": "modal",
+          "title": { "en": "Scratchpad", "zh-CN": "速记本" },
+          "entry": "./ui/index.html",
+          "width": 760,
+          "height": 560
+        }
+      ]
+    }
+  }
+}

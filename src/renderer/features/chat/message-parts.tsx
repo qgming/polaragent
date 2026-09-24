@@ -19,7 +19,10 @@ import {
   ReasoningTrigger,
 } from "@/renderer/components/assistant-ui/elements/reasoning.aui";
 import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/thinking-indicator";
-import { ToolCallPart, ToolRunGroup, toolActiveLabelKey } from "./ToolParts";
+import { ToolCallPart, ToolRunGroup } from "./ToolParts";
+// 工具文案来自注册表入口（不再是 ToolParts 的导出 —— 那张表已经搬到
+// features/chat/tool-presentations.ts，与面板/设置分栏的注册表同构）
+import { toolActiveLabelKey } from "./tool-presentations";
 
 /**
  * 消息正文的共享渲染件：主线程（Thread.tsx）与右侧「子智能体」面板（SubagentPanel 的

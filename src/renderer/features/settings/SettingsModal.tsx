@@ -1,15 +1,3 @@
-import {
-  Bot,
-  Database,
-  FileText,
-  Globe,
-  Info,
-  Plug,
-  Server,
-  Settings2,
-  Sparkles,
-  SquareSlash,
-} from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { typeSection } from "@/renderer/components/assistant-ui/type";
@@ -23,70 +11,14 @@ import { ScrollArea } from "@/renderer/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/renderer/components/ui/tabs";
 import { cn } from "@/renderer/lib/utils";
 import { type SettingsSection, useUiStore } from "@/renderer/stores/ui-store";
-import { AboutPanel } from "./panels/AboutPanel";
-import { DataPanel } from "./panels/DataPanel";
-import { GeneralPanel } from "./panels/GeneralPanel";
-import { McpPanel } from "./panels/McpPanel";
-import { PersonalizationPanel } from "./panels/PersonalizationPanel";
-import { PromptsPanel } from "./panels/PromptsPanel";
-import { ServicesPanel } from "./panels/ServicesPanel";
-import { SkillsPanel } from "./panels/SkillsPanel";
-import { SubagentsPanel } from "./panels/SubagentsPanel";
-import { WebPanel } from "./panels/WebPanel";
-import { SettingsPanelTitle } from "./settings-shared";
+// 注册表是这一屏**唯一**的来源：顺序、图标、文案键、内容都在描述子里。
+// 这里不再有 SECTIONS 数组 + renderPanel switch 两份要同步的东西（过去漏改一处
+// 的症状是「分栏在导航里但点不开」或「能打开但导航上没名字」）。
+import { settingsSections } from "./sections";
+import { modalNavItem, SettingsPanelTitle } from "./settings-shared";
 
-// 左侧分类导航：图标语义取自 Elements 的 settings 面
-const SECTIONS: readonly {
-  id: SettingsSection;
-  labelKey: string;
-  Icon: typeof Settings2;
-}[] = [
-  { id: "general", labelKey: "settings.general", Icon: Settings2 },
-  { id: "services", labelKey: "settings.services", Icon: Server },
-  { id: "web", labelKey: "settings.web", Icon: Globe },
-  { id: "mcp", labelKey: "settings.mcp", Icon: Plug },
-  { id: "skills", labelKey: "settings.skills", Icon: Sparkles },
-  { id: "subagents", labelKey: "settings.subagents", Icon: Bot },
-  { id: "promptTemplates", labelKey: "settings.promptTemplates", Icon: SquareSlash },
-  { id: "personalization", labelKey: "settings.personalization", Icon: FileText },
-  { id: "data", labelKey: "settings.data", Icon: Database },
-  { id: "about", labelKey: "settings.about", Icon: Info },
-];
-
-/** 分类项：官方 Tabs 的垂直变体，只把选中态改成中性墨色淡底（Elements 的 field 量级），不画竖条 */
-const navItem = cn(
-  "h-8 w-full flex-none justify-start gap-2 rounded-[10px] px-3 text-sm font-normal",
-  "text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground",
-  "data-[state=active]:bg-foreground/[0.06] data-[state=active]:text-foreground",
-  "dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-foreground/[0.09]",
-  "focus-visible:ring-1 focus-visible:ring-foreground/20 focus-visible:outline-none",
-);
-
-/** 按当前分类渲染面板：每个分类一个 tabpanel，官方 Tabs 默认只挂载当前项 */
-function renderPanel(section: SettingsSection) {
-  switch (section) {
-    case "general":
-      return <GeneralPanel />;
-    case "services":
-      return <ServicesPanel />;
-    case "web":
-      return <WebPanel />;
-    case "mcp":
-      return <McpPanel />;
-    case "skills":
-      return <SkillsPanel />;
-    case "subagents":
-      return <SubagentsPanel />;
-    case "promptTemplates":
-      return <PromptsPanel />;
-    case "personalization":
-      return <PersonalizationPanel />;
-    case "data":
-      return <DataPanel />;
-    case "about":
-      return <AboutPanel />;
-  }
-}
+/** 分类项样式来自 settings-shared 的 modalNavItem —— 与插件管理模态窗共用一份 */
+const navItem = modalNavItem;
 
 export function SettingsModal() {
   const { t } = useTranslation();
@@ -94,6 +26,12 @@ export function SettingsModal() {
   const settingsSection = useUiStore((s) => s.settingsSection);
   const openSettings = useUiStore((s) => s.openSettings);
   const closeSettings = useUiStore((s) => s.closeSettings);
+  /*
+    每次渲染现取而不是放模块级常量：插件可以在运行期注册自己的设置页，
+    模块级快照会让它永远不出现（面板注册表那边同理，见 useGlobalShortcuts 的说明）。
+    十项的数组开销可以忽略。
+  */
+  const sections = settingsSections();
 
   return (
     <Dialog open={settingsOpen} onOpenChange={(open) => !open && closeSettings()}>
@@ -117,7 +55,7 @@ export function SettingsModal() {
               aria-label={t("settings.title")}
               className="w-full flex-col items-stretch justify-start gap-0.5 rounded-none bg-transparent p-0"
             >
-              {SECTIONS.map((section) => (
+              {sections.map((section) => (
                 <TabsTrigger key={section.id} value={section.id} className={navItem}>
                   <section.Icon className="size-4 shrink-0" aria-hidden="true" />
                   <span className="truncate">{t(section.labelKey)}</span>
@@ -129,7 +67,7 @@ export function SettingsModal() {
           {/* 右侧面板：独立滚动，内容区留 20px 内边距 */}
           <div className="min-w-0 flex-1">
             <ScrollArea className="h-full">
-              {SECTIONS.map((section) => (
+              {sections.map((section) => (
                 <TabsContent key={section.id} value={section.id} className="p-5">
                   {/*
                     分类切换是「内容换了一屏」，做一次轻微的淡入 + 上移来说明这件事。
@@ -141,9 +79,9 @@ export function SettingsModal() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
                   >
-                    {/* 大标题：分类名。五个分类在这里统一渲染，面板自身不写标题 */}
+                    {/* 大标题：分类名。各分栏在这里统一渲染，面板自身不写标题 */}
                     <SettingsPanelTitle>{t(section.labelKey)}</SettingsPanelTitle>
-                    {renderPanel(section.id)}
+                    <section.content />
                   </motion.div>
                 </TabsContent>
               ))}

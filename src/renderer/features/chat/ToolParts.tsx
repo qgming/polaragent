@@ -2,36 +2,7 @@
 
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { useAssistantToolUI, useAuiState } from "@assistant-ui/react";
-import {
-  BellRingIcon,
-  Bot,
-  CameraIcon,
-  ChevronRightIcon,
-  CloudDownloadIcon,
-  CodeIcon,
-  FileSearchIcon,
-  FileTextIcon,
-  GlobeIcon,
-  HistoryIcon,
-  ImageIcon,
-  ListIcon,
-  ListTodoIcon,
-  Loader2Icon,
-  type LucideIcon,
-  MessageCircleQuestion,
-  MousePointerClickIcon,
-  NetworkIcon,
-  PenLineIcon,
-  RocketIcon,
-  ScanEyeIcon,
-  ScrollTextIcon,
-  SearchIcon,
-  SquareIcon,
-  SquarePenIcon,
-  TerminalIcon,
-  TextSearchIcon,
-  TimerIcon,
-} from "lucide-react";
+import { ChevronRightIcon, Loader2Icon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -88,97 +59,16 @@ import {
   toolResultText,
   toolRows,
 } from "./tool-presentation";
+// 从 tool-presentations.ts（唯一入口）导入：它会先跑内置 27 项的注册副作用
+import { toolIcon, toolLabelKeys } from "./tool-presentations";
 
-/** 工具名 → 图标；未登记的一律用终端图标 */
-const TOOL_ICONS: Record<string, LucideIcon> = {
-  bash: TerminalIcon,
-  read: FileTextIcon,
-  write: SquarePenIcon,
-  edit: PenLineIcon,
-  grep: TextSearchIcon,
-  glob: FileSearchIcon,
-  todo: ListTodoIcon,
-  ask_user: MessageCircleQuestion,
-  // 读图片：ImageIcon（与浏览器截图那个 CameraIcon 分开 —— 一个是「读一张已有的图」，
-  // 一个是「现拍一张」）
-  read_image: ImageIcon,
-  // 后台作业四件套：起进程 / 读输出 / 列清单 / 停掉
-  bash_background: RocketIcon,
-  job_output: ScrollTextIcon,
-  job_list: ListIcon,
-  job_kill: SquareIcon,
-  // 浏览器九件套：打开 / 历史 / 读页面 / 动作（点击·输入·按键·悬停·下拉·滚动）/ 等待 /
-  // 截图 / 日志（控制台·网络）/ 弹窗策略 / 执行脚本
-  browser_open: GlobeIcon,
-  browser_history: HistoryIcon,
-  browser_snapshot: ScanEyeIcon,
-  browser_act: MousePointerClickIcon,
-  browser_screenshot: CameraIcon,
-  browser_logs: ScrollTextIcon,
-  browser_evaluate: CodeIcon,
-  browser_wait: TimerIcon,
-  browser_dialog: BellRingIcon,
-  // 网络工具：检索（SearchIcon）/ 抓取（CloudDownloadIcon）
-  web_search: SearchIcon,
-  web_fetch: CloudDownloadIcon,
-  // 子智能体四件套：委派 / 等它 / 列一下 / 停掉（与主进程 tools.ts 的 Task 系列一一对应）
-  Task: Bot,
-  TaskWait: NetworkIcon,
-  TaskList: ListIcon,
-  TaskStop: SquareIcon,
-};
-
-const DEFAULT_ICON = TerminalIcon;
-
-/** 工具名 → 词条键（收尾态 / 进行态）；未登记的工具落到通用「调用」 */
-const TOOL_LABELS: Record<string, { resting: string; active: string }> = {
-  bash: { resting: "tools.bash", active: "tools.bashActive" },
-  read: { resting: "tools.read", active: "tools.readActive" },
-  write: { resting: "tools.write", active: "tools.writeActive" },
-  edit: { resting: "tools.edit", active: "tools.editActive" },
-  grep: { resting: "tools.grep", active: "tools.grepActive" },
-  glob: { resting: "tools.glob", active: "tools.globActive" },
-  todo: { resting: "tools.todo", active: "tools.todoActive" },
-  ask_user: { resting: "tools.askUser", active: "tools.askUserActive" },
-  read_image: { resting: "tools.readImage", active: "tools.readImageActive" },
-  bash_background: { resting: "tools.bashBackground", active: "tools.bashBackgroundActive" },
-  job_output: { resting: "tools.jobOutput", active: "tools.jobOutputActive" },
-  job_list: { resting: "tools.jobList", active: "tools.jobListActive" },
-  job_kill: { resting: "tools.jobKill", active: "tools.jobKillActive" },
-  // 浏览器九件套（词条见 locales 的 tools.browser*）
-  browser_open: { resting: "tools.browserOpen", active: "tools.browserOpenActive" },
-  browser_history: { resting: "tools.browserHistory", active: "tools.browserHistoryActive" },
-  browser_snapshot: { resting: "tools.browserSnapshot", active: "tools.browserSnapshotActive" },
-  browser_act: { resting: "tools.browserAction", active: "tools.browserActionActive" },
-  browser_wait: { resting: "tools.browserWait", active: "tools.browserWaitActive" },
-  browser_screenshot: {
-    resting: "tools.browserScreenshot",
-    active: "tools.browserScreenshotActive",
-  },
-  browser_logs: { resting: "tools.browserLogs", active: "tools.browserLogsActive" },
-  browser_dialog: { resting: "tools.browserDialog", active: "tools.browserDialogActive" },
-  browser_evaluate: { resting: "tools.browserEvaluate", active: "tools.browserEvaluateActive" },
-  // 网络工具（词条见 locales 的 tools.webSearch* / tools.webFetch*）
-  web_search: { resting: "tools.webSearch", active: "tools.webSearchActive" },
-  web_fetch: { resting: "tools.webFetch", active: "tools.webFetchActive" },
-  // 子智能体四件套（词条见 locales 的 tools.task*）
-  Task: { resting: "tools.task", active: "tools.taskActive" },
-  TaskWait: { resting: "tools.taskWait", active: "tools.taskWaitActive" },
-  TaskList: { resting: "tools.taskList", active: "tools.taskListActive" },
-  TaskStop: { resting: "tools.taskStop", active: "tools.taskStopActive" },
-};
-
-const FALLBACK_LABELS = { resting: "tools.call", active: "tools.callActive" };
-
-/** 工具名 → 词条键；未登记的工具落到通用「调用」 */
-export function toolLabelKeys(toolName: string): { resting: string; active: string } {
-  return TOOL_LABELS[toolName] ?? FALLBACK_LABELS;
-}
-
-/** 工具进行态的词条键；给消息尾部的运行指示器复用 */
-export function toolActiveLabelKey(toolName: string): string {
-  return toolLabelKeys(toolName).active;
-}
+/*
+  工具的图标与文案来自**注册表**（见 ./tool-presentations.ts）：
+  原先这里是两张并列的 Record（TOOL_ICONS 与 TOOL_LABELS，键集合逐字相同），
+  加一个工具要改两处，漏一处的症状是"图标对了但名字显示成通用的『调用』"。
+  现在只有一处（builtin-tool-presentations.ts 里注册一行），而且插件也能给自己
+  的工具补上图标与名字。
+*/
 
 /** bash 的详情：命令作标题、末尾输出作正文、运行中转圈、完成打勾 */
 function TerminalDetail({
@@ -1589,9 +1479,9 @@ export function ToolRunGroup({
   }
 
   const steps: TimelineStep[] = rows.map((row) => ({
-    verb: t((TOOL_LABELS[row.name] ?? FALLBACK_LABELS).resting),
+    verb: t(toolLabelKeys(row.name).resting),
     chip: row.chip,
-    icon: TOOL_ICONS[row.name] ?? DEFAULT_ICON,
+    icon: toolIcon(row.name),
     detail: (stepOpen: boolean) => <StepDetail index={row.partIndex} open={stepOpen} />,
   }));
 

@@ -24,6 +24,7 @@ import type {
   ExecutionToolContext,
 } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { validateRealPathAccess } from "@/main/security/path-guard";
 
 /** 递归检索时跳过的目录名：依赖、版本库与构建产物，既没有检索价值又会淹没结果 */
 const SKIPPED_DIR_NAMES: readonly string[] = [
@@ -175,9 +176,17 @@ type RootResolution = { ok: true; root: string; isFile: boolean } | { ok: false;
 /**
  * 解析检索根，失败时给出可直接回给模型的文案（不抛异常）。
  *
- * 这里**刻意不做工作目录围栏**：`path` 可以是工作目录之外的任意绝对路径，会话工作目录
- * 只承担「相对路径的解析基准」这一个职责（缺省即 "."，与 DSH 的 glob/grep 一致）。
- * 越界与否由上层权限门决定，不在检索工具这一层判死。
+ * ## 围栏：`allowedRoots` 传了才判，但**生产路径一定传**
+ *
+ * 早先这里刻意不做围栏，理由写在旧注释里：「`path` 可以是工作目录之外的任意绝对路径，
+ * 越界与否由上层权限门决定」。那个理由在**只有权限门**的前提下成立 —— 但 `grep` 与
+ * `glob` 在 `pisdk/permissions.ts` 里被判为 **low 风险**，而权限门对 low **直接放行、
+ * 连审批卡都不创建**。于是 `grep { path: "~/.oint", pattern: "apiKey" }` 成了一次
+ * **零确认的凭据读取**：`settings.json` 是文本、远小于 1 MiB 的跳过阈值，唯一的拦截
+ * 是二进制嗅探。
+ *
+ * 现在两道判据合起来才成立：**权限门管"要不要问人"，这道围栏管"能不能到那儿"**。
+ * 判据用 realpath 版本（不是纯字符串）—— 否则一个指向禁区的符号链接就能绕过。
  *
  * 仍然保留两道与围栏无关的校验：
  * - realpath 归一：软链接指向哪里都按真实路径报告，`root` 是稳定可比对的绝对路径；
@@ -187,6 +196,7 @@ type RootResolution = { ok: true; root: string; isFile: boolean } | { ok: false;
 async function resolveSearchRoot(
   requested: string | undefined,
   cwd: string,
+  allowedRoots?: readonly string[],
 ): Promise<RootResolution> {
   const requestedRoot = path.resolve(cwd, requested ?? ".");
   const realRoot = await realpath(requestedRoot).catch(() => undefined);
@@ -196,6 +206,22 @@ async function resolveSearchRoot(
   const info = await stat(realRoot).catch(() => undefined);
   if (info === undefined) {
     return { ok: false, message: `Path not found: ${realRoot}` };
+  }
+  if (allowedRoots !== undefined && allowedRoots.length > 0) {
+    const access = await validateRealPathAccess(realRoot, [...allowedRoots]);
+    if (!access.ok) {
+      /*
+        文案刻意与 read/write 的越界错误同款（都说「不在允许的工作目录内」）：
+        模型在两种工具上看到同一句话，才会学到同一条边界。
+        同时给出去哪儿找：这句话出现的场合几乎都是「想搜工作目录外面」。
+      */
+      return {
+        ok: false,
+        message:
+          `Path outside the allowed workspace: ${realRoot}. ` +
+          `Search only inside the session working directory and the configured resource folders.`,
+      };
+    }
   }
   return { ok: true, root: realRoot, isFile: info.isFile() };
 }
@@ -277,10 +303,21 @@ Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; files larger
 
 Keep patterns simple: a regex with nested quantifiers tested against a very long minified line can be extremely slow.`;
 
+/**
+ * 检索工具的选项。
+ *
+ * `allowedRoots` 是**这道围栏唯一的来源**：不传 = 不做围栏（单测与不关心会话边界的
+ * 调用方走这条）。生产路径必须传 —— runtime 的两处 buildTools 都把
+ * `sessionAllowedRoots(cwd, appPath)` 交进来。
+ */
+export interface SearchToolOptions {
+  allowedRoots?: readonly string[];
+}
+
 /** 构造 grep 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
-export function createGrepTool<
-  TContext extends ExecutionToolContext = ExecutionToolContext,
->(): AgentHarnessTool<TContext, typeof grepSchema, GrepToolDetails> {
+export function createGrepTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
+  options: SearchToolOptions = {},
+): AgentHarnessTool<TContext, typeof grepSchema, GrepToolDetails> {
   return {
     name: "grep",
     label: "grep",
@@ -295,7 +332,7 @@ export function createGrepTool<
           files: 0,
           truncated: false,
         });
-      const resolution = await resolveSearchRoot(params.path, env.cwd);
+      const resolution = await resolveSearchRoot(params.path, env.cwd, options.allowedRoots);
       if (!resolution.ok) return failure(resolution.message);
 
       let pattern: RegExp;
@@ -403,9 +440,9 @@ Output:
 Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; symbolic links are never followed. Paths are reported relative to the resolved root.`;
 
 /** 构造 glob 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
-export function createGlobTool<
-  TContext extends ExecutionToolContext = ExecutionToolContext,
->(): AgentHarnessTool<TContext, typeof globSchema, GlobToolDetails> {
+export function createGlobTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
+  options: SearchToolOptions = {},
+): AgentHarnessTool<TContext, typeof globSchema, GlobToolDetails> {
   return {
     name: "glob",
     label: "glob",
@@ -415,7 +452,7 @@ export function createGlobTool<
       const requestedRoot = path.resolve(env.cwd, params.path ?? ".");
       const failure = (message: string): AgentToolResult<GlobToolDetails> =>
         textResult(`Error: ${message}`, { root: requestedRoot, matches: 0, truncated: false });
-      const resolution = await resolveSearchRoot(params.path, env.cwd);
+      const resolution = await resolveSearchRoot(params.path, env.cwd, options.allowedRoots);
       if (!resolution.ok) return failure(resolution.message);
 
       const pattern = compileWildcard(params.pattern);

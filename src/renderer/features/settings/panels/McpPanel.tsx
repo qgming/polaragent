@@ -272,10 +272,57 @@ function McpServerEditor({ draft, createdAt, onChange, onClose, onSave }: Editor
   );
 }
 
+/**
+ * 三个来源页签的文案键。
+ *
+ * ⚠️ **字段名必须是 `labelKey` / `descriptionKey` / `messageKey` / `hintKey` 之一**
+ * （这四个都在 scripts/check-i18n.mjs 的 KEY_FIELD_RE 里），
+ * 不能改成 `title` / `desc` / `empty` 这类自定义名字：门禁是**按字段名**抓词条键的，
+ * 换个名字这十二个键就整体从它眼皮底下消失 —— 打错一个字不会有任何东西变红，
+ * 界面上直接显示 `settings.mcpPluginServers`。
+ * 同一个坑在这个项目里已经踩过两次（插件的权限表、工具展示表）。
+ *
+ * 放模块级而不是组件里：它是纯静态的，每次渲染重建一份没有意义。
+ */
+/**
+ * 面板只有两个页签。**`"plugin"` 不在其中** —— 插件贡献的 server 归插件管：
+ * 用户在面板里改不了它们（配置由插件的 mcp.json 派生），显示出来只会制造
+ * "这里能管它"的错觉。它们在**插件详情**里可见（那个插件自己的档案）。
+ *
+ * 类型上收窄而不是留着值不渲染：留着的话 `Record<McpServerSource, …>` 会要求
+ * 一个永远用不到的条目，而"存在但没人用"的条目迟早会被谁用上。
+ */
+type PanelSource = Exclude<McpServerSource, "plugin">;
+
+const SOURCE_TEXT: Record<
+  PanelSource,
+  { labelKey: string; descriptionKey: string; messageKey: string; hintKey: string }
+> = {
+  system: {
+    labelKey: "settings.mcpSystemServers",
+    descriptionKey: "settings.mcpSystemServersDesc",
+    messageKey: "settings.mcpSystemEmpty",
+    hintKey: "settings.mcpSystemEmptyHint",
+  },
+  user: {
+    labelKey: "settings.mcpServers",
+    descriptionKey: "settings.mcpServersDesc",
+    messageKey: "settings.mcpEmpty",
+    hintKey: "settings.mcpEmptyHint",
+  },
+};
+
 interface ServerCardProps {
   view: McpServerView;
   /** 系统预设的一句话说明（走 i18n）；用户配置没有这句，卡片直接显示命令 / URL */
   description?: string;
+  /**
+   * 插件层：一行「这东西归谁管」的说明。
+   *
+   * 插件声明的 server 没有任何开关（见渲染处的说明），所以卡片必须自己解释
+   * 「想关掉它该去哪」—— 否则用户面对一台无法操作的 server 只会以为界面坏了。
+   */
+  note?: string;
   /** 免审批开关：只在用户配置上有；系统预设一律允许，不给开关 */
   trusted?: boolean;
   onToggleTrust?: (checked: boolean) => void;
@@ -300,6 +347,7 @@ interface ServerCardProps {
 function ServerCard({
   view,
   description,
+  note,
   trusted,
   onToggleTrust,
   onEdit,
@@ -313,13 +361,19 @@ function ServerCard({
   const tools = state.tools;
   const hidden = tools.length - TOOL_PREVIEW;
 
-  /** 覆盖关系要说清方向：系统行是「没生效」，用户行是「你正在替代预设」 */
-  const overrideNote =
-    overridden && source === "system"
+  /**
+   * 覆盖关系要说清方向。
+   *
+   * 三层的方向不同：系统行是「没生效」，插件行是「被你的配置替代了」，
+   * 用户行是「你正在替代预设或插件」。合并成一句话会让"谁盖了谁"读不出来。
+   */
+  const overrideNote = !overridden
+    ? null
+    : source === "system"
       ? t("settings.mcpOverriddenByUser")
-      : overridden
-        ? t("settings.mcpOverridesSystem")
-        : null;
+      : source === "plugin"
+        ? t("settings.mcpPluginOverridden")
+        : t("settings.mcpOverridesSystem");
 
   const headline = (
     <>
@@ -353,6 +407,7 @@ function ServerCard({
       </div>
 
       {description === undefined ? null : <p className="mt-1 text-xs text-ink-3">{description}</p>}
+      {note === undefined ? null : <p className="mt-1 text-xs text-ink-4">{note}</p>}
 
       <p
         className={cn(mono, "mt-1 truncate text-ink-4")}
@@ -505,7 +560,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
   /** 正在重连的那一台 server（卡片上的按钮据此转圈；null = 没有在重连的） */
   const [reconnectingId, setReconnectingId] = useState<string | null>(null);
   // 来源页签：系统 = 随应用分发的预设（只读，可启停），用户 = 自己新增的配置
-  const [source, setSource] = useState<McpServerSource>("system");
+  const [source, setSource] = useState<PanelSource>("system");
   const [editor, setEditor] = useState<{ draft: McpServerDraft; createdAt: number } | null>(null);
   const [removing, setRemoving] = useState<McpServerConfig | null>(null);
 
@@ -630,6 +685,18 @@ function McpPanelBody({ settings }: { settings: Settings }) {
 
   const visible = (views ?? []).filter((view) => view.source === source);
   const system = source === "system";
+  /**
+   * 页签是不是**只读**的。
+   *
+   * 系统预设与插件声明都不是用户在面板里编辑出来的东西 —— 前者随包分发，后者由插件
+   * 的 `mcp.json` 派生。所以「添加 / 编辑 / 删除」只在用户页签出现。
+   *
+   * 注意这与 `source === "system"` **不是同一个条件**：早先面板只有两层时两者等价，
+   * 加了插件那一层之后它们分开了。用 `system` 当只读判据的话，插件页签上会出现
+   * 「编辑」按钮，点下去却改不动任何东西。
+   */
+  const readOnly = source !== "user";
+  const text = SOURCE_TEXT[source];
 
   /**
    * 系统页签按领域分组渲染。
@@ -644,10 +711,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
 
   return (
     <div className="space-y-6">
-      <SettingsSection
-        title={t(system ? "settings.mcpSystemServers" : "settings.mcpServers")}
-        description={t(system ? "settings.mcpSystemServersDesc" : "settings.mcpServersDesc")}
-      >
+      <SettingsSection title={t(text.labelKey)} description={t(text.descriptionKey)}>
         <PanelToolbar
           action={
             <>
@@ -662,8 +726,8 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                 <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden="true" />
                 {t(busy ? "settings.mcpReconnecting" : "settings.mcpReconnect")}
               </Button>
-              {/* 系统预设随包分发：没有「添加」，也没有「编辑 / 删除」 */}
-              {system ? null : (
+              {/* 系统预设随包分发、插件声明由 mcp.json 派生：两者都没有「添加」 */}
+              {readOnly ? null : (
                 <AddButton
                   label={t("settings.mcpAddServer")}
                   onClick={() => setEditor({ draft: createMcpDraft(), createdAt: Date.now() })}
@@ -672,7 +736,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
             </>
           }
         >
-          <Segmented<McpServerSource>
+          <Segmented<PanelSource>
             ariaLabel={t("settings.sourceLabel")}
             value={source}
             onChange={setSource}
@@ -703,10 +767,8 @@ function McpPanelBody({ settings }: { settings: Settings }) {
           </div>
         ) : visible.length === 0 ? (
           <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
-            {t(system ? "settings.mcpSystemEmpty" : "settings.mcpEmpty")}
-            <span className="mt-1 block text-xs text-ink-4">
-              {t(system ? "settings.mcpSystemEmptyHint" : "settings.mcpEmptyHint")}
-            </span>
+            {t(text.messageKey)}
+            <span className="mt-1 block text-xs text-ink-4">{t(text.hintKey)}</span>
           </p>
         ) : (
           <div className="space-y-4">
@@ -728,7 +790,7 @@ function McpPanelBody({ settings }: { settings: Settings }) {
                       {...(preset === undefined ? {} : { description: t(preset.descriptionKey) })}
                       onReconnect={() => void handleReconnect(view.config)}
                       reconnecting={reconnectingId === view.config.id}
-                      {...(system
+                      {...(source === "system"
                         ? {
                             // 系统预设一律允许，不给免审批开关；用户配置才有
                             onToggleEnabled: (checked: boolean) =>

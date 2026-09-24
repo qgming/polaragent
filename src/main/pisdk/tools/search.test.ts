@@ -38,8 +38,17 @@ type GrepOutcome = Awaited<ReturnType<ReturnType<typeof createGrepTool>["execute
 type GlobParams = Parameters<ReturnType<typeof createGlobTool>["execute"]>[1];
 type GlobOutcome = Awaited<ReturnType<ReturnType<typeof createGlobTool>["execute"]>>;
 
-function runGrep(cwd: string, params: GrepParams): Promise<GrepOutcome> {
-  return createGrepTool().execute(
+/*
+  allowedRoots 是**构造期**选项（不是工具参数）：围栏在生产路径由 buildTools 注入
+  `sessionAllowedRoots(cwd, appPath)`。这里做成第三个入参是为了让用例能明确地
+  「带围栏」或「不带围栏」各跑一遍。
+*/
+function runGrep(
+  cwd: string,
+  params: GrepParams,
+  allowedRoots?: readonly string[],
+): Promise<GrepOutcome> {
+  return createGrepTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
     "call-grep",
     params,
     () => {},
@@ -49,8 +58,12 @@ function runGrep(cwd: string, params: GrepParams): Promise<GrepOutcome> {
   );
 }
 
-function runGlob(cwd: string, params: GlobParams): Promise<GlobOutcome> {
-  return createGlobTool().execute(
+function runGlob(
+  cwd: string,
+  params: GlobParams,
+  allowedRoots?: readonly string[],
+): Promise<GlobOutcome> {
+  return createGlobTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
     "call-glob",
     params,
     () => {},
@@ -302,5 +315,22 @@ describe("glob", () => {
 
     expect(text).not.toContain("Error:");
     expect(dataLines(text)).toEqual(["outside/outside.ts"]);
+  });
+
+  it("path 越出 allowedRoots 时被围栏挡住", async () => {
+    const outcome = await runGlob(root, { pattern: "*.ts", path: path.dirname(outsideFile) }, [
+      root,
+    ]);
+    const text = textOf(outcome);
+
+    expect(text).toContain("Path outside the allowed workspace");
+    expect(outcome.details.matches).toBe(0);
+  });
+
+  it("allowedRoots 内的路径照常检索", async () => {
+    const text = textOf(await runGlob(root, { pattern: "**/*.ts", path: "." }, [root]));
+
+    expect(text).not.toContain("Error:");
+    expect(dataLines(text)).toContain("a.ts");
   });
 });

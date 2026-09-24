@@ -496,12 +496,34 @@ export function createSettingsStore(
 
   async function save(next: Settings): Promise<void> {
     const crypto = await resolveCrypto();
-    const payload = `${JSON.stringify(toPersisted(next, crypto), null, 2)}\n`;
+    /**
+     * **写侧归一 —— 与读侧同一套判据。**
+     *
+     * 早先这里直接 `toPersisted(next)`：`toPersisted` 是 `{...settings, services, webSearch}`，
+     * 于是**渲染层送来的任意额外键会被 spread 落盘**，而所有校验
+     *（`normalizePermissionMode` 非法回落 default、`clampInt`、`normalizeMcpServers`…）
+     * **只在 `load()` 里生效**。
+     *
+     * 后果不是理论问题：渲染层可以写 `permissionMode: "full"`，缓存立即更新
+     *（下面那行 `cache = ...`），**审批链当场失效**。今天渲染层是我们自己的代码所以
+     * 不算漏洞，但插件界面一旦进入渲染层，`window.oint.settings.write` 就是全套权限 ——
+     * 这正是 docs/plugin-system-plan.md §6 缺口二。
+     *
+     * 跑一遍 `mergeWithDefaults` 一次解决两件事：
+     *  - 非法值被归一（`"full"` 是合法值，但 `"whatever"` 会回落 `default`）；
+     *  - **DEFAULT_SETTINGS 之外的键根本不会被复制**，因为它是按那份键表逐项取的。
+     *
+     * 代价是每次写入多一次纯内存的对象归一（微秒级），而收益是「读到的」与「写下去的」
+     * 从此走同一条路 —— 不再有一类值只在重启后才被发现非法。
+     */
+    const normalized = mergeWithDefaults(next, crypto, warn);
+    const payload = `${JSON.stringify(toPersisted(normalized, crypto), null, 2)}\n`;
     await mkdir(path.dirname(filePath), { recursive: true });
     // 先写临时文件再 rename，避免中断时留下半截 JSON
     await writeFileAtomic(filePath, payload);
-    // 落盘成功后才更新缓存：写失败时内存态不该「看起来已经保存了」
-    cache = { value: next, crypto };
+    // 落盘成功后才更新缓存：写失败时内存态不该「看起来已经保存了」。
+    // 缓存的是**归一后**的那份 —— 否则界面读回来的值与盘上的不一致。
+    cache = { value: normalized, crypto };
   }
 
   return { load, save };

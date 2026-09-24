@@ -113,6 +113,11 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
     followUp: async () => ({ ok: true, value: {} }),
     getModel: async () => ({ provider: "svc", id: "m1" }),
     setModel: async () => undefined,
+    /*
+      真实 lane 有这个方法（lane.d.ts 声明了）—— 假实现缺它会让
+      createRuntime 里的"工具名对齐"直接抛 TypeError。
+    */
+    setActiveTools: async () => undefined,
     setThinkingLevel: async () => undefined,
     getThinkingLevel: async () => "medium",
     inspectExecution: async () => ({ current: null }),
@@ -183,6 +188,31 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
 });
 
 vi.mock("@/main/app/paths", () => ({ dataDir: () => "/data-unused" }));
+
+/**
+ * 插件进程池的替身。
+ *
+ * 钩子的**判定逻辑**在 hooks.ts 里另有测试（纯函数）；这里要钉的是**接线**：
+ * 宿主真的在工具执行前问了插件、真的把插件的结论用上了、真的把补充说明投递进了上下文。
+ * 「逻辑测了、接线没测」正是这个文件反复吃亏的形态 —— 见上面那两处注释里的
+ * "系统提示算出来但没传进内核"与 `setTools` 整表替换。
+ */
+const pluginHost = vi.hoisted(() => ({
+  /** 返回值形状与 `HookDispatch` 一致（block / additionalContext / failures） */
+  dispatch: vi.fn(
+    async (
+      _event: string,
+      _payload: unknown,
+    ): Promise<{ block?: string; additionalContext?: string; failures: unknown[] }> => ({
+      failures: [],
+    }),
+  ),
+}));
+vi.mock("@/main/plugins/process-host", () => ({
+  pluginTools: () => [],
+  pluginToolsGeneration: () => 0,
+  dispatchPluginHooks: (event: string, payload: unknown) => pluginHost.dispatch(event, payload),
+}));
 
 import { createApprovalService } from "./approvals";
 import { type ChatRuntime, createChatRuntime } from "./runtime";
@@ -1361,6 +1391,126 @@ describe("手动压缩（/compact 后端）", () => {
       status: "aborted",
       summaryPreview: "",
     });
+
+    await runtime.dispose();
+  });
+});
+
+/**
+ * 插件钩子的**接线**（判定逻辑在 main/plugins/hooks.test.ts 里）。
+ *
+ * 三件事各有一条用例，都是"逻辑对了但没接上"会静默失效的地方：
+ *  1. `PreToolUse` 在宿主的权限门**之前**被问到，且它的 block 真的拦下调用；
+ *  2. 两个 post 事件按 `isError` 分派（否则"工具失败了"永远走不到）；
+ *  3. 钩子的 `additionalContext` 真的投递进了下一次请求（那条 custom 条目）。
+ */
+describe("插件钩子的接线", () => {
+  beforeEach(() => {
+    resetHarness();
+    pluginHost.dispatch.mockClear();
+    pluginHost.dispatch.mockResolvedValue({ failures: [] });
+  });
+
+  it("PreToolUse：先问插件，插件说拦就拦（不再走宿主的权限门）", async () => {
+    const runtime = makeRuntime();
+    // 钩子是在**首次 send 装配会话时**挂上的（与重复调用守卫同一时机）
+    await runtime.send("s1", "嗨");
+    pluginHost.dispatch.mockResolvedValueOnce({
+      block: "本插件禁用 bash",
+      failures: [],
+    });
+
+    const verdict = await harness.fireHook("before_tool", {
+      toolCallId: "call-1",
+      toolName: "bash",
+      args: { command: "rm -rf /" },
+    });
+
+    expect(pluginHost.dispatch).toHaveBeenCalledWith(
+      "PreToolUse",
+      expect.objectContaining({ toolName: "bash" }),
+    );
+    expect(verdict).toEqual({ block: { reason: "本插件禁用 bash" } });
+
+    await runtime.dispose();
+  });
+
+  it("PreToolUse：插件没意见时宿主照常放行（block 是 undefined）", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+
+    const verdict = await harness.fireHook("before_tool", {
+      toolCallId: "call-2",
+      toolName: "read",
+      args: { file_path: "/tmp/x" },
+    });
+
+    expect(verdict).toBeUndefined();
+    expect(pluginHost.dispatch).toHaveBeenCalledWith(
+      "PreToolUse",
+      expect.objectContaining({ toolName: "read" }),
+    );
+
+    await runtime.dispose();
+  });
+
+  it("post 事件按 isError 分派：成功走 PostToolUse，失败走 PostToolUseFailure", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+    const base = { toolCallId: "call-3", toolName: "bash", args: {} };
+
+    await harness.fireHook("after_tool", {
+      ...base,
+      content: [{ type: "text", text: "输出" }],
+      isError: false,
+    });
+    await harness.fireHook("after_tool", {
+      ...base,
+      content: [{ type: "text", text: "报错" }],
+      isError: true,
+    });
+
+    expect(pluginHost.dispatch.mock.calls.map(([event]) => event)).toEqual([
+      "PostToolUse",
+      "PostToolUseFailure",
+    ]);
+    // 结果的文本预览要跟着过去（截断逻辑在 hooks.ts 里测）
+    expect(pluginHost.dispatch.mock.calls[0]?.[1]).toMatchObject({ text: "输出", isError: false });
+
+    await runtime.dispose();
+  });
+
+  it("钩子的补充说明在下一次请求组装时注入（custom 条目，不是新的一轮对话）", async () => {
+    const runtime = makeRuntime();
+    await runtime.send("s1", "嗨");
+    pluginHost.dispatch.mockResolvedValueOnce({
+      additionalContext: "这个仓库不要动 vendor/",
+      failures: [],
+    });
+
+    await harness.fireHook("after_tool", {
+      toolCallId: "call-4",
+      toolName: "write",
+      args: {},
+      content: [{ type: "text", text: "ok" }],
+      isError: false,
+    });
+
+    // 投递发生在 transform_context（与重复提醒同一条路径）—— 这里把它跑一遍
+    const injected = await harness.fireHook("transform_context", {
+      messages: [],
+      systemPrompt: "系统提示",
+    });
+
+    expect(JSON.stringify(injected)).toContain("plugin-hook");
+    expect(JSON.stringify(injected)).toContain("这个仓库不要动 vendor/");
+
+    // 注入后即清空：第二次组装不该再带上它（否则它会跟着整段历史一直重复）
+    const again = await harness.fireHook("transform_context", {
+      messages: [],
+      systemPrompt: "系统提示",
+    });
+    expect(again).toBeUndefined();
 
     await runtime.dispose();
   });

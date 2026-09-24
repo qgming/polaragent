@@ -40,6 +40,19 @@ const BUILTIN_SKILL: SkillInfo = {
   disabled: false,
 };
 
+/**
+ * 跨工具共享目录里的技能（`~/.agents/skills`）。
+ *
+ * 它的三个特点各有对应用例：进「全局」页签、**能禁用**、**不能删除**。
+ */
+const SHARED_SKILL: SkillInfo = {
+  name: "pdf",
+  description: "排版成 PDF",
+  filePath: "C:\\Users\\me\\.agents\\skills\\pdf\\SKILL.md",
+  source: "agents",
+  disabled: false,
+};
+
 function settingsFixture(overrides: Partial<Settings> = {}): Settings {
   return {
     theme: "light",
@@ -77,11 +90,14 @@ function stubBridge(skills: SkillInfo[]) {
     content: "# review\n\n正文",
   }));
   const remove = vi.fn(async () => {});
+  // 参数声明成 Settings：调用方（settings-store 的 update）会传整份设置，
+  // 而断言要读 `mock.calls.at(-1)[0]` —— 不声明参数的话元组类型是 `[]`，取不出第 0 项
+  const write = vi.fn(async (_next: Settings) => {});
   vi.stubGlobal("oint", {
     skills: { list, import: importSkills, read, remove },
-    settings: { read: vi.fn(async () => settingsFixture()), write: vi.fn(async () => {}) },
+    settings: { read: vi.fn(async () => settingsFixture()), write },
   });
-  return { list, importSkills, read, remove };
+  return { list, importSkills, read, remove, write };
 }
 
 describe("SkillsPanel", () => {
@@ -143,5 +159,61 @@ describe("SkillsPanel", () => {
     fireEvent.click(confirmButtons[confirmButtons.length - 1] as HTMLElement);
 
     await waitFor(() => expect(bridge.remove).toHaveBeenCalledWith("review"));
+  });
+
+  it("「全局」页签：只列跨工具共享目录里的技能", async () => {
+    stubBridge([USER_SKILL, SHARED_SKILL, BUILTIN_SKILL]);
+    render(<SkillsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "全局" }));
+
+    expect(screen.getByText("pdf")).toBeTruthy();
+    expect(screen.queryByText("review")).toBeNull();
+    expect(screen.queryByText("commit-style")).toBeNull();
+  });
+
+  it("全局页签的空态用自己的文案（不能指路到数据目录）", async () => {
+    stubBridge([USER_SKILL]);
+    render(<SkillsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "全局" }));
+
+    expect(screen.getByText("跨工具共享目录里还没有技能")).toBeTruthy();
+    expect(screen.queryByText("还没有发现技能")).toBeNull();
+  });
+
+  /**
+   * **本地开关**：共享来源的技能与其余来源一样可禁用/启用。
+   *
+   * 禁用名单按名字匹配、与来源无关（`settings.disabledSkillNames`），所以这一档
+   * 不需要任何额外机制 —— 这条用例钉的正是"不需要额外机制"这件事：一旦有人给
+   * 共享来源加了单独的开关字段，它会红。
+   */
+  it("共享来源的技能可以本地开关：写进 disabledSkillNames", async () => {
+    const bridge = stubBridge([SHARED_SKILL]);
+    render(<SkillsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "全局" }));
+    fireEvent.click(screen.getByRole("switch", { name: "pdf · 启用" }));
+
+    await waitFor(() => expect(bridge.write).toHaveBeenCalled());
+    expect(bridge.write.mock.calls.at(-1)?.[0]).toMatchObject({ disabledSkillNames: ["pdf"] });
+  });
+
+  /**
+   * 共享来源的技能**不给删除按钮**，且底部的说明与内置那条不同。
+   *
+   * 界面与主进程两处都要挡（`ipc/skills.ts` 的 remove 会拒绝），这条只验界面这一半：
+   * 一个点下去只会报错的按钮比没有按钮更糟。
+   */
+  it("共享来源的技能：详情里没有删除按钮，说明指向「禁用」", async () => {
+    stubBridge([SHARED_SKILL]);
+    render(<SkillsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "全局" }));
+    fireEvent.click(await screen.findByRole("button", { name: /pdf/ }));
+
+    expect(await screen.findByText(/删掉会让别的工具一起丢技能/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
   });
 });

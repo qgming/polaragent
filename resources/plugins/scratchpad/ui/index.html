@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>速记本</title>
+    <!--
+      模态窗里的速记本。
+
+      它演示的是**模态窗形态**（清单里 `kind: "modal"`）最小可用的一套：
+        · 全部持久化走 `window.oint.storage`（插件私有的 KV，落盘在
+          `<dataDir>/plugins/data/<id>/storage.json`）；
+        · 复制走 `writeText()`（要 `clipboard.write` 权限，**只有写、没有读**）；
+        · 关窗走 `close()` —— 这条同时是宿主 `plugins:surfaceClosed` 事件的真实用例：
+          页面说"我关了"，宿主把对话框收掉（主进程没有对话框的句柄）；
+        · 主题跟随 `info.theme` 与 `on("theme")`。
+
+      **一个危险权限都不申请**：没有 net、没有 fs、没有 shell.exec。
+      界面 CSP 是 `connect-src 'none'`（页面自己发不出请求），
+      所以"纯界面 + 私有存储"这类插件在权限卡上是清一色的低风险。
+
+      样式内联在 <style> 里：CSP 的 `style-src` 允许 `'unsafe-inline'`，
+      而 `script-src` **不允许** —— 所以脚本必须是外部 .js（下面那个 script 标签）。
+    -->
+    <style>
+      :root {
+        --bg: transparent;
+        --fg: #1c1c1e;
+        --muted: #6b6b70;
+        --faint: #9a9aa0;
+        --line: rgb(0 0 0 / 10%);
+        --hover: rgb(0 0 0 / 4%);
+        --active: rgb(0 0 0 / 7%);
+        --accent: #2563eb;
+        --danger: #dc2626;
+      }
+      body[data-theme="dark"] {
+        --fg: #e8e8ea;
+        --muted: #a0a0a8;
+        --faint: #6e6e76;
+        --line: rgb(255 255 255 / 12%);
+        --hover: rgb(255 255 255 / 6%);
+        --active: rgb(255 255 255 / 10%);
+        --accent: #60a5fa;
+        --danger: #f87171;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+        border: 1px solid var(--line);
+        background: none;
+        color: var(--muted);
+        border-radius: 6px;
+        padding: 3px 9px;
+      }
+      button:hover:not(:disabled) {
+        background: var(--hover);
+        color: var(--fg);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      input,
+      textarea {
+        font: inherit;
+        color: var(--fg);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 8px;
+        outline: none;
+      }
+      input:focus,
+      textarea:focus {
+        border-color: var(--accent);
+      }
+      textarea {
+        resize: none;
+        line-height: 1.65;
+      }
+
+      /* ── 顶部工具条 ─────────────────────────────────────────────── */
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        flex: none;
+      }
+      #search {
+        flex: 1;
+        min-width: 0;
+      }
+      .count {
+        color: var(--faint);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        flex: none;
+      }
+
+      /* ── 主体：左列表 + 右编辑器 ────────────────────────────────── */
+      .body {
+        display: flex;
+        min-height: 0;
+        flex: 1;
+      }
+      #list {
+        width: 248px;
+        flex: none;
+        overflow-y: auto;
+        border-right: 1px solid var(--line);
+        padding: 4px;
+      }
+      .note {
+        position: relative;
+        padding: 7px 9px;
+        border-radius: 7px;
+        cursor: pointer;
+      }
+      .note:hover {
+        background: var(--hover);
+      }
+      .note[data-selected="true"] {
+        background: var(--active);
+      }
+      .note[data-selected="true"]::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 2px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+      .note-title {
+        font-weight: 600;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .note-sub {
+        color: var(--faint);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #editor {
+        display: flex;
+        min-width: 0;
+        flex: 1;
+        flex-direction: column;
+      }
+      #text {
+        flex: 1;
+        min-height: 0;
+        margin: 10px 12px 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+      }
+      .editor-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        flex: none;
+      }
+      .editor-foot .spacer {
+        margin-left: auto;
+      }
+      .muted {
+        color: var(--faint);
+        font-size: 11px;
+      }
+      .danger {
+        color: var(--danger);
+        border-color: currentcolor;
+        opacity: 0.85;
+      }
+
+      /* ── 空态 / 提示 ─────────────────────────────────────────────── */
+      .empty {
+        padding: 28px 16px;
+        text-align: center;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .empty b {
+        display: block;
+        color: var(--muted);
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+      #notice {
+        display: none;
+        padding: 7px 12px;
+        border-top: 1px solid var(--line);
+        color: var(--danger);
+        font-size: 11.5px;
+        flex: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <button id="new" type="button">新建</button>
+      <input id="search" type="search" placeholder="搜索…" autocomplete="off" />
+      <span id="count" class="count"></span>
+      <button id="close" type="button">关闭</button>
+    </div>
+
+    <div class="body">
+      <div id="list"></div>
+      <div id="editor">
+        <textarea id="text" placeholder="随手写点什么…&#10;&#10;每次输入都会自动保存到插件自己的目录里。" spellcheck="false"></textarea>
+        <div class="editor-foot">
+          <button id="copy" type="button">复制</button>
+          <button id="delete" type="button" class="danger">删除</button>
+          <span id="saved" class="muted spacer"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="notice"></div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

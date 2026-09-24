@@ -7,6 +7,7 @@
 // 两种实现都不做协议解析：分帧交给 jsonrpc.ts 的 splitter，语义交给 client.ts。
 
 import { spawn } from "node:child_process";
+import { buildChildEnv } from "@/main/security/child-env";
 import type { McpServerConfig } from "@/shared/contracts/mcp";
 import { createLineSplitter, createSseSplitter } from "./jsonrpc";
 
@@ -57,16 +58,39 @@ function createListenerSet(snapshotOnClose: () => string | null) {
 // --- stdio -------------------------------------------------------------------
 
 /**
- * cmd.exe 下的参数转义（仅在 shell 模式生效）。
+ * `cmd.exe` 会当成语法解释的字符。
  *
- * 含空白或 shell 元字符的参数必须带引号，否则 cmd 会把一个路径拆成两段；
- * 引号内的双引号用 \" 兜住 —— 这是 best effort：cmd 的转义规则本身不完整，
- * 真正有歧义的参数（含 % 或 !）建议写成 .cmd 脚本再调用。
+ * `%` 与 `!` 是变量展开与延迟展开 —— **这两个恰恰是旧实现漏掉的**（它的判据正则
+ * 是 `/[\s"^&|<>()]/`，不含 `%` `!`），而它们能把一个"看起来只是个参数"的字符串
+ * 变成一次展开或一次命令替换。
  */
-function quoteForShell(arg: string): string {
-  if (arg === "") return '""';
-  if (!/[\s"^&|<>()]/.test(arg)) return arg;
-  return `"${arg.replace(/"/g, '\\"')}"`;
+const CMD_METACHARACTERS = /[%!&|<>^"\r\n]/;
+
+/**
+ * 这个命令是否必须经过 Windows 的命令解释器。
+ *
+ * 判据是**文件扩展名**而不是「我们在 Windows 上」：`npx` / `uvx` 这些最常见的启动
+ * 方式是 `.cmd` 垫片，Node 20.12 起不允许直接 spawn，必须经 `cmd.exe`；
+ * 而一个真正的 `.exe` **不需要**解释器，多套一层只会多一次注入面。
+ */
+export function needsWindowsInterpreter(command: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+/**
+ * 找出会让 `cmd.exe` 重新解释的参数；返回第一个有问题的值，全部安全时返回 undefined。
+ *
+ * **为什么是"拒绝"而不是"再引号化一次"**：cmd 的转义规则本身不完整（旧实现的注释
+ * 自己写着"真正有歧义的参数（含 % 或 !）建议写成 .cmd 脚本再调用"，也就是知道并在
+ * 事实上接受了这个洞）。与其继续猜转义，不如把判据变成一个**封闭的、可审计的规则**：
+ * 参数里出现 cmd 的元字符就拒绝启动，并把是哪一个报给用户。
+ *
+ * 代价是「参数里真的要带 `&` 或 `%`」的 MCP server 起不来 —— 那种情况应该写成
+ * 一个 `.cmd` 包装脚本，而不是指望宿主把转义猜对。
+ */
+export function findCmdUnsafeArg(command: string, args: readonly string[]): string | undefined {
+  if (CMD_METACHARACTERS.test(command)) return command;
+  return args.find((arg) => CMD_METACHARACTERS.test(arg));
 }
 
 /** 失败诊断里保留的 stderr 行数 */
@@ -78,27 +102,90 @@ export interface StdioTransportOptions {
 }
 
 /**
+ * 一个「永远起不来」的传输：注册即报告失败。
+ *
+ * 用途是**拒绝启动**时保持接口形状不变（见 createStdioTransport 里对歧义参数的拒绝）。
+ * 不在这里抛异常是因为调用方（mcp-servers 的连接池）把「启动失败」当作一种正常的
+ * 连接状态来展示；抛出去会让一次坏配置拖垮整轮 reload，而用户需要看到的是
+ * 「这一台起不来，原因是什么」。
+ */
+function failedTransport(reason: string, warn: (message: string) => void): McpTransport {
+  warn(reason);
+  return {
+    label: "stdio:(拒绝启动)",
+    async send() {
+      throw new Error(reason);
+    },
+    // 没有任何报文会到达：不注册监听，也不假装注册了
+    onMessage() {},
+    onClose(listener) {
+      // 立刻回调 —— 否则调用方会一直等一个永远不来的连接
+      listener(reason);
+    },
+    describeFailure: () => reason,
+    setProtocolVersion() {},
+    async close() {},
+  };
+}
+
+/**
  * 创建 stdio 传输：spawn 一个子进程，stdout 走 NDJSON，stderr 只拿来诊断。
  *
- * Windows 上固定开 shell：npx / uvx 这些最常见的启动命令是 .cmd 垫片，
- * 不开 shell 会直接 ENOENT（Node 20.12 起不再允许直接 spawn .cmd）。
+ * ## 两条与「命令怎么被启动」有关的纪律
+ *
+ * **1. `command` 是一个可执行 token，不是 shell 命令串。**
+ * 旧实现在 Windows 上恒定 `shell: true`，并把命令与每个参数各自引号化后**拼成一条
+ * 字符串**交给 shell。那条路有两个问题：拼接本身的转义规则不完整（`%` 与 `!` 是
+ * cmd 的变量展开与延迟展开字符，而判据正则不含它们），而更根本的是它把「一个参数」
+ * 交给了「一个会解释语法的解析器」。
+ *
+ * 现在的形状：**参数永远逐项传递**（Node 自己负责平台引号化），只有确认目标是
+ * `.cmd` / `.bat` 垫片时才经 `cmd.exe`，且**任何含 cmd 元字符的命令或参数一律拒绝启动**
+ * （见 findCmdUnsafeArg）。这与 Agent Plugins 规范 §7.2.1 的要求一致：
+ * *"Clients MAY use a platform-specific command interpreter when required … but MUST
+ * preserve `command` as one token and pass `args` separately."*
+ *
+ * **2. 子进程只拿到白名单环境变量。**
+ * 旧实现是 `{...process.env, ...config.env}` —— 用户自己填的 server 拿到用户的环境变量
+ * 还算合理，但一旦 server 由第三方插件声明（`mcp.json`），提供者就从"用户"变成了
+ * "插件作者"，同一条继承立刻变成提权面。改成白名单后 `config.env` 仍是显式通道，
+ * 用户想传什么就在配置里写。
  */
 export function createStdioTransport(options: StdioTransportOptions): McpTransport {
   const { config } = options;
   const warn = options.warn ?? ((message: string) => console.warn(message));
-  const useShell = process.platform === "win32";
-  // Windows 走 cmd 解析：命令与参数都要自己引号化，否则含空格的路径会被 cmd 截断
-  const command = useShell ? quoteForShell(config.command) : config.command;
-  const args = useShell ? config.args.map(quoteForShell) : config.args;
   const cwd = config.cwd.trim() === "" ? undefined : config.cwd.trim();
+  const useInterpreter = needsWindowsInterpreter(config.command);
 
-  const child = spawn(command, args, {
-    ...(cwd === undefined ? {} : { cwd }),
-    env: { ...process.env, ...config.env },
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-    ...(useShell ? { shell: true } : {}),
-  });
+  /*
+    经解释器之前先拒绝歧义参数。
+    这里**不抛异常**（构造传输时抛会让整个 MCP 池的 reload 失败），而是起一个
+    "永远起不来"的传输：把拒绝原因当作关闭理由报出去 —— 面板上显示的就是
+    「无法启动 xxx：参数含 cmd 元字符」，与其它启动失败的呈现一致。
+  */
+  const unsafe = useInterpreter ? findCmdUnsafeArg(config.command, config.args) : undefined;
+  if (unsafe !== undefined) {
+    return failedTransport(
+      `无法启动 ${config.command}：参数含有 cmd 会解释的字符（% ! & | < > ^ " 换行），` +
+        `拒绝经命令解释器启动。请改用一个 .cmd 包装脚本，或去掉该参数。`,
+      warn,
+    );
+  }
+
+  const child = spawn(
+    useInterpreter ? (process.env.ComSpec ?? "cmd.exe") : config.command,
+    // 经解释器时把命令本身也作为**一个 argv 项**传进去（/c 之后的第一项），
+    // 而不是拼进一个字符串 —— 拼接才是旧实现的病根。
+    useInterpreter ? ["/d", "/s", "/c", config.command, ...config.args] : config.args,
+    {
+      ...(cwd === undefined ? {} : { cwd }),
+      env: buildChildEnv(process.env, config.env),
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+      // shell 永远关掉：需要解释器时我们显式调用它，不让 Node 再套一层
+      shell: false,
+    },
+  );
 
   let closedReason: string | null = null;
   // 报文的快照恒为 null：关闭后到达的报文直接丢掉，不该被当成「断开原因」回调给监听者

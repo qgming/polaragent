@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Git 状态</title>
+    <!--
+      右侧面板里的 Git 状态。
+
+      它演示的是**插件界面唯一能读本地状态的那条路**：`window.oint.exec`。
+      界面的 CSP 是 `connect-src 'none'`，`fetch` 也出不了本机 —— 所以 `git` 只能经由
+      宿主执行（宿主会核对清单里的 `shell.exec: ["git"]` 白名单）。
+
+      样式全部内联在 <style> 里而不是外链 .css：这个面板只有一屏，
+      多一个文件就多一次 `oint-plugin://` 请求，而收益只是"结构上更整齐"。
+      注意 **CSP 是 `script-src 'self'`** —— 脚本必须是外部 .js，内联 <script> 会被拦掉。
+    -->
+    <style>
+      :root {
+        --bg: transparent;
+        --fg: #1c1c1e;
+        --muted: #6b6b70;
+        --faint: #9a9aa0;
+        --line: rgb(0 0 0 / 10%);
+        --hover: rgb(0 0 0 / 4%);
+        --accent: #2563eb;
+        --add: #16a34a;
+        --del: #dc2626;
+        --warn: #d97706;
+      }
+      body[data-theme="dark"] {
+        --fg: #e8e8ea;
+        --muted: #a0a0a8;
+        --faint: #6e6e76;
+        --line: rgb(255 255 255 / 12%);
+        --hover: rgb(255 255 255 / 6%);
+        --accent: #60a5fa;
+        --add: #4ade80;
+        --del: #f87171;
+        --warn: #fbbf24;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font: 12.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        flex: none;
+      }
+      #branch {
+        font-weight: 600;
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #track {
+        color: var(--muted);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        flex: none;
+      }
+      #refresh {
+        margin-left: auto;
+        flex: none;
+        border: 1px solid var(--line);
+        background: none;
+        color: var(--muted);
+        border-radius: 6px;
+        padding: 2px 8px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      #refresh:hover {
+        background: var(--hover);
+        color: var(--fg);
+      }
+      #list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 0;
+      }
+      .row {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 3px 12px;
+        font-size: 12px;
+      }
+      .row:hover {
+        background: var(--hover);
+      }
+      .code {
+        flex: none;
+        width: 2ch;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-weight: 600;
+      }
+      .code.M,
+      .code.R {
+        color: var(--warn);
+      }
+      .code.A,
+      .code. {
+        color: var(--add);
+      }
+      .code.D {
+        color: var(--del);
+      }
+      .path {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl;
+        text-align: left;
+      }
+      .group {
+        padding: 8px 12px 2px;
+        color: var(--faint);
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .empty {
+        padding: 24px 16px;
+        text-align: center;
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .empty b {
+        display: block;
+        color: var(--muted);
+        font-weight: 500;
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span id="branch">…</span>
+      <span id="track"></span>
+      <button id="refresh" type="button">刷新</button>
+    </header>
+    <div id="list"></div>
+    <script src="./panel.js"></script>
+  </body>
+</html>

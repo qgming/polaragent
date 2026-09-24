@@ -88,9 +88,13 @@ export interface McpServerState {
 /**
  * server 配置的来源：
  * - `system`：随应用分发的预设（见 shared/mcp/builtin-servers.ts），不可编辑/删除，只能启停；
- * - `user`：用户自己新增的配置，住在 settings.mcpServers 里，可增删改。
+ * - `user`：用户自己新增的配置，住在 settings.mcpServers 里，可增删改；
+ * - `plugin`：**插件在它自己的 `mcp.json` 里声明的**（见 main/plugins/plugin-mcp.ts）。
+ *   配置由插件的清单派生，所以同样不可编辑/删除 —— 要改就去改插件。
+ *   单独一档而不是并进 `user`：卸载插件要连带撤掉它们，而"用户手写的配置"不该被
+ *   任何卸载动作碰到。
  */
-export type McpServerSource = "system" | "user";
+export type McpServerSource = "system" | "user" | "plugin";
 
 /** 设置面板要的一行：配置 + 运行时状态（配置来自 settings，状态来自连接管理器） */
 export interface McpServerView {

@@ -5,6 +5,7 @@
 // 运行侧不属于本文件：运行记录由 pisdk/subagent-runner.ts（子智能体运行时）维护，这里只做转发。
 
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { shell } from "electron";
 import {
   BUILTIN_SUBAGENTS,
@@ -17,6 +18,7 @@ import {
   writeUserSubagentFile,
 } from "@/main/pisdk/subagent-catalog";
 import { reconcileSubagentRuns, stopSubagentRun } from "@/main/pisdk/subagent-runner";
+import { isPluginContributionDir } from "@/main/plugins/contributions";
 import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
 import {
@@ -44,8 +46,21 @@ export function registerSubagentsIpc(): void {
       // cwd 决定项目级目录（.oint/subagents）扫不扫：设置面板不带会话，只列数据目录里的定义；
       // 项目级定义跟着会话 cwd 走。定义目录固定，读取走普通 fs，不需要装配 ExecutionEnv
       const { definitions, diagnostics } = await loadSubagentCatalog(request?.workingDir);
+      /*
+        **把插件贡献的定义排除掉。**
+
+        与技能 / 提示同一个口径（见 ipc/skills.ts 的说明）：那些定义归**插件**管，
+        用户在设置里编辑不了也删不掉。**模型照样读得到** ——
+        运行时那一侧走 `loadSubagentCatalog` 的完整结果，不经过这个过滤。
+
+        这里只能在**结果层**过滤而不是目录层：`loadSubagentCatalog` 是设置面板与
+        运行时**共用**的扫描器，按目录过滤会把运行时那份也一起砍掉。
+      */
+      const visible = definitions.filter(
+        (def) => def.filePath === undefined || !isPluginContributionDir(path.dirname(def.filePath)),
+      );
       // enabled 由设置现算，不在目录层过滤：已禁用的定义也要显示出来才能重新启用
-      return { subagents: definitions.map((def) => toSubagentInfo(def, settings)), diagnostics };
+      return { subagents: visible.map((def) => toSubagentInfo(def, settings)), diagnostics };
     },
   );
 

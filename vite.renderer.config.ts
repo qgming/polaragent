@@ -49,25 +49,48 @@ export default defineConfig(async () => ({
           await startup(["."], { env });
         },
       },
-      preload: {
-        input: {
-          preload: "src/preload/index.ts",
-        },
-        vite: {
-          resolve: { alias },
-          build: {
-            emptyOutDir: false,
-            target: "node22",
-            rollupOptions: {
-              // sandbox: true 的窗口只支持 CJS preload，因此强制产出 preload.cjs
-              output: {
-                format: "cjs",
-                entryFileNames: "preload.cjs",
+      /*
+        两个 preload 入口**必须各自一次构建**（数组形式），不能合成一个多入口构建。
+
+        原因不是配置麻烦，是沙箱的硬约束：`sandbox: true` 的 preload 里 `require`
+        只能拿到 electron 与少数内建模块，**require 不了兄弟 chunk**。
+        而多入口 + CJS 会触发代码分割（vite 直接报
+        `multiple inputs are not supported when output.codeSplitting is false`），
+        强行打开它产出的 preload 在沙箱里一加载就失败 —— 症状是
+        「窗口开了，但 window.oint 是 undefined」。
+
+        所以：每个入口一个自包含的单文件产物。
+      */
+      preload: [
+        {
+          input: { preload: "src/preload/index.ts" },
+          vite: {
+            resolve: { alias },
+            build: {
+              emptyOutDir: false,
+              target: "node22",
+              rollupOptions: {
+                // sandbox: true 的窗口只支持 CJS preload，因此强制产出 .cjs
+                output: { format: "cjs", entryFileNames: "[name].cjs" },
               },
             },
           },
         },
-      },
+        {
+          // 插件界面的 guest preload：暴露给**第三方页面**的那一份（权限面完全不同）
+          input: { "plugin-surface": "src/preload/plugin-surface.ts" },
+          vite: {
+            resolve: { alias },
+            build: {
+              emptyOutDir: false,
+              target: "node22",
+              rollupOptions: {
+                output: { format: "cjs", entryFileNames: "[name].cjs" },
+              },
+            },
+          },
+        },
+      ],
     }),
   ],
   resolve: {

@@ -19,10 +19,37 @@ export const DATA_DIR_ENV = "OINT_HOME";
 const DATA_DIR_NAME = ".oint";
 
 /** 数据目录内的子目录；缺少时由 ensureAppDirs 补建 */
-const DATA_SUBDIRS = ["sessions", "skills", "prompts", "subagents", "cache"] as const;
+const DATA_SUBDIRS = ["sessions", "skills", "prompts", "subagents", "cache", "plugins"] as const;
 
 /** 数据目录权限：只允许当前用户访问（Windows 忽略该位） */
 const DIR_MODE = 0o700;
+
+/**
+ * 插件私有数据目录的**目录名**归一。
+ *
+ * 插件的 id 是反向域名（`dev.example.git-lens`），它可以合法地含点与连字符 ——
+ * 那在目录名里没问题，但**必须挡掉路径分隔符与 `..`**：id 来自一份第三方写的
+ * 清单文件，`id: "../../etc"` 这种值是能通过"反向域名"这条正则之外的想象的。
+ * 校验器已经要求了 `^[a-z0-9]+(\.[a-z0-9_-]+)+$`，这里再兜一层 ——
+ * 因为**数据目录的路径拼接不能依赖"上游校验过了"**（将来 id 可能来自别处，
+ * 比如市场目录）。
+ *
+ * 归一规则：白名单字符之外的**一切**替换成 `_`。于是 `..` 与 `/` 都变成下划线，
+ * 拼出来的路径一定落在 plugins/ 里。
+ */
+export function pluginDirName(id: string): string {
+  return id.replace(/[^a-z0-9._-]/gi, "_");
+}
+
+/** 插件根目录：`<dataDir>/plugins` */
+export function pluginsDir(dir: string = dataDir()): string {
+  return path.join(dir, "plugins");
+}
+
+/** 某个插件的私有数据目录：`<dataDir>/plugins/data/<sanitized-id>` */
+export function pluginDataDir(id: string, dir: string = dataDir()): string {
+  return path.join(pluginsDir(dir), "data", pluginDirName(id));
+}
 
 export interface ResolveDataDirOptions {
   /** 环境变量来源，默认 process.env */

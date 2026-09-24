@@ -9,6 +9,7 @@ export * from "./interaction";
 export * from "./ipc";
 export * from "./job";
 export * from "./models";
+export * from "./plugin";
 export * from "./project";
 export * from "./prompts";
 export * from "./review";

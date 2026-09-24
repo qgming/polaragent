@@ -14,6 +14,15 @@ import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
 import type { ModelLookupResult } from "./models";
 import type { PermissionRuleView } from "./permissions";
+import type {
+  PluginCommandView,
+  PluginDiagnostic,
+  PluginListResult,
+  PluginMutationResult,
+  PluginSurfaceClosedEvent,
+  PluginSurfaceOpenResult,
+  PluginView,
+} from "./plugin";
 import type { Project } from "./project";
 import type { PromptTemplateInfo, PromptTemplateWriteRequest } from "./prompts";
 import type { ReviewSummary } from "./review";
@@ -303,5 +312,86 @@ export interface OintApi {
   web: {
     /** 用**草稿**配置发一次真实检索，验证 provider 是否可用（与是否已保存无关） */
     test(request: WebTestRequest): Promise<WebTestResult>;
+  };
+  /**
+   * 插件：设置里那个插件管理模态窗的数据通路。
+   *
+   * 两处刻意的形状选择：
+   *  - **改状态的通道一律返回 PluginListResult（变更后的完整列表）**，而不是 void ——
+   *    与 mcp 那组同款。一次操作可能连带影响别的行（同 id 覆盖、升级时的权限变化），
+   *    只回一行会让界面漏刷新，而「再拉一次」会多一次往返和一个闪烁的中间态。
+   *  - **`list` 在运行时未接入时返回空数组而不是抛错** —— 模态窗因此可以先于插件
+   *    运行时上线（见 docs/plugin-manager-modal-plan.md §4.4）。真正的失败
+   *    （IPC 通道不存在）由 plugins-store 兜住并降级为空态。
+   */
+  plugins: {
+    /** 列出全部插件（内置 + 用户 + 开发），已按来源与安装顺序排好 */
+    list(): Promise<PluginView[]>;
+    /** 启用一个插件；加载失败时那一行的 state 是 load_error，而不是抛错 */
+    enable(id: string): Promise<PluginListResult>;
+    /** 停用一个插件：卸载运行时的全部贡献物并关闭它的界面 */
+    disable(id: string): Promise<PluginListResult>;
+    /** 重载：先卸载再加载，用于「改完包 / 崩过之后再来一次」 */
+    reload(id: string): Promise<PluginListResult>;
+    /** 安装 .ointplug 包；取消时 canceled 为真 */
+    install(): Promise<PluginMutationResult>;
+    /** 卸载；keepData 为真时保留私有数据目录（默认由界面问用户） */
+    uninstall(id: string, keepData: boolean): Promise<PluginListResult>;
+    /** 引用本地目录作为开发插件（不拷贝文件，带文件监视） */
+    loadDev(): Promise<PluginMutationResult>;
+    /** 打开插件的一个界面；面板切右侧面板、模态窗开对话框、窗口建独立窗口 */
+    openSurface(id: string, surfaceId: string): Promise<PluginSurfaceOpenResult>;
+    /**
+     * 订阅「插件界面自己请求关闭」（见 IPC.plugins.surfaceClosed）。
+     *
+     * 与 chat / terminal / subagents 的 onEvent 同款：返回取消订阅函数。
+     * **只针对宿主在渲染层的两类界面**（面板与模态窗）—— 独立窗口由主进程关，
+     * 渲染层不需要知道。
+     */
+    onSurfaceClosed(callback: (event: PluginSurfaceClosedEvent) => void): () => void;
+    /** 插件注册的命令（只有进程在跑的插件才有） */
+    commands(): Promise<PluginCommandView[]>;
+    /**
+     * 执行一个插件命令。
+     *
+     * `workspaceDir` **由调用方给**：主进程不知道"当前会话在看哪个目录"，
+     * 而插件命令多半要针对那个目录做事。传空串表示没有特定工作目录。
+     */
+    runCommand(
+      id: string,
+      args: string,
+      workspaceDir: string,
+    ): Promise<{ ok: boolean; text?: string; error?: string }>;
+    /**
+     * 把当前主题推给全部插件界面；返回送达了几个（诊断用）。
+     *
+     * 接受 `"system"`：**解析留给主进程**（`nativeTheme` 只有它拿得到），
+     * 渲染层不该自己猜操作系统现在是深色还是浅色。
+     */
+    broadcastTheme(theme: "light" | "dark" | "system"): Promise<number>;
+    /**
+     * 把一个插件打成 zip 分享出去。
+     *
+     * `canceled` 表示用户在保存框上按了取消 —— **不是错误**（与安装那边同款）。
+     * `skipped` 里是被排除的东西（node_modules、超大文件等），要显示给用户，
+     * 否则他会以为分享包里有那些东西。
+     */
+    export(
+      id: string,
+    ): Promise<{ canceled: boolean; path?: string; files?: number; skipped?: string[] }>;
+    /** 在系统文件管理器里定位插件的私有数据目录 */
+    revealData(id: string): Promise<{ ok: boolean }>;
+    /** 最近的诊断记录（加载错误、崩溃、被拒的权限请求），按时间降序 */
+    diagnostics(): Promise<PluginDiagnostic[]>;
+    /**
+     * 告诉宿主当前会话的工作目录。
+     *
+     * 它决定**项目级插件目录**（`<工作目录>/.oint/plugins/`）扫不扫 ——
+     * 模型写插件只能写在会话工作目录里（那是它被允许写的范围），
+     * 所以"对话创建插件"能不能被看见，取决于这一条。
+     *
+     * 传 `undefined` 表示没有会话：那时**跳过**项目那一层，而不是猜一个。
+     */
+    setWorkspace(dir: string | undefined): Promise<void>;
   };
 }

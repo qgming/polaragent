@@ -465,3 +465,109 @@ describe("网络搜索设置", () => {
     expect(DEFAULT_WEB_SEARCH_SETTINGS.searxng.instances).toBe("");
   });
 });
+
+/**
+ * 写侧归一（缺口二）。
+ *
+ * 早先 `save()` 直接 `toPersisted(next)`，而 `toPersisted` 是 `{...settings, services, webSearch}` ——
+ * 于是**渲染层送来的任意额外键会被 spread 落盘**，所有校验只在 `load()` 里生效。
+ *
+ * 后果不是理论问题：渲染层可以写 `permissionMode: "full"`，缓存立即更新，**审批链当场失效**。
+ * 今天渲染层是我们自己的代码所以不算漏洞，但插件界面一旦进入渲染层，
+ * `window.oint.settings.write` 就是全套权限。
+ */
+describe("save：写侧归一", () => {
+  /** 读回落盘的那份 JSON（绕过 store 的缓存，看的是磁盘上的真实内容） */
+  async function readPersisted(): Promise<Record<string, unknown>> {
+    return JSON.parse(await readFile(settingsFile, "utf8")) as Record<string, unknown>;
+  }
+
+  it("**未知键不落盘** —— 它们不再被 spread 进去", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save({
+      ...sampleSettings("sk-1"),
+      // 渲染层（或将来的插件界面）塞进来的额外键
+      evilKey: "should-not-persist",
+      permissionMode: "default",
+    } as unknown as Settings);
+
+    const persisted = await readPersisted();
+    expect(persisted).not.toHaveProperty("evilKey");
+  });
+
+  it("非法的 permissionMode 在写入时就被归一，而不是等下次读盘", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save({
+      ...sampleSettings("sk-1"),
+      permissionMode: "definitely-not-a-mode",
+    } as unknown as Settings);
+
+    // 落盘的是归一后的值
+    const persisted = await readPersisted();
+    expect(persisted.permissionMode).toBe("default");
+    // **缓存里也是归一后的那份** —— 否则界面读回来的值与盘上不一致
+    expect((await store.load()).permissionMode).toBe("default");
+  });
+
+  it("非法的 agentMode / language 同样在写入时归一", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save({
+      ...sampleSettings("sk-1"),
+      agentMode: "nope",
+      language: "klingon",
+    } as unknown as Settings);
+
+    const persisted = await readPersisted();
+    expect(persisted.agentMode).toBe(DEFAULT_SETTINGS.agentMode);
+    expect(persisted.language).toBe(DEFAULT_SETTINGS.language);
+  });
+
+  it("非法 id 的 MCP server 在写入时就被丢掉（而不是读回来才发现）", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save({
+      ...sampleSettings("sk-1"),
+      mcpServers: [
+        {
+          id: "BAD ID",
+          name: "x",
+          transport: "stdio",
+          command: "echo",
+          args: [],
+          env: {},
+          cwd: "",
+          url: "",
+          headers: {},
+          createdAt: 0,
+        },
+        {
+          id: "good-id",
+          name: "y",
+          transport: "stdio",
+          command: "echo",
+          args: [],
+          env: {},
+          cwd: "",
+          url: "",
+          headers: {},
+          createdAt: 0,
+        },
+      ],
+    } as unknown as Settings);
+
+    const persisted = (await readPersisted()).mcpServers as { id: string }[];
+    expect(persisted.map((server) => server.id)).toEqual(["good-id"]);
+  });
+
+  it("正常写入不受影响：合法值原样落盘，apiKey 仍走加密", async () => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    const settings = sampleSettings("sk-secret");
+    await store.save(settings);
+
+    const persisted = await readPersisted();
+    expect(persisted.theme).toBe("dark");
+    expect(persisted.permissionMode).toBe(settings.permissionMode);
+    // 归一不等于明文落盘 —— apiKey 还是加密对象
+    const services = persisted.services as { apiKey: unknown }[];
+    expect(services[0]?.apiKey).toEqual({ v: 1, enc: true, data: expect.any(String) });
+  });
+});

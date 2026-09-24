@@ -20,6 +20,7 @@ import {
   type McpHandshake,
   type McpRemoteTool,
 } from "@/main/mcp/client";
+import { pluginMcpServerConfigs } from "@/main/plugins/contributions";
 import { loadSettings } from "@/main/settings/store";
 import {
   isValidMcpServerId,
@@ -115,6 +116,43 @@ export interface McpServersDeps {
   warn?: (message: string) => void;
   /** 注入客户端工厂（测试用） */
   createClient?: (config: McpServerConfig) => McpClient;
+}
+
+/**
+ * 三层的合并口径：**系统预设 → 插件声明 → 用户配置**。
+ *
+ * 这两个局部包装是**唯一**注入插件 server 的地方（下面五处调用全走它们）。
+ * 为什么收在这里而不是让每个调用点自己写 `pluginMcpServerConfigs()`：
+ * 那是五处各写一遍同一个参数，而漏掉任何一处的症状都不一样 ——
+ * 漏在 `views()` 是「面板看不到插件提供的 server」，漏在 `reload()` 是
+ * 「面板看得到但连不上」，漏在 `reconnect()` 是「点重连没反应」。
+ * 三种症状，同一个原因，而且都不报错。
+ *
+ * `pluginMcpServerConfigs()` 读的是插件贡献面快照（同步）—— 它在装配路径上，
+ * 不能 await 注册表。
+ */
+function entriesOf(settings: Settings): ResolvedMcpServer[] {
+  return resolveMcpServerEntries(settings, pluginMcpServerConfigs());
+}
+
+/**
+ * 设置面板用的清单：**不含插件贡献的 server**。
+ *
+ * 与 `entriesOf` 分开是刻意的，而且分开的正是**"谁说了算"**：
+ *  - 面板是给用户管自己配置的地方。插件带来的 server 用户在面板里既改不了也删不掉
+ *    （它们由插件的 `mcp.json` 派生），显示出来只会制造"这里能管它"的错觉；
+ *  - 运行时那一侧照常合并（`entriesOf`），所以**模型照样能用它们**。
+ *
+ * 代价是"插件偷偷加了 MCP server 而用户在设置里看不见"。这条由**插件详情**补上：
+ * 详情里有它的权限清单（`mcp.server.local` / `mcp.server.remote` 是高风险项）
+ * 与贡献物计数 —— 用户在那个插件自己的档案里看得到，而不是在一个不属于它的列表里。
+ */
+function entriesForPanel(settings: Settings): ResolvedMcpServer[] {
+  return resolveMcpServerEntries(settings);
+}
+
+function effectiveOf(settings: Settings): McpServerConfig[] {
+  return effectiveMcpServerConfigs(settings, pluginMcpServerConfigs());
 }
 
 /** 连接相关的配置是否一致：只比会影响连接本身的字段，名字/启用状态不算 */
@@ -387,13 +425,14 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
     async views() {
       // 面板要看到**两层**（系统预设 + 用户配置），包括停用与被覆盖的那些 —— 停用的条目
       // 也要显示（否则用户没法把它重新打开），被覆盖的也要显示（否则「改了没生效」无从解释）。
-      return toViews(resolveMcpServerEntries(await deps.getSettings()));
+      // 面板：不含插件贡献的（理由见 entriesForPanel）
+      return toViews(entriesForPanel(await deps.getSettings()));
     },
     async reload() {
       if (disposed) return [];
       const settings = await deps.getSettings();
       // 连接只连**生效的**那些：同 id 用户配置胜出、停用的不连（合并口径见 builtin-servers.ts）
-      const active = effectiveMcpServerConfigs(settings);
+      const active = effectiveOf(settings);
       const byId = new Map(active.map((config) => [config.id, config]));
 
       for (const [id, entry] of [...entries]) {
@@ -411,11 +450,11 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
 
       await Promise.all(active.map((config) => ensureConnected(config)));
       notify();
-      return toViews(resolveMcpServerEntries(settings));
+      return toViews(entriesOf(settings));
     },
     async reconnect(serverId) {
       const settings = await deps.getSettings();
-      const config = effectiveMcpServerConfigs(settings).find((item) => item.id === serverId);
+      const config = effectiveOf(settings).find((item) => item.id === serverId);
       // 先断开这台（如果有连接）：不复用旧 client，否则「重连」等于什么都不做
       const existing = entries.get(serverId);
       if (existing !== undefined) {
@@ -425,7 +464,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
       }
       if (config !== undefined) await ensureConnected(config);
       notify();
-      return toViews(resolveMcpServerEntries(settings));
+      return toViews(entriesOf(settings));
     },
     async probe(config) {
       if (!isValidMcpServerId(config.id)) {

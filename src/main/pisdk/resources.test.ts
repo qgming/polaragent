@@ -16,9 +16,22 @@ import { describe, expect, it, vi } from "vitest";
 const paths = vi.hoisted(() => ({ data: "/data-oint" }));
 vi.mock("@/main/app/paths", () => ({ dataDir: () => paths.data }));
 
+/**
+ * 家目录固定成常量。
+ *
+ * 理由不是"为了好写"：跨工具共享技能目录住在 `~/.agents/skills`（见 `agentsSkillsDir`），
+ * 拿真实的 `homedir()` 做断言等于**让测试结果取决于跑测试的那台机器上有没有那份技能** ——
+ * 本机有它、CI 没有，两边断言的值就不一样，而失败信息会指向资源解析函数。
+ */
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => "/home-test" };
+});
+
 import { BUILTIN_COMMANDS } from "@/shared/contracts/commands";
 import { PROMPT_NAME_PATTERN } from "@/shared/contracts/prompts";
 import {
+  agentsSkillsDir,
   resolveBuiltinPromptDir,
   resolveBuiltinSkillDir,
   resolvePromptTemplateDirs,
@@ -45,12 +58,13 @@ function normalizeAll(values: string[]): string[] {
 }
 
 describe("resolveSkillDirs", () => {
-  it("三个来源的顺序是：数据目录 → 项目 → 内置（顺序即优先级）", () => {
+  it("四个来源的顺序是：数据目录 → 项目 → 跨工具共享 → 内置（顺序即优先级）", () => {
     const dirs = resolveSkillDirs("/proj", "/app");
 
     expect(normalizeAll(dirs)).toEqual([
       "/data-oint/skills",
       "/proj/.oint/skills",
+      "/home-test/.agents/skills",
       "/app/resources/skills",
     ]);
   });
@@ -62,20 +76,58 @@ describe("resolveSkillDirs", () => {
     expect(dirs.indexOf("/app/resources/skills")).toBe(dirs.length - 1);
   });
 
+  /**
+   * 跨工具共享目录的位置：**在项目之后、插件之前**。
+   *
+   * 两边的判据不同，各钉一条：
+   * - 排在项目之后 —— 项目是"这个仓库要的"，比机器级的共享目录更具体；
+   * - 排在插件之前 —— 用户手上那份技能（哪怕是别的工具装的）优先于插件随包带的。
+   */
+  it("共享目录排在项目之后、插件与内置之前", () => {
+    const dirs = normalizeAll(
+      resolveSkillDirs("/proj", "/app", ["/plugin-a/skills"], ["/shared/.agents/skills"]),
+    );
+
+    expect(dirs).toEqual([
+      "/data-oint/skills",
+      "/proj/.oint/skills",
+      "/shared/.agents/skills",
+      "/plugin-a/skills",
+      "/app/resources/skills",
+    ]);
+  });
+
+  it("共享目录缺省是 ~/.agents/skills（家目录可注入，路径形状仍钉住）", () => {
+    expect(normalize(agentsSkillsDir())).toBe("/home-test/.agents/skills");
+    expect(normalize(agentsSkillsDir("/other-home"))).toBe("/other-home/.agents/skills");
+    // 缺省参与扫描：不传第四个参数时它就在清单里
+    expect(normalizeAll(resolveSkillDirs("/proj"))).toContain("/home-test/.agents/skills");
+  });
+
+  it("显式传空数组即完全不看共享目录（单测要纯行为时走这条）", () => {
+    expect(normalizeAll(resolveSkillDirs("/proj", "/app", [], []))).toEqual([
+      "/data-oint/skills",
+      "/proj/.oint/skills",
+      "/app/resources/skills",
+    ]);
+  });
+
   it("没有工作目录时不追加项目目录（设置面板不带会话）", () => {
     expect(normalizeAll(resolveSkillDirs(undefined, "/app"))).toEqual([
       "/data-oint/skills",
+      "/home-test/.agents/skills",
       "/app/resources/skills",
     ]);
-    expect(resolveSkillDirs("", "/app")).toHaveLength(2);
+    expect(resolveSkillDirs("", "/app")).toHaveLength(3);
   });
 
   it("没有 appPath 时只有用户来源（单测与不关心内置技能的调用方）", () => {
     expect(normalizeAll(resolveSkillDirs("/proj"))).toEqual([
       "/data-oint/skills",
       "/proj/.oint/skills",
+      "/home-test/.agents/skills",
     ]);
-    expect(resolveSkillDirs("/proj", "")).toHaveLength(2);
+    expect(resolveSkillDirs("/proj", "")).toHaveLength(3);
   });
 });
 

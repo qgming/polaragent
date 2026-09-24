@@ -1,18 +1,14 @@
-import { Plus, X } from "lucide-react";
+import { Plug, Plus, X } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { WindowControls } from "@/renderer/app/WindowControls";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
-import { type RightPanelTab, type RightPanelView, useUiStore } from "@/renderer/stores/ui-store";
-import { BrowserPanel } from "./BrowserPanel";
-import { FilesPanel } from "./FilesPanel";
-import { FileViewPanel } from "./FileViewPanel";
-import { RIGHT_PANEL_VIEW_META } from "./panel-meta";
-import { ReviewPanel } from "./ReviewPanel";
+import { type RightPanelTab, useUiStore } from "@/renderer/stores/ui-store";
+// 从 panels.ts（唯一入口）导入：它会先跑内置面板的注册副作用，再暴露查询函数。
+// 直接 import panel-registry 会拿到一张空表（见那个文件的文件头）。
+import { getPanel, panelLabel } from "./panels";
 import { RightPanelChooser } from "./RightPanelChooser";
-import { SubagentPanel } from "./SubagentPanel";
-import { TerminalPanel } from "./TerminalPanel";
 /**
  * 右侧栏本体：内容区顶栏那颗按钮开出来的面板。
  *
@@ -167,24 +163,28 @@ export function RightSidebar(): React.JSX.Element {
             所以这里只给 min-h-0 的容器，不加 overflow —— 加了会把面板内部的吸顶元素一起滚走。 */}
         <div className="flex min-h-0 flex-1 flex-col">
           {/*
-            所有浏览器标签都渲染（每个都在自己的宿主 div 里），只有当前标签那个可见。
-            这是「页面状态活过切换」的实现处：display:none 不销毁 guest，
+            **常驻面板**（目前只有浏览器）：所有它的标签都渲染，只有当前那个可见。
+            这是「页面状态活过切换」的实现处 —— display:none 不销毁 guest，
             切回来时页面、滚动位置、表单草稿都还在（理由见文件头）。
+            判据来自注册表的 `resident` 标志，不再写死 `tab.view === "browser"`。
           */}
           {tabs
-            .filter((tab) => tab.view === "browser")
+            .filter((tab) => getPanel(tab.view)?.resident === true)
             .map((tab) => (
               <div
                 key={tab.id}
                 className={cn("flex min-h-0 flex-1 flex-col", tab.id !== activeTabId && "hidden")}
               >
-                <BrowserPanel tabId={tab.id} active={tab.id === activeTabId} />
+                <PanelBody view={tab.view} tabId={tab.id} active={tab.id === activeTabId} />
               </div>
             ))}
           {activeTab === null ? (
             <RightPanelChooser />
           ) : (
-            activeTab.view !== "browser" && <TransientPanel view={activeTab.view} />
+            // 常驻的已经由上面渲染过了，这里只画其余的（切走即卸载）
+            getPanel(activeTab.view)?.resident !== true && (
+              <PanelBody view={activeTab.view} tabId={activeTab.id} active />
+            )
           )}
         </div>
       </div>
@@ -218,8 +218,14 @@ function RightPanelTabButton({
   onClose: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
-  const meta = RIGHT_PANEL_VIEW_META[tab.view];
-  const Icon = meta.icon;
+  /*
+    注册表里查不到也要能画出标签：插件面板被禁用 / 卸载之后，它的标签可能还开着
+    （用户没关），而这时右栏不该整条崩掉。兜底用 `Plug` 图标 + 视图 id 本身 ——
+    至少让用户看出"这个标签对应的是一个已经不可用的面板"。
+  */
+  const panel = getPanel(tab.view);
+  const Icon = panel?.Icon ?? Plug;
+  const label = tab.title ?? (panel === undefined ? tab.view : panelLabel(panel, t));
 
   return (
     <div
@@ -237,7 +243,7 @@ function RightPanelTabButton({
         className="flex min-w-0 items-center gap-1.5"
       >
         <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-        <span className="max-w-[8rem] truncate">{tab.title ?? t(meta.labelKey)}</span>
+        <span className="max-w-[8rem] truncate">{label}</span>
       </button>
       <button
         type="button"
@@ -262,23 +268,32 @@ function RightPanelTabButton({
 }
 
 /**
- * 除浏览器外的四个面板：切走就卸载（重建成本低，同时留着只会白占内存）。
+ * 一个面板实例的内容。
  *
- * 单独一个组件而不是在上一层的 return 里写 switch：那一层要同时表达
- * 「浏览器常驻」与「其余瞬时」，两件事混在一个 switch 里读不出这个区别。
- * 入参把 browser 排除掉：浏览器由上一层常驻渲染，走不到这里。
+ * 从注册表取描述、渲染它的 `content`，并把 `tabId` / `active` 一并交给它 ——
+ * **统一形状**让"浏览器要两个参数、其余的不要"这条差异从渲染逻辑里消失。
+ *
+ * 注册表里查不到时给一块明确的占位，而不是渲染空白：插件面板被卸载后标签可能还开着，
+ * 那时"这里本来是某个面板，现在没了"才是用户该看到的信息。
  */
-function TransientPanel({ view }: { view: Exclude<RightPanelView, "browser"> }): React.JSX.Element {
-  switch (view) {
-    case "review":
-      return <ReviewPanel />;
-    case "files":
-      return <FilesPanel />;
-    case "file":
-      return <FileViewPanel />;
-    case "subagent":
-      return <SubagentPanel />;
-    case "terminal":
-      return <TerminalPanel />;
+function PanelBody({
+  view,
+  tabId,
+  active,
+}: {
+  view: string;
+  tabId: string;
+  active: boolean;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  const panel = getPanel(view);
+  if (panel === undefined) {
+    return (
+      <div className="grid flex-1 place-items-center p-6 text-center">
+        <p className="text-[13px] text-ink-3">{t("rightPanel.unavailable")}</p>
+      </div>
+    );
   }
+  const Content = panel.content;
+  return <Content tabId={tabId} active={active} />;
 }

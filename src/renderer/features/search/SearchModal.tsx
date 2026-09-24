@@ -12,11 +12,14 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/renderer/components/ui/dialog";
+import { useActiveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
+import { settingsSections } from "@/renderer/features/settings/sections";
 import { formatRelativeDay, formatTime } from "@/renderer/lib/format";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { usePluginsStore } from "@/renderer/stores/plugins-store";
 import { useSettingsStore } from "@/renderer/stores/settings-store";
-import { SETTINGS_SECTIONS, useUiStore } from "@/renderer/stores/ui-store";
+import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts/session";
 import { findMatches } from "./find-matches";
 
@@ -73,6 +76,14 @@ export function SearchModal() {
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const createSession = useChatStore((s) => s.createSession);
   const theme = useSettingsStore((s) => s.settings?.theme);
+  /*
+    插件命令：只有**进程在跑**的插件才有（纯声明式插件不注册命令）。
+    列表跟着插件启停变，所以它在 store 里、由 store 刷新，这里只读。
+  */
+  const pluginCommands = usePluginsStore((s) => s.commands);
+  const runPluginCommand = usePluginsStore((s) => s.runCommand);
+  // 命令多半要针对"当前会话在看的那个目录"做事，而主进程不知道那是哪个
+  const workingDir = useActiveWorkingDir();
   const updateSettings = useSettingsStore((s) => s.update);
 
   const [query, setQuery] = useState("");
@@ -183,14 +194,21 @@ export function SearchModal() {
       }
     }
 
-    // 设置：分类清单取自 ui-store 的规范顺序，按当前语言标签过滤
-    for (const section of SETTINGS_SECTIONS) {
-      const label = t(`settings.${section}`);
+    /*
+      设置：分栏清单取自**注册表**，文案键是描述子里的字面量。
+
+      这里过去是 `` t(`settings.${section}`) `` —— 一个运行期拼出来的 i18n 键，
+      它依赖「section id 恰好等于文案键的后缀」这条没人写下来的约定：
+      改一个 id 会让搜索结果里显示成 `settings.foo`，而 scripts/check-i18n.mjs
+      抓的是**编译期字面量**，拼串正好从它眼皮底下溜过去。
+    */
+    for (const section of settingsSections()) {
+      const label = t(section.labelKey);
       if (!label.toLocaleLowerCase().includes(lowered)) continue;
-      const id = `setting:${section}`;
+      const id = `setting:${section.id}`;
       next.set(id, () => {
         closeSearch();
-        openSettings(section);
+        openSettings(section.id);
       });
       out.push({
         id,
@@ -226,6 +244,36 @@ export function SearchModal() {
       });
     }
 
+    /*
+      插件命令。
+      **与内置命令同一组**（`groupCommands`）：对用户来说"新建对话"与"看看 Git 状态"
+      是同一类东西 —— 都是"让某个东西做一件事"，分两组只会让他多扫一遍。
+
+      命令清单来自 `plugins:commands`（只有**进程在跑**的插件才有），而那个列表
+      跟着插件启停变。所以它在 store 里、由 store 负责刷新，这里只读。
+    */
+    for (const command of pluginCommands) {
+      const label = `${command.pluginName}：${command.name}`;
+      if (!label.toLocaleLowerCase().includes(lowered)) continue;
+      const id = `plugin-command:${command.id}`;
+      next.set(id, () => {
+        /*
+          执行是**异步**的，而命令面板要先关掉：不关的话用户会盯着一个不动的面板，
+          而命令可能跑几秒。失败走 `plugins-store` 的 error（面板上能看到），
+          不在这里弹窗 —— 命令面板正在关闭，弹什么都来不及看。
+        */
+        closeSearch();
+        void runPluginCommand(command.id, "", workingDir ?? "");
+      });
+      out.push({
+        id,
+        label,
+        group: groupCommands,
+        // 描述进关键词：用户敲"仓库"时该能找到描述里写了"仓库"的那条命令
+        keys: [command.description],
+      });
+    }
+
     actions.current = next;
     return out;
   }, [
@@ -243,6 +291,9 @@ export function SearchModal() {
     openSettings,
     createSession,
     updateSettings,
+    pluginCommands,
+    runPluginCommand,
+    workingDir,
   ]);
 
   // 关键词变化或结果变化后回到首条结果

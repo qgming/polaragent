@@ -10,14 +10,38 @@
 // 需要同步的真相 —— 目录选择器因此被移除，扫描范围只有下面几种来源。
 
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
+import { pluginContributionDirs } from "@/main/plugins/contributions";
+
+/**
+ * 跨工具共享的技能目录：`~/.agents/skills`。
+ *
+ * `~/.agents/` 是**跨工具**的约定目录（Claude Code / Codex / Cursor / ZCode 都扫它），
+ * 而技能格式（`<名字>/SKILL.md` + name/description frontmatter）几家一致 —— 读它等于让
+ * 用户手上已有的那一份技能在 Oint 里也能用，不必先导入一遍。
+ *
+ * **只读它，不写它**：Oint 的导入与删除只作用于 `<dataDir>/skills`（用户自己那一份），
+ * 这里出现的技能在设置面板里可以禁用（禁用名单按名字匹配，与来源无关），但不能删 ——
+ * 删掉它会让**别的工具**一起丢技能，那不是这个面板该做的事。
+ *
+ * **刻意不参与 `OINT_HOME` 覆盖**：它属于家目录，跟的是用户机器上的既有约定，
+ * 不是"这份 Oint 的数据搬到了哪里"。同理**不含** `<工作目录>/.agents/skills` ——
+ * 那一档是项目级的，与这里"全局"的定位不是一件事。
+ *
+ * `home` 可注入只为一个理由：单测要钉住这个路径形状，而 `homedir()` 是机器相关的。
+ */
+export function agentsSkillsDir(home: string = homedir()): string {
+  return path.join(home, ".agents", "skills");
+}
 
 /**
  * 解析技能目录清单，**顺序即优先级**（同名先出现者胜）：
  * 1. `${dataDir()}/skills` —— 数据目录下的全局位置，始终参与扫描；
  * 2. `${workingDir}/.oint/skills` —— 会话工作目录下的项目级技能，workingDir 缺失时跳过；
- * 3. `${appPath}/resources/skills` —— **随包分发的内置技能**，appPath 缺失时跳过。
+ * 3. `~/.agents/skills` —— **跨工具共享目录**，始终参与扫描（见 `agentsSkillsDir`）；
+ * 4. `${appPath}/resources/skills` —— **随包分发的内置技能**，appPath 缺失时跳过。
  *
  * 本函数是 ipc/skills.ts（设置面板的技能列表）与 pisdk runtime（把技能目录注入
  * harness / 系统提示词）共用的唯一解析入口——抽它出来就是为了让「面板看到的」与
@@ -29,12 +53,38 @@ import { dataDir } from "@/main/app/paths";
  * 这里不需要 omo 那套 manifest / 暂存机制。
  *
  * 边界处理：workingDir 为 undefined 或空串时不追加项目目录。
+ *
+ * ## 插件贡献的目录（第四个来源）
+ *
+ * `pluginSkills` 缺省取**当前插件快照**（见 main/plugins/contributions.ts）。
+ * 插件的技能排在**跨工具共享目录之后、内置之前**：
+ *
+ * ```
+ * dataDir/skills → workingDir/.oint/skills → ~/.agents/skills → 插件的 skills/ → 内置 resources/skills
+ * ```
+ *
+ * 这个位置是刻意的：**用户永远能覆盖插件**（用户自己写的东西优先于别人给的），
+ * 而插件能覆盖随包分发的内置资源（插件是按用户意愿装的，比出厂内容更贴近他的意图）。
+ * 顺序即优先级（同名先出现者胜），内核的 loadSkills 按这个数组逐个扫。
+ *
+ * 单测要纯行为时显式传 `[]` —— 那时它完全不看快照。
+ *
+ * `sharedSkills` 同理可注入（缺省 `~/.agents/skills`）：这条**必须**与
+ * `runtime.ts` 的 `sessionAllowedRoots` 同步，否则技能目录存在却一个都读不到
+ * （那两处的耦合已踩过两次，见那里与 `contributions.test.ts` 的断言）。
  */
-export function resolveSkillDirs(workingDir?: string, appPath?: string): string[] {
+export function resolveSkillDirs(
+  workingDir?: string,
+  appPath?: string,
+  pluginSkills: readonly string[] = pluginContributionDirs().skills,
+  sharedSkills: readonly string[] = [agentsSkillsDir()],
+): string[] {
   const dirs = [`${dataDir()}/skills`];
   if (workingDir !== undefined && workingDir !== "") {
     dirs.push(`${workingDir}/.oint/skills`);
   }
+  dirs.push(...sharedSkills);
+  dirs.push(...pluginSkills);
   if (appPath !== undefined && appPath !== "") {
     dirs.push(resolveBuiltinSkillDir(appPath));
   }
@@ -90,11 +140,17 @@ export function resolveBuiltinSkillDir(appPath: string): string {
  *
  * 注意 pi 的 `loadPromptTemplates` 只读目录的**直接子级** .md（不递归），与 loadSkills 的递归遍历不同。
  */
-export function resolvePromptTemplateDirs(workingDir?: string, appPath?: string): string[] {
+export function resolvePromptTemplateDirs(
+  workingDir?: string,
+  appPath?: string,
+  pluginPrompts: readonly string[] = pluginContributionDirs().prompts,
+): string[] {
   const dirs = [`${dataDir()}/prompts`];
   if (workingDir !== undefined && workingDir !== "") {
     dirs.push(`${workingDir}/.oint/prompts`);
   }
+  // 插件贡献的模板同样排在项目之后、内置之前（理由见 resolveSkillDirs）
+  dirs.push(...pluginPrompts);
   if (appPath !== undefined && appPath !== "") {
     dirs.push(resolveBuiltinPromptDir(appPath));
   }
@@ -119,15 +175,20 @@ export function resolveBuiltinPromptDir(appPath: string): string {
 /**
  * 解析子智能体定义目录清单，顺序固定为：
  * 1. `${dataDir()}/subagents` —— 数据目录下的全局位置，始终参与扫描；
- * 2. `${workingDir}/.oint/subagents` —— 会话工作目录下的项目级定义，workingDir 缺失时跳过。
+ * 2. `${workingDir}/.oint/subagents` —— 会话工作目录下的项目级定义，workingDir 缺失时跳过；
+ * 3. **插件贡献的目录**（排在最后，理由见 resolveSkillDirs：用户覆盖插件）。
  *
  * ipc/subagents.ts（设置面板的定义列表）与 pisdk/subagent-catalog.ts（装配子会话时读取定义）
  * 共用这一份解析，两处不要再各写一份。
  */
-export function resolveSubagentDirs(workingDir?: string): string[] {
+export function resolveSubagentDirs(
+  workingDir?: string,
+  pluginSubagents: readonly string[] = pluginContributionDirs().subagents,
+): string[] {
   const dirs = [`${dataDir()}/subagents`];
   if (workingDir !== undefined && workingDir !== "") {
     dirs.push(`${workingDir}/.oint/subagents`);
   }
+  dirs.push(...pluginSubagents);
   return dirs;
 }

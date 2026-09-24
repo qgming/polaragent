@@ -11,7 +11,8 @@ import { BACKGROUND_CONTEXT, loadSkills } from "@earendil-works/pi-agent-core";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
-import { resolveBuiltinSkillDir, resolveSkillDirs } from "@/main/pisdk/resources";
+import { agentsSkillsDir, resolveBuiltinSkillDir, resolveSkillDirs } from "@/main/pisdk/resources";
+import { isPluginContributionDir } from "@/main/plugins/contributions";
 import { loadSettings } from "@/main/settings/store";
 import { extractSkillZip } from "@/main/skills/zip-import";
 import { IPC } from "@/shared/contracts/ipc";
@@ -33,11 +34,15 @@ function globalSkillsDir(): string {
  *
  * 判据是**路径**而不是「第几个目录」：目录清单本身可增可减（appPath 缺失时会少一个），
  * 按位置判断会在某天悄悄把内置技能标成用户的，而那种错误没有任何地方会报。
+ *
+ * 跨工具共享目录（`~/.agents/skills`）单列一档：它与数据目录的差别不是"优先级"，
+ * 而是**这个面板不许动它**（见 remove 里的拒绝理由）。
  */
 function sourceOfDir(dir: string): SkillSource {
-  return path.resolve(dir) === path.resolve(resolveBuiltinSkillDir(app.getAppPath()))
-    ? "builtin"
-    : "user";
+  const resolved = path.resolve(dir);
+  if (resolved === path.resolve(resolveBuiltinSkillDir(app.getAppPath()))) return "builtin";
+  if (resolved === path.resolve(agentsSkillsDir())) return "agents";
+  return "user";
 }
 
 /** 扫描单个技能目录；失败只告警并返回空（单个目录坏掉不影响其余目录） */
@@ -81,6 +86,16 @@ async function findBuiltinSkill(name: string): Promise<SkillInfo | null> {
   return found.find((skill) => skill.name === name) ?? null;
 }
 
+/**
+ * 跨工具共享目录里的技能：按名字在 `~/.agents/skills` 里找。
+ *
+ * 只读用：列表里点开详情必须能读到原文，而**删除与编辑不经过这里**（见 remove）。
+ */
+async function findSharedSkill(name: string): Promise<SkillInfo | null> {
+  const found = await scanSkillDir(agentsSkillsDir(), new Set(), "agents");
+  return found.find((skill) => skill.name === name) ?? null;
+}
+
 export function registerSkillsIpc(): void {
   handle(
     IPC.skills.list,
@@ -88,8 +103,21 @@ export function registerSkillsIpc(): void {
     async (request?: { workingDir?: string }): Promise<SkillInfo[]> => {
       const settings = await loadSettings();
       const disabled = new Set(settings.disabledSkillNames);
-      // 目录来源与顺序统一由 resources.ts 解析：数据目录 → 项目 → 内置（顺序即优先级）
-      const dirs = resolveSkillDirs(request?.workingDir, app.getAppPath());
+      // 目录来源与顺序统一由 resources.ts 解析：数据目录 → 项目 → 跨工具共享 → 插件 → 内置
+      //（顺序即优先级；插件那一档在下面被过滤掉，见注释）
+      /*
+        **把插件贡献的目录排除掉。**
+
+        那些技能/提示/子智能体归**插件**管：用户在这里既编辑不了也删不掉
+        （改了会被下一次插件同步覆盖）。显示出来只会制造"这里能管它"的错觉，
+        而"同一个东西出现在两个地方、只有一个地方能改"是这套界面一直在避免的。
+
+        **模型照样读得到**：运行时那一侧走 `resolveSkillDirs` 的完整清单，
+        不经过这个过滤 —— 这里是"藏起来"，不是"不加载"。
+      */
+      const dirs = resolveSkillDirs(request?.workingDir, app.getAppPath()).filter(
+        (dir) => !isPluginContributionDir(dir),
+      );
       const results = await Promise.all(
         dirs.map((dir) => scanSkillDir(dir, disabled, sourceOfDir(dir))),
       );
@@ -134,13 +162,16 @@ export function registerSkillsIpc(): void {
     "读取技能详情",
     async (request: { name: string }): Promise<SkillDetail> => {
       /**
-       * 先找数据目录（可编辑的那一份），找不到再找内置的。
+       * 按**列表去重的同一顺序**找：数据目录（可编辑的那一份）→ 跨工具共享 → 内置。
        *
-       * 这个顺序与列表去重一致：同名时生效的是数据目录那一份，
+       * 这个顺序与列表一致才有意义：同名时生效的是排在前面的那一份，
        * 详情当然也要显示同一份 —— 否则用户看到的是「内置的原文」，
        * 而模型读的是他覆盖过的那份，两边对不上。
        */
-      const skill = (await findGlobalSkill(request.name)) ?? (await findBuiltinSkill(request.name));
+      const skill =
+        (await findGlobalSkill(request.name)) ??
+        (await findSharedSkill(request.name)) ??
+        (await findBuiltinSkill(request.name));
       if (skill === null) throw new Error(`技能不存在：${request.name}`);
       return {
         name: skill.name,
@@ -165,6 +196,18 @@ export function registerSkillsIpc(): void {
        */
       if ((await findBuiltinSkill(request.name)) !== null) {
         throw new Error(`内置技能不可删除，请改用「禁用」：${request.name}`);
+      }
+      /**
+       * 跨工具共享目录里的技能同样不可删，但理由与内置那条**不是**同一个。
+       *
+       * 内置技能住在应用目录里（删不掉，升级后又回来）；而 `~/.agents/skills` 里的技能
+       * 是**别的工具也在用的那一份**：在这个面板里删掉它，Claude Code / Codex / Cursor
+       * 会一起丢掉它。用户真正的诉求通常是「在 Oint 里别用它」→ 那是禁用。
+       */
+      if ((await findSharedSkill(request.name)) !== null) {
+        throw new Error(
+          `跨工具共享技能不可在此删除（删掉它会让其它工具一起丢技能），请改用「禁用」：${request.name}`,
+        );
       }
       throw new Error(`技能不存在：${request.name}`);
     }

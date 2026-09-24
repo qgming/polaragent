@@ -45,6 +45,8 @@ export const zhCN = {
     tabClose: "关闭标签",
     /** 选择列表下的那句话：说清「哪些能多开、哪些只有一个」 */
     chooserHint: "浏览器可以同时开多个标签；其余面板只有一个，再次打开只是切回去。",
+    /** 标签还在、但那个面板已经不在注册表里（插件被卸载/禁用）时的占位 */
+    unavailable: "这个面板已经不可用（提供它的插件已被停用或卸载）",
     review: "审查",
     files: "文件",
     /** 单个文件的查看器：标签上的名字会被文件名覆盖，这里只在还没打开任何文件时兜底 */
@@ -319,6 +321,153 @@ export const zhCN = {
     showMore: "展开显示",
     showLess: "收起",
   },
+  plugins: {
+    title: "插件",
+    /** 插件面板还在加载时的占位（webview 的 guest 进程启动比 React 渲染慢） */
+    surfaceLoading: "界面加载中…",
+    surfaceFailed: "这个界面没能加载",
+    /** 注册表里给插件面板的占位文案键；真正的名字走 PanelDescriptor.labelText */
+    panelFallbackLabel: "插件面板",
+    /** 左导航只剩这一项：来源切换（系统 / 用户）挪到面板顶部的页签里 */
+    /** 模态窗头部那句说明：最需要事先讲清的是"用户装的默认停用" */
+    subtitle:
+      "插件给模型加技能、给界面加面板。用户装的插件默认是停用的 —— 启用前先看一眼它要的权限。",
+    sectionManage: "管理",
+    sectionDiagnostics: "诊断",
+    tabSystem: "系统",
+    tabUser: "用户",
+    sourceBuiltin: "内置",
+    /** 详情里的来源：用户装的（卡片上不显示，那里默认全是用户装的） */
+    sourceUser: "用户安装",
+    /** 开发插件必须标：卸载它**不删文件**，而用户面对"卸载"会以为要删 */
+    sourceDev: "开发",
+    /** 行上的「分享」：把插件打成 zip（导出与导入用同一个容器） */
+    share: "分享",
+    /** 窄卡片上那个「更多」菜单的无障碍名 */
+    moreActions: "更多操作",
+    /** 详情里的权限三档 */
+    riskHigh: "高风险",
+    riskMedium: "中风险",
+    riskLow: "低风险",
+    /** 清单里声明了宿主不认识的权限时，在 id 旁边补一句 */
+    unknownPermission: "（宿主不认识的权限）",
+    /** 详情里的界面清单 */
+    surfaces: "界面",
+    surfacePanel: "面板",
+    surfaceModal: "模态窗",
+    surfaceWindow: "窗口",
+    /** 插件模态窗的无障碍说明（`DialogDescription`） */
+    surfaceModalDescription: "「{{plugin}}」提供的界面",
+    countLabel: "共 {{n}} 个",
+    detail: "展开详情",
+
+    empty: "还没有安装任何插件",
+    emptyHint: "插件可以给 Oint 加技能包、面板、工具或独立窗口。",
+    installPackage: "安装插件包",
+    loadDev: "加载开发插件",
+    /** 列表/诊断**读不到**时的标签（后面跟的是真实错误原文） */
+    unavailable: "无法读取插件信息",
+    systemEmpty: "没有随包分发的插件",
+    systemEmptyHint: "内置插件由应用自带，可停用但不能删除；安装包不完整时这里会是空的。",
+
+    enable: "启用",
+    disable: "停用",
+    reload: "重载",
+    uninstall: "卸载",
+    revealData: "数据目录",
+    openSurface: "打开界面",
+    refresh: "刷新",
+
+    contributions: "贡献物",
+    permissions: "权限",
+    newPermission: "新",
+    /**
+     * 宿主还没有执行点的权限（见 shared/contracts/plugin.ts 的 UNENFORCED_PLUGIN_PERMISSIONS）。
+     *
+     * 这枚标记是**如实告知**，不是恐吓：那几条权限声明了也不会生效。
+     * 不标的话，权限卡会把"读取文件 · 范围：工作区"当成已经在管着的规则展示。
+     */
+    notEnforced: "未生效",
+    notEnforcedHint: "标着「未生效」的权限，宿主还没有实现对应的执行点 —— 声明它今天不起作用。",
+    /**
+     * 信任边界（方案 §4.11）。措辞刻意直白，抄的是 PI-Desktop 作者指南那句
+     * "It is not yet an operating-system sandbox for raw Node APIs"。
+     * 隐瞒这条边界比边界本身更糟。
+     */
+    trustBoundary:
+      "这个插件带自己的代码。它跑在独立进程里，但那是崩溃隔离、不是系统沙箱 —— 它仍能直接读写文件、联网。上面的权限表管的是宿主交给它的能力，不是它的全部能力。",
+    noContributions: "无贡献物",
+    noPermissions: "未申请任何权限",
+    contributionCount: "贡献 {{n}} 项",
+    /**
+     * 钩子那一栏。逐条列出"这个插件会在哪些时机介入工具调用" ——
+     * `PreToolUse` 能拦住调用，用户做装不装的判断时必须看得见。
+     */
+    hooks: "介入点",
+    hookAllTools: "全部工具",
+    hookFailsClosed: "出错时拒绝",
+    hooksDesc:
+      "钩子只能给工具调用**加限制**：PreToolUse 可以拦下调用，但永远不能绕过权限与审批；另外两个事件只观察、不改结果。",
+
+    state: {
+      disabled: "已停用",
+      loading: "正在加载",
+      running: "已就绪",
+      loadError: "加载失败",
+      invalid: "包不合法",
+      crashed: "已崩溃",
+    },
+    contrib: {
+      panels: "面板",
+      modals: "模态窗",
+      windows: "独立窗口",
+      commands: "命令",
+      skills: "技能",
+      prompts: "魔法提示",
+      subagents: "子智能体",
+      mcpServers: "MCP 服务",
+      tools: "工具",
+    },
+    /**
+     * 贡献物**名字**那一行：`{{label}}：{{names}}`。
+     *
+     * 计数（chip 上的"技能 2"）只说"有几个"，这一行说"是哪几个" —— 而按 §4.8 的边界，
+     * 插件贡献的技能不进设置面板的技能列表，所以详情页是唯一能看清它们的地方。
+     * 分隔符单独成键：中文用顿号、英文用逗号，拼在代码里会让另一语言读起来是外文。
+     */
+    contributionNames: "{{label}}：{{names}}",
+    contributionNameSeparator: "、",
+    perm: {
+      uiPanel: "显示一个面板",
+      uiView: "在右侧面板里显示界面",
+      uiWindow: "打开一个独立窗口",
+      uiModal: "打开一个模态窗",
+      uiTheme: "更换主题",
+      notify: "发送通知",
+      storage: "保存自己的配置",
+      skillsContribute: "提供技能",
+      promptsContribute: "提供魔法提示",
+      subagentsContribute: "提供子智能体定义",
+      commandsRegister: "注册命令",
+      agentToolRegister: "给模型增加工具",
+      fsRead: "读取文件",
+      fsWrite: "写入文件",
+      fsDelete: "删除文件",
+      shellExec: "执行命令",
+      shellOpenExternal: "用系统默认程序打开链接",
+      netFetch: "访问网络",
+      mcpServerLocal: "启动本地 MCP 服务",
+      mcpServerRemote: "连接远端 MCP 服务",
+      hostHooksRegister: "介入工具调用",
+      clipboardWrite: "写入剪贴板",
+      sessionRead: "读取当前会话",
+    },
+
+    diagnosticsEmpty: "没有任何加载错误或崩溃记录",
+    levelError: "错误",
+    levelWarn: "警告",
+    sourcesPendingHint: "在此之前，可以先安装本地的 .ointplug 包，或直接加载开发目录。",
+  },
   settings: {
     general: "通用",
     services: "模型服务",
@@ -388,9 +537,13 @@ export const zhCN = {
     defaultModelDesc: "新会话默认使用的模型",
     noServices: "还没有配置模型服务",
     noServicesHint: "添加一个 OpenAI 兼容服务后即可开始对话",
-    // 来源切换：系统 = 随应用内置，用户 = 自己放进数据目录 / 项目的
+    // 来源切换：系统 = 随应用内置，全局 = 跨工具共享目录，用户 = 自己放进数据目录 / 项目的
     sourceLabel: "来源",
     sourceTabSystem: "系统",
+    /** 跨工具共享的技能目录（`~/.agents/skills`）：Claude Code / Codex / Cursor 也扫它 */
+    sourceTabGlobal: "全局",
+    /** MCP 面板的第三个页签：插件在 mcp.json 里声明的 server（只读） */
+    sourceTabPlugin: "插件",
     sourceTabUser: "用户",
     skillsList: "技能",
     // 斜杠菜单已接线：禁用的技能仍可从菜单手动调用（models 提示词里看不到它）
@@ -399,6 +552,9 @@ export const zhCN = {
     skillsEmptyHint: "把 SKILL.md 放进数据目录的 skills 文件夹即可被识别",
     skillsSystemEmpty: "还没有内置技能",
     skillsSystemEmptyHint: "随应用提供的技能会显示在这里",
+    skillsGlobalEmpty: "跨工具共享目录里还没有技能",
+    skillsGlobalEmptyHint:
+      "把技能放进 ~/.agents/skills（Claude Code / Codex / Cursor 用的是同一个目录），这里就能看到并启用它",
     skillImport: "导入技能（.zip）",
     skillImportDone: "已导入 {{files}} 个文件，识别到 {{skills}} 个技能",
     skillImportNoSkill: "压缩包里没有可识别的技能：每个技能需要一个内含 SKILL.md 的文件夹",
@@ -408,6 +564,7 @@ export const zhCN = {
     skillDisabled: "禁用",
     skillEnabled: "启用",
     skillBuiltinHint: "内置技能随应用更新，不可删除；不需要时可以禁用",
+    skillSharedHint: "这份技能在跨工具共享目录里，删掉会让别的工具一起丢技能；不需要时可以禁用",
     // 子智能体分栏
     subagentsList: "可用的子智能体",
     subagentsListDesc:
@@ -497,6 +654,14 @@ export const zhCN = {
     mcpSystemEmptyHint: "安装包若不完整，随应用分发的预设会缺失；重装应用可恢复",
     mcpOverriddenByUser: "已被你的同名配置覆盖",
     mcpOverridesSystem: "正在覆盖系统预设",
+    mcpPluginServers: "来自插件",
+    mcpPluginServersDesc:
+      "插件在自己的 mcp.json 里声明的 MCP server。配置与启停都跟着插件走，这里只做展示 —— 要关掉某一台，停用提供它的插件",
+    mcpPluginEmpty: "没有插件提供 MCP server",
+    mcpPluginEmptyHint:
+      "插件要在 mcp.json 里声明、并在清单里申请 mcp.server.local 或 mcp.server.remote 权限才会出现在这里",
+    mcpPluginOverridden: "已被你的同名配置覆盖",
+    mcpPluginManaged: "由插件提供：停用那个插件即可关闭它",
     mcpPresetCategory: {
       knowledge: "知识与百科",
       search: "搜索与抓取",

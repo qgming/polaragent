@@ -284,10 +284,8 @@ describe("文件查看器（openFilePanel）", () => {
     expect(state.rightPanelTabs.map((tab) => tab.view)).toEqual(["review", "file"]);
   });
 
-  it("file 不在选择列表里：它不是用户挑出来的视图，而是点卡片的结果", async () => {
-    const { RIGHT_PANEL_VIEWS } = await import("./ui-store");
-    expect(RIGHT_PANEL_VIEWS).not.toContain("file");
-  });
+  // 「file 不在面板选择列表里」这条已搬到 features/right-panel/panels.test.tsx ——
+  // 那件事现在由注册表的 `chooseable` 标志表达，不再是 store 里的顺序表。
 });
 
 describe("用内置浏览器打开地址（openInBrowser）", () => {
@@ -338,5 +336,71 @@ describe("用内置浏览器打开地址（openInBrowser）", () => {
 
     expect(useUiStore.getState().browserOpenRequest).not.toBeNull();
     expect(useUiStore.getState().browserOpenRequest?.token).toBeGreaterThan(0);
+  });
+});
+
+describe("插件模态窗（pluginModal）", () => {
+  /** 四个模态的开合状态都要清干净：互斥是在它们之间生效的 */
+  function resetModals(): void {
+    useUiStore.setState({
+      searchOpen: false,
+      settingsOpen: false,
+      pluginsOpen: false,
+      pluginModal: null,
+    });
+  }
+
+  beforeEach(resetModals);
+
+  it("打开之后它就是唯一开着的模态", () => {
+    useUiStore.getState().openPlugins();
+    useUiStore.getState().openPluginModal("dev.oint.scratchpad", "scratchpad");
+
+    const state = useUiStore.getState();
+    expect(state.pluginModal).toEqual({ pluginId: "dev.oint.scratchpad", surfaceId: "scratchpad" });
+    expect(state.pluginsOpen).toBe(false);
+    expect(state.settingsOpen).toBe(false);
+    expect(state.searchOpen).toBe(false);
+  });
+
+  it("换一个插件的界面是替换，不是叠加（同一时刻只开一个）", () => {
+    useUiStore.getState().openPluginModal("dev.a", "one");
+    useUiStore.getState().openPluginModal("dev.b", "two");
+
+    expect(useUiStore.getState().pluginModal).toEqual({ pluginId: "dev.b", surfaceId: "two" });
+  });
+
+  /**
+   * 幂等不是"什么都不做"：状态对象**保持同一份引用**，于是 React 这边不会重挂
+   * webview（重挂 = 页面重新加载，用户看到的是一闪），但另外三个模态仍然要被关掉。
+   */
+  it("重复打开同一个界面：引用不变，但另外三个模态仍然被关掉", () => {
+    useUiStore.getState().openPluginModal("dev.a", "one");
+    const before = useUiStore.getState().pluginModal;
+
+    // 直接置位而不是 openSettings()：那个动作会顺手关掉这个模态，就不是"重复打开"了
+    useUiStore.setState({ settingsOpen: true });
+    useUiStore.getState().openPluginModal("dev.a", "one");
+
+    expect(useUiStore.getState().pluginModal).toBe(before);
+    expect(useUiStore.getState().settingsOpen).toBe(false);
+  });
+
+  it("打开另外三个模态中的任何一个，都会把它关掉", () => {
+    for (const open of ["openSearch", "openSettings", "openPlugins"] as const) {
+      useUiStore.getState().openPluginModal("dev.a", "one");
+      useUiStore.getState()[open]();
+      expect(useUiStore.getState().pluginModal, open).toBeNull();
+    }
+  });
+
+  it("closePluginModal 只清它自己（另外三个模态的状态不受影响）", () => {
+    useUiStore.getState().openPluginModal("dev.a", "one");
+    useUiStore.setState({ pluginsOpen: true });
+
+    useUiStore.getState().closePluginModal();
+
+    expect(useUiStore.getState().pluginModal).toBeNull();
+    expect(useUiStore.getState().pluginsOpen).toBe(true);
   });
 });

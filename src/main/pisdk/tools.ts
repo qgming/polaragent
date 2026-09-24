@@ -42,8 +42,22 @@ import { createWebTools } from "./tools/web";
  */
 export type AppToolContext = TodoToolContext;
 
-/** 工具名常量，供权限层与 UI 复用 */
-export const TOOL_NAMES = {
+/**
+ * `buildTools` 的可选配置。
+ *
+ * 单独一个类型而不是继续加位置参数：见 buildTools 第七个参数的说明。
+ */
+export interface BuildToolsOptions {
+  /**
+   * grep / glob 的检索围栏（通常是 `sessionAllowedRoots(cwd, appPath)`）。
+   *
+   * **不传 = 不做围栏**。这不是"默认安全"的形状，是刻意的：单测与不关心会话边界的
+   * 调用方需要旧行为。生产路径的两处调用都必须传。
+   */
+  searchRoots?: readonly string[];
+}
+
+/** 工具名常量，供权限层与 UI 复用 */ export const TOOL_NAMES = {
   bash: "bash",
   read: "read",
   /** 读一张图片（用户上传的 / 项目里的 / 截图工具产出的），名字取自 tools/read-image.ts */
@@ -182,6 +196,15 @@ export function buildTools(
   browserAutomation?: BrowserAutomation,
   subagentTools: AgentHarnessTool<AppToolContext>[] = [],
   webService?: WebService,
+  /**
+   * 第七个参数是**对象**而不是又一个位置参数：前六个已经排满，再加一个是纯粹的
+   * 「填 undefined 才能到第七位」。将来的选项（插件工具、配额…）都往这里放。
+   *
+   * `searchRoots` 是 grep / glob 的围栏（见 tools/search.ts 的 resolveSearchRoot）。
+   * **不传 = 不做围栏** —— 单测与不关心会话边界的调用方走这条；runtime 的两处调用
+   * 都必须传 `sessionAllowedRoots(cwd, appPath)`，否则那两个工具又变成零确认越界读。
+   */
+  options: BuildToolsOptions = {},
 ): AgentHarnessTool<AppToolContext>[] {
   return [
     {
@@ -200,8 +223,8 @@ export function buildTools(
     createReadImageTool<AppToolContext>(),
     { ...createWriteTool<AppToolContext>(), description: WRITE_DESCRIPTION },
     { ...createEditTool<AppToolContext>(), description: EDIT_DESCRIPTION },
-    createGrepTool<AppToolContext>(),
-    createGlobTool<AppToolContext>(),
+    createGrepTool<AppToolContext>({ allowedRoots: options.searchRoots }),
+    createGlobTool<AppToolContext>({ allowedRoots: options.searchRoots }),
     createTodoTool(),
     // 浏览器工具：操作的是主进程持有的 guest，与本会话的工作目录无关（见 tools/browser.ts）
     ...(browserAutomation === undefined

@@ -31,6 +31,24 @@ export const SELECT_NONE = "__none__";
 /** 次要按钮的补丁：outline 变体自带阴影与实边，按「只有浮层可以有 lift」去掉 */
 export const secondaryButton = "border-border/60 shadow-none";
 
+/**
+ * 模态窗左侧导航项的样式。
+ *
+ * **为什么放在这里而不是留在 SettingsModal 里**：插件管理模态窗与设置模态窗
+ * 是同一个东西的两种内容（同尺寸、同左导航、同动效），导航项的尺寸/圆角/选中态
+ * 必须逐像素一致。各留一份的话，改了一个忘了另一个，两个模态就会看起来像两个应用。
+ *
+ * 取的是官方 Tabs 的垂直变体，只把选中态改成中性墨色淡底（Elements 的 field 量级），
+ * 不画竖条 —— design.md 规定「唯一强调色」留给状态，不给导航。
+ */
+export const modalNavItem = cn(
+  "h-8 w-full flex-none justify-start gap-2 rounded-[10px] px-3 text-sm font-normal",
+  "text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground",
+  "data-[state=active]:bg-foreground/[0.06] data-[state=active]:text-foreground",
+  "dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-foreground/[0.09]",
+  "focus-visible:ring-1 focus-visible:ring-foreground/20 focus-visible:outline-none",
+);
+
 /** 设置分区：眉题用 typeEyebrow（mono 11px）——design.md 规定 section 由 mono 命名；
  *  首个分区不画顶线，避免面板顶部出现多余线条 */
 export function SettingsSection({

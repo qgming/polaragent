@@ -19,30 +19,33 @@ export interface ComposerNotice {
 
 let composerNoticeSeq = 0;
 
-/** 右侧面板的视图 */
-export type RightPanelView = "review" | "files" | "file" | "subagent" | "browser" | "terminal";
+/** 随应用分发的六个面板视图；插件贡献的面板不在其中 */
+export type BuiltinRightPanelView =
+  | "review"
+  | "files"
+  | "file"
+  | "subagent"
+  | "browser"
+  | "terminal";
 
 /**
- * 右侧面板五个视图的规范顺序，即面板内选择列表的顺序（与参考图一致）。
- * 加一个视图时只有这一处要改，选择列表与快捷键提示都读它。
+ * 右侧面板的视图 id。
+ *
+ * 联合里那个 `(string & {})` 是刻意的 TS 惯用法：**保留字面量的自动补全与拼写检查，
+ * 同时允许任意字符串**。写成裸 `string` 会丢掉前者（`openRightPanel("files")` 拼错
+ * 就不再报错），写成纯字面量联合又会挡住插件贡献的面板。
+ *
+ * **顺序与展示元数据不在这里** —— 它们在右侧面板的注册表里（见
+ * features/right-panel/panels.ts）。过去这里还有一张 `RIGHT_PANEL_VIEWS` 顺序表，
+ * 与 `panel-meta` 的穷举 Record 两处维护，加一个视图要同时改两处，漏哪一处的症状都不同。
+ * 现在只有一处：注册一行。
  *
  * **没有「侧边聊天」这个视图**：它原本是「往主线程之外塞一句小问题」的入口，
  * 但用户要的是「让模型帮我问一句」，而这件事与子智能体是同一件事 ——
  * 都需要一条独立、可查看、不污染主上下文的会话。两个入口做同一件事时，
  * 用户要先猜该点哪个；于是侧边聊天被合进子智能体面板。
  */
-export const RIGHT_PANEL_VIEWS = [
-  "review",
-  "files",
-  // 单个文件的查看器**不在这个列表里**：它不是用户从选择列表挑出来的一个「视图」，
-  // 而是点某张文件卡片的结果（见 openFilePanel）。放进列表会让「文件」与「文件查看器」
-  // 两个入口指向同一件事，用户得先猜该点哪个。
-  // 子智能体：一次委派的执行详情（任务、进度、报告、子会话转录）。
-  // 排在这里是因为它是唯一「对话形态」的面板，与审查 / 文件那种资料形态分开
-  "subagent",
-  "browser",
-  "terminal",
-] as const satisfies readonly RightPanelView[];
+export type RightPanelView = BuiltinRightPanelView | (string & {});
 
 /**
  * 面板里的一个标签。
@@ -89,8 +92,8 @@ export interface BrowserOpenRequest {
 
 let browserOpenSeq = 0;
 
-/** 设置弹窗内的分栏 */
-export type SettingsSection =
+/** 随应用分发的十个设置分栏；插件贡献的设置页不在其中 */
+export type BuiltinSettingsSection =
   | "general"
   | "services"
   | "web"
@@ -103,22 +106,50 @@ export type SettingsSection =
   | "about";
 
 /**
- * 设置分类的规范顺序：左栏导航与搜索里的「设置」结果都按它渲染。
- * 两处各写一份列表时，删掉一个分类就会漏改另一处（搜索会打开一个没有面板的分栏）。
+ * 设置弹窗内的分栏 id。
+ *
+ * 与 RightPanelView 同款：`(string & {})` 保住内置项的字面量检查，同时允许插件
+ * 贡献自己的设置页。
+ *
+ * **顺序与图标、文案都不在这里** —— 它们在设置分栏注册表里
+ *（见 features/settings/sections.ts）。过去这里有一张 `SETTINGS_SECTIONS` 顺序表，
+ * 与 SettingsModal 的 `SECTIONS` 数组、`renderPanel` 的 switch 三处并立，
+ * 而**第 4 处最隐蔽**：SearchModal 用 `` t(`settings.${section}`) `` 拼文案键，
+ * 依赖"id 恰好等于键的后缀"这条没人写下来的约定。
  */
-export const SETTINGS_SECTIONS = [
-  "general",
-  "services",
-  // 网络搜索紧挨模型服务：两者都是「外部服务配置」，放在一起符合直觉
-  "web",
-  "mcp",
-  "skills",
-  "subagents",
-  "promptTemplates",
-  "personalization",
-  "data",
-  "about",
-] as const satisfies readonly SettingsSection[];
+export type SettingsSection = BuiltinSettingsSection | (string & {});
+
+/**
+ * 默认落在哪一栏。
+ *
+ * 单独一个常量而不是让三处各写一次 `"general"`：它是"打开设置时看到什么"的答案，
+ * 改了要一起改（store 的初值、openSettings 的缺省、以及将来深链的回落）。
+ */
+export const DEFAULT_SETTINGS_SECTION: BuiltinSettingsSection = "general";
+
+/**
+ * 插件管理模态窗内的**来源页签**。
+ *
+ * 与设置分栏同款（`DEFAULT_SETTINGS_SECTION`），但值域是"插件从哪来"而不是"配置的哪一栏"。
+ *
+ * ## 为什么从「四栏」收敛成「两个来源」
+ *
+ * 原先左导航是 已安装 / 开发 / 来源 / 诊断 四项，而「开发」与「已安装」在**内容上高度重叠**
+ * —— 同一个开发插件在两栏里都会出现（DevPanel 的注释自己写了这一点）。
+ * 一个东西出现在两个地方，用户就要先想"我该去哪一栏找它"。
+ *
+ * 现在：**来源只有系统与用户两个**，开发插件并入用户（它本来就是用户自己挂的，
+ * 生命周期也归用户）。开发与安装的差别**落在行上的徽章**里（见 PluginRow），
+ * 而不是落在导航上 —— 那个差别影响的是"卸载会不会删我的文件"，
+ * 是某一行的属性，不是一整栏的属性。
+ *
+ * 市场来源与诊断不再各占一栏：前者并入用户页签的空态提示（它本来就没实现），
+ * 后者并进用户面板底部（有内容才显示）。
+ */
+export type PluginSourceTab = "system" | "user";
+
+/** 默认落在哪一页签。用户装的东西比随包分发的更需要管理，所以默认落在用户 */
+export const DEFAULT_PLUGIN_SOURCE: PluginSourceTab = "user";
 /**
  * 从搜索模态窗跳到某条消息。
  * token 只增不减：Thread 用它做「同一目标只滚一次」的去重键，
@@ -168,11 +199,41 @@ function findReusableTab(
   return undefined;
 }
 
+/**
+ * 一个正在打开的**插件模态窗**：哪个插件的哪一个界面。
+ *
+ * 只存 id 不存 surface 描述对象：那份描述来自 `plugins:list` 的结果，
+ * 而插件可以在模态窗开着的时候被停用 / 卸载 —— 届时描述会失效。
+ * 存 id、用时现查，天然让"插件没了"表现为"查不到"（模态窗自己收掉），
+ * 而不是拿一份过期的描述继续渲染。
+ */
+export interface PluginModalTarget {
+  pluginId: string;
+  surfaceId: string;
+}
+
 interface UiState {
   sidebarCollapsed: boolean;
   /** 搜索模态窗的显隐：侧栏搜索按钮与 Ctrl+K 共用同一个开关 */
   searchOpen: boolean;
   settingsOpen: boolean;
+  /**
+   * 插件管理模态窗的显隐与当前分栏。
+   *
+   * 与 settingsOpen / searchOpen 是**互斥**的三个模态（见 openPlugins 的实现）：
+   * 同一时刻只能开一个。互斥写在 store 里而不是各组件里 —— 三个模态的开关分散在
+   * 侧栏、快捷键、命令面板多处，靠调用方自觉「先关别的」迟早会漏一处。
+   */
+  pluginsOpen: boolean;
+  /** 插件模态窗当前的分栏（与 settingsSection 同款：配置态，关闭不清空） */
+  pluginsSource: PluginSourceTab;
+  /**
+   * 正在打开的插件模态窗界面（清单里 `kind: "modal"` 的那一类）；null = 没有。
+   *
+   * 与 searchOpen / settingsOpen / pluginsOpen 一起构成四个**互斥**的模态：
+   * 同一时刻只开一个。理由与那三个一字不差 —— 叠起来的模态底下那层还能被点到。
+   */
+  pluginModal: PluginModalTarget | null;
   settingsSection: SettingsSection;
   /** 待定位的消息（null = 无）；由搜索模态窗的消息结果写入，Thread 消费后自行去重 */
   searchJump: SearchJump | null;
@@ -284,6 +345,18 @@ interface UiState {
   closeSearch(): void;
   openSettings(section?: SettingsSection): void;
   closeSettings(): void;
+  /** 打开插件管理模态窗并落在某个分栏（缺省 = 已安装）；同时关掉另外三个模态 */
+  openPlugins(source?: PluginSourceTab): void;
+  closePlugins(): void;
+  /**
+   * 打开一个插件的模态窗界面（清单 `kind: "modal"`）；同时关掉另外三个模态。
+   *
+   * **同一时刻只开一个插件模态窗**：与独立窗口那条「再点就聚焦」同一口径 ——
+   * 两个插件的配置叠在一起没有意义，而模态窗本来就互斥。
+   * 已经在开的那一个再点一次是**幂等**的（不重挂、不闪）。
+   */
+  openPluginModal(pluginId: string, surfaceId: string): void;
+  closePluginModal(): void;
   /** 记录一次消息跳转请求；token 自增让同一目标也能重新触发定位 */
   jumpToMessage(sessionId: string, messageId: string): void;
   /** 丢弃当前跳转目标；离开目标会话后由 Thread 调用，避免残留标记 */
@@ -309,7 +382,10 @@ export const useUiStore = create<UiState>()((set, get) => ({
   sidebarCollapsed: false,
   searchOpen: false,
   settingsOpen: false,
-  settingsSection: "general",
+  settingsSection: DEFAULT_SETTINGS_SECTION,
+  pluginsOpen: false,
+  pluginsSource: DEFAULT_PLUGIN_SOURCE,
+  pluginModal: null,
   searchJump: null,
   rightPanelOpen: false,
   rightPanelTabs: [],
@@ -479,10 +555,47 @@ export const useUiStore = create<UiState>()((set, get) => ({
   },
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  openSearch: () => set({ searchOpen: true }),
+  /*
+    三个模态（搜索 / 设置 / 插件）互斥。
+    互斥写在 store 里而不是各组件里：开关分散在侧栏按钮、快捷键、命令面板若干处，
+    靠调用方自觉「先关掉别的」迟早会漏 —— 而漏了的症状是两层模态叠在一起，
+    底下的那层还能被点到。
+  */
+  openSearch: () =>
+    set({ searchOpen: true, settingsOpen: false, pluginsOpen: false, pluginModal: null }),
   closeSearch: () => set({ searchOpen: false }),
-  openSettings: (section) => set({ settingsOpen: true, settingsSection: section ?? "general" }),
+  openSettings: (section) =>
+    set({
+      settingsOpen: true,
+      settingsSection: section ?? DEFAULT_SETTINGS_SECTION,
+      searchOpen: false,
+      pluginsOpen: false,
+      pluginModal: null,
+    }),
   closeSettings: () => set({ settingsOpen: false }),
+  openPlugins: (section) =>
+    set({
+      pluginsOpen: true,
+      pluginsSource: section ?? DEFAULT_PLUGIN_SOURCE,
+      searchOpen: false,
+      settingsOpen: false,
+      pluginModal: null,
+    }),
+  closePlugins: () => set({ pluginsOpen: false }),
+  openPluginModal: (pluginId, surfaceId) =>
+    set((state) => {
+      // 已经在开的那一个：**不动状态**（幂等）。仍然要关掉另外三个 —— 幂等指的是
+      // "不重挂这个模态窗"，不是"什么都不做"
+      const same =
+        state.pluginModal?.pluginId === pluginId && state.pluginModal.surfaceId === surfaceId;
+      return {
+        pluginModal: same ? state.pluginModal : { pluginId, surfaceId },
+        searchOpen: false,
+        settingsOpen: false,
+        pluginsOpen: false,
+      };
+    }),
+  closePluginModal: () => set({ pluginModal: null }),
 
   jumpToMessage: (sessionId, messageId) => {
     searchJumpSeq += 1;

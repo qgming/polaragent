@@ -27,15 +27,35 @@ import {
   secondaryButton,
 } from "../settings-shared";
 
-/** 空态文案：系统（内置）与用户（磁盘扫描）各自一份，别让「没有」显得像坏了 */
+/**
+ * 空态文案：三个来源各一份，别让「没有」显得像坏了。
+ *
+ * 全局（跨工具共享目录）**必须有自己的文案**：它的空是常态（多数用户还没用那套约定），
+ * 拿「把 SKILL.md 放进数据目录」去解释它等于指错地方 —— 用户会照做，然后发现
+ * 技能出现在「用户」页签里，而「全局」还是空的。
+ */
 function SkillsEmpty({ source }: { source: SkillSource }) {
   const { t } = useTranslation();
+  if (source === "builtin") {
+    return (
+      <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
+        {t("settings.skillsSystemEmpty")}
+        <span className="mt-1 block text-xs text-ink-4">{t("settings.skillsSystemEmptyHint")}</span>
+      </p>
+    );
+  }
+  if (source === "agents") {
+    return (
+      <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
+        {t("settings.skillsGlobalEmpty")}
+        <span className="mt-1 block text-xs text-ink-4">{t("settings.skillsGlobalEmptyHint")}</span>
+      </p>
+    );
+  }
   return (
     <p className="rounded-xl border border-border/60 p-4 text-center text-[13px] text-ink-3">
-      {source === "builtin" ? t("settings.skillsSystemEmpty") : t("settings.skillsEmpty")}
-      <span className="mt-1 block text-xs text-ink-4">
-        {source === "builtin" ? t("settings.skillsSystemEmptyHint") : t("settings.skillsEmptyHint")}
-      </span>
+      {t("settings.skillsEmpty")}
+      <span className="mt-1 block text-xs text-ink-4">{t("settings.skillsEmptyHint")}</span>
     </p>
   );
 }
@@ -45,21 +65,33 @@ function SkillDetailDialog({
   detail,
   onClose,
   onRemove,
-  removable,
+  source,
 }: {
   detail: SkillDetail;
   onClose: () => void;
   onRemove: () => void;
   /**
-   * 能不能删。
+   * 这个技能来自哪一档 —— **决定底部给不给删除按钮**，三档各有各的答案：
    *
-   * 内置技能**随应用分发**（住在应用目录里），删掉它只会在下次升级时又冒出来 ——
-   * 用户真正的诉求通常是「别用它」，那是禁用。所以内置行不给删除按钮，
-   * 与主进程那边的「内置技能不可删除」呼应（两处都要挡：UI 不给入口，IPC 也要拒绝）。
+   * - `user`（数据目录）：可删。这是能撤的那一档（导入错了要能收回来）；
+   * - `builtin`：不可删。内置技能**随应用分发**（住在应用目录里），删掉它只会在下次
+   *   升级时又冒出来 —— 用户真正的诉求通常是「别用它」，那是禁用。两处都挡：
+   *   UI 不给入口，主进程也拒绝（`ipc/skills.ts` 的 remove）；
+   * - `agents`（`~/.agents/skills`）：不可删，**而且理由与内置那条不同** ——
+   *   那份技能是**别的工具也在用的**，在这里删掉会连它们一起丢。同样是给禁用。
+   *
+   * 传 source 而不是传一个 `removable` 布尔：布尔会把上面两种"不可删"压成一种，
+   * 于是底部的说明文案只能二选一，而其中一种场合它一定是错的。
    */
-  removable: boolean;
+  source: SkillSource;
 }) {
   const { t } = useTranslation();
+  const hint =
+    source === "builtin"
+      ? t("settings.skillBuiltinHint")
+      : source === "agents"
+        ? t("settings.skillSharedHint")
+        : null;
   return (
     <SettingsDialog
       title={detail.name}
@@ -67,7 +99,7 @@ function SkillDetailDialog({
       onClose={onClose}
       footer={
         <>
-          {removable ? (
+          {source === "user" ? (
             <Button
               type="button"
               variant="outline"
@@ -78,7 +110,7 @@ function SkillDetailDialog({
               {t("common.delete")}
             </Button>
           ) : (
-            <span className="text-xs text-ink-3">{t("settings.skillBuiltinHint")}</span>
+            <span className="text-xs text-ink-3">{hint}</span>
           )}
           <Button type="button" size="sm" onClick={onClose}>
             {t("common.close")}
@@ -105,7 +137,8 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
   const update = useSettingsStore((s) => s.update);
   const [skills, setSkills] = useState<SkillInfo[] | null>(null);
   const [failed, setFailed] = useState(false);
-  // 技能来源切换：系统 = 随应用内置，用户 = 自己放进数据目录的
+  // 技能来源切换：系统 = 随应用内置，全局 = 跨工具共享目录（~/.agents/skills），
+  // 用户 = 自己放进数据目录的
   // （面板不带会话，项目级 .oint/skills 只在会话的斜杠菜单里出现）
   const [source, setSource] = useState<SkillSource>("user");
   const [importing, setImporting] = useState(false);
@@ -191,6 +224,15 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
 
   const visible = (skills ?? []).filter((skill) => skill.source === source);
 
+  /**
+   * 详情弹窗里那一条的来源，取自**列表那一行**。
+   *
+   * 找不到时按 `builtin` 处理（即：不给删除按钮）：列表刷新把它挤掉了、或它被同名技能
+   * 遮住时，"少一个按钮"永远好过"点下去报错的按钮"。
+   */
+  const detailSource: SkillSource =
+    (skills ?? []).find((item) => item.name === detail?.name)?.source ?? "builtin";
+
   return (
     <div className="space-y-6">
       <SettingsSection title={t("settings.skillsList")} description={t("settings.skillsListDesc")}>
@@ -211,6 +253,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
             onChange={setSource}
             options={[
               { value: "builtin", label: t("settings.sourceTabSystem") },
+              { value: "agents", label: t("settings.sourceTabGlobal") },
               { value: "user", label: t("settings.sourceTabUser") },
             ]}
           />
@@ -289,7 +332,7 @@ function SkillsPanelBody({ settings }: { settings: Settings }) {
       {detail === null ? null : (
         <SkillDetailDialog
           detail={detail}
-          removable={(skills ?? []).find((item) => item.name === detail.name)?.source !== "builtin"}
+          source={detailSource}
           onClose={() => setDetail(null)}
           onRemove={() => {
             const row = (skills ?? []).find((item) => item.name === detail.name);

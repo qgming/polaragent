@@ -33,6 +33,7 @@
     "probe:viewport": "node scripts/probe-browser-viewport.mjs",
     "probe:kernel": "node scripts/probe-upgrade-087.mjs",
     "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
+    "probe:plugin-modal": "node scripts/probe-plugin-modal.mjs",
     "probe:system": "node scripts/probe-system-resources.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

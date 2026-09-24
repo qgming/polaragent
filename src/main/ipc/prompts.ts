@@ -10,6 +10,7 @@ import { app } from "electron";
 import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
 import { resolveBuiltinPromptDir, resolvePromptTemplateDirs } from "@/main/pisdk/resources";
+import { isPluginContributionDir } from "@/main/plugins/contributions";
 import { IPC } from "@/shared/contracts/ipc";
 import type { PromptTemplateInfo, PromptTemplateWriteRequest } from "@/shared/contracts/prompts";
 import { normalizePromptName, PROMPT_NAME_PATTERN } from "@/shared/contracts/prompts";
@@ -110,7 +111,10 @@ export function registerPromptsIpc(): void {
     "读取魔法提示列表",
     async (request?: { workingDir?: string }): Promise<PromptTemplateInfo[]> => {
       // 目录来源与顺序统一由 resources.ts 解析：数据目录 → 项目目录 → 内置（顺序即优先级）
-      const dirs = resolvePromptTemplateDirs(request?.workingDir, app.getAppPath());
+      // 与技能同一个口径：插件贡献的模板归插件管，设置里不显示（模型照样读得到）
+      const dirs = resolvePromptTemplateDirs(request?.workingDir, app.getAppPath()).filter(
+        (dir) => !isPluginContributionDir(dir),
+      );
       const results = await Promise.all(dirs.map((dir) => scanPromptDir(dir, sourceOfDir(dir))));
       // 同名模板按「先出现者优先」去重，保持列表稳定。
       // 于是内置模板被用户/项目的同名模板遮住时，列表里只留下生效的那一个 ——
