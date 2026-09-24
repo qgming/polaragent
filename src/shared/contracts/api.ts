@@ -35,6 +35,7 @@ import type {
 } from "./session";
 import type { Settings } from "./settings";
 import type { SkillDetail, SkillImportResult, SkillInfo } from "./skills";
+import type { UsageStatsReport } from "./stats";
 import type {
   SubagentCatalog,
   SubagentEventEnvelope,
@@ -302,6 +303,16 @@ export interface OintApi {
     activateTab(tabId: string): Promise<void>;
     /** 订阅浏览器事件（状态变化 / 开标签请求 / 模型操作中），返回取消订阅函数 */
     onEvent(callback: (event: BrowserEvent) => void): () => void;
+  };
+  /**
+   * 用量统计：数据统计模态窗的数据通路。
+   *
+   * 一条只读通道返回整份报告 —— 时间范围的切换（近 7 日 / 近 30 日）在渲染层切片，
+   * 不为此再走一次 IPC：那条路会让每次切范围都闪一下，而数据本来就在手里。
+   */
+  stats: {
+    /** 全部用量统计（总量 / 每日 / 分模型 / 连续天数 / 历史折叠进度） */
+    report(): Promise<UsageStatsReport>;
   };
   /**
    * 网络搜索：只需要一个「测试连接」通道。

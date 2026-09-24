@@ -35,6 +35,7 @@
     "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
     "probe:plugin-modal": "node scripts/probe-plugin-modal.mjs",
     "probe:system": "node scripts/probe-system-resources.mjs",
+    "probe:stats": "node scripts/probe-usage-stats.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",

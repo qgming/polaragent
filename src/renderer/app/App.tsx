@@ -11,6 +11,7 @@ import {
 import { RightSidebar } from "@/renderer/features/right-panel/RightSidebar";
 import { SearchModal } from "@/renderer/features/search";
 import { SettingsModal } from "@/renderer/features/settings";
+import { StatsModal } from "@/renderer/features/stats";
 import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
 import { OintRuntimeProvider } from "@/renderer/runtime/OintRuntimeProvider";
 import { useChatStore } from "@/renderer/stores/chat-store";
@@ -122,6 +123,8 @@ export function App() {
         {/* 浮层挂载在布局之外，避免受侧栏/主区的溢出裁剪 */}
         <SettingsModal />
         <PluginsModal />
+        {/* 数据统计模态窗：与上面两个并列（同一层浮层、同一套互斥） */}
+        <StatsModal />
         {/* 插件自己的模态窗界面（清单里 kind: "modal"）：与上面两个并列，同一层浮层 */}
         <PluginSurfaceModal />
         <SearchModal />

@@ -18,6 +18,7 @@ import { registerServicesIpc } from "./services";
 import { registerSessionsIpc } from "./sessions";
 import { registerSettingsIpc } from "./settings";
 import { registerSkillsIpc } from "./skills";
+import { registerStatsIpc } from "./stats";
 import { registerSubagentsIpc } from "./subagents";
 import { registerSurfaceIpc } from "./surface";
 import { registerTerminalIpc } from "./terminal";
@@ -36,6 +37,7 @@ export function registerIpcHandlers(options: { appPath?: string } = {}): void {
   registerWindowIpc();
   registerSettingsIpc();
   registerSessionsIpc();
+  registerStatsIpc();
   registerProjectsIpc();
   registerChatIpc();
   registerApprovalsIpc();

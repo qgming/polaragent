@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   BACKGROUND_CONTEXT,
   type Branch,
+  type Entry,
   type LaneConfiguration,
   type LaneState,
   laneConfig,
@@ -78,6 +79,36 @@ export interface LoadMessagesResult {
   nextCursor?: number;
 }
 
+/**
+ * 会话日志里的一条用量样本：一条**带 usage 的助手消息**。
+ *
+ * 这里刻意只做「照抄」不做归并：模型键、按日分桶、口径换算都是统计侧的语义
+ * （见 main/stats/usage-rollup.ts），会话库只负责把日志里写着的事实读出来。
+ * serviceId 取自内核消息的 `provider` —— 在本应用里它就是设置里的服务 id
+ *（见 shared/contracts/common.ts 的 ModelRef 注释）。
+ */
+export interface UsageSample {
+  /** 助手消息时间戳（epoch ms） */
+  at: number;
+  serviceId?: string;
+  modelId?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/** 一次增量扫描的结果 */
+export interface UsageScanResult {
+  samples: UsageSample[];
+  /** 已扫到的最大 seq（没有新条目时等于入参 afterSeq）；下次从这个游标继续 */
+  nextSeq: number;
+  /** 本次实际读过的条目数（含非助手消息条目），调用方用它做工作量预算 */
+  entries: number;
+  /** 是否已经扫到主分支末尾；false 表示还有更多条目，调用方下轮接着扫 */
+  done: boolean;
+}
+
 export interface SessionStore {
   /** 合并索引元数据；archived 可见性由调用方按设置过滤 */
   list(): Promise<SessionSummary[]>;
@@ -133,10 +164,47 @@ export interface SessionStore {
   saveSubagentRun(childSessionId: string, run: SubagentRun): Promise<void>;
   /** 某个父会话的全部运行记录（含本进程没见过的历史运行），按 startedAt 升序 */
   listSubagentRunsFor(parentSessionId: string): Promise<SubagentRun[]>;
+  /**
+   * 增量扫描一个会话的用量样本（数据统计用）。
+   *
+   * 只扫**主分支**、只取 `seq > afterSeq` 的条目 —— 与 loadMessages 同一个分支口径，
+   * 这样统计里的数字与用户在会话里看得到的消息是同一批。`maxEntries` 是工作量预算：
+   * 一次不让主进程在同步 SQLite 上停太久（几百条实测 < 10ms），预算用尽就带着
+   * `done: false` 回来，调用方下一轮从 `nextSeq` 接着扫。
+   *
+   * 打开失败（文件损坏 / 路径异常）返回空结果而不是抛错：统计是只读的旁路，
+   * 不该让一个坏会话把整份报告打掉。
+   */
+  scanUsageSamples(id: string, afterSeq: number, maxEntries: number): Promise<UsageScanResult>;
 }
 
 const MAIN_BRANCH = "main";
 const DEFAULT_PAGE_SIZE = 40;
+/** 用量扫描的页大小：见 scanUsageSamples 的注释（它决定主进程一次停多久） */
+const USAGE_SCAN_PAGE = 200;
+
+/**
+ * 一条条目 → 用量样本；不是「带 usage 的助手消息」时返回 undefined。
+ *
+ * 时间戳优先取消息自己的 `timestamp`，条目时间戳只作兜底：条目时间戳由存储层在写入时
+ * 打，而消息时间戳是模型响应本身的时间 —— 统计要的是「这次调用发生在哪天哪一刻」。
+ */
+function usageSampleOf(entry: Entry): UsageSample | undefined {
+  if (entry.type !== "message") return undefined;
+  const message = entry.message;
+  if (message.role !== "assistant") return undefined;
+  const usage = message.usage;
+  if (usage === undefined || usage === null) return undefined;
+  return {
+    at: message.timestamp || entry.timestamp,
+    ...(message.provider === undefined ? {} : { serviceId: String(message.provider) }),
+    ...(message.model === undefined ? {} : { modelId: String(message.model) }),
+    inputTokens: usage.input,
+    outputTokens: usage.output,
+    cacheReadTokens: usage.cacheRead,
+    cacheWriteTokens: usage.cacheWrite,
+  };
+}
 
 /**
  * fork 校验要求源分支是「完整配置的 AgentLane」（lane.config + lane.state）。
@@ -802,6 +870,59 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     await updateIndex(childSessionId, { subagentRun: run });
   }
 
+  /**
+   * 增量扫描用量样本（见接口注释）。
+   *
+   * 分页而不是一次读完：底层是同步 `node:sqlite`，一次查询的条目数直接决定主进程停多久。
+   * 一页 200 条实测在 10ms 量级；预算用尽就带着 `done: false` 返回，宁可多跑几个来回，
+   * 也不让统计把界面卡住。
+   */
+  async function scanUsageSamples(
+    id: string,
+    afterSeq: number,
+    maxEntries: number,
+  ): Promise<UsageScanResult> {
+    const budget = Math.max(1, Math.floor(maxEntries));
+    const opened = await openHandle(id);
+    // 打不开就当作「已扫完」：统计是旁路，一个坏会话不该让整份报告失败或无限重试
+    if (!opened) return { samples: [], nextSeq: afterSeq, entries: 0, done: true };
+
+    const samples: UsageSample[] = [];
+    let cursor = afterSeq;
+    let entries = 0;
+    try {
+      for (;;) {
+        const remaining = budget - entries;
+        if (remaining <= 0) return { samples, nextSeq: cursor, entries, done: false };
+        const limit = Math.min(USAGE_SCAN_PAGE, remaining);
+        const raw = await opened.branch.findEntries(
+          {
+            order: "oldestFirst",
+            limit,
+            // afterSeq 为 0（没扫过）时不带游标：从分支开头开始
+            ...(cursor > 0 ? { cursor: { seq: cursor } } : {}),
+          },
+          BACKGROUND_CONTEXT,
+        );
+        // 空页 = 已到分支末尾
+        if (raw.length === 0) return { samples, nextSeq: cursor, entries, done: true };
+        for (const entry of raw) {
+          entries += 1;
+          const sample = usageSampleOf(entry);
+          if (sample !== undefined) samples.push(sample);
+        }
+        const lastSeq = raw[raw.length - 1]?.seq;
+        if (lastSeq !== undefined) cursor = lastSeq;
+        // 取满一页才可能有下一页（与 loadMessages 的游标口径一致）
+        if (raw.length < limit) return { samples, nextSeq: cursor, entries, done: true };
+      }
+    } catch (error) {
+      console.warn(`扫描会话用量失败 ${id}: ${String(error)}`);
+      // 出错也按「扫完」收尾并保留已推进的游标：否则这个会话每次统计都会重试一遍
+      return { samples, nextSeq: cursor, entries, done: true };
+    }
+  }
+
   async function listSubagentRunsFor(parentSessionId: string): Promise<SubagentRun[]> {
     const entries = await index.read();
     const runs: SubagentRun[] = [];
@@ -840,6 +961,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     touch,
     saveSubagentRun,
     listSubagentRunsFor,
+    scanUsageSamples,
   };
 }
 

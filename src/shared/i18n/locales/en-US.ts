@@ -324,6 +324,52 @@ export const enUS = {
     showLess: "Show less",
     branchOf: "Branch",
   },
+  /*
+    Usage stats (the sidebar entry + its modal).
+
+    The accounting has to be spelled out or the numbers get misread: "Total tokens"
+    is the sum of all four billing buckets (uncached input + cache read + cache write
+    + output) — cache reads are usually the largest one, and without saying so users
+    compare it against an "input tokens" figure elsewhere and think it is wrong.
+  */
+  stats: {
+    title: "Usage",
+    subtitle: "All token usage and activity on this machine (subagents included)",
+    loading: "Gathering stats…",
+    totalTokens: "Total tokens",
+    peakTokens: "Peak tokens",
+    longestChat: "Longest chat",
+    currentStreak: "Current streak",
+    longestStreak: "Longest streak",
+    days_one: "{{count}} day",
+    days_other: "{{count}} days",
+    tokenActivity: "Token activity",
+    modeDaily: "Daily",
+    modeWeekly: "Weekly",
+    modeCumulative: "Cumulative",
+    heatLess: "Less",
+    heatMore: "More",
+    heatSummary: "Token activity over the past year: {{days}} active days, {{total}} total",
+    heatCell: "{{tokens}} on {{date}}",
+    dailyTrend: "Daily token trend",
+    range7: "Last 7 days",
+    range30: "Last 30 days",
+    emptyTrend: "No usage recorded in this range",
+    modelUsage: "Model usage",
+    otherModels: "Other models",
+    tokensUnit: "tokens",
+    donutSummary: "Token share by model",
+    empty: "No usage recorded yet. Start a chat and it will show up here.",
+    scopeSessions: "{{count}} chats",
+    scopeSubagent: "{{count}} from subagents · {{tokens}}",
+    scopeActiveDays: "{{count}} active days",
+    scanning: "Folding history… ({{done}}/{{total}} chats)",
+    cacheRead: "cache read {{tokens}}",
+    durationSeconds: "{{seconds}}s",
+    durationMinutes: "{{minutes}}m",
+    durationHours: "{{hours}}h {{minutes}}m",
+    durationDays: "{{days}}d {{hours}}h",
+  },
   plugins: {
     title: "Plugins",
     /** Placeholder while a plugin panel loads (the webview guest starts slower than React renders) */

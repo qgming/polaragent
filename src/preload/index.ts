@@ -170,6 +170,10 @@ const api = {
     // 用草稿配置做一次真实检索：「测试连接」与「是否已保存」解耦
     test: (request) => ipcRenderer.invoke(IPC.web.test, request),
   },
+  stats: {
+    // 只读现算：打开统计模态窗时折一次历史，没有推送通道（见 shared/contracts/ipc.ts）
+    report: () => ipcRenderer.invoke(IPC.stats.report),
+  },
   plugins: {
     list: () => ipcRenderer.invoke(IPC.plugins.list),
     enable: (id) => ipcRenderer.invoke(IPC.plugins.enable, { id }),

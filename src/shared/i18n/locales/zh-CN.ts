@@ -321,6 +321,54 @@ export const zhCN = {
     showMore: "展开显示",
     showLess: "收起",
   },
+  /*
+    数据统计（侧栏底部的入口 + 模态窗）。
+
+    口径必须说清楚，否则数字一定会被误读：
+    「累计 Token 数」是**四个计费桶之和**（未缓存输入 + 缓存读取 + 缓存写入 + 输出），
+    也就是模型实际处理过的全部 token —— 缓存读取那一桶往往是最大的一项，
+    不说明的话用户会拿它跟别处的「输入 token」对不上。
+  */
+  stats: {
+    title: "数据统计",
+    subtitle: "这台机器上的全部 Token 用量与活跃度（含子智能体）",
+    loading: "正在统计…",
+    totalTokens: "累计 Token 数",
+    peakTokens: "峰值 Token 数",
+    longestChat: "最长聊天时长",
+    currentStreak: "当前连续天数",
+    longestStreak: "最长连续天数",
+    /** 「5 天」；中文没有复数，两个键给同一份文案（与 editDiscards 同款） */
+    days_one: "{{count}} 天",
+    days_other: "{{count}} 天",
+    tokenActivity: "Token 活动",
+    modeDaily: "每日",
+    modeWeekly: "每周",
+    modeCumulative: "累计",
+    heatLess: "少",
+    heatMore: "多",
+    heatSummary: "最近一年的 Token 活动：{{days}} 天有记录，累计 {{total}}",
+    heatCell: "{{tokens}} · {{date}}",
+    dailyTrend: "每日 Token 趋势图",
+    range7: "近 7 日",
+    range30: "近 30 日",
+    emptyTrend: "这段时间还没有用量记录",
+    modelUsage: "模型用量",
+    otherModels: "其他模型",
+    tokensUnit: "tokens",
+    donutSummary: "各模型的 Token 占比",
+    empty: "还没有用量记录。开始一次对话，这里就会有数据。",
+    scopeSessions: "{{count}} 个会话",
+    /** 子智能体的用量也是真花掉的 token，单独给一行让人对得上帐 */
+    scopeSubagent: "其中子智能体 {{count}} 个 · {{tokens}}",
+    scopeActiveDays: "{{count}} 天有记录",
+    scanning: "正在整理历史用量…（{{done}}/{{total}} 个会话）",
+    cacheRead: "缓存读取 {{tokens}}",
+    durationSeconds: "{{seconds}} 秒",
+    durationMinutes: "{{minutes}} 分钟",
+    durationHours: "{{hours}} 小时 {{minutes}} 分钟",
+    durationDays: "{{days}} 天 {{hours}} 小时",
+  },
   plugins: {
     title: "插件",
     /** 插件面板还在加载时的占位（webview 的 guest 进程启动比 React 渲染慢） */

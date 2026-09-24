@@ -340,12 +340,13 @@ describe("用内置浏览器打开地址（openInBrowser）", () => {
 });
 
 describe("插件模态窗（pluginModal）", () => {
-  /** 四个模态的开合状态都要清干净：互斥是在它们之间生效的 */
+  /** 五个模态的开合状态都要清干净：互斥是在它们之间生效的 */
   function resetModals(): void {
     useUiStore.setState({
       searchOpen: false,
       settingsOpen: false,
       pluginsOpen: false,
+      statsOpen: false,
       pluginModal: null,
     });
   }
@@ -387,7 +388,7 @@ describe("插件模态窗（pluginModal）", () => {
   });
 
   it("打开另外三个模态中的任何一个，都会把它关掉", () => {
-    for (const open of ["openSearch", "openSettings", "openPlugins"] as const) {
+    for (const open of ["openSearch", "openSettings", "openPlugins", "openStats"] as const) {
       useUiStore.getState().openPluginModal("dev.a", "one");
       useUiStore.getState()[open]();
       expect(useUiStore.getState().pluginModal, open).toBeNull();
@@ -402,5 +403,60 @@ describe("插件模态窗（pluginModal）", () => {
 
     expect(useUiStore.getState().pluginModal).toBeNull();
     expect(useUiStore.getState().pluginsOpen).toBe(true);
+  });
+});
+
+/**
+ * 数据统计模态窗与另外四个模态互斥。
+ *
+ * 互斥是**在 store 里**实现的（而不是各组件自觉先关别的）：统计的入口在侧栏，
+ * 将来还会出现在命令面板 / 快捷键里，靠调用方记着「先关掉别的」迟早会漏 ——
+ * 漏了的症状是两层模态叠在一起，底下那层还能被点到。
+ */
+describe("数据统计模态窗（statsOpen）", () => {
+  function resetModals(): void {
+    useUiStore.setState({
+      searchOpen: false,
+      settingsOpen: false,
+      pluginsOpen: false,
+      statsOpen: false,
+      pluginModal: null,
+    });
+  }
+
+  beforeEach(resetModals);
+
+  it("打开统计时，另外四个模态都被关掉", () => {
+    useUiStore.getState().openPlugins();
+    useUiStore.getState().openStats();
+
+    const state = useUiStore.getState();
+    expect(state.statsOpen).toBe(true);
+    expect(state.pluginsOpen).toBe(false);
+    expect(state.settingsOpen).toBe(false);
+    expect(state.searchOpen).toBe(false);
+    expect(state.pluginModal).toBeNull();
+  });
+
+  it("打开另外四个模态中的任何一个，都会把统计关掉", () => {
+    for (const open of ["openSearch", "openSettings", "openPlugins"] as const) {
+      useUiStore.getState().openStats();
+      useUiStore.getState()[open]();
+      expect(useUiStore.getState().statsOpen, open).toBe(false);
+    }
+
+    useUiStore.getState().openStats();
+    useUiStore.getState().openPluginModal("dev.a", "one");
+    expect(useUiStore.getState().statsOpen).toBe(false);
+  });
+
+  it("closeStats 只清它自己", () => {
+    useUiStore.getState().openStats();
+    useUiStore.setState({ searchOpen: true });
+
+    useUiStore.getState().closeStats();
+
+    expect(useUiStore.getState().statsOpen).toBe(false);
+    expect(useUiStore.getState().searchOpen).toBe(true);
   });
 });

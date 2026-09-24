@@ -39,7 +39,7 @@ const RECENT_SESSION_LIMIT = 5;
  */
 const EMPTY_SESSIONS: Record<string, ChatMessage[]> = {};
 
-type CommandId = "new-chat" | "toggle-theme";
+type CommandId = "new-chat" | "toggle-theme" | "open-stats";
 
 /**
  * 统一搜索模态窗：侧栏搜索按钮与 Ctrl+K 打开同一个它，输入即搜，
@@ -59,6 +59,7 @@ export function SearchModal() {
   const closeSearch = useUiStore((s) => s.closeSearch);
   const jumpToMessage = useUiStore((s) => s.jumpToMessage);
   const openSettings = useUiStore((s) => s.openSettings);
+  const openStats = useUiStore((s) => s.openStats);
   const sessions = useChatStore((s) => s.sessions);
   /**
    * 消息表**只在弹窗打开时订阅**。
@@ -218,7 +219,7 @@ export function SearchModal() {
       });
     }
 
-    // 命令：新建对话 + 切换主题（显示将要切到的主题）
+    // 命令：新建对话 + 切换主题（显示将要切到的主题）+ 打开数据统计
     const commandEntries: { id: string; command: CommandId; label: string; hint?: string }[] = [
       { id: "command:new-chat", command: "new-chat", label: t("chat.newChat"), hint: "Ctrl+N" },
       {
@@ -228,11 +229,19 @@ export function SearchModal() {
           theme: t(theme === "dark" ? "app.themeLight" : "app.themeDark"),
         }),
       },
+      // 统计与设置一样是「面板型」入口：搜它的名字就能开，不必先知道它在侧栏哪颗图标下
+      {
+        id: "command:open-stats",
+        command: "open-stats",
+        label: t("stats.title"),
+        hint: t("stats.subtitle"),
+      },
     ];
     for (const entry of commandEntries) {
       if (!entry.label.toLocaleLowerCase().includes(lowered)) continue;
       next.set(entry.id, () => {
         if (entry.command === "new-chat") void createSession();
+        else if (entry.command === "open-stats") openStats();
         else void updateSettings({ theme: theme === "dark" ? "light" : "dark" });
         closeSearch();
       });
@@ -289,6 +298,7 @@ export function SearchModal() {
     closeSearch,
     jumpToMessage,
     openSettings,
+    openStats,
     createSession,
     updateSettings,
     pluginCommands,

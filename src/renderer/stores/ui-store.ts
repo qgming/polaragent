@@ -225,6 +225,14 @@ interface UiState {
    * 侧栏、快捷键、命令面板多处，靠调用方自觉「先关别的」迟早会漏一处。
    */
   pluginsOpen: boolean;
+  /**
+   * 数据统计模态窗的显隐。
+   *
+   * 与 settingsOpen / searchOpen / pluginsOpen 一起构成**互斥**的模态组
+   * （见 openStats 的实现）：四种内容都是「占满一屏、要人看一会儿」的东西，
+   * 叠起来只会让底下那层还能被点到。
+   */
+  statsOpen: boolean;
   /** 插件模态窗当前的分栏（与 settingsSection 同款：配置态，关闭不清空） */
   pluginsSource: PluginSourceTab;
   /**
@@ -348,6 +356,9 @@ interface UiState {
   /** 打开插件管理模态窗并落在某个分栏（缺省 = 已安装）；同时关掉另外三个模态 */
   openPlugins(source?: PluginSourceTab): void;
   closePlugins(): void;
+  /** 打开数据统计模态窗；同时关掉另外三个模态（同一时刻只开一个） */
+  openStats(): void;
+  closeStats(): void;
   /**
    * 打开一个插件的模态窗界面（清单 `kind: "modal"`）；同时关掉另外三个模态。
    *
@@ -385,6 +396,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   settingsSection: DEFAULT_SETTINGS_SECTION,
   pluginsOpen: false,
   pluginsSource: DEFAULT_PLUGIN_SOURCE,
+  statsOpen: false,
   pluginModal: null,
   searchJump: null,
   rightPanelOpen: false,
@@ -556,13 +568,19 @@ export const useUiStore = create<UiState>()((set, get) => ({
 
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   /*
-    三个模态（搜索 / 设置 / 插件）互斥。
+    模态互斥（搜索 / 设置 / 插件 / 统计 + 插件自己的模态窗）。
     互斥写在 store 里而不是各组件里：开关分散在侧栏按钮、快捷键、命令面板若干处，
     靠调用方自觉「先关掉别的」迟早会漏 —— 而漏了的症状是两层模态叠在一起，
     底下的那层还能被点到。
   */
   openSearch: () =>
-    set({ searchOpen: true, settingsOpen: false, pluginsOpen: false, pluginModal: null }),
+    set({
+      searchOpen: true,
+      settingsOpen: false,
+      pluginsOpen: false,
+      statsOpen: false,
+      pluginModal: null,
+    }),
   closeSearch: () => set({ searchOpen: false }),
   openSettings: (section) =>
     set({
@@ -570,6 +588,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
       settingsSection: section ?? DEFAULT_SETTINGS_SECTION,
       searchOpen: false,
       pluginsOpen: false,
+      statsOpen: false,
       pluginModal: null,
     }),
   closeSettings: () => set({ settingsOpen: false }),
@@ -579,9 +598,19 @@ export const useUiStore = create<UiState>()((set, get) => ({
       pluginsSource: section ?? DEFAULT_PLUGIN_SOURCE,
       searchOpen: false,
       settingsOpen: false,
+      statsOpen: false,
       pluginModal: null,
     }),
   closePlugins: () => set({ pluginsOpen: false }),
+  openStats: () =>
+    set({
+      statsOpen: true,
+      searchOpen: false,
+      settingsOpen: false,
+      pluginsOpen: false,
+      pluginModal: null,
+    }),
+  closeStats: () => set({ statsOpen: false }),
   openPluginModal: (pluginId, surfaceId) =>
     set((state) => {
       // 已经在开的那一个：**不动状态**（幂等）。仍然要关掉另外三个 —— 幂等指的是
@@ -593,6 +622,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
         searchOpen: false,
         settingsOpen: false,
         pluginsOpen: false,
+        statsOpen: false,
       };
     }),
   closePluginModal: () => set({ pluginModal: null }),

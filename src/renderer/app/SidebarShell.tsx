@@ -1,4 +1,4 @@
-import { Blocks, PanelLeft, Plus, Search, Settings2 } from "lucide-react";
+import { Blocks, ChartColumn, PanelLeft, Plus, Search, Settings2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   ThreadListItems,
@@ -83,6 +83,7 @@ export function SidebarShell() {
   const openSearch = useUiStore((s) => s.openSearch);
   const openSettings = useUiStore((s) => s.openSettings);
   const openPlugins = useUiStore((s) => s.openPlugins);
+  const openStats = useUiStore((s) => s.openStats);
   const pendingDeleteSessionId = useUiStore((s) => s.pendingDeleteSessionId);
   const settleDeleteSession = useUiStore((s) => s.settleDeleteSession);
 
@@ -131,12 +132,14 @@ export function SidebarShell() {
           <ThreadListItems className="app-scrollbar min-h-0 flex-1 overflow-y-auto" />
         </ThreadListRoot>
 
-        {/* 底部：设置（左）+ 插件/主题（右）。
-            插件紧邻主题左侧 —— 两者都是「改这台机器怎么用」的入口，
-            而设置是「改我自己怎么用」。
+        {/* 底部：设置（左）+ 插件/统计/主题（右）。
+            这三者都是「改这台机器怎么用」的入口，而设置是「改我自己怎么用」；
+            统计排在插件与主题之间（用户指定的位置）。
             图标用 Blocks 而不是 Plug：Plug 已经被设置里的 MCP 分栏占用，
             同一个界面里两个 Plug 会让人以为它们是一回事；而 Blocks 的
-            "一堆积木"恰好是插件系统在贡献面上的形状（技能 / 面板 / 工具各是一块）。 */}
+            "一堆积木"恰好是插件系统在贡献面上的形状（技能 / 面板 / 工具各是一块）。
+            统计用 ChartColumn：它是这一排里唯一一个**只读**的入口
+            （另外两个都会改变什么），柱子图标正好也说明"这里只有数字"。 */}
         <div className="border-t border-border/60 p-2">
           <div className="flex items-center justify-between">
             <IconButton label={t("sidebar.settings")} onClick={() => openSettings()}>
@@ -145,6 +148,9 @@ export function SidebarShell() {
             <div className="flex items-center gap-1">
               <IconButton label={t("plugins.title")} onClick={() => openPlugins()}>
                 <Blocks className="size-4" />
+              </IconButton>
+              <IconButton label={t("stats.title")} onClick={() => openStats()}>
+                <ChartColumn className="size-4" />
               </IconButton>
               <ThemeToggle side="right" />
             </div>
