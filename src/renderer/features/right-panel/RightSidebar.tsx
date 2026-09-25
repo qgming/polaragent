@@ -127,11 +127,12 @@ export function RightSidebar(): React.JSX.Element {
           「+」与窗口控制留在原地 —— 否则标签一多，那两个入口就被滚出屏幕。
           「+」的语义是「开一个内容」：它不直接建标签，而是回到选择列表让用户选
          （浏览器多开的那条路也在那儿，每次点「浏览器」都是新标签）。
+
+          **这一行不是窗口拖拽区**：标签条自带一条横向滚动条，而 `-webkit-app-region: drag`
+          会把拖拽事件整体吞掉 —— 标签一多，用户拖那条滚动条时被拖走的是整个窗口。
+          窗口拖拽留给内容区顶栏（TitleBar），它始终可见。
         */}
-        <div
-          className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 pr-2 pl-2"
-          data-electron-drag-region
-        >
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 pr-2 pl-2">
           <div className="app-scrollbar flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
             {tabs.map((tab) => (
               <RightPanelTabButton

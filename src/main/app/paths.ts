@@ -19,7 +19,15 @@ export const DATA_DIR_ENV = "OINT_HOME";
 const DATA_DIR_NAME = ".oint";
 
 /** 数据目录内的子目录；缺少时由 ensureAppDirs 补建 */
-const DATA_SUBDIRS = ["sessions", "skills", "prompts", "subagents", "cache", "plugins"] as const;
+const DATA_SUBDIRS = [
+  "sessions",
+  "workspaces",
+  "skills",
+  "prompts",
+  "subagents",
+  "cache",
+  "plugins",
+] as const;
 
 /** 数据目录权限：只允许当前用户访问（Windows 忽略该位） */
 const DIR_MODE = 0o700;
@@ -49,6 +57,43 @@ export function pluginsDir(dir: string = dataDir()): string {
 /** 某个插件的私有数据目录：`<dataDir>/plugins/data/<sanitized-id>` */
 export function pluginDataDir(id: string, dir: string = dataDir()): string {
   return path.join(pluginsDir(dir), "data", pluginDirName(id));
+}
+
+/**
+ * 会话临时工作区根目录：`<dataDir>/workspaces`。
+ *
+ * 放在数据根下（而不是系统临时目录）有两个理由：系统临时目录会被操作系统按自己的
+ * 规则清理，而这里的目录必须活到「会话被删」那一刻；而且它跟着数据根一起被备份 / 迁移。
+ */
+export function workspacesDir(dir: string = dataDir()): string {
+  return path.join(dir, "workspaces");
+}
+
+/**
+ * 会话 id → 目录名。
+ *
+ * 会话 id 由会话库生成（当前是 UUID），但拼路径这一步不依赖「上游一定是 UUID」：
+ * 白名单之外的一切替换成 `_`，分隔符与 `..` 因此都进不了路径。
+ *
+ * 纯点号要**单独**挡一次：`.` 与 `..` 的每个字符都在白名单里，只靠白名单会拼出
+ * `workspaces/..` —— 那是路径语义而不是名字，而它下游是 `rm -rf`。
+ * 空名同理（`path.join(root, "")` 就是 root 本身）。
+ */
+function workspaceDirName(id: string): string {
+  const safe = id.replace(/[^a-z0-9._-]/gi, "_");
+  if (safe === "" || /^\.+$/.test(safe)) return safe.replace(/\./g, "_") || "_";
+  return safe;
+}
+
+/**
+ * 某个会话的临时工作目录：`<dataDir>/workspaces/<会话 id>`。
+ *
+ * **目录名只由会话 id 决定，不取会话自己写的 cwd**：这样「删会话时该清哪一份文件」
+ * 是一个当场算得出来的答案，而不是从别处读回来的、可能被改过的值。用户显式让模型
+ * 保存到别处（比如 `D:\报告.md`）的文件不在这里，因此不会跟着会话被删。
+ */
+export function sessionWorkspaceDir(id: string, dir: string = dataDir()): string {
+  return path.join(workspacesDir(dir), workspaceDirName(id));
 }
 
 export interface ResolveDataDirOptions {

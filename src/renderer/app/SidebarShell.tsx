@@ -106,12 +106,12 @@ export function SidebarShell() {
         style={{ width: "var(--layout-sidebar-width)" }}
       >
         {/* 顶行：侧栏从这里起就是窗口最顶部（整宽顶栏已去掉），与内容区顶栏等高、
-            共用同一条下边框。左侧是品牌图标与应用名，右侧是搜索与收起开关（先搜索、后收起）；
-            整行是窗口拖拽区。 */}
-        <div
-          data-electron-drag-region
-          className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-2"
-        >
+            共用同一条下边框。左侧是品牌图标与应用名，右侧是搜索与收起开关（先搜索、后收起）。
+
+            **这一行不是窗口拖拽区**：它紧贴屏幕左上角，用户在这里按下多半是想点搜索或
+            收起侧栏，误拖却会把整个窗口带走。窗口拖拽留给内容区顶栏（TitleBar），
+            它始终可见、且中间那段没有控件。 */}
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-2">
           <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
             <BrandMark />
             <span className="truncate text-sm font-medium">{t("app.name")}</span>

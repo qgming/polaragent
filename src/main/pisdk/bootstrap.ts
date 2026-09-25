@@ -34,11 +34,20 @@ export function getInteractionService(): InteractionService | null {
 
 /**
  * 解析会话工作目录：该会话在索引里绑定的目录（在项目里新建的会话就绑定该项目目录），
- * 没有绑定就回退进程当前目录。
+ * 没绑定就现补一个本会话的临时工作区（见 session-store 的 ensureCwd）。
+ *
+ * 临时工作区而不是进程当前目录：后者会让「模型能读写哪些文件」随启动方式漂移
+ *（开发时是仓库目录，打包后可能是安装目录），而且那些文件不会跟着会话被清理。
  */
 async function resolveWorkingDir(sessionId: string): Promise<string> {
-  const bound = await getSessionStore().readCwd(sessionId);
-  return bound ?? process.cwd();
+  try {
+    return await getSessionStore().ensureCwd(sessionId);
+  } catch (error) {
+    // 建不出目录（磁盘满 / 权限）或会话不存在：退回进程当前目录，与旧行为一致。
+    // 这一轮对话还能跑起来，比整个会话用不了要好。
+    console.warn(`解析会话工作目录失败（${sessionId}），回落到进程当前目录：${String(error)}`);
+    return process.cwd();
+  }
 }
 
 /**

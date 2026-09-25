@@ -1,3 +1,4 @@
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   BACKGROUND_CONTEXT,
@@ -13,7 +14,7 @@ import {
   createNodeSqliteFactory,
   SqliteSessionRepo,
 } from "@earendil-works/pi-session-backend-sqlite-node";
-import { dataDir } from "@/main/app/paths";
+import { dataDir, sessionWorkspaceDir, workspacesDir } from "@/main/app/paths";
 import {
   type AgentMode,
   ALL_THINKING_LEVELS,
@@ -29,7 +30,7 @@ import type {
 } from "@/shared/contracts/session";
 import type { SubagentRun, SubagentRunStatus, SubagentSource } from "@/shared/contracts/subagent";
 import { mapEntriesToMessages } from "./message-mapper";
-import { createSessionsIndex, type SessionIndexEntry } from "./sessions-index";
+import { createSessionsIndex, type SessionIndexEntry, type SessionsIndex } from "./sessions-index";
 
 /**
  * 本地索引条目 + 从属会话字段。
@@ -125,6 +126,16 @@ export interface SessionStore {
   setPinned(id: string, pinned: boolean): Promise<void>;
   /** 会话绑定的工作目录（索引 cwd）；未绑定返回 null */
   readCwd(id: string): Promise<string | null>;
+  /**
+   * 会话的工作目录，**没有就现补一个**（`<数据根>/workspaces/<会话 id>`，并写回索引）。
+   *
+   * 与 readCwd 的差别只在「没有绑定」这一类会话上：readCwd 回 null，这个建目录并绑定。
+   * 文件面板 / 终端 / 执行环境要的是「一个能用的根」，不是「有没有绑过」这个事实 ——
+   * 早先它们拿 null 当错误，表现是「模型写过的文件在右侧一律打不开」。
+   *
+   * 会话不存在时抛错（否则会为一个拼错 / 已删的 id 留下一个没人认领的目录）。
+   */
+  ensureCwd(id: string): Promise<string>;
   /** 会话自己指定的模型；未绑定返回 null（调用方据此回落到默认模型） */
   readModel(id: string): Promise<ModelRef | null>;
   /** 写会话级模型绑定；null 表示清除绑定（回到「跟随默认」） */
@@ -556,6 +567,8 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     try {
       const metas = await listMetas();
       const entries = await index.read();
+      // 历史会话（索引里没有 cwd）在这里补上临时工作区，见该函数的注释
+      await bindMissingWorkspaces(metas, entries);
       return metas
         .map((meta) => toSummary(meta, entries[meta.id]))
         .sort((left, right) => right.updatedAt - left.updatedAt);
@@ -581,11 +594,21 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
       // 会话集合变了：下次 list() 必须重新扫盘（否则新建的会话不会出现在列表里）
       invalidateMetas();
 
+      /**
+       * 工作目录：调用方给了就用它（在项目里新建的会话绑定项目目录；子会话继承父会话），
+       * 没给就给这个会话建一个临时工作区 —— 会话从此**总是**有一个能用的根，
+       * 文件面板 / 终端 / 执行环境不必再各自处理「没有绑定」这一种情况。
+       *
+       * 空白串按「没给」处理：它会拼出含糊的相对路径，下游很容易变成「进程当前目录」。
+       */
+      const explicitCwd = options.cwd?.trim() ? options.cwd : undefined;
+      const cwd = explicitCwd ?? (await ensureWorkspaceDir(session.metadata.id));
+
       // 其余从属字段（kind / 工具调用 id / 子智能体名 / 运行 id）落在本地索引里：
       // SQLite 后端的 create 只收 { id, parentSessionId }，多出来的字段没有地方放
       const entry: LocalIndexEntry = {
+        cwd,
         ...(options.title === undefined ? {} : { title: options.title }),
-        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.kind === undefined ? {} : { kind: options.kind }),
         ...(options.parentSessionId === undefined
           ? {}
@@ -628,6 +651,66 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     // 只 trim 用于判空，返回原值——路径本身的首尾空白不真正剪掉
     const cwd = (await index.read())[id]?.cwd ?? "";
     return cwd.trim() === "" ? null : cwd;
+  }
+
+  /**
+   * 建一个会话的临时工作目录（幂等）。**只建目录、不写索引**：
+   * 两个调用点（create / ensureCwd）紧接着都要写索引，分开写会让新建会话多一次
+   * 「读 JSON → 改 → 写 JSON」的往返。
+   */
+  async function ensureWorkspaceDir(id: string): Promise<string> {
+    const dir = sessionWorkspaceDir(id, baseDir);
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  /**
+   * 会话的工作目录，没有就现补一个临时工作区并绑定（见接口注释）。
+   *
+   * 为什么补的是临时工作区而不是回落到进程当前目录：后者会让「能访问哪些文件」随
+   * 启动方式漂移（开发时是仓库目录，打包后可能是安装目录），而临时工作区是会话自己的
+   * 一个固定目录，且随会话一起被清理（见 removeWorkspace）。
+   */
+  async function ensureCwd(id: string): Promise<string> {
+    const bound = await readCwd(id);
+    if (bound !== null) return bound;
+    // 只给真实存在的会话建目录：否则一个拼错 / 已删的 id 会留下一个没人认领的目录
+    const exists = (await listMetas()).some((item) => item.id === id);
+    if (!exists) throw new Error(`会话不存在：${id}`);
+    const dir = await ensureWorkspaceDir(id);
+    // 写索引失败不抛（updateIndex 自己只记警告）：目录已经建好，本次调用能正常用，
+    // 下次再补一次即可（幂等）—— 不该让「读一个目录」因为写索引失败而整体失败
+    await updateIndex(id, { cwd: dir });
+    return dir;
+  }
+
+  /**
+   * 给索引里还没有 cwd 的**历史会话**补上临时工作区（写回索引，下次读到的就是真值）。
+   *
+   * 为什么挂在 list 上而不是启动时跑一遍：列表是「界面要知道这些会话长什么样」的唯一入口，
+   * 谁先问谁触发，而且**一定会被 await**。启动时补的话，窗口加载与补写之间存在竞态，
+   * 列表会先返回一批空 cwd 的会话 —— 那正是这次要修的毛病。
+   *
+   * 已经绑定过的会话在这里只做一次内存判断，不产生任何写入。
+   */
+  async function bindMissingWorkspaces(
+    metas: SqliteSessionMetadata[],
+    entries: SessionsIndex,
+  ): Promise<void> {
+    for (const meta of metas) {
+      // pi 元数据里的 cwd 优先（toSummary 同口径）：它写了值就不该被我们覆盖
+      if (meta.cwd?.trim() || entries[meta.id]?.cwd?.trim()) continue;
+      try {
+        const dir = await ensureWorkspaceDir(meta.id);
+        const entry = entries[meta.id];
+        if (entry) entry.cwd = dir;
+        else entries[meta.id] = { cwd: dir };
+        await updateIndex(meta.id, { cwd: dir });
+      } catch (error) {
+        // 单个会话补不上（磁盘满 / 权限）不该让整个列表失败：它下次 list 会再试一次
+        console.warn(`为会话补建临时工作目录失败 ${meta.id}: ${String(error)}`);
+      }
+    }
   }
 
   async function readModel(id: string): Promise<ModelRef | null> {
@@ -673,7 +756,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
    * 这些子会话就成了**永远看不见、也删不掉的磁盘垃圾** —— 每派一次子智能体就留一份。
    *
    * 顺序：先收集子会话 id（要在删父之前读索引，删完就没得找了），
-   * 再逐个走与父会话完全相同的删除路径（close → repo.delete → 清索引），
+   * 再逐个走与父会话完全相同的删除路径（close → repo.delete → 清索引 → 清临时工作区），
    * 最后删父。子会话的删除失败**不阻断**父会话的删除 —— 父删不掉才是用户能感知的问题，
    * 而残留的子会话还有「下次删除父级时再试一次」的机会。
    */
@@ -708,6 +791,11 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
   /** 删除单个会话（不含级联）；remove 的级联逻辑复用它 */
   async function removeOne(id: string): Promise<void> {
     await closeHandle(id);
+    /**
+     * 先记下工作目录：索引条目马上就要删掉，删完就无从知道这个会话用的是哪个目录了。
+     * 读到的可能是 null（历史会话还没补过），那时没有什么可清的。
+     */
+    const cwd = await readCwd(id);
     let deleted = true;
     try {
       const meta = (await listMetas()).find((item) => item.id === id);
@@ -724,6 +812,51 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
       } catch (error) {
         console.warn(`删除会话索引失败 ${id}: ${String(error)}`);
       }
+      await removeWorkspace(id, cwd);
+    }
+  }
+
+  /**
+   * 这个工作区目录是否还被**别的**会话用着（有会话的 cwd 指向它）。
+   *
+   * 工作目录会被继承：分支会话（fork）接着源会话的目录，子会话也接着父会话的目录。
+   * 所以删掉其中一个会话时不能直接清目录 —— 它还是另一个会话的根，清掉之后那边的
+   * bash 与文件面板会指向一个不存在的目录。谁还在用就留着，等最后一个使用者被删时再清。
+   */
+  async function workspaceInUse(dir: string, exceptId: string): Promise<boolean> {
+    const target = path.resolve(dir);
+    const entries = await index.read();
+    for (const [sessionId, entry] of Object.entries(entries)) {
+      if (sessionId === exceptId) continue;
+      const cwd = entry.cwd?.trim();
+      if (cwd !== undefined && cwd !== "" && path.resolve(cwd) === target) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 清掉这个会话用的临时工作区。
+   *
+   * 判据是**「cwd 是 workspaces 根的直接子目录」**，而不是「cwd 等于按会话 id 算出来的
+   * 那个目录」：分支会话继承的是**源会话**的目录（目录名只由源会话 id 决定），按 id 算
+   * 就永远清不到它。反过来，用户显式绑定的项目目录一定在 workspaces 根之外，因此不会被清
+   * ——「只有临时会话里的文件跟着会话删」这条要求就落在这个判断上。
+   *
+   * 只认直接子目录（不含 workspaces 根本身）：根是所有会话共用的，绝不能成为清理目标。
+   *
+   * 只在会话真的删掉之后调用：删除失败时那个会话还在，它的文件不该被清。
+   * 清理失败只记警告：留下一个目录比「删不掉的会话」好处理得多。
+   */
+  async function removeWorkspace(id: string, cwd: string | null): Promise<void> {
+    if (cwd === null) return;
+    const managed = path.resolve(workspacesDir(baseDir));
+    const target = path.resolve(cwd);
+    if (path.dirname(target) !== managed) return;
+    try {
+      if (await workspaceInUse(target, id)) return;
+      await rm(target, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`清理会话临时工作目录失败 ${target}: ${String(error)}`);
     }
   }
 
@@ -784,14 +917,26 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
       invalidateMetas();
 
       const stats = await forked.getStats(BACKGROUND_CONTEXT);
-      const sourceTitle = (await index.read())[id]?.title;
+      // 索引只读一次：标题、模型、工作目录都取自这一份快照
+      const sourceEntry = (await index.read())[id];
+      /**
+       * 工作目录同样继承源会话：分支接着同一段对话，文件也在同一个目录里。
+       *
+       * 源会话没绑定工作目录（历史会话）时给分支建一个自己的临时工作区 ——
+       * 这里不省这一步：分支随后就可能被打开，那时它得有一个存在的根。
+       * 继承来的工作区可能被两个会话共用，删源会话时由 workspaceInUse 兜住。
+       */
+      const cwd = sourceEntry?.cwd?.trim()
+        ? sourceEntry.cwd
+        : await ensureWorkspaceDir(forked.metadata.id);
       const entry: SessionIndexEntry = {
-        ...(sourceTitle ? { title: `${sourceTitle} · 分支` } : {}),
+        ...(sourceEntry?.title ? { title: `${sourceEntry.title} · 分支` } : {}),
         updatedAt: Date.now(),
         messageCount: stats.messageCount,
         // 继承源会话的模型绑定：分支接着同一段（由那个模型产生的）上下文，
         // 让它悄悄改用默认模型与「分支」的语义不符
-        model: (await index.read())[id]?.model ?? null,
+        model: sourceEntry?.model ?? null,
+        cwd,
       };
       await updateIndex(forked.metadata.id, entry);
       return toSummary(forked.metadata, entry);
@@ -949,6 +1094,7 @@ export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): S
     setArchived,
     setPinned,
     readCwd,
+    ensureCwd,
     readModel,
     setModel,
     readAgentMode,

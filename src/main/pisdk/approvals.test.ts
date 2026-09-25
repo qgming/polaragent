@@ -5,7 +5,7 @@ import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import type { AiApprover } from "./ai-approver";
-import { type ApprovalService, createApprovalService } from "./approvals";
+import { type ApprovalService, createApprovalService, effectivePermissionMode } from "./approvals";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -243,6 +243,75 @@ describe("createApprovalService", () => {
   it("设置读取失败时退回用户审批", async () => {
     const { service, events } = createHarness({ settingsError: true });
     const promise = service.request(makeInput());
+    await flush();
+    expect(requestedRequest(events).source).toBe("user");
+    service.respond(service.pending("s1")[0]?.id ?? "", "deny");
+    await expect(promise).resolves.toBe("deny");
+  });
+
+  it("权限档映射：只有子会话的 default 抬高到 ai_review，主会话一档不变", () => {
+    expect(effectivePermissionMode("default", false)).toBe("default");
+    expect(effectivePermissionMode("ai_review", false)).toBe("ai_review");
+    expect(effectivePermissionMode("full", false)).toBe("full");
+
+    expect(effectivePermissionMode("default", true)).toBe("ai_review");
+    expect(effectivePermissionMode("ai_review", true)).toBe("ai_review");
+    expect(effectivePermissionMode("full", true)).toBe("full");
+  });
+
+  it("子会话在 default 档也交 AI 预审，放行时自动结算", async () => {
+    const aiApprover: AiApprover = async () => ({ allow: true, reason: "只读命令" });
+    const { service, events } = createHarness({
+      settings: { permissionMode: "default" },
+      aiApprover,
+    });
+
+    await expect(service.request({ ...makeInput(), isSubagent: true })).resolves.toBe("allow_once");
+    expect(requestedRequest(events).source).toBe("ai");
+    expect(service.pending()).toHaveLength(0);
+    expect(service.history()[0]).toMatchObject({ decidedBy: "ai" });
+  });
+
+  it("子会话在 default 档下 AI 拒绝时仍交回用户", async () => {
+    const aiApprover: AiApprover = async () => ({ allow: false, reason: "越出项目范围" });
+    const { service, events } = createHarness({
+      settings: { permissionMode: "default" },
+      aiApprover,
+    });
+
+    const promise = service.request({ ...makeInput(), isSubagent: true });
+    await flush();
+    expect(service.pending("s1")[0]?.aiReviewed).toBe(true);
+    expect(events.find((item) => item.type === "approval-reviewed")).toMatchObject({
+      reason: "越出项目范围",
+    });
+
+    service.respond(service.pending("s1")[0]?.id ?? "", "allow_once");
+    await expect(promise).resolves.toBe("allow_once");
+  });
+
+  it("主会话在 default 档不启用 AI 预审（显式 isSubagent: false）", async () => {
+    const aiApprover: AiApprover = async () => ({ allow: true, reason: "不应被调用" });
+    const { service, events } = createHarness({
+      settings: { permissionMode: "default" },
+      aiApprover,
+    });
+
+    const promise = service.request({ ...makeInput(), isSubagent: false });
+    await flush();
+    expect(requestedRequest(events).source).toBe("user");
+    service.respond(service.pending("s1")[0]?.id ?? "", "deny");
+    await expect(promise).resolves.toBe("deny");
+  });
+
+  it("子会话在 full 档不因映射而收紧（仍不启用 AI 预审）", async () => {
+    const aiApprover: AiApprover = async () => ({ allow: true, reason: "不应被调用" });
+    const { service, events } = createHarness({
+      settings: { permissionMode: "full" },
+      aiApprover,
+    });
+
+    const promise = service.request({ ...makeInput(), isSubagent: true });
     await flush();
     expect(requestedRequest(events).source).toBe("user");
     service.respond(service.pending("s1")[0]?.id ?? "", "deny");

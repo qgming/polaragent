@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPermissionRuleStore } from "@/main/pisdk/permissions";
 import { createSessionsIndex } from "@/main/pisdk/sessions-index";
 import { createSettingsStore, DEFAULT_SETTINGS } from "@/main/settings/store";
-import { DATA_DIR_ENV, dataDir, ensureAppDirs, purgeStaleTempFiles, resolveDataDir } from "./paths";
+import {
+  DATA_DIR_ENV,
+  dataDir,
+  ensureAppDirs,
+  purgeStaleTempFiles,
+  resolveDataDir,
+  sessionWorkspaceDir,
+} from "./paths";
 
 /** 固定的假家目录：期望值全部用 path.join 拼，跨平台不受分隔符影响 */
 const HOME = path.resolve(path.sep, "home", "tester");
@@ -81,6 +88,39 @@ describe("ensureAppDirs", () => {
     ensureAppDirs(dir);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(path.join(dir, "sessions")).mode & 0o777).toBe(0o700);
+  });
+});
+
+/**
+ * 会话临时工作区：目录名**只由会话 id 决定**（不是会话自己写的 cwd）。
+ *
+ * 这条性质是「删会话时该清哪一份文件」的全部依据：算出来的目录一定落在 workspaces 根下，
+ * 而用户显式让模型保存到别处的文件不在其中。所以这里钉住的是**算不出根之外的路径** ——
+ * 一个 `..` 或空 id 拼出来的路径，下游是一次 `rm -rf`。
+ */
+describe("sessionWorkspaceDir", () => {
+  const dir = path.resolve(path.sep, "data", "oint-home");
+
+  it("目录名就是会话 id，落在 workspaces 根下", () => {
+    expect(sessionWorkspaceDir("01a09140-4064-7628-ada8-c947f92bac5b", dir)).toBe(
+      path.join(dir, "workspaces", "01a09140-4064-7628-ada8-c947f92bac5b"),
+    );
+  });
+
+  it("分隔符、纯点号与空名都进不了路径", () => {
+    // 白名单之外的字符（分隔符）替换成下划线
+    expect(sessionWorkspaceDir("a/../../b", dir)).toBe(path.join(dir, "workspaces", "a_.._.._b"));
+    // 纯点号是**路径语义**（上一级 / 当前目录）而不是名字，单独消掉
+    expect(sessionWorkspaceDir("..", dir)).toBe(path.join(dir, "workspaces", "__"));
+    expect(sessionWorkspaceDir(".", dir)).toBe(path.join(dir, "workspaces", "_"));
+    // 空名：path.join(root, "") 就是 root 本身，那会让「删会话」删掉整个 workspaces
+    expect(sessionWorkspaceDir("", dir)).toBe(path.join(dir, "workspaces", "_"));
+
+    for (const id of ["a/../../b", "..", ".", ""]) {
+      expect(
+        sessionWorkspaceDir(id, dir).startsWith(`${path.join(dir, "workspaces")}${path.sep}`),
+      ).toBe(true);
+    }
   });
 });
 

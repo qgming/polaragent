@@ -5,9 +5,14 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { Bot, ChevronLeftIcon, Loader2Icon, Square } from "lucide-react";
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
+import {
+  CollapsibleSection,
+  SectionTitle,
+} from "@/renderer/components/assistant-ui/elements/collapsible-section";
+import { MarkdownBlock } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import {
   fieldInteractive,
   mono,
@@ -56,6 +61,19 @@ import { pickTranscript } from "./subagent-transcript";
 /** 稳定的空数组：zustand v5 的 useSyncExternalStore 按引用比较，每次返回新数组会无限重渲染 */
 const EMPTY_RUNS: readonly SubagentRun[] = [];
 const EMPTY_MESSAGES: readonly ChatMessage[] = [];
+
+/**
+ * 面板里正文的字体口径，与主线程的消息组同源（`--chat-font` / `--chat-font-size`，见 index.css）：
+ * 任务、汇报、子会话转录三处都用它，面板里的 Markdown、代码块因此和对话一样跟随
+ * 「对话字号」设置；块间距同样是 --density-gap，两条流的阅读节奏一致。
+ *
+ * 字号只在这一处给：面板里任何一块正文都不该另立一套字号（写死 px 的正文在用户调大
+ * 对话字号后就变成了另一套排版）。
+ */
+const CHAT_TEXT_STYLE: React.CSSProperties = {
+  fontFamily: "var(--chat-font)",
+  fontSize: "var(--chat-font-size)",
+};
 
 export function SubagentPanel(): React.JSX.Element {
   const { t } = useTranslation();
@@ -249,21 +267,37 @@ export function SubagentPanel(): React.JSX.Element {
         <div className="flex flex-col gap-3">
           <RunHeader run={selected} now={now} onStop={() => void stopRun(selected)} />
 
-          <Section title={t("rightPanel.subagentTask")}>
-            <p className="text-ink-2 text-[12.5px] leading-relaxed whitespace-pre-wrap">
-              {selected.task}
-            </p>
-          </Section>
+          {/*
+            任务与汇报都按 markdown 渲染：它们天然是 markdown（标题、列表、表格、代码块、
+            路径引用都是主代理与子智能体常用的形状），按纯文本铺出来会把 `##`、`-`、`|`
+            原样暴露给用户 —— 与对话、文件查看器、主会话里的报告卡片（ToolParts）三处不一致。
 
-          <Section title={t("rightPanel.subagentReport")}>
-            {selected.report === undefined || selected.report === "" ? (
+            两节都默认展开、都可以收起来（开合入口在小节标题行上，见 CollapsibleSection）：
+            收起后只剩标题行。key 用 delegationId：换一条运行就是换一份内容，
+            折叠状态跟着重置回「展开」这个默认值。
+          */}
+          <CollapsibleSection
+            key={selected.delegationId}
+            title={t("rightPanel.subagentTask")}
+            style={CHAT_TEXT_STYLE}
+          >
+            <MarkdownBlock text={selected.task} />
+          </CollapsibleSection>
+
+          {selected.report === undefined || selected.report === "" ? (
+            /* 还没有汇报时不给折叠入口：这里只有一行状态说明，收起它等于把唯一的说明藏起来 */
+            <Section title={t("rightPanel.subagentReport")}>
               <p className="text-ink-4 text-[12.5px]">{t("rightPanel.subagentNoReport")}</p>
-            ) : (
-              <p className="text-ink-2 text-[12.5px] leading-relaxed whitespace-pre-wrap">
-                {selected.report}
-              </p>
-            )}
-          </Section>
+            </Section>
+          ) : (
+            <CollapsibleSection
+              key={selected.delegationId}
+              title={t("rightPanel.subagentReport")}
+              style={CHAT_TEXT_STYLE}
+            >
+              <MarkdownBlock text={selected.report} />
+            </CollapsibleSection>
+          )}
 
           <Section title={t("rightPanel.subagentTranscript")}>
             {!hasTranscript ? (
@@ -271,15 +305,8 @@ export function SubagentPanel(): React.JSX.Element {
                 {transcriptLoading ? t("common.loading") : t("rightPanel.subagentTranscriptEmpty")}
               </p>
             ) : (
-              /*
-                字体与字号跟主线程的消息组同源（--chat-font / --chat-font-size，见 index.css）：
-                面板里的 Markdown、代码块因此和主线程一样跟随「对话字号」设置；块间距同样是
-                --density-gap，两条流的阅读节奏一致。消息自身的 px-2 与行高在各自的壳里。
-              */
-              <div
-                style={{ fontFamily: "var(--chat-font)", fontSize: "var(--chat-font-size)" }}
-                className="flex flex-col gap-y-(--density-gap)"
-              >
+              /* 字体与字号同 CHAT_TEXT_STYLE；消息自身的 px-2 与行高在各自的壳里 */
+              <div style={CHAT_TEXT_STYLE} className="flex flex-col gap-y-(--density-gap)">
                 <PanelThread messages={transcript} running={selected.status === "running"} />
               </div>
             )}
@@ -442,7 +469,10 @@ function RunHeader({
   );
 }
 
-/** 详情里的一个小节：标题 + 内容，标题用同一套小号字色 */
+/**
+ * 详情里的一个小节：标题 + 内容。**不折叠**的小节用它（执行记录、以及还没有汇报时的
+ * 汇报节）—— 标题排版与 CollapsibleSection 共用 SectionTitle，两处不会各长各的。
+ */
 function Section({
   title,
   children,
@@ -452,18 +482,22 @@ function Section({
 }): React.JSX.Element {
   return (
     <section className="flex flex-col gap-1.5">
-      <h4 className="text-ink-4 text-[11.5px]">{title}</h4>
+      <SectionTitle>{title}</SectionTitle>
       {children}
     </section>
   );
 }
 
 /**
- * 面板运行时的「这条运行还活着」：消息壳把它交给 AssistantMessageParts 的 showRunStatus。
- * 走 context 而不是 props：消息组件由 ThreadPrimitive.Messages 按角色取用，没有地方接 props；
- * 而「还在跑 / 已结束」是整段共享的一个布尔，context 正好。
+ * 面板里的转录**不显示运行状态行**（「正在思考 12s」那一条）。
+ *
+ * 主线程需要它：一次回答只有一处，状态行在那里回答「还在跑、跑了多久」。但面板是一条
+ * 只读的转录，子智能体每调一次工具就多出一行、每完成一步又重新计时 —— 满屏都是它，
+ * 反而盖住了真正要看的东西（它做了什么、改了什么）。「还在跑」由上方的 RunHeader 统一
+ * 表达，转录本身只呈现已经发生的事实。
+ *
+ * 所以这里不再有「这条运行还活着」的 context：下面把 showRunStatus 固定传 false。
  */
-const PanelRunLiveContext = createContext(false);
 
 /**
  * 只读运行时不需要发送入口：库的类型要求 onNew 存在，这里给一个到不了的空实现
@@ -513,11 +547,9 @@ const PanelThread = memo(function PanelThread({
   const runtime = useExternalStoreRuntime<ChatMessage>(store);
 
   return (
-    <PanelRunLiveContext.Provider value={running}>
-      <AssistantRuntimeProvider runtime={runtime}>
-        <ThreadPrimitive.Messages components={PANEL_MESSAGE_COMPONENTS} />
-      </AssistantRuntimeProvider>
-    </PanelRunLiveContext.Provider>
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ThreadPrimitive.Messages components={PANEL_MESSAGE_COMPONENTS} />
+    </AssistantRuntimeProvider>
   );
 });
 
@@ -547,10 +579,10 @@ function PanelUserMessage(): React.JSX.Element {
  * 面板里的一条助手消息：外壳与主线程 AssistantMessage 一致（同样的 px-2、块间距、行高），
  * 刻意去掉底部操作栏（复制 / 重新生成 / 分支）—— 那些动作作用在**当前会话**上，对一条
  * 子会话的历史消息没有意义；跨天分隔与左侧消息地图同理留在主线程。
- * 正文（状态行 / 推理 / 工具 / Markdown）与主线程共用 AssistantMessageParts。
+ * 正文（推理 / 工具 / Markdown）与主线程共用 AssistantMessageParts，但状态行被关掉
+ *（面板不显示「正在思考 xxs」，理由见上面那段说明）。
  */
 function PanelAssistantMessage(): React.JSX.Element {
-  const live = useContext(PanelRunLiveContext);
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
@@ -561,7 +593,7 @@ function PanelAssistantMessage(): React.JSX.Element {
         data-slot="aui_assistant-message-content"
         className="flex flex-col gap-y-(--density-gap) px-2 leading-relaxed text-foreground wrap-break-word"
       >
-        <AssistantMessageParts showRunStatus={live} />
+        <AssistantMessageParts showRunStatus={false} />
         <MessageError />
       </div>
     </MessagePrimitive.Root>

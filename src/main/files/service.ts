@@ -1,4 +1,4 @@
-// 右侧面板「文件」的主进程实现：列一层目录、读一个文件。
+// 右侧面板「文件」的主进程实现：列一层目录、读一个文件、写回一个文件。
 //
 // **安全边界在 root 的来源上**：root 由 ipc/files.ts 从**会话索引**里解析出来
 //（会话绑定的工作目录），渲染层只能给 sessionId、给不了路径。本文件收到的 root
@@ -14,15 +14,28 @@
 // 也没有 realpath（全仓只有 search 工具做了 realpath 复检）。要收紧应当同时改两处
 // 并对「链接是否算越界」做一次产品决定，而不是在这里单独加一层（那会让面板与模型
 // 看到的世界不一致）。
+//
+// **上面那条宽松只对读成立，写盘不继承**：读错了最多是看到了不该看的内容（且与
+// 模型侧口径一致），而写盘会把同一个链接从「看得见」变成「改得掉」—— 字面路径在
+// root 内、字符串判断放行，实际落点却在 root 之外，一次误操作就能改掉工作目录外的
+// 文件。所以 writeFileContent 走 validateRealPathAccess（先解析 realpath 再判包含），
+// 并且此后一律用**解析后的真实路径**。这里刻意不追求与模型侧一致：模型侧的写工具
+// 该不该同样收紧是另一处的事，不能拿它当理由把面板的写盘留在边界外。
 
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { imageDimensions, sniffMediaType } from "@/main/pisdk/tools/image-meta";
-import { normalizePath, validatePathAccess } from "@/main/security/path-guard";
+import {
+  normalizePath,
+  validatePathAccess,
+  validateRealPathAccess,
+} from "@/main/security/path-guard";
+import { writeFileAtomic } from "@/main/storage/atomic-write";
 import type {
   DirectoryListing,
   FileContent,
   FileTreeEntry,
+  FileWriteResult,
   ImageContent,
 } from "@/shared/contracts/files";
 
@@ -44,6 +57,15 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
  * 而全部读一遍既慢又没必要。
  */
 const SNIFF_BYTES = 4096;
+/**
+ * 单次写回的最大字节数：与读侧的 MAX_FILE_BYTES **同一个数**（512 KiB）。
+ *
+ * 上限不是为了省内存，而是为了让「能被完整显示的文件」与「能被保存的文件」是同一个集合：
+ * 面板一次最多只能读到前 512 KiB（readFileContent 会截断并在 truncated 上标注），
+ * 所以比它大的文件在人眼里**从来不是完整的**。若允许保存，用户看到的那半截就会被
+ * 当成全文写回去 —— 尾部静默消失。因此两侧用同一个阈值，越界一律给出明确提示。
+ */
+const MAX_WRITE_BYTES = MAX_FILE_BYTES;
 
 /** 目录项排序：目录在前、同类按名字（与各家文件管理器一致，扫一眼就能找到目标） */
 function compareEntries(a: FileTreeEntry, b: FileTreeEntry): number {
@@ -213,4 +235,98 @@ export async function readImageContent(request: {
     ...(dimensions === undefined ? {} : { width: dimensions.width, height: dimensions.height }),
     dataUrl: `data:${mediaType};base64,${bytes.toString("base64")}`,
   };
+}
+
+/**
+ * 把编辑后的文本写回一个文件（原子写：同目录临时文件 → rename 覆盖）。
+ *
+ * root 的来源与前三个函数相同（IPC 层从会话索引解析）。
+ *
+ * ## 守卫与读侧不同 —— 这是本函数安全上的关键
+ *
+ * 读侧走的是 `validatePathAccess`（纯字符串判断，看不见符号链接，见文件头注释）。
+ * 那条宽松只对读成立：写盘会让同一个链接从「看得见」变成「改得掉」—— 字面路径在 root 内、
+ * 字符串判断放行，实际落点却在 root 之外。所以这里用 `validateRealPathAccess`
+ *（先 realpath 再判包含，见 security/path-guard.ts），并且**此后一律用解析后的真实路径
+ * `check.resolved`**，而不是请求里那个字面路径：否则校验的是一个路径、写的是另一个。
+ *
+ * ## 拒绝的情形
+ *
+ * - 待写内容含 NUL / 替换字符（读侧判定二进制的同一套判据），或目标的现有内容就是二进制；
+ * - 待写内容、或目标文件的现有体积超过 MAX_WRITE_BYTES；
+ * - 目标是目录；
+ * - 目标落在 root 之外（含经符号链接绕出的情形）；
+ * - 新建文件但父目录不存在。
+ *
+ * 全部是给用户看的中文，**不包含绝对路径与 errno 码**：这些消息经 ipc/handler.ts 的
+ * fail 包装后直接显示在面板上（`写入文件失败：<message>`）。
+ *
+ * 目标不存在时按**新建**处理（`writeFileAtomic` 会把它建出来）：真实场景里它是
+ * 「文件刚被外部删掉，面板又点了一次保存」，报错反而挡住了用户。
+ */
+export async function writeFileContent(request: {
+  root: string;
+  path: string;
+  text: string;
+}): Promise<FileWriteResult> {
+  const requested = request?.path;
+  if (typeof requested !== "string" || requested.trim() === "") {
+    throw new Error("缺少要保存的文件路径");
+  }
+  const text = request?.text;
+  if (typeof text !== "string") throw new Error("缺少要保存的内容");
+
+  // 与读侧同一套二进制判据（NUL 字节 / UTF-8 解码出的替换字符）：面板是文本编辑器，
+  // 让它把一段二进制内容写进文件是纯粹的破坏。
+  if (text.includes("\u0000") || text.includes("\uFFFD")) {
+    throw new Error("要保存的内容不是纯文本（含空字节或替换字符），已拒绝写入");
+  }
+  const payload = Buffer.from(text, "utf8");
+  if (payload.byteLength > MAX_WRITE_BYTES) {
+    throw new Error(
+      `要保存的内容有 ${payload.byteLength} 字节，超过 ${MAX_WRITE_BYTES / 1024} KB 的编辑上限`,
+    );
+  }
+
+  const check = await validateRealPathAccess(requested, [normalizePath(request.root)]);
+  if (!check.ok) {
+    // **不复用 check.reason**：它把解析后的绝对路径拼进了文案，而这条消息会原样显示
+    // 给用户。写盘这一侧只说「被拒」，不给路径。
+    throw new Error("这个路径不在允许的工作目录内，已拒绝写入");
+  }
+  const target = check.resolved;
+
+  // stat 失败（文件不存在）不是错误 —— 按新建处理，但要先确认父目录存在：
+  // writeFileAtomic 只写「临时文件 + rename」，不建父目录（plugins/registry.ts 踩过这一条），
+  // 而裸的 ENOENT 不是一句能给用户看的文案。
+  const info = await stat(target).catch(() => null);
+  if (info === null) {
+    const parent = await stat(path.dirname(target)).catch(() => null);
+    if (parent === null || !parent.isDirectory()) {
+      throw new Error("目标文件所在的目录不存在");
+    }
+  } else {
+    if (info.isDirectory()) throw new Error("这是一个目录，不能作为文件保存");
+    if (info.size > MAX_WRITE_BYTES) {
+      throw new Error(
+        `这个文件有 ${info.size} 字节，超过 ${MAX_WRITE_BYTES / 1024} KB 的编辑上限：` +
+          "面板只能显示它的开头，保存会把没显示出来的部分抹掉",
+      );
+    }
+    if (info.size > 0) {
+      // 目标文件本身是二进制时也拒一次：读侧对它回的是空文本 + binary 标记，
+      // 面板手里并没有可编辑的内容，真让它保存就是把文件覆盖成空。
+      // 体积已过上限检查，所以整份读进来嗅探的成本是有界的（≤ 512 KiB）。
+      const existing = await readFile(target);
+      if (existing.subarray(0, SNIFF_BYTES).includes(0)) {
+        throw new Error("这个文件看起来是二进制文件，不能用文本编辑器覆盖");
+      }
+    }
+  }
+
+  // 原子写：同目录临时文件 → rename 覆盖。写到一半崩掉时用户拿到的仍是旧内容，
+  // 而不是半截新内容；失败时的临时文件由 writeFileAtomic 自己清掉（见该模块的注释）。
+  await writeFileAtomic(target, text);
+
+  return { path: target, bytes: payload.byteLength };
 }

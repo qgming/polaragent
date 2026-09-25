@@ -8,7 +8,7 @@ import type {
   CompactOutcome,
 } from "./chat";
 import type { AgentMode, ModelRef, WireFormat } from "./common";
-import type { DirectoryListing, FileContent, ImageContent } from "./files";
+import type { DirectoryListing, FileContent, FileWriteResult, ImageContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
 import type { McpProbeResult, McpServerConfig, McpServerView } from "./mcp";
@@ -275,6 +275,17 @@ export interface OintApi {
      * details 里刻意不带图片字节（它会落盘，见 main/pisdk/tools/read-image.ts）。
      */
     readImage(request: { sessionId: string; path: string }): Promise<ImageContent>;
+    /**
+     * 把编辑后的文本写回文件（原子写：先写同目录的临时文件，再 rename 覆盖）。
+     *
+     * **失败是抛异常**（message 为人类可读的中文，不含绝对路径与内部错误码），
+     * 与 readFile 同款 —— 渲染层 catch 后直接显示 message 即可。
+     *
+     * `text` 原样落盘：**不做行尾符转换**（CRLF 的文件读出来带 \r，写回去还是 CRLF）、
+     * 不补也不去 BOM。上限 512 KiB —— 与 readFile 的截断阈值同一个数：比它大的文件
+     * 读侧只会给出开头一段，因此两侧都直接拒绝，避免一次保存把没显示过的部分抹掉。
+     */
+    writeFile(request: { sessionId: string; path: string; text: string }): Promise<FileWriteResult>;
   };
   /** 右侧面板「审查」：本次会话改动过的文件与补丁 */
   review: {

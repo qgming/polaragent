@@ -1,10 +1,14 @@
 /**
  * 右栏文件查看器的测试（ui project / jsdom）。
  *
- * 钉住两件事：
+ * 钉住四件事：
  *   1. **markdown 默认按渲染显示**（用户明确要求），且顶部能切到源码；
- *   2. **不可渲染的文件不给切换按钮** —— 给一个点了没变化的按钮比不给更糟
- *      （这条原则在本仓已有先例，见 job-tool-ui.test.tsx 的「不摆点了没反应的按钮」）。
+ *   2. **代码文件也有渲染档**（用户要求）：渲染档只读、原始档可编辑 —— 两档的差别是
+ *      「有没有可编辑的正文」，不是「有没有 pre」；
+ *   3. **不可渲染的文件不给切换按钮** —— 给一个点了没变化的按钮比不给更糟
+ *      （这条原则在本仓已有先例，见 job-tool-ui.test.tsx 的「不摆点了没反应的按钮」）；
+ *   4. 原始档的编辑与保存：未保存可见、Ctrl/Cmd+S 同效、失败显示主进程给的中文，
+ *      以及**换文件不会丢掉没保存的正文**。
  *
  * 文件内容走 `files.readFile`，**根由主进程解析**：这里断言请求里带的是
  * sessionId + 绝对路径，不含 root（那是提权面，见 main/ipc/files.ts）。
@@ -13,6 +17,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileViewPanel } from "@/renderer/features/right-panel/FileViewPanel";
+import { resetUnsavedEdits } from "@/renderer/features/right-panel/unsaved-edits";
 import i18n from "@/renderer/i18n";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
@@ -21,6 +26,8 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   useUiStore.setState({ filePanelTarget: null });
+  // 未保存的草稿是模块级状态，不随卸载消失：不清会把一条用例的编辑带到下一条里
+  resetUnsavedEdits();
 });
 
 beforeAll(async () => {
@@ -31,13 +38,14 @@ beforeEach(() => {
   useChatStore.setState({ activeSessionId: "s1" });
 });
 
-/** 装一个 files.readFile 的替身，记录它收到的请求 */
-function stubFiles(text: string): { calls: unknown[] } {
-  const calls: unknown[] = [];
+/** 装一个 files 桥的替身：记录读与写的请求 */
+function stubFiles(text: string): { reads: unknown[]; writes: unknown[] } {
+  const reads: unknown[] = [];
+  const writes: unknown[] = [];
   vi.stubGlobal("oint", {
     files: {
       readFile: (request: unknown) => {
-        calls.push(request);
+        reads.push(request);
         return Promise.resolve({
           path: "x",
           text,
@@ -46,9 +54,14 @@ function stubFiles(text: string): { calls: unknown[] } {
           binary: false,
         });
       },
+      writeFile: (request: unknown) => {
+        writes.push(request);
+        const { text: written } = request as { text: string };
+        return Promise.resolve({ path: "x", bytes: written.length });
+      },
     },
   });
-  return { calls };
+  return { reads, writes };
 }
 
 async function open(path: string) {
@@ -57,6 +70,15 @@ async function open(path: string) {
   // 等读取落地：源码档与渲染档都依赖 content
   await waitFor(() => expect(screen.queryByText("加载中…")).toBeNull());
 }
+
+/** 换一个文件（走 store，和用户点另一张文件卡片是同一条路径） */
+async function reopen(path: string) {
+  useUiStore.setState({ filePanelTarget: path });
+  await waitFor(() => expect(screen.queryByText("加载中…")).toBeNull());
+}
+
+const editor = (): HTMLTextAreaElement | null =>
+  screen.queryByLabelText<HTMLTextAreaElement>("编辑文件内容");
 
 describe("markdown 文件的两种模式", () => {
   it("默认按渲染显示：标题渲染成真标题，源码的 # 不再出现", async () => {
@@ -75,9 +97,8 @@ describe("markdown 文件的两种模式", () => {
 
     fireEvent.click(screen.getByLabelText("源码显示"));
 
-    // 源码档是一个 <pre>，里面留着 # 号
-    const pre = document.querySelector("pre");
-    expect(pre?.textContent).toContain("# 标题一");
+    // 源码档是编辑区，里面留着 # 号
+    expect(editor()?.value).toContain("# 标题一");
     // 渲染出来的 h1 这时不该还在
     expect(screen.queryByRole("heading", { name: "标题一" })).toBeNull();
   });
@@ -91,27 +112,188 @@ describe("markdown 文件的两种模式", () => {
 
     expect(screen.getByRole("heading", { name: "又见面了" })).toBeTruthy();
     // 切换模式不该再取一次文件
-    expect(bridge.calls).toHaveLength(1);
+    expect(bridge.reads).toHaveLength(1);
+  });
+
+  it("渲染档是只读的：可编辑的正文只在原始档", async () => {
+    stubFiles("# 标题一");
+    await open("D:/dev/project/notes.md");
+
+    expect(editor()).toBeNull();
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    expect(editor()).not.toBeNull();
   });
 });
 
-describe("非 markdown 文件", () => {
+describe("代码文件", () => {
+  it("也有渲染档（语法高亮，只读），切到原始档才能编辑", async () => {
+    stubFiles("export const a = 1;");
+    await open("D:/dev/project/src/a.ts");
+
+    // 两档都在，默认渲染档
+    expect(screen.getByLabelText("渲染显示").getAttribute("aria-pressed")).toBe("true");
+    expect(editor()).toBeNull();
+    expect(document.querySelector("pre")?.textContent).toContain("export const a = 1;");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    expect(editor()?.value).toBe("export const a = 1;");
+  });
+
+  it("原始档下改正文不会立刻写盘", async () => {
+    const bridge = stubFiles("const a = 1;");
+    await open("D:/dev/project/src/a.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), {
+      target: { value: "const a = 2;" },
+    });
+
+    expect(screen.getByText("未保存")).toBeTruthy();
+    expect(bridge.writes).toHaveLength(0);
+  });
+});
+
+describe("非代码文件", () => {
   it("文本文件只给源码一档，不摆一个点了没变化的切换按钮", async () => {
     stubFiles("第一行\n第二行");
     await open("D:/dev/project/notes.txt");
 
     expect(screen.queryByLabelText("渲染显示")).toBeNull();
     expect(screen.queryByLabelText("源码显示")).toBeNull();
-    const pre = document.querySelector("pre");
-    expect(pre?.textContent).toContain("第一行");
+    expect(editor()?.value).toContain("第一行");
   });
+});
 
-  it("代码文件同样只给源码", async () => {
-    stubFiles("export const a = 1;");
+describe("编辑与保存", () => {
+  it("保存把整份正文提交给主进程，并用回执更新字节数", async () => {
+    const bridge = stubFiles("const a = 1;");
     await open("D:/dev/project/src/a.ts");
 
-    expect(screen.queryByLabelText("渲染显示")).toBeNull();
-    expect(document.querySelector("pre")?.textContent).toContain("export const a = 1;");
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), {
+      target: { value: "const a = 2;" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(bridge.writes).toHaveLength(1));
+    expect(bridge.writes[0]).toEqual({
+      sessionId: "s1",
+      path: "D:/dev/project/src/a.ts",
+      text: "const a = 2;",
+    });
+    // 保存成功后不再是「未保存」，也不必重新读一次文件
+    await waitFor(() => expect(screen.queryByText("未保存")).toBeNull());
+    expect(bridge.reads).toHaveLength(1);
+    expect(screen.getByText("已保存")).toBeTruthy();
+  });
+
+  it("Ctrl/Cmd + S 保存", async () => {
+    const bridge = stubFiles("const a = 1;");
+    await open("D:/dev/project/src/a.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    const area = screen.getByLabelText("编辑文件内容");
+    fireEvent.change(area, { target: { value: "const a = 3;" } });
+    fireEvent.keyDown(area, { key: "s", ctrlKey: true });
+
+    await waitFor(() => expect(bridge.writes).toHaveLength(1));
+  });
+
+  it("保存失败时显示主进程给的中文，并且仍然是未保存", async () => {
+    vi.stubGlobal("oint", {
+      files: {
+        readFile: () =>
+          Promise.resolve({
+            path: "x",
+            text: "x",
+            truncated: false,
+            size: 1,
+            binary: false,
+          }),
+        writeFile: () =>
+          Promise.reject(new Error("写入文件失败：这个路径不在允许的工作目录内，已拒绝写入")),
+      },
+    });
+    await open("D:/dev/project/src/a.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "y" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain(
+        "这个路径不在允许的工作目录内，已拒绝写入",
+      );
+    });
+    // 失败后正文仍然是改过的：保存按钮还能再按一次（而不是变成「已保存」）
+    expect(editor()?.value).toBe("y");
+    expect(screen.getByRole("button", { name: "保存" })).not.toHaveProperty("disabled", true);
+  });
+
+  it("撤销改动回到磁盘上的那一份", async () => {
+    stubFiles("const a = 1;");
+    await open("D:/dev/project/src/a.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "改坏了" } });
+    fireEvent.click(screen.getByRole("button", { name: "撤销改动" }));
+
+    expect(editor()?.value).toBe("const a = 1;");
+    expect(screen.queryByText("未保存")).toBeNull();
+  });
+
+  it("换文件再回来，没保存的正文还在（不静默丢弃）", async () => {
+    stubFiles("const a = 1;");
+    await open("D:/dev/project/src/a.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), {
+      target: { value: "const a = 42;" },
+    });
+
+    await reopen("D:/dev/project/src/b.ts");
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    expect(editor()?.value).toBe("const a = 1;");
+
+    await reopen("D:/dev/project/src/a.ts");
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    expect(editor()?.value).toBe("const a = 42;");
+    expect(screen.getByText("未保存")).toBeTruthy();
+  });
+});
+
+describe("不能编辑的文件", () => {
+  it("二进制文件不给编辑，也不摆保存按钮", async () => {
+    vi.stubGlobal("oint", {
+      files: {
+        readFile: () =>
+          Promise.resolve({ path: "x", text: "", truncated: false, size: 8, binary: true }),
+      },
+    });
+    await open("D:/dev/project/blob.bin");
+
+    expect(editor()).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+  });
+
+  it("被截断的大文件不给编辑（写回会被主进程拒）", async () => {
+    vi.stubGlobal("oint", {
+      files: {
+        readFile: () =>
+          Promise.resolve({
+            path: "x",
+            text: "前一半",
+            truncated: true,
+            size: 999_999,
+            binary: false,
+          }),
+      },
+    });
+    await open("D:/dev/project/huge.ts");
+
+    fireEvent.click(screen.getByLabelText("源码显示"));
+    expect(editor()).toBeNull();
+    expect(document.querySelector("pre")?.textContent).toContain("前一半");
   });
 });
 
@@ -120,9 +302,9 @@ describe("读文件的请求形状", () => {
     const bridge = stubFiles("x");
     await open("D:/dev/project/a.md");
 
-    expect(bridge.calls).toEqual([{ sessionId: "s1", path: "D:/dev/project/a.md" }]);
+    expect(bridge.reads).toEqual([{ sessionId: "s1", path: "D:/dev/project/a.md" }]);
     // root 是提权面：渲染层给不了它（见 main/ipc/files.ts 与 files.test.ts）
-    expect(Object.hasOwn(bridge.calls[0] as object, "root")).toBe(false);
+    expect(Object.hasOwn(bridge.reads[0] as object, "root")).toBe(false);
   });
 
   it("标题显示文件名，路径单独一行", async () => {

@@ -311,14 +311,3 @@ export function fileOpenTarget(path: string): FileOpenTarget {
   const extension = extensionOf(path);
   return extension === "html" || extension === "htm" ? "browser" : "viewer";
 }
-
-/**
- * 该文件在查看器里有没有「渲染」这一档。
- *
- * 只有 markdown 家族有：它们按源码读是 `## 标题` / `| 表 |`，按渲染读才是文档。
- * 其余一律只有源码一档 —— 给一个点了没变化的切换按钮比不给更糟。
- */
-export function hasRenderedMode(path: string): boolean {
-  const extension = extensionOf(path);
-  return extension === "md" || extension === "markdown" || extension === "mdx";
-}

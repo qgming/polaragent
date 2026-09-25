@@ -167,10 +167,13 @@ export function summarizeReview(page: SessionMessagesPage, cwd: string): ReviewS
  *
  * 消息从会话存储读（与渲染层的 loadMessages 同一个来源），
  * 所以面板看到的改动与对话里显示的完全一致，不另算一份。
+ *
+ * 工作目录走 ensureCwd：历史会话（索引里没有 cwd）会现补一个临时工作区，
+ * 而不是把「没绑定工作目录」当成错误抛给用户 —— 那与文件面板早先的毛病是同一个，
+ * 两个面板看的是同一批文件，没有理由一个报错另一个正常。
  */
 export async function reviewSummary(sessionId: string): Promise<ReviewSummary> {
-  const cwd = await getSessionStore().readCwd(sessionId);
-  if (cwd === null) throw new Error(`会话不存在或未绑定工作目录：${sessionId}`);
+  const cwd = await getSessionStore().ensureCwd(sessionId);
 
   // 从会话尾部读：审查关心的是最近的改动，而 store 默认按 newestFirst 返回，
   // 超过 SCAN_LIMIT 条时更早的改动不再回顾（面板顶部会显示本次统计范围）

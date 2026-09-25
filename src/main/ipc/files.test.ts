@@ -8,8 +8,9 @@
 // 单测不便模拟「渲染层直接调 IPC」，改为从契约形状上验证：
 //   1. 请求里带 root 也不起作用（它被忽略，真正的根来自会话索引）；
 //   2. 会话索引给出的 cwd 之外的路径一律被拒；
-//   3. 会话不存在 / 未绑定工作目录时直接拒绝，不退化成进程当前目录。
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+//   3. 会话不存在时拒绝；**没绑过工作目录的会话拿到一个临时目录**，
+//      而不是进程当前目录（那会让边界随启动方式漂移）。
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,8 +18,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type Handler = (event: unknown, request?: unknown) => Promise<unknown>;
 
 const registered = vi.hoisted(() => ({ handlers: new Map<string, Handler>() }));
-/** 会话索引的替身：只回一个受控的 cwd，用来证明 root 的来源是它而不是请求体 */
-const session = vi.hoisted(() => ({ cwd: null as string | null }));
+/**
+ * 会话索引的替身：只回一个受控的 cwd，用来证明 root 的来源是它而不是请求体。
+ *
+ * `workspace` 是 `ensureCwd` 在「没绑过工作目录」时会现建的那个临时目录 ——
+ * 真实实现里它由会话 id 算出来（`<数据根>/workspaces/<会话 id>`）。
+ */
+const session = vi.hoisted(() => ({ cwd: null as string | null, workspace: "" }));
 
 vi.mock("electron", () => ({
   ipcMain: {
@@ -30,12 +36,16 @@ vi.mock("electron", () => ({
 
 vi.mock("@/main/pisdk/session-store", () => ({
   getSessionStore: () => ({
-    readCwd: async (id: string) => (id === "known-session" ? session.cwd : null),
+    // 真实实现里 ensureCwd 对不存在的会话抛错、对没绑定的会话建临时目录
+    ensureCwd: async (id: string) => {
+      if (id !== "known-session") throw new Error(`会话不存在：${id}`);
+      return session.cwd ?? session.workspace;
+    },
   }),
 }));
 
 import { normalizePath } from "@/main/security/path-guard";
-import type { DirectoryListing, FileContent } from "@/shared/contracts/files";
+import type { DirectoryListing, FileContent, FileWriteResult } from "@/shared/contracts/files";
 import { IPC } from "@/shared/contracts/ipc";
 import { registerFilesIpc } from "./files";
 
@@ -53,8 +63,10 @@ beforeEach(async () => {
   const base = await mkdtemp(path.join(tmpdir(), "oint-files-ipc-"));
   root = path.join(base, "project");
   outside = path.join(base, "outside");
+  session.workspace = path.join(base, "workspaces", "known-session");
   await mkdir(root, { recursive: true });
   await mkdir(outside, { recursive: true });
+  await mkdir(session.workspace, { recursive: true });
   await writeFile(path.join(root, "inside.txt"), "inside\n", "utf8");
   await writeFile(path.join(outside, "secret.txt"), "secret\n", "utf8");
 
@@ -112,13 +124,36 @@ describe("files IPC 的根来源", () => {
     expect(file.text).toBe("inside\n");
   });
 
-  it("会话不存在 / 未绑定工作目录时拒绝，不退化成进程当前目录", async () => {
+  it("会话不存在时拒绝；没绑过工作目录时用本会话的临时目录", async () => {
+    // 会话不存在：拒绝，且不为这个拼错的 id 建目录（真实实现里 ensureCwd 会抛）
     await expect(
       invoke(IPC.files.listDirectory, { sessionId: "unknown-session" }),
     ).rejects.toThrow();
 
+    // 没绑过工作目录：根是主进程现补的临时目录 —— 面板因此能打开模型写过的文件，
+    // 而**不是**退化成进程当前目录（那会让能访问哪些文件随启动方式漂移）
     session.cwd = null;
-    await expect(invoke(IPC.files.listDirectory, { sessionId: "known-session" })).rejects.toThrow();
+    await writeFile(path.join(session.workspace, "written.md"), "hello\n", "utf8");
+
+    const listing = await invoke<DirectoryListing>(IPC.files.listDirectory, {
+      sessionId: "known-session",
+    });
+    expect(listing.root).toBe(normalizePath(session.workspace));
+    expect(listing.entries.map((entry) => entry.name)).toContain("written.md");
+    expect(listing.root).not.toBe(normalizePath(process.cwd()));
+
+    // 临时目录里的文件能读，临时目录之外仍然被拒（边界没有因为「现补根」而松开）
+    const file = await invoke<FileContent>(IPC.files.readFile, {
+      sessionId: "known-session",
+      path: path.join(session.workspace, "written.md"),
+    });
+    expect(file.text).toBe("hello\n");
+    await expect(
+      invoke(IPC.files.readFile, {
+        sessionId: "known-session",
+        path: path.join(outside, "secret.txt"),
+      }),
+    ).rejects.toThrow(/不在允许的工作目录内/);
   });
 
   it("缺少 sessionId 时拒绝", async () => {
@@ -132,6 +167,49 @@ describe("files IPC 的根来源", () => {
         sessionId: "known-session",
         path: path.join(root, "..", "outside", "secret.txt"),
       }),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * 写通道（files:write-file）：`files` 域里**唯一会改盘**的通道，所以单独钉两组不变量 ——
+ * root 只能来自会话索引（与三条读通道同口径），以及越界路径必须被拒。
+ *
+ * 守卫是 realpath 版，理由在 main/files/service.ts 的 writeFileContent 上；
+ * 符号链接逃逸、二进制、超上限、原子写失败这些细节用例在 main/files/service.write.test.ts。
+ */
+describe("files:write-file", () => {
+  it("正常写回：改的确实是会话工作目录里的文件", async () => {
+    const target = path.join(root, "inside.txt");
+    const result = await invoke<FileWriteResult>(IPC.files.writeFile, {
+      sessionId: "known-session",
+      path: target,
+      text: "改过了\n",
+    });
+
+    expect(result.path).toBe(normalizePath(target));
+    expect(result.bytes).toBe(Buffer.byteLength("改过了\n", "utf8"));
+    expect(await readFile(target, "utf8")).toBe("改过了\n");
+  });
+
+  it("越界路径被拒：请求体里伪造 root 不起作用，且目标文件未被改动", async () => {
+    const victim = path.join(outside, "secret.txt");
+
+    await expect(
+      invoke(IPC.files.writeFile, {
+        sessionId: "known-session",
+        root: outside,
+        path: victim,
+        text: "pwned",
+      }),
+    ).rejects.toThrow(/不在允许的工作目录内/);
+
+    expect(await readFile(victim, "utf8")).toBe("secret\n");
+  });
+
+  it("缺少 sessionId 时拒绝", async () => {
+    await expect(
+      invoke(IPC.files.writeFile, { path: path.join(root, "inside.txt"), text: "x" }),
     ).rejects.toThrow();
   });
 });

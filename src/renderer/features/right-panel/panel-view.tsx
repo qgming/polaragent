@@ -18,16 +18,24 @@ import { cn } from "@/renderer/lib/utils";
  *
  * 高度 h-11（44px）与左侧栏顶行、内容区顶栏（TitleBar）严格等高 ——
  * 三条横线共用同一条视觉基线，窗口顶部才是一条干净的连续线。
+ *
+ * `leading` 是标题**左侧**的插槽（目前只有文件面板用它放「返回」）：
+ * 返回是「上一屏」，位置在名字前面 —— 与右栏里其它动作（刷新、档位切换）分开，
+ * 扫标题时先看到它，不会跟「这一屏能做什么」混在一起。不给就不占位，
+ * 其余四个面板的标题行一字不变。
  */
 export function PanelSection({
   title,
+  leading,
   actions,
 }: {
   title: string;
+  leading?: ReactNode;
   actions?: ReactNode;
 }): React.JSX.Element {
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+      {leading !== undefined && <div className="flex shrink-0 items-center gap-0.5">{leading}</div>}
       <h3 className={cn(typeEyebrow, "min-w-0 flex-1 truncate")}>{title}</h3>
       {actions !== undefined && <div className="flex shrink-0 items-center gap-0.5">{actions}</div>}
     </div>

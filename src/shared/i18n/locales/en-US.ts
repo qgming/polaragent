@@ -54,9 +54,17 @@ export const enUS = {
     /** Single-file viewer: the tab label is replaced by the file name; this only covers the empty case */
     file: "File",
     fileEmpty: "No file is open yet",
-    /** The viewer's two modes: read it rendered (markdown) or read the source */
+    /** The viewer's two modes: read it rendered (markdown layout / code highlighting) or read the source */
     fileRendered: "Rendered",
     fileSource: "Source",
+    /** Name of the editing area when the source is editable (screen readers) */
+    fileEditLabel: "Edit file content",
+    /** Changed but not saved yet: shared by the footer line and the marker in the file list */
+    fileUnsaved: "Unsaved",
+    fileSaving: "Saving…",
+    fileSaveFailed: "Save failed",
+    /** Throw the changes away and go back to what is on disk */
+    fileRevert: "Discard changes",
     subagent: "Subagent",
     browser: "Browser",
     terminal: "Terminal",
@@ -70,7 +78,14 @@ export const enUS = {
     reviewOpenFile: "Show in Files",
     // Files
     filesEmpty: "This directory is empty",
-    filesPickRoot: "Bind a working directory to the session first",
+    /**
+     * Empty-state hint for the session's temporary directory: files here follow the session.
+     * Only shown when the root is not inside any project (see FilesPanel's temporaryRoot).
+     */
+    filesEmptyHint:
+      "This is the session's temporary directory: files Oint writes land here, and they are deleted along with the session.",
+    /** Empty state without a session: both the files panel and the terminal need one for a root */
+    noSession: "Open a session first",
     filesParent: "Go to parent",
     filesRefresh: "Refresh",
     filesTruncated: "Too many entries — showing the first {{count}}",
@@ -98,7 +113,7 @@ export const enUS = {
       "The previous process exited while this delegation was running, so whether it succeeded is unknown. Whether to re-run it is the main agent's call: ask it to continue.",
     subagentInterruptedAt: "Last updated at {{time}}",
     subagentTask: "Task",
-    subagentReport: "Subagent report",
+    subagentReport: "Report",
     subagentNoReport: "No report yet (running or interrupted)",
     subagentTranscript: "Execution log",
     subagentTranscriptEmpty: "The child session has no messages yet",

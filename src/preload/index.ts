@@ -148,6 +148,7 @@ const api = {
     listDirectory: (request) => ipcRenderer.invoke(IPC.files.listDirectory, request),
     readFile: (request) => ipcRenderer.invoke(IPC.files.readFile, request),
     readImage: (request) => ipcRenderer.invoke(IPC.files.readImage, request),
+    writeFile: (request) => ipcRenderer.invoke(IPC.files.writeFile, request),
   },
   review: {
     summary: (sessionId) => ipcRenderer.invoke(IPC.review.summary, { sessionId }),

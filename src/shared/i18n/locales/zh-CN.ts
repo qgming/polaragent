@@ -52,9 +52,17 @@ export const zhCN = {
     /** 单个文件的查看器：标签上的名字会被文件名覆盖，这里只在还没打开任何文件时兜底 */
     file: "文件查看",
     fileEmpty: "还没有打开任何文件",
-    /** 查看器的两个模式：按渲染读（markdown）或按源码读 */
+    /** 查看器的两个模式：按渲染读（markdown 排版 / 代码高亮）或按源码读 */
     fileRendered: "渲染显示",
     fileSource: "源码显示",
+    /** 原文可编辑时的编辑区名字（读屏器用） */
+    fileEditLabel: "编辑文件内容",
+    /** 有改动还没保存：脚注行与文件列表上的标记共用这一条 */
+    fileUnsaved: "未保存",
+    fileSaving: "保存中…",
+    fileSaveFailed: "保存失败",
+    /** 丢弃改动、回到磁盘上的那一份 */
+    fileRevert: "撤销改动",
     subagent: "子智能体",
     browser: "浏览器",
     terminal: "终端",
@@ -68,7 +76,14 @@ export const zhCN = {
     reviewOpenFile: "在文件面板中查看",
     // 文件
     filesEmpty: "这个目录是空的",
-    filesPickRoot: "先在会话里绑定一个工作目录",
+    /**
+     * 临时目录的空态提示：说清「这里的文件跟着会话走」。
+     * 只在根目录不是任何项目时出现（见 FilesPanel 的 temporaryRoot）。
+     */
+    filesEmptyHint:
+      "这是本会话的临时目录：让 Oint 写文件，就会出现在这里；删除会话时这里的文件会一起清掉。",
+    /** 没有会话时的空态：文件面板与终端都要一个会话才有根目录 */
+    noSession: "先打开一个会话",
     filesParent: "返回上级",
     filesRefresh: "刷新",
     filesTruncated: "条目过多，只显示前 {{count}} 项",
@@ -96,7 +111,7 @@ export const zhCN = {
       "上一个进程在这次委派执行途中退出了，它究竟是成功还是失败已无从确认。要不要重新执行由主代理决定：让它继续处理即可。",
     subagentInterruptedAt: "最后更新于 {{time}}",
     subagentTask: "任务",
-    subagentReport: "子智能体的汇报",
+    subagentReport: "汇报",
     subagentNoReport: "还没有汇报（运行中或已中断）",
     subagentTranscript: "执行记录",
     subagentTranscriptEmpty: "子会话里还没有消息",

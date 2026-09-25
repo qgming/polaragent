@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { type AgentMessage, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
@@ -7,6 +7,7 @@ import {
   SqliteSessionRepo,
 } from "@earendil-works/pi-session-backend-sqlite-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionWorkspaceDir } from "@/main/app/paths";
 import type { TextPart } from "@/shared/contracts/session";
 import type { SubagentRun } from "@/shared/contracts/subagent";
 import { createSessionStore, type SessionStore } from "./session-store";
@@ -107,7 +108,8 @@ describe("session-store", () => {
       title: "会话二",
       archived: false,
       messageCount: 0,
-      cwd: "",
+      // 没给工作目录的会话拿的是自己的临时工作区（不是空串，也不是进程当前目录）
+      cwd: sessionWorkspaceDir(second.id, baseDir),
       updatedAt: second.createdAt,
     });
     expect(list[1]).toMatchObject({
@@ -432,16 +434,129 @@ describe("session-store", () => {
     expect((await store.list()).find((item) => item.id === target.id)?.pinned).toBe(false);
   });
 
-  it("readCwd 区分未绑定与已绑定", async () => {
-    const unbound = await store.create();
-    await expect(store.readCwd(unbound.id)).resolves.toBeNull();
+  /**
+   * 会话的临时工作区（`<数据根>/workspaces/<会话 id>`）。
+   *
+   * 它存在的理由：会话原先可以「没有工作目录」，而文件面板 / 终端 / 执行环境都拿它当根 ——
+   * 结果是模型写过的文件在右侧一律打不开。现在**每个会话都有根**：调用方给了就用它
+   *（在项目里新建的会话、子会话），没给就建一个本会话的临时目录。
+   *
+   * 三组不变量：
+   *   1. 建会话时就把目录建出来（执行环境要拿它当 cwd，不存在会直接跑不起来）；
+   *   2. 历史会话（索引里没有 cwd）由 ensureCwd / list 补上，且补出来的值会落盘；
+   *   3. 删会话只清这一份目录，用户显式保存到别处（含子会话共享的父工作区）的文件不受影响。
+   */
+  describe("会话临时工作区", () => {
+    it("create 没给工作目录时绑定本会话的临时工作区，且目录真的建出来", async () => {
+      const created = await store.create();
+      const expected = sessionWorkspaceDir(created.id, baseDir);
 
-    const bound = await store.create({ cwd: "D:\\work\\demo" });
-    await expect(store.readCwd(bound.id)).resolves.toBe("D:\\work\\demo");
+      expect(created.cwd).toBe(expected);
+      await expect(store.readCwd(created.id)).resolves.toBe(expected);
+      // 目录必须存在：执行环境拿它当 cwd，终端拿它当启动目录，缺了会直接失败
+      await expect(stat(expected)).resolves.toBeDefined();
 
-    // 纯空白视为未绑定，避免把空格当工作目录用
-    const blank = await store.create({ cwd: "   " });
-    await expect(store.readCwd(blank.id)).resolves.toBeNull();
+      const bound = await store.create({ cwd: "D:\\work\\demo" });
+      await expect(store.readCwd(bound.id)).resolves.toBe("D:\\work\\demo");
+      // 显式绑定的会话不该多出一个没人用的临时目录
+      await expect(stat(sessionWorkspaceDir(bound.id, baseDir))).rejects.toThrow();
+
+      // 纯空白视为「没给」：它会拼出含糊的相对路径，下游很容易变成进程当前目录
+      const blank = await store.create({ cwd: "   " });
+      await expect(store.readCwd(blank.id)).resolves.toBe(sessionWorkspaceDir(blank.id, baseDir));
+    });
+
+    it("ensureCwd：历史会话现补一个临时工作区并落盘，重复调用是同一个目录", async () => {
+      const legacy = await store.create({ cwd: "D:\\legacy" });
+      // 模拟旧版本写下的索引条目：把 cwd 抹掉（JSON 里没有这个键）
+      await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
+      await expect(store.readCwd(legacy.id)).resolves.toBeNull();
+
+      const dir = await store.ensureCwd(legacy.id);
+      expect(dir).toBe(sessionWorkspaceDir(legacy.id, baseDir));
+      // 落盘：下一个进程读到的就是它，不必再补一次
+      await expect(store.readCwd(legacy.id)).resolves.toBe(dir);
+      // 幂等：不会每问一次就换一个目录
+      await expect(store.ensureCwd(legacy.id)).resolves.toBe(dir);
+    });
+
+    it("list 给历史会话补上临时工作区（界面看到的 cwd 与主进程用的是同一个）", async () => {
+      const legacy = await store.create({ cwd: "D:\\legacy" });
+      await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
+
+      const row = (await store.list()).find((item) => item.id === legacy.id);
+      expect(row?.cwd).toBe(sessionWorkspaceDir(legacy.id, baseDir));
+      // 目录真的建出来了：终端会拿这个值当启动目录
+      await expect(stat(row?.cwd ?? "")).resolves.toBeDefined();
+      // 已经写进索引，不是每次列表都现算
+      const index = await createSessionsIndex(baseDir).read();
+      expect(index[legacy.id]?.cwd).toBe(sessionWorkspaceDir(legacy.id, baseDir));
+    });
+
+    it("ensureCwd 对不存在的会话抛错（不为拼错的 id 留下没人认领的目录）", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await expect(store.ensureCwd("not-exists")).rejects.toThrow(/会话不存在/);
+      await expect(stat(sessionWorkspaceDir("not-exists", baseDir))).rejects.toThrow();
+      warn.mockRestore();
+    });
+
+    it("删会话时清掉它的临时工作区，但不碰显式绑定的目录", async () => {
+      const scratch = await store.create();
+      const scratchDir = sessionWorkspaceDir(scratch.id, baseDir);
+      await writeFile(path.join(scratchDir, "note.md"), "临时文件\n", "utf8");
+
+      // 显式绑定的目录：用户让模型「保存到别处」的那一类
+      const realDir = path.join(baseDir, "user-project");
+      await mkdir(realDir, { recursive: true });
+      await writeFile(path.join(realDir, "keep.md"), "用户文件\n", "utf8");
+      const bound = await store.create({ cwd: realDir });
+
+      await store.remove(scratch.id);
+      await expect(stat(scratchDir)).rejects.toThrow();
+
+      await store.remove(bound.id);
+      await expect(stat(path.join(realDir, "keep.md"))).resolves.toBeDefined();
+    });
+
+    it("删子会话不会清掉父会话的工作区（子会话的 cwd 指向父的工作区）", async () => {
+      const parent = await store.create({ title: "父" });
+      const parentDir = sessionWorkspaceDir(parent.id, baseDir);
+      await writeFile(path.join(parentDir, "from-parent.md"), "x\n", "utf8");
+      const child = await store.create({
+        kind: "subagent",
+        parentSessionId: parent.id,
+        cwd: parent.cwd,
+      });
+
+      // 单删子会话：父的工作区必须原样留着
+      await store.remove(child.id);
+      await expect(stat(path.join(parentDir, "from-parent.md"))).resolves.toBeDefined();
+
+      // 删父会话：级联删掉子会话，最后清掉父的工作区
+      await store.remove(parent.id);
+      await expect(stat(parentDir)).rejects.toThrow();
+    });
+
+    it("分支会话继承源会话的工作目录，最后一个使用者被删时才清目录", async () => {
+      const source = await store.create({ title: "源" });
+      const sourceDir = sessionWorkspaceDir(source.id, baseDir);
+      await writeFile(path.join(sourceDir, "shared.md"), "x\n", "utf8");
+      const opened = await store.open(source.id);
+      if (!opened) throw new Error("源会话应能打开");
+      const entry = await opened.branch.appendMessage(userMessage("一"), BACKGROUND_CONTEXT);
+
+      const forked = await store.fork(source.id, entry);
+      // 分支接着同一段对话，文件也在同一个目录里
+      expect(forked.cwd).toBe(sourceDir);
+
+      // 删源会话：目录还被分支用着，不能清（否则分支的根变成一个不存在的目录）
+      await store.remove(source.id);
+      await expect(stat(path.join(sourceDir, "shared.md"))).resolves.toBeDefined();
+
+      // 分支也没了，这时才真正清掉
+      await store.remove(forked.id);
+      await expect(stat(sourceDir)).rejects.toThrow();
+    });
   });
 
   it("readModel / setModel：会话级模型绑定能存能读，写 null 即清除", async () => {

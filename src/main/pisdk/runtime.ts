@@ -419,6 +419,16 @@ interface SessionRuntime {
    * 不带回去这些工具就会在那次替换后凭空消失（ask_user 踩过同一个坑）。
    */
   subagentTools: AgentHarnessTool<AppToolContext>[];
+  /**
+   * 这个 runtime 属于一个**子智能体子会话**（`kind === "subagent"` 的隐藏会话）。
+   *
+   * 为什么要在 runtime 上留一个快照：`SessionRuntime` 里没有 kind 字段，而权限档映射
+   * （approvals.ts 的 effectivePermissionMode）在权限门里需要一个稳定的「我是不是子会话」判据。
+   * 不直接用模块级的 `subagentSessions` 去查，是因为那张登记表**会被注销**
+   *（`closeSession` 里调 unregisterSubagentSession），而会话身份是创建时就定下的、
+   * 不该随登记表的生命周期变化。值就是 `createRuntime` 里那个 `spec`（登记表读得到即子会话）。
+   */
+  isSubagent: boolean;
   queue: QueuedMessage[];
   unsubscribers: Array<() => void>;
   /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
@@ -2102,6 +2112,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       ...(warning === undefined ? {} : { warning }),
       // 审批用「这个会话正在用的模型」：会话级绑定过模型时不该拿默认模型去审
       ...(runtime.modelRef === null ? {} : { modelRef: runtime.modelRef }),
+      // 子智能体子会话：审批服务据此把「默认权限」抬高到「帮我审批」（见 effectivePermissionMode）
+      ...(runtime.isSubagent ? { isSubagent: true } : {}),
     });
     if (decision === "deny") {
       if (ref) {
@@ -2440,6 +2452,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       unsubscribers: [],
       // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
       subagentTools,
+      // 身份在创建时就定下（spec 读得到即子智能体会话），见字段注释
+      isSubagent: spec !== undefined,
       repeatChain: createRepeatChain(),
       stats: initSessionStatsState(),
       tokenUsage: {

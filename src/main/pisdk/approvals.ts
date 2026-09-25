@@ -7,7 +7,7 @@ import type {
   ApprovalRequest,
 } from "@/shared/contracts/approval";
 import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
-import type { ModelRef } from "@/shared/contracts/common";
+import type { ModelRef, PermissionMode } from "@/shared/contracts/common";
 import type { Settings } from "@/shared/contracts/settings";
 import type { AiApprover, AiApproverResult } from "./ai-approver";
 
@@ -33,6 +33,13 @@ export interface ApprovalService {
     warning?: string;
     /** 会话实际使用的模型：AI 预审用它，缺省时审批器回落默认模型 */
     modelRef?: ModelRef;
+    /**
+     * 这条请求是不是来自**子智能体子会话**（`kind === "subagent"` 的隐藏会话）。
+     *
+     * 只用来算生效档位（见 effectivePermissionMode），其余判定一律不看它。
+     * 缺省 false：老调用点与测试不传就是主会话语义。
+     */
+    isSubagent?: boolean;
   }): Promise<ApprovalDecision>;
   /** 渲染进程回传决定 */
   respond(id: string, decision: ApprovalDecision, note?: string): void;
@@ -53,6 +60,32 @@ interface PendingApproval {
   promise: Promise<ApprovalDecision>;
   resolve: (decision: ApprovalDecision) => void;
   workingDir?: string;
+}
+
+/**
+ * 全局权限档 → 本会话**实际生效**的档位。**权限档映射规则只有这一处。**
+ *
+ * | 全局档位（用户设置） | 主会话 | 子智能体子会话 |
+ * | --- | --- | --- |
+ * | `default`（默认权限） | default | **ai_review（先交 AI 预审）** |
+ * | `ai_review`（帮我审批） | ai_review | ai_review（跟随） |
+ * | `full`（完全访问） | full | full（跟随） |
+ *
+ * 为什么子智能体在「默认权限」下要抬高到 AI 预审：子会话是**侧栏看不见的隐藏会话**
+ *（`kind === "subagent"`，被 ipc/sessions.ts 从列表里滤掉），而审批卡只在**当前选中的会话**上渲染
+ *（renderer 的 ChatView 按 `item.sessionId === activeSessionId` 过滤）。于是「默认权限」下子智能体
+ * 一旦调一个高风险工具，卡片就挂在一个用户打不开的会话里：用户既看不到也没法点，而子智能体
+ * 会一直等下去（父会话的 TaskWait 也跟着一起等）。抬高到 AI 预审后，绝大多数只读/常规操作被
+ * AI 直接放行；AI 拒绝或调用失败仍照常把卡片交回用户（handBack），行为与「帮我审批」完全一致。
+ *
+ * 另外两档原样跟随：`ai_review` 本来就是这套流程；`full` 下若映射成别的档反而是**收紧**权限
+ *（用户明确选了「完全访问」，主会话不审批而子会话审批是自相矛盾的）。
+ *
+ * **主会话（isSubagent = false）必须一个字都不变**：无论哪一档都原样返回。
+ */
+export function effectivePermissionMode(mode: PermissionMode, isSubagent: boolean): PermissionMode {
+  if (!isSubagent) return mode;
+  return mode === "default" ? "ai_review" : mode;
 }
 
 export function createApprovalService(deps: ApprovalServiceDeps): ApprovalService {
@@ -153,16 +186,21 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     warning?: string;
     /** 会话实际使用的模型；AI 预审据此选模型，缺省时审批器回落默认模型 */
     modelRef?: ModelRef;
+    isSubagent?: boolean;
   }): Promise<ApprovalDecision> {
     const duplicate = findPending(input.toolCallId);
     if (duplicate) return duplicate.promise;
 
-    // 只有「帮我审批」模式启用 AI 预审，其余模式一律等用户确认；
-    // 读取设置失败时退回用户审批（审批卡照常弹出，不打断链路）。
+    // 只有「帮我审批」（含子智能体在「默认权限」下映射来的那一档）启用 AI 预审，
+    // 其余模式一律等用户确认；读取设置失败时退回用户审批（审批卡照常弹出，不打断链路）。
     let aiApprover: AiApprover | undefined;
     try {
       const settings = await deps.getSettings();
-      if (settings.permissionMode === "ai_review" && deps.aiApprover) {
+      if (
+        effectivePermissionMode(settings.permissionMode, input.isSubagent === true) ===
+          "ai_review" &&
+        deps.aiApprover
+      ) {
         aiApprover = deps.aiApprover;
       }
     } catch (error) {

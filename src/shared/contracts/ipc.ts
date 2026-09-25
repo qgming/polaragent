@@ -125,6 +125,14 @@ export const IPC = {
     readFile: "files:read-file",
     /** 读一张图片（返回可直接显示的 dataUrl）；供 read_image 的详情按需加载 */
     readImage: "files:read-image",
+    /**
+     * 把编辑后的文本写回文件（原子写）。
+     *
+     * 是 files 域里**唯一会改盘的通道** —— 因此它的路径校验走 realpath 版守卫
+     * （validateRealPathAccess，见 main/files/service.ts 的 writeFileContent），
+     * 而不沿用上面三条只读通道那条纯字符串判断。
+     */
+    writeFile: "files:write-file",
   },
   review: {
     summary: "review:summary",

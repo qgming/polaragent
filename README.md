@@ -4,7 +4,6 @@
 # Oint
 
 **基于 pisdk 的桌面 Agent 工作台**
-
   把 pisdk（pi-agent-core / pi-ai）的对话、会话持久化与原生工具装进一个克制的桌面外壳：
   主进程独占 Agent 运行时，渲染进程零特权，UI 以 assistant-ui 为核心。
 

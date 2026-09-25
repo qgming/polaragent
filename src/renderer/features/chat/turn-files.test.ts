@@ -14,7 +14,6 @@ import {
   baseNameOf,
   extensionOf,
   fileOpenTarget,
-  hasRenderedMode,
   isDocumentPath,
   summarizeTurnFiles,
   toAbsolutePath,
@@ -105,16 +104,11 @@ describe("路径工具", () => {
     expect(toFileUrl("D:/dev/a?b.html")).toBe("file:///D:/dev/a%3Fb.html");
   });
 
-  it("HTML 交给浏览器，其余进查看器；只有 markdown 有渲染档", () => {
+  it("HTML 交给浏览器，其余进查看器", () => {
     expect(fileOpenTarget("page.html")).toBe("browser");
     expect(fileOpenTarget("page.htm")).toBe("browser");
     expect(fileOpenTarget("notes.md")).toBe("viewer");
     expect(fileOpenTarget("src/a.ts")).toBe("viewer");
-
-    expect(hasRenderedMode("notes.md")).toBe(true);
-    expect(hasRenderedMode("notes.mdx")).toBe(true);
-    expect(hasRenderedMode("notes.txt")).toBe(false);
-    expect(hasRenderedMode("src/a.ts")).toBe(false);
   });
 });
 

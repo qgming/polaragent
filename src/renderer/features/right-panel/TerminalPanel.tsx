@@ -139,7 +139,12 @@ export function TerminalPanel(): React.JSX.Element {
       ? s.sessions.find((item) => item.id === s.activeSessionId)?.cwd
       : undefined,
   );
-  const cwd = sessionCwd;
+  /**
+   * 空串与「没有工作目录」是同一件事：node-pty 会把空 cwd 当成**进程当前目录**，
+   * 那正是要避免的漂移（开发时是仓库目录，打包后可能是安装目录）。
+   * 主进程会给没绑过的会话补一个临时目录，所以这里通常拿得到值。
+   */
+  const cwd = sessionCwd !== undefined && sessionCwd.trim() !== "" ? sessionCwd : undefined;
 
   /** cwd 的镜像：自动建终端只用挂载那一刻的目录，而它不该成为 effect 的依赖 */
   const cwdRef = useRef(cwd);
@@ -519,9 +524,7 @@ export function TerminalPanel(): React.JSX.Element {
           <PanelEmpty
             icon={SquareTerminal}
             title={t("rightPanel.terminalEmpty")}
-            hint={
-              cwd === undefined ? t("rightPanel.filesPickRoot") : t("rightPanel.terminalEmptyHint")
-            }
+            hint={cwd === undefined ? t("rightPanel.noSession") : t("rightPanel.terminalEmptyHint")}
           />
         )}
       </div>
