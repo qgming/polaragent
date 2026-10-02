@@ -1,5 +1,6 @@
 import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
+import type { ChatAttachment } from "./attachment";
 import type { BrowserEvent, BrowserStatus } from "./browser";
 import type {
   ChatEventEnvelope,
@@ -85,6 +86,14 @@ export interface OintApi {
      * 与切模型同一条理由：中途换提示会让同一段对话的前后指令不一致。
      */
     setMode(id: string, mode: AgentMode | null): Promise<SetSessionModeResult>;
+    /**
+     * 重新绑定会话的工作目录（新会话页上「选择项目」走这条路）。
+     *
+     * 只对**还没产生消息**的会话开放：工作目录决定相对路径怎么解析，一段已经存在的
+     * 对话换根之后，历史里那些相对路径会指到别的地方去。空会话没有这个包袱，
+     * 而它正是用户会想改绑定的那一刻。
+     */
+    setCwd(id: string, cwd: string): Promise<void>;
     remove(id: string): Promise<void>;
     fork(id: string, entryId: string): Promise<SessionSummary>;
     loadMessages(id: string, options?: LoadSessionMessagesOptions): Promise<SessionMessagesPage>;
@@ -100,7 +109,14 @@ export interface OintApi {
     send(
       sessionId: string,
       text: string,
-      images?: { data: string; mimeType: string }[],
+      /**
+       * 附件（图片 / 视频 / 文本 / 其他文件）。
+       *
+       * **必须读 `AppendMessage.attachments` 才拿得到**：assistant-ui 把附件放在与
+       * `content` 并列的独立字段里，`content` 只有文本 —— 早先只扫 `content`，
+       * 于是图片从来没离开过渲染进程（见 renderer/runtime/attachment-payload.ts）。
+       */
+      attachments?: ChatAttachment[],
       messageId?: string,
       /** 重新生成 / 编辑：先回退到指定条目再运行 */
       options?: ChatSendOptions,
@@ -286,6 +302,21 @@ export interface OintApi {
      * 读侧只会给出开头一段，因此两侧都直接拒绝，避免一次保存把没显示过的部分抹掉。
      */
     writeFile(request: { sessionId: string; path: string; text: string }): Promise<FileWriteResult>;
+    /**
+     * 一个 `<input type="file">` / 拖拽给出的 `File` 在磁盘上的真实路径。
+     *
+     * 为什么需要它：附件要落盘，而把整个文件先读成 base64 再走 IPC 会把一份 200 MB 的
+     * 视频在内存里复制两遍。有路径就让主进程自己读 —— 这也顺带让「同一个文件重发」
+     * 在磁盘上命中同一份（内容寻址，见 main/pisdk/attachments.ts）。
+     *
+     * 只有**用户真的从磁盘选/拖**来的 File 才有路径：剪贴板粘贴、以及用 Blob 造的 File
+     * 会返回空串，那条路必须走 `data`（base64）。返回值不抛错 —— 拿不到路径不是异常，
+     * 是「换一条路」的信号。
+     *
+     * 这个能力由 preload 用 Electron 的 `webUtils.getPathForFile` 提供；它**不暴露任意
+     * 路径查询**，只回答「你手里这个 File 来自哪里」，所以不构成提权面。
+     */
+    pathForFile(file: File): string;
   };
   /** 右侧面板「审查」：本次会话改动过的文件与补丁 */
   review: {

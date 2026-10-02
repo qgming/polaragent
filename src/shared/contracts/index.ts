@@ -1,6 +1,7 @@
 export * from "./api";
 export * from "./app";
 export * from "./approval";
+export * from "./attachment";
 export * from "./browser";
 export * from "./chat";
 export * from "./common";

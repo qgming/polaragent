@@ -1,3 +1,4 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // read 工具的输出契约：tools.ts 的描述承诺「返回带行号的内容」，实现必须真的给出来 ——
 // 曾经的版本照抄内核 read（只回原文），子智能体因此被描述误导（行号对不上它想引用的位置）。
 //
@@ -6,11 +7,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createExecEnv } from "../exec-env";
 import { buildTools } from "../tools";
@@ -19,26 +17,11 @@ import { numberLines } from "./read";
 let root: string;
 let env: ExecutionEnv;
 
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-
 /** 走装配后的 read 工具（而不是单独构造包装）：tools.ts 里接错工具时这里必须变红 */
 async function runRead(params: { path: string; offset?: number; limit?: number }) {
   const tool = buildTools().find((candidate) => candidate.name === "read");
   if (tool === undefined) throw new Error("缺少 read 工具");
-  return tool.execute(
-    "call-read",
-    params,
-    () => {},
-    { env } as never,
-    INVOCATION,
-    BACKGROUND_CONTEXT,
-  );
+  return tool.execute(params, createToolTestApi({ env, callId: "call-read" }), BACKGROUND_CONTEXT);
 }
 
 async function readText(params: {
@@ -47,7 +30,9 @@ async function readText(params: {
   limit?: number;
 }): Promise<string> {
   const result = await runRead(params);
-  return result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+  return (result.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n");
 }
 
 beforeAll(async () => {
@@ -93,9 +78,7 @@ describe("read 输出", () => {
     await writeFile(path.join(root, "five.txt"), "one\ntwo\nthree\nfour\nfive\n", "utf8");
 
     // 尾注里的 "1 more lines" 是内核对「末尾换行也算一行」的既有口径，这里照抄它的原文
-    expect(await readText({ path: "five.txt", offset: 4, limit: 2 })).toBe(
-      "4\tfour\n5\tfive\n\n[1 more lines in file. Use offset=6 to continue.]",
-    );
+    expect(await readText({ path: "five.txt", offset: 4, limit: 2 })).toBe("4\tfour\n5\tfive");
   });
 
   it("截断时内容行照常编号，内核的续读尾注原样保留（不能被当成内容行编号）", async () => {
@@ -106,19 +89,27 @@ describe("read 输出", () => {
     expect(lines[0]).toBe("   1\tline 1");
     expect(lines[1_999]).toBe("2000\tline 2000");
     // 尾注是内核分页语义的一部分：不带行号，且一个字都不能改
-    expect(lines[2_000]).toBe("");
-    expect(lines[2_001]).toBe("[Showing lines 1-2000 of 2100. Use offset=2001 to continue.]");
+    expect(lines).toHaveLength(2_000);
+    expect((await runRead({ path: "big.txt" })).diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "truncated",
+        message: "Showing lines 1-2000 of 2100. Use offset=2001 to continue.",
+      }),
+    );
   });
 
-  it("单行超过字节上限时原样回内核的提示（整段没有可编号的内容行）", async () => {
+  it("超长单行保留原生前段与截断诊断", async () => {
     await writeFile(path.join(root, "huge-line.txt"), "x".repeat(60_000), "utf8");
 
     const text = await readText({ path: "huge-line.txt" });
-    expect(text.startsWith("[Line 1 is ")).toBe(true);
-    expect(text).toContain("exceeds 50.0KB limit");
+    expect(text.startsWith("1\tx")).toBe(true);
+    expect(text.length).toBeLessThan(52_000);
+    expect((await runRead({ path: "huge-line.txt" })).diagnostics?.[0]?.message).toContain(
+      "exceeds the 50.0KB limit",
+    );
   });
 
-  it("图片按附件返回：说明文字不会被当成内容行编号", async () => {
+  it("read 的图片错误指向 read_image", async () => {
     // 1x1 透明 PNG（最小合法文件）：内核按魔数识别成图片，返回文本块 + image 块
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
@@ -127,7 +118,8 @@ describe("read 输出", () => {
     await writeFile(path.join(root, "pixel.png"), png);
 
     const result = await runRead({ path: "pixel.png" });
-    expect(result.content[0]).toEqual({ type: "text", text: "Read image file [image/png]" });
-    expect(result.content.some((block) => block.type === "image")).toBe(true);
+    expect(result.isError).toBe(true);
+    expect(result.diagnostics?.[0]?.message).toContain("read_image");
+    expect(result.content).toEqual([]);
   });
 });

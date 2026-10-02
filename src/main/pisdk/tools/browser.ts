@@ -1,3 +1,5 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 // 内置浏览器工具：让模型自己操作右侧栏里那些浏览器标签。
 //
 // 与其它自建工具的差异：它们操作的是**主进程持有的 guest WebContents**
@@ -20,7 +22,6 @@
 //
 // 工具文案用英文，与内核四件套、todo、jobs 一致；面向维护者的注释是中文。
 
-import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import {
   BROWSER_TOOL_NAMES,
@@ -306,6 +307,7 @@ const actSchema = Type.Object({
       description: 'For select: program value of the option, e.g. "us" (what the form submits).',
     }),
   ),
+
   label: Type.Optional(
     Type.String({
       description: 'For select: the option text as the user sees it, e.g. "United States".',
@@ -935,15 +937,16 @@ function describePointClick(
  * automation 由调用方注入：生产是 getBrowserAutomation() 单例（工具与 IPC 共用一份状态），
  * 测试传假实现 —— 与 jobs / ask 的注入方式一致，工具自己不认识 Electron。
  */
-export function createBrowserTools(
-  automation: BrowserAutomation,
-): AgentHarnessTool<ExecutionToolContext>[] {
-  const open: AgentHarnessTool<ExecutionToolContext, typeof openSchema> = {
+export function createBrowserTools(automation: BrowserAutomation): ToolRegistration[] {
+  const open: ToolRegistration<
+    typeof openSchema,
+    JsonRepresentation<{ state: BrowserPageState; tabId: string }>
+  > = {
     name: BROWSER_TOOL_NAMES.open,
-    label: BROWSER_TOOL_NAMES.open,
+
     description: OPEN_DESCRIPTION,
     parameters: openSchema,
-    async execute(_toolCallId, params: Static<typeof openSchema>) {
+    async execute(params: Static<typeof openSchema>) {
       try {
         const state = await automation.open(params.url, {
           ...(params.tab === undefined ? {} : { tabId: params.tab }),
@@ -966,12 +969,15 @@ export function createBrowserTools(
     },
   };
 
-  const history: AgentHarnessTool<ExecutionToolContext, typeof historySchema> = {
+  const history: ToolRegistration<
+    typeof historySchema,
+    JsonRepresentation<{ state: BrowserPageState; tabId: string }>
+  > = {
     name: BROWSER_TOOL_NAMES.history,
-    label: BROWSER_TOOL_NAMES.history,
+
     description: HISTORY_DESCRIPTION,
     parameters: historySchema,
-    async execute(_toolCallId, params: Static<typeof historySchema>) {
+    async execute(params: Static<typeof historySchema>) {
       const label =
         params.action === "back" ? "后退" : params.action === "forward" ? "前进" : "刷新";
       return withinTab(
@@ -995,12 +1001,12 @@ export function createBrowserTools(
     },
   };
 
-  const snapshot: AgentHarnessTool<ExecutionToolContext, typeof snapshotSchema> = {
+  const snapshot: ToolRegistration<typeof snapshotSchema, JsonRepresentation<BrowserSnapshot>> = {
     name: BROWSER_TOOL_NAMES.snapshot,
-    label: BROWSER_TOOL_NAMES.snapshot,
+
     description: SNAPSHOT_DESCRIPTION,
     parameters: snapshotSchema,
-    async execute(_toolCallId, params: Static<typeof snapshotSchema>) {
+    async execute(params: Static<typeof snapshotSchema>) {
       return withinTab(
         automation,
         params.tab,
@@ -1022,12 +1028,12 @@ export function createBrowserTools(
     },
   };
 
-  const act: AgentHarnessTool<ExecutionToolContext, typeof actSchema> = {
+  const act: ToolRegistration<typeof actSchema, JsonRepresentation<BrowserActionOutcome>> = {
     name: BROWSER_TOOL_NAMES.act,
-    label: BROWSER_TOOL_NAMES.act,
+
     description: ACT_DESCRIPTION,
     parameters: actSchema,
-    async execute(_toolCallId, params: Static<typeof actSchema>) {
+    async execute(params: Static<typeof actSchema>) {
       return withinTab(
         automation,
         params.tab,
@@ -1172,12 +1178,12 @@ export function createBrowserTools(
     },
   };
 
-  const wait: AgentHarnessTool<ExecutionToolContext, typeof waitSchema> = {
+  const wait: ToolRegistration<typeof waitSchema, JsonRepresentation<BrowserWaitResult>> = {
     name: BROWSER_TOOL_NAMES.wait,
-    label: BROWSER_TOOL_NAMES.wait,
+
     description: WAIT_DESCRIPTION,
     parameters: waitSchema,
-    async execute(_toolCallId, params: Static<typeof waitSchema>) {
+    async execute(params: Static<typeof waitSchema>) {
       const options = pickWaitOptions(params);
       return withinTab(
         automation,
@@ -1197,12 +1203,12 @@ export function createBrowserTools(
     },
   };
 
-  const screenshot: AgentHarnessTool<ExecutionToolContext, typeof screenshotSchema> = {
+  const screenshot: ToolRegistration<typeof screenshotSchema> = {
     name: BROWSER_TOOL_NAMES.screenshot,
-    label: BROWSER_TOOL_NAMES.screenshot,
+
     description: SCREENSHOT_DESCRIPTION,
     parameters: screenshotSchema,
-    async execute(_toolCallId, params: Static<typeof screenshotSchema>) {
+    async execute(params: Static<typeof screenshotSchema>) {
       return withinTab(
         automation,
         params.tab,
@@ -1240,12 +1246,15 @@ export function createBrowserTools(
     },
   };
 
-  const logs: AgentHarnessTool<ExecutionToolContext, typeof logsSchema> = {
+  const logs: ToolRegistration<
+    typeof logsSchema,
+    JsonRepresentation<BrowserConsoleReport | BrowserNetworkReport>
+  > = {
     name: BROWSER_TOOL_NAMES.logs,
-    label: BROWSER_TOOL_NAMES.logs,
+
     description: LOGS_DESCRIPTION,
     parameters: logsSchema,
-    async execute(_toolCallId, params: Static<typeof logsSchema>) {
+    async execute(params: Static<typeof logsSchema>) {
       // 读缓冲本身不碰页面，但它也要走这条链：提示条与错误收口的口径必须一致
       return withinTab(
         automation,
@@ -1275,12 +1284,15 @@ export function createBrowserTools(
     },
   };
 
-  const dialog: AgentHarnessTool<ExecutionToolContext, typeof dialogSchema> = {
+  const dialog: ToolRegistration<
+    typeof dialogSchema,
+    JsonRepresentation<Awaited<ReturnType<BrowserTabOperations["dialog"]>>>
+  > = {
     name: BROWSER_TOOL_NAMES.dialog,
-    label: BROWSER_TOOL_NAMES.dialog,
+
     description: DIALOG_DESCRIPTION,
     parameters: dialogSchema,
-    async execute(_toolCallId, params: Static<typeof dialogSchema>) {
+    async execute(params: Static<typeof dialogSchema>) {
       const policy: BrowserDialogPolicy = { action: params.action };
       return withinTab(
         automation,
@@ -1302,12 +1314,12 @@ export function createBrowserTools(
     },
   };
 
-  const evaluate: AgentHarnessTool<ExecutionToolContext, typeof evaluateSchema> = {
+  const evaluate: ToolRegistration<typeof evaluateSchema> = {
     name: BROWSER_TOOL_NAMES.evaluate,
-    label: BROWSER_TOOL_NAMES.evaluate,
+
     description: EVALUATE_DESCRIPTION,
     parameters: evaluateSchema,
-    async execute(_toolCallId, params: Static<typeof evaluateSchema>) {
+    async execute(params: Static<typeof evaluateSchema>) {
       return withinTab(
         automation,
         params.tab,

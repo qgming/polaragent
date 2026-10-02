@@ -7,11 +7,16 @@
 
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { BACKGROUND_CONTEXT, loadSkills } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { dataDir } from "@/main/app/paths";
 import { createExecEnv } from "@/main/pisdk/exec-env";
-import { agentsSkillsDir, resolveBuiltinSkillDir, resolveSkillDirs } from "@/main/pisdk/resources";
+import {
+  agentsSkillsDir,
+  loadSkills,
+  resolveBuiltinSkillDir,
+  resolveSkillDirs,
+} from "@/main/pisdk/resources";
 import { isPluginContributionDir } from "@/main/plugins/contributions";
 import { loadSettings } from "@/main/settings/store";
 import { extractSkillZip } from "@/main/skills/zip-import";

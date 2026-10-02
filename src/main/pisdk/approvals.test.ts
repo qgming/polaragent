@@ -1,5 +1,5 @@
 // approvals 单测：挂起/唤醒、事件发射、历史、取消与去重；AI 审批用假实现，不发网络请求。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ApprovalDecision, ApprovalRequest } from "@/shared/contracts/approval";
 import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
@@ -37,6 +37,61 @@ function makeInput(toolCallId = "t1") {
     risk: "high" as const,
   };
 }
+
+describe("native invocation cancellation", () => {
+  it("cancels while settings are still loading and never emits a late approval card", async () => {
+    let resolveSettings: ((settings: Settings) => void) | undefined;
+    const events: ChatEventEnvelope[] = [];
+    const service = createApprovalService({
+      getSettings: () =>
+        new Promise<Settings>((resolve) => {
+          resolveSettings = resolve;
+        }),
+      emit: (event) => {
+        events.push(event);
+      },
+    });
+    const controller = new AbortController();
+    const decision = service.request({ ...makeInput(), signal: controller.signal });
+    controller.abort();
+    await expect(decision).resolves.toBe("deny");
+    resolveSettings?.(makeSettings());
+    await Promise.resolve();
+    expect(service.pending()).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it("denies a visible card on native abort and removes the signal listener after settlement", async () => {
+    const service = createApprovalService({
+      getSettings: async () => makeSettings(),
+      emit: () => {},
+    });
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const decision = service.request({ ...makeInput(), signal: controller.signal });
+    await expect.poll(() => service.pending().length).toBe(1);
+    controller.abort();
+    await expect(decision).resolves.toBe("deny");
+    expect(service.pending()).toEqual([]);
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("session cancellation also fences admission that began without a signal", async () => {
+    let resolveSettings: ((settings: Settings) => void) | undefined;
+    const service = createApprovalService({
+      getSettings: () =>
+        new Promise<Settings>((resolve) => {
+          resolveSettings = resolve;
+        }),
+      emit: () => {},
+    });
+    const decision = service.request(makeInput());
+    service.cancelSession("s1");
+    resolveSettings?.(makeSettings());
+    await expect(decision).resolves.toBe("deny");
+    expect(service.pending()).toEqual([]);
+  });
+});
 
 interface Harness {
   service: ApprovalService;

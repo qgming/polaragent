@@ -37,8 +37,6 @@
 //   近似变体绕过检测是接受的取舍 —— 模糊匹配会带来误报，而误报会让守卫被关掉。
 // - **链不跨用户消息**：用户新指令清空计数，全新指令绝不会被当成循环。
 
-import type { JsonValue } from "@earendil-works/pi-agent-core";
-
 /**
  * 软阈值：第几次连续相同的调用开始注入纠正消息。
  *
@@ -114,14 +112,14 @@ function canonicalize(value: unknown): unknown {
  * `JSON.stringify` 在规范化之后不会有 undefined / bigint / 循环引用的问题 ——
  * 输入的 `args` 来自模型生成的 JSON，值域就是 JSON 的值域。
  */
-export function repeatKey(toolName: string, args: Record<string, JsonValue>): string {
+export function repeatKey(toolName: string, args: Record<string, unknown>): string {
   return `${toolName}\u0000${JSON.stringify(canonicalize(args))}`;
 }
 
 /** 参数预览：提醒里带上它，模型才看得出「是哪一次调用」在重复 */
 const ARGS_PREVIEW_CHARS = 300;
 
-function previewArgs(args: Record<string, JsonValue>): string {
+function previewArgs(args: Record<string, unknown>): string {
   const text = JSON.stringify(canonicalize(args)) ?? "";
   if (text.length <= ARGS_PREVIEW_CHARS) return text;
   return `${text.slice(0, ARGS_PREVIEW_CHARS)}… (+${text.length - ARGS_PREVIEW_CHARS} more chars)`;
@@ -137,7 +135,7 @@ function previewArgs(args: Record<string, JsonValue>): string {
 export function inspectRepeat(
   chain: RepeatChain,
   toolName: string,
-  args: Record<string, JsonValue>,
+  args: Record<string, unknown>,
 ): RepeatVerdict | null {
   // 排除名单里的调用对链透明：不计也不清，穿插它们掩盖不了真循环
   if (REPEAT_EXCLUDED_TOOLS.has(toolName)) return null;

@@ -18,10 +18,6 @@ import { createContext, Fragment, useContext, useEffect, useMemo, useRef } from 
 import { useTranslation } from "react-i18next";
 import { UserMessageAttachments } from "@/renderer/components/assistant-ui/elements/attachment.aui";
 import { DaySeparatorRow } from "@/renderer/components/assistant-ui/elements/day-separator";
-import {
-  EmptyState,
-  EmptyStateGreeting,
-} from "@/renderer/components/assistant-ui/elements/empty-state";
 import { StatusBar } from "@/renderer/components/assistant-ui/elements/stats-pills";
 import { mono } from "@/renderer/components/assistant-ui/elements/surfaces";
 import { TooltipIconButton } from "@/renderer/components/assistant-ui/elements/tooltip-icon-button";
@@ -45,6 +41,7 @@ import { isMessageSequenceSynced } from "./message-seq";
 import { TurnFiles } from "./TurnFiles";
 import { turnFileSummaries } from "./turn-files";
 import { useStickToBottom } from "./use-stick-to-bottom";
+import { WelcomeView } from "./WelcomeView";
 
 /**
  * 这条助手消息是不是所在运行段的最后一条。
@@ -320,6 +317,14 @@ interface ThreadViewProps {
 export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: ThreadViewProps) {
   const { t } = useTranslation();
   const messages = useAuiState((s) => s.thread.messages);
+  /**
+   * 这一屏是不是「新会话页」：没有选中会话、或刚新建了一个还没有消息的会话。
+   *
+   * 两种情况在这里**本来就分不开也不该分**：一个空会话与「什么都没有」在界面上是同一屏，
+   * 而输入框在两种情况下都能用（没有会话时发送会现建一个，见 chat-store 的 send）。
+   * 判据取自渲染用的 messages（与库的 ThreadPrimitive.Empty 同源），不是 activeSessionId。
+   */
+  const isEmpty = messages.length === 0;
   const viewportRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   // 流式输出只在「用户本来就在底部」时跟随；上滑一下即停，到底或点按钮稍候恢复
@@ -523,141 +528,140 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
         data-slot="aui_thread-viewport"
         className="app-scrollbar relative min-h-0 flex-1 overflow-y-auto"
       >
-        {/*
-          min-h-full 而不是 flex-1：这里的父级是 Viewport（overflow-y-auto），不是 flex 容器，
-          flex-1 完全无效 —— 容器只有内容高，脚注上的 mt-auto 就没有可分配空间，
-          输入框会贴着消息往下滑。撑到至少一屏高，mt-auto 才能把它压到底；
-          内容超过一屏后由脚注自己的 sticky bottom-0 接管。
-        */}
-        <div className="mx-auto flex min-h-full w-full max-w-(--thread-max-width) flex-col px-4 pt-4">
-          {/*
-            消息组顶部的哨兵：滚到附近就自动取更早的一页（见上面的 IntersectionObserver）。
-            它必须在消息组**之前**，这样前插内容会把哨兵顶出视野，避免连续触发。
-          */}
-          <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
-          {loadingOlder && (
-            <div
-              className={cn("pb-1 text-center", mono, "text-ink-4")}
-              role="status"
-              aria-live="polite"
-            >
-              {t("chat.loadingOlder")}
-            </div>
-          )}
-          {/*
-            对话正文的字体与字号挂在这一层：fontSize 取自设置的 --chat-font-size（<html> 上），
-            字体取自 --chat-font。消息组同时包住用户消息、助手正文、推理与工具输出，因此
-            「对话字号」一改整段正文都跟着走；审批卡（下方 ApprovalSection）与 Composer
-            （脚注）在这一层之外，不受影响（Composer 自己带 text-sm）。
-            块间距交给 --density-gap：舒适 16px / 紧凑 12px。
-          */}
-          <div
-            data-slot="aui_message-group"
-            style={{ fontFamily: "var(--chat-font)", fontSize: "var(--chat-font-size)" }}
-            className="mb-2 flex flex-col gap-y-(--density-gap) empty:hidden"
-          >
-            {messages.map((message, index) => {
-              const prev = messages[index - 1];
-              const next = messages[index + 1];
-              const isSearchTarget = jump?.messageId === message.id;
-              // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
-              const isRunEnd = next?.role !== "assistant";
-              // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
-              const isRunStart = index === activeRunStart;
-              // 本回合的文件改动挂在这一回合**最后一条**消息下面（见 turn-files 的说明）
-              const turnFiles = turnFilesByMessage.get(message.id);
-              return (
-                <Fragment key={message.id}>
-                  {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
-                    <DayDivider timestamp={message.createdAt} />
-                  )}
-                  {/* 搜索落点用内阴影做左侧栏（gutter bar），避免出现/消失时引起排版跳动 */}
-                  <div
-                    data-message-id={message.id}
-                    data-search-hit={isSearchTarget ? "true" : undefined}
-                    className={cn(
-                      "relative rounded-md",
-                      isSearchTarget &&
-                        "shadow-[inset_2px_0_0_0_color-mix(in_oklab,var(--foreground)_35%,transparent)]",
-                    )}
-                  >
-                    <IsRunEndContext.Provider value={isRunEnd}>
-                      <IsRunStartContext.Provider value={isRunStart}>
-                        <ThreadPrimitive.MessageByIndex
-                          index={index}
-                          components={MESSAGE_COMPONENTS}
-                        />
-                      </IsRunStartContext.Provider>
-                    </IsRunEndContext.Provider>
-                    {/*
-                      「本轮文件改动」挂在消息**之外**（同级的下一块），不在消息根里面：
-                      消息根带着 hover 操作栏与消息操作（复制/重试/分支）的语义，
-                      把这一块塞进去会让「复制这条消息」把它也算作消息内容。
-                    */}
-                    {turnFiles !== undefined && <TurnFiles summary={turnFiles} />}
-                  </div>
-                </Fragment>
-              );
-            })}
-            {messages.length === 0 && (
-              <ThreadPrimitive.Empty>
-                <div className="flex flex-1 items-center justify-center py-24">
-                  <EmptyState>
-                    <EmptyStateGreeting>{t("chat.welcome")}</EmptyStateGreeting>
-                    <p className="text-center text-sm leading-relaxed text-ink-3">
-                      {t("chat.welcomeSubtitle")}
-                    </p>
-                  </EmptyState>
+        {isEmpty ? (
+          /*
+            新会话页：整屏换一棵树，不把输入框留在底部的脚注里。
+            这一屏没有消息，滚动 / 贴底 / 消息地图那一整套前提都不成立；
+            输入框则从「贴底、跟着消息走」换成「居中、上下留白」的摆法（variant="hero"）。
+          */
+          <WelcomeView />
+        ) : (
+          <>
+            {/*
+              min-h-full 而不是 flex-1：这里的父级是 Viewport（overflow-y-auto），不是 flex 容器，
+              flex-1 完全无效 —— 容器只有内容高，脚注上的 mt-auto 就没有可分配空间，
+              输入框会贴着消息往下滑。撑到至少一屏高，mt-auto 才能把它压到底；
+              内容超过一屏后由脚注自己的 sticky bottom-0 接管。
+            */}
+            <div className="mx-auto flex min-h-full w-full max-w-(--thread-max-width) flex-col px-4 pt-4">
+              {/*
+                消息组顶部的哨兵：滚到附近就自动取更早的一页（见上面的 IntersectionObserver）。
+                它必须在消息组**之前**，这样前插内容会把哨兵顶出视野，避免连续触发。
+              */}
+              <div ref={sentinelRef} aria-hidden className="h-px shrink-0" />
+              {loadingOlder && (
+                <div
+                  className={cn("pb-1 text-center", mono, "text-ink-4")}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {t("chat.loadingOlder")}
                 </div>
-              </ThreadPrimitive.Empty>
-            )}
-          </div>
-
-          {/* 审批卡接在消息流尾部（提问卡不在这里：它固定在输入框上方，见 ViewportFooter） */}
-          <ApprovalSection requests={approvals} onResolve={onResolve} />
-
-          {/*
-            脚注容器本身不铺底色（它包含提问卡与输入框上方那段，仍要让消息透出）；
-            **底栏**（下方那个 div）才是不透明的，见它的注释。
-            pb-0：底部不再留白 —— 底栏自己带 3px，且必须一直铺到窗口底边，
-            否则那条白边底下又会露出滚动的消息。
-          */}
-          <ThreadPrimitive.ViewportFooter
-            // data-slot 供消息地图测量脚注高度（刻度条要避开输入框，见 MessageRail）
-            data-slot="aui_thread-viewport-footer"
-            className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-0"
-          >
-            <ScrollToBottom />
-            {/*
-              提问卡固定在输入框**上方**、不跟随消息流：模型问话时用户多半正在读别处，
-              卡片跟着消息尾部滚走等于把唯一能作答的入口藏起来。放在 sticky 脚注里
-              与 Composer 同宽同层（px-4 与 Composer 外层的水平内边距一致）。
-            */}
-            {asks.length > 0 && (
-              <div className="px-4">
-                <AskSection requests={asks} onRespond={onRespond} />
+              )}
+              {/*
+                对话正文的字体与字号挂在这一层：fontSize 取自设置的 --chat-font-size（<html> 上），
+                字体取自 --chat-font。消息组同时包住用户消息、助手正文、推理与工具输出，因此
+                「对话字号」一改整段正文都跟着走；审批卡（下方 ApprovalSection）与 Composer
+                （脚注）在这一层之外，不受影响（Composer 自己带 text-sm）。
+                块间距交给 --density-gap：舒适 16px / 紧凑 12px。
+              */}
+              <div
+                data-slot="aui_message-group"
+                style={{ fontFamily: "var(--chat-font)", fontSize: "var(--chat-font-size)" }}
+                className="mb-2 flex flex-col gap-y-(--density-gap) empty:hidden"
+              >
+                {messages.map((message, index) => {
+                  const prev = messages[index - 1];
+                  const next = messages[index + 1];
+                  const isSearchTarget = jump?.messageId === message.id;
+                  // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
+                  const isRunEnd = next?.role !== "assistant";
+                  // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
+                  const isRunStart = index === activeRunStart;
+                  // 本回合的文件改动挂在这一回合**最后一条**消息下面（见 turn-files 的说明）
+                  const turnFiles = turnFilesByMessage.get(message.id);
+                  return (
+                    <Fragment key={message.id}>
+                      {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
+                        <DayDivider timestamp={message.createdAt} />
+                      )}
+                      {/* 搜索落点用内阴影做左侧栏（gutter bar），避免出现/消失时引起排版跳动 */}
+                      <div
+                        data-message-id={message.id}
+                        data-search-hit={isSearchTarget ? "true" : undefined}
+                        className={cn(
+                          "relative rounded-md",
+                          isSearchTarget &&
+                            "shadow-[inset_2px_0_0_0_color-mix(in_oklab,var(--foreground)_35%,transparent)]",
+                        )}
+                      >
+                        <IsRunEndContext.Provider value={isRunEnd}>
+                          <IsRunStartContext.Provider value={isRunStart}>
+                            <ThreadPrimitive.MessageByIndex
+                              index={index}
+                              components={MESSAGE_COMPONENTS}
+                            />
+                          </IsRunStartContext.Provider>
+                        </IsRunEndContext.Provider>
+                        {/*
+                          「本轮文件改动」挂在消息**之外**（同级的下一块），不在消息根里面：
+                          消息根带着 hover 操作栏与消息操作（复制/重试/分支）的语义，
+                          把这一块塞进去会让「复制这条消息」把它也算作消息内容。
+                        */}
+                        {turnFiles !== undefined && <TurnFiles summary={turnFiles} />}
+                      </div>
+                    </Fragment>
+                  );
+                })}
               </div>
-            )}
-            {/*
-              输入框 + 其下方的会话状态条合成一条**不透明底栏**：输入框到底是窗口底边的
-              这段区域不再让消息透出来（原先脚注带是透明的，消息会从输入框身下滚过）。
-              底栏铺页底色并与窗口底边齐平；输入框自己仍是浮起的 card 面 + 阴影，
-              分层靠面与阴影表达，**不画分割线**（输入区上方保持干净）。
-              -mx-4 是为了盖住外层容器的 16px 内边距 —— 水平内缩由 Composer 与
-              StatusBar 各自的 px-4 提供，这里不再叠加。
-              纵向 py-[3px]：状态条与输入框之间 3px、与窗口底边之间 3px。
-            */}
-            <div className="bg-background -mx-4 py-[3px]">
-              <Composer />
-              <StatusBar
-                stats={sessionStats}
-                tokenUsage={sessionTokenUsage}
-                resetKey={activeSessionId ?? undefined}
-                className="mt-[3px]"
-              />
+
+              {/* 审批卡接在消息流尾部（提问卡不在这里：它固定在输入框上方，见 ViewportFooter） */}
+              <ApprovalSection requests={approvals} onResolve={onResolve} />
+
+              {/*
+                脚注容器本身不铺底色（它包含提问卡与输入框上方那段，仍要让消息透出）；
+                **底栏**（下方那个 div）才是不透明的，见它的注释。
+                pb-0：底部不再留白 —— 底栏自己带 3px，且必须一直铺到窗口底边，
+                否则那条白边底下又会露出滚动的消息。
+              */}
+              <ThreadPrimitive.ViewportFooter
+                // data-slot 供消息地图测量脚注高度（刻度条要避开输入框，见 MessageRail）
+                data-slot="aui_thread-viewport-footer"
+                className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-0"
+              >
+                <ScrollToBottom />
+                {/*
+                  提问卡固定在输入框**上方**、不跟随消息流：模型问话时用户多半正在读别处，
+                  卡片跟着消息尾部滚走等于把唯一能作答的入口藏起来。放在 sticky 脚注里
+                  与 Composer 同宽同层（px-4 与 Composer 外层的水平内边距一致）。
+                */}
+                {asks.length > 0 && (
+                  <div className="px-4">
+                    <AskSection requests={asks} onRespond={onRespond} />
+                  </div>
+                )}
+                {/*
+                  输入框 + 其下方的会话状态条合成一条**不透明底栏**：输入框到底是窗口底边的
+                  这段区域不再让消息透出来（原先脚注带是透明的，消息会从输入框身下滚过）。
+                  底栏铺页底色并与窗口底边齐平；输入框自己仍是浮起的 card 面 + 阴影，
+                  分层靠面与阴影表达，**不画分割线**（输入区上方保持干净）。
+                  -mx-4 是为了盖住外层容器的 16px 内边距 —— 水平内缩由 Composer 与
+                  StatusBar 各自的 px-4 提供，这里不再叠加。
+                  纵向 py-[3px]：状态条与输入框之间 3px、与窗口底边之间 3px。
+                */}
+                <div className="bg-background -mx-4 py-[3px]">
+                  <Composer />
+                  <StatusBar
+                    stats={sessionStats}
+                    tokenUsage={sessionTokenUsage}
+                    resetKey={activeSessionId ?? undefined}
+                    className="mt-[3px]"
+                  />
+                </div>
+              </ThreadPrimitive.ViewportFooter>
             </div>
-          </ThreadPrimitive.ViewportFooter>
-        </div>
+          </>
+        )}
       </ThreadPrimitive.Viewport>
 
       {/* 左侧消息地图：一条消息一格，hover 出预览、点击跳到那条 */}

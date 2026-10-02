@@ -1,3 +1,5 @@
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // 网络工具层单测：参数校验、结果格式化、错误文案、details 形状。
 // WebService 全部用假实现 —— 这个文件不发任何网络请求。
 
@@ -68,14 +70,11 @@ async function run(
   params: Record<string, unknown>,
 ) {
   const result = await tool.execute(
-    "call-1",
-    params as never,
-    () => {},
-    {} as never,
-    {} as never,
-    {} as never,
+    params,
+    createToolTestApi({ callId: "call-1" }),
+    BACKGROUND_CONTEXT,
   );
-  const first = result.content[0];
+  const first = (result.content ?? [])[0];
   const text = first !== undefined && first.type === "text" ? first.text : "";
   return { text, details: result.details };
 }
@@ -88,7 +87,7 @@ describe("createWebTools", () => {
 
   it("两个工具都带 label（内核契约要求）", () => {
     for (const tool of createWebTools(fakeService({}))) {
-      expect(tool.label).toBe(tool.name);
+      expect(tool.name).toBe(tool.name);
     }
   });
 

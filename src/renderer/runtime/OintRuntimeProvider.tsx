@@ -2,7 +2,6 @@ import {
   type AppendMessage,
   AssistantRuntimeProvider,
   type ExternalStoreThreadListAdapter,
-  SimpleImageAttachmentAdapter,
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type * as React from "react";
@@ -15,9 +14,10 @@ import { useChatStore } from "@/renderer/stores/chat-store";
 import { SUBAGENT_TOOL_NAMES, useSubagentStore } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts";
+import { OintAttachmentAdapter } from "./attachment-adapter";
+import { appendMessageToAttachments } from "./attachment-payload";
 import { startEventBridge } from "./event-bridge";
 import {
-  appendMessageToImages,
   appendMessageToText,
   childSessionIdFromDetails,
   toThreadMessage,
@@ -124,8 +124,14 @@ export function OintRuntimeProvider({
         // 规格查不到（菜单与代码不同步）：按普通消息发出去，绝不静默吞掉用户输入
       }
       const text = resolved.kind === "command" ? resolved.source : resolved.text;
-      const images = appendMessageToImages(message);
-      await useChatStore.getState().send(text, images);
+      /**
+       * 附件从 `message.attachments` 取，**不是** `message.content`（见 attachment-payload）。
+       *
+       * 这一步曾经写成只扫 content，于是图片从来没离开过渲染进程：界面上不显示、
+       * 模型也收不到。测试直接钉在这个函数上。
+       */
+      const attachments = appendMessageToAttachments(message);
+      await useChatStore.getState().send(text, attachments);
     },
     [workingDir],
   );
@@ -139,8 +145,8 @@ export function OintRuntimeProvider({
     await useChatStore.getState().reload();
   }, []);
 
-  // 图片附件：复用官方 SimpleImageAttachmentAdapter（image/*）
-  const attachments = useMemo(() => new SimpleImageAttachmentAdapter(), []);
+  // 附件：自绘适配器，接受任意文件（图片 / 视频 / 文本 / 其他），加入时就探测好
+  const attachments = useMemo(() => new OintAttachmentAdapter(), []);
 
   /**
    * 会话列表适配器：把 chat-store 的 sessions 接到官方的 thread-list primitives。

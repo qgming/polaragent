@@ -1,11 +1,8 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // ask_user 工具的行为测试：schema 边界、三种 outcome 的文本与 details 形状。
 // 提问服务用假实现（记录请求、按预置结论立即结算），不挂真挂起、不碰定时器。
 
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import type { AskAnswerItem, AskQuestion, AskResponse } from "@/shared/contracts/interaction";
@@ -42,16 +39,7 @@ const DB_QUESTION = question("q1", "数据库", "用哪个数据库？", ["Postg
 const STYLE_QUESTION = question("q2", "文案", "文档语气？");
 const QUESTIONS = [DB_QUESTION, STYLE_QUESTION];
 
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-
 /** ask 不读 toolContext（只走提问服务），最小替身即可 */
-const TOOL_CONTEXT = { env: { cwd: process.cwd() } as ExecutionEnv };
 
 type AskTool = ReturnType<typeof createAskTool>;
 type AskToolResult = Awaited<ReturnType<AskTool["execute"]>>;
@@ -61,11 +49,13 @@ function runAsk(
   params: AskToolParams,
   toolCallId = "call-ask",
 ): Promise<AskToolResult> {
-  return tool.execute(toolCallId, params, () => {}, TOOL_CONTEXT, INVOCATION, BACKGROUND_CONTEXT);
+  return tool.execute(params, createToolTestApi({ callId: toolCallId }), BACKGROUND_CONTEXT);
 }
 
 function textOf(outcome: AskToolResult): string {
-  return outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+  return (outcome.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n");
 }
 
 describe("ask_user", () => {
@@ -130,7 +120,7 @@ describe("ask_user", () => {
 
     expect(outcome.details).toEqual({ outcome: "answered", questions: QUESTIONS, answers });
     // answers 是渲染层与日志都依赖的对外形状：每题只能有这三个字段
-    expect(Object.keys(outcome.details.answers[0] ?? {}).sort()).toEqual([
+    expect(Object.keys(outcome.details?.answers[0] ?? {}).sort()).toEqual([
       "questionId",
       "selected",
       "text",
@@ -155,7 +145,7 @@ describe("ask_user", () => {
     expect(text).toContain("用户已回答（1/2 题）：");
     expect(text).toContain("- 数据库：用哪个数据库？ → 选定 SQLite");
     expect(text).toContain("- 文案：文档语气？ → 未作答");
-    expect(outcome.details.answers).toEqual(answers);
+    expect(outcome.details?.answers).toEqual(answers);
   });
 
   it("unanswered：给出超时秒数与保守继续的提示，details 记 unanswered", async () => {

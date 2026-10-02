@@ -184,9 +184,35 @@ export const zhCN = {
     newChat: "新建对话",
     welcome: "今天想做点什么？",
     welcomeSubtitle: "把任务交给 Oint，它会读写代码、运行命令。",
+    // 新会话页的输入框：顶部那一行「跑在哪个项目里」，以及下方的起手提示
+    welcomeProject: "工作目录所属项目",
+    welcomeProjectNone: "未绑定项目",
+    welcomeProjectPicker: "项目",
+    welcomeProjectEmpty: "还没有项目。添加一个文件夹，新会话就会跑在它里面。",
+    welcomeProjectHint: "新会话跑在哪个目录里；选中的项目会成为它的工作根",
+    welcomeProjectFailed: "切换项目失败：{{reason}}",
+    welcomeSuggestions: "起手提示",
+    // 起手提示 chip 的短标签；正文来自 resources/prompts/<name>.md（内置层，随包分发）
+    promptPlan: "实现计划",
+    promptDebug: "排查 Bug",
+    promptReview: "代码审查",
+    promptVerify: "交付自检",
+    promptCommit: "提交信息",
+    promptMap: "摸清模块",
     composerDisabledHint: "对话区将在后续版本接入",
-    attachImage: "添加图片",
+
+    addAttachment: "添加附件（图片 / 视频 / 文件）",
     removeAttachment: "移除附件",
+    // 附件卡片上的读数与状态
+    attachmentPending: "尚未落盘，稍后可打开",
+    attachmentFrames: "{{count}} 帧",
+    attachmentLines: "{{count}} 行",
+    attachmentDownscaled: "已压缩",
+    attachmentTruncated: "已截断",
+    // 模型没开图片输入时的说明：附件照样送达，但模型看到的是文字说明而不是图本身
+    attachmentVisionUnsupported: "当前模型未开启图片输入，图片会以文字说明的形式送达",
+    // 运行中排队只带文本，带附件的消息不能排队
+    attachmentQueueBlocked: "排队只支持纯文本：请等这一轮结束，或先移除附件",
     editMessage: "编辑消息",
     editMessageDesc: "修改这条消息并重新发送；它之后的回复会被丢弃",
     // 复数键与 en-US 保持同形（本仓词条类型由 zh-CN 派生）；中文没有复数，两者同文

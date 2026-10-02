@@ -5,8 +5,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ExecutionEnv, err, FileError } from "@earendil-works/pi-agent-core";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/harness/env/nodejs";
+import { type ExecutionEnv, err, FileError } from "@earendil-works/pi-durable/env";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { buildChildEnv } from "@/main/security/child-env";
 import { isInsidePath, normalizePath, resolveRealPath } from "@/main/security/path-guard";
 
@@ -172,6 +172,7 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
   }
 
   return {
+    id: inner.id,
     get cwd() {
       return inner.cwd;
     },
@@ -220,6 +221,18 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
       const check = await guard(requested);
       if (!check.ok) return err<never, FileError>(check.error);
       return inner.appendFile(check.path, content, context);
+    },
+
+    async truncateFile(requested, size, context) {
+      const check = await guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.truncateFile(check.path, size, context);
+    },
+
+    async flushFile(requested, context) {
+      const check = await guard(requested);
+      if (!check.ok) return err<never, FileError>(check.error);
+      return inner.flushFile(check.path, context);
     },
 
     async renameFile(source, destination, context) {

@@ -19,7 +19,12 @@ type IpcListener = (event: unknown, request?: unknown) => unknown;
 
 // vi.mock 工厂先于 import 执行，用 hoisted 容器接住 handler 与 store 替身
 const registered = vi.hoisted(() => ({ handlers: new Map<string, IpcListener>() }));
-const store = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), remove: vi.fn() }));
+const store = vi.hoisted(() => ({
+  list: vi.fn(),
+  create: vi.fn(),
+  remove: vi.fn(),
+  setCwd: vi.fn(),
+}));
 /** 删除路径的调用顺序：先关运行时、再删库 */
 const order = vi.hoisted(() => ({ calls: [] as string[] }));
 const chatRuntime = vi.hoisted(() => ({
@@ -72,6 +77,7 @@ beforeEach(() => {
   store.remove.mockImplementation(async (id: string) => {
     order.calls.push(`store.remove:${id}`);
   });
+  store.setCwd.mockResolvedValue(undefined);
   registerSessionsIpc();
 });
 
@@ -138,9 +144,34 @@ describe("sessions:create", () => {
  * 删除会话的收尾（P1-3）。
  *
  * `closeSession` 曾经**生产从不调用**：`sessions:delete` 直接删 SQLite 文件，
- * 而 `AgentHarness` / `AgentLane` / `ExecutionEnv` 与一堆事件订阅全都还活着 ——
+ * 而 `Harness` / `Conversation` / `ExecutionEnv` 与事件订阅全都还活着 ——
  * 每删一个会话就漏一整套运行时资源（实测表现为 50 个会话留下 120 MB 的 `-wal`）。
  */
+/**
+ * 新会话页「选择项目」的落点。
+ *
+ * 这一条只验转发（改绑定的判定在 store 里，见 session-store.test.ts 的 setCwd 一节）：
+ * IPC 层多写一层校验，就会出现「界面能选、store 也接受，但中间那道闸门把它拦了」——
+ * 而那种失败在界面上只表现为「点了没反应」。
+ */
+describe("sessions:set-cwd", () => {
+  it("把 {id, cwd} 原样交给 store", async () => {
+    store.setCwd.mockResolvedValue(undefined);
+
+    await invoke(IPC.sessions.setCwd, { id: "s1", cwd: "D:\\dev\\polaragent" });
+
+    expect(store.setCwd).toHaveBeenCalledWith("s1", "D:\\dev\\polaragent");
+  });
+
+  it("store 拒绝时错误照常抛给渲染层（那里要把它显示出来）", async () => {
+    store.setCwd.mockRejectedValue(new Error("目录不存在：D:\\nope"));
+
+    await expect(invoke(IPC.sessions.setCwd, { id: "s1", cwd: "D:\\nope" })).rejects.toThrow(
+      "目录不存在",
+    );
+  });
+});
+
 describe("sessions:delete", () => {
   it("先关运行时、再删库（顺序反了，收尾就打在已删除的存储上）", async () => {
     await invoke(IPC.sessions.delete, { id: "s1" });

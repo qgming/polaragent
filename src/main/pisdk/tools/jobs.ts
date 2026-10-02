@@ -1,3 +1,6 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { requireToolEnv } from "./tool-env";
 // 后台作业工具（与 pi 原生四件套 bash/read/write/edit 并列的自建工具）。
 //
 // 为什么需要这四个工具：内核的 bash 没有默认超时，一条 dev server / watch 会把整轮运行挂住。
@@ -14,11 +17,7 @@
 //
 // 工具文案用英文，与内核四件套及 todo 工具一致（它们的 description / 输出都是英文）；
 // 面向维护者的注释仍是中文。
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+
 import { type Static, type TSchema, Type } from "typebox";
 import type { JobInfo } from "@/shared/contracts/job";
 import type { JobService } from "../jobs";
@@ -139,10 +138,9 @@ export interface JobToolDeps {
  * 四个工具的参数 schema 各不相同，装配处却只把它们当「同一批工具」放进数组 ——
  * 统一到最宽的 TSchema，避免联合类型在 execute 参数位的逆变冲突。
  */
-type JobHarnessTool<TDetails extends object> = AgentHarnessTool<
-  ExecutionToolContext,
+type JobToolDefinition<TDetails extends object> = ToolRegistration<
   TSchema,
-  TDetails
+  JsonRepresentation<TDetails>
 >;
 
 /** 状态 → 给模型看的一句话（有退出码就一并给出） */
@@ -187,22 +185,21 @@ function summarize(job: JobInfo): string {
 }
 
 /** 组装四个工具；sessionId 与作业服务在创建时固定（照 tools/ask.ts 的 createAskTool 模式） */
-export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
+export function createJobTools(deps: JobToolDeps): ToolRegistration[] {
   const { sessionId, jobs } = deps;
 
-  const bashBackground: JobHarnessTool<JobToolDetails> = {
+  const bashBackground: JobToolDefinition<JobToolDetails> = {
     name: BASH_BACKGROUND_TOOL_NAME,
-    label: BASH_BACKGROUND_TOOL_NAME,
+
     description: START_DESCRIPTION,
     parameters: startSchema,
     async execute(
-      toolCallId,
       rawParams,
-      _onUpdate,
-      toolContext,
-    ): Promise<AgentToolResult<JobToolDetails>> {
+      api,
+    ): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
       const params = rawParams as BashBackgroundToolParams;
-      const cwd = params.cwd ?? toolContext.env.cwd;
+      const cwd = params.cwd ?? requireToolEnv(api).cwd;
+      const toolCallId = api.callId;
       let job: JobInfo;
       try {
         // 带上这次调用的 id：作业结束时 runtime 靠它把结论回填到**这次调用**上，
@@ -232,12 +229,12 @@ export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
     },
   };
 
-  const jobOutput: JobHarnessTool<JobToolDetails> = {
+  const jobOutput: JobToolDefinition<JobToolDetails> = {
     name: JOB_OUTPUT_TOOL_NAME,
-    label: JOB_OUTPUT_TOOL_NAME,
+
     description: OUTPUT_DESCRIPTION,
     parameters: outputSchema,
-    async execute(_toolCallId, rawParams): Promise<AgentToolResult<JobToolDetails>> {
+    async execute(rawParams): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
       const params = rawParams as JobOutputToolParams;
       let result: Awaited<ReturnType<JobService["read"]>>;
       try {
@@ -270,12 +267,12 @@ export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
     },
   };
 
-  const jobList: JobHarnessTool<JobListToolDetails> = {
+  const jobList: JobToolDefinition<JobListToolDetails> = {
     name: JOB_LIST_TOOL_NAME,
-    label: JOB_LIST_TOOL_NAME,
+
     description: LIST_DESCRIPTION,
     parameters: listSchema,
-    async execute(): Promise<AgentToolResult<JobListToolDetails>> {
+    async execute(): Promise<ToolExecutionResult<JsonRepresentation<JobListToolDetails>>> {
       const all = jobs.list(sessionId);
       const text =
         all.length === 0
@@ -285,12 +282,12 @@ export function createJobTools(deps: JobToolDeps): JobHarnessTool<object>[] {
     },
   };
 
-  const jobKill: JobHarnessTool<JobToolDetails> = {
+  const jobKill: JobToolDefinition<JobToolDetails> = {
     name: JOB_KILL_TOOL_NAME,
-    label: JOB_KILL_TOOL_NAME,
+
     description: KILL_DESCRIPTION,
     parameters: killSchema,
-    async execute(_toolCallId, rawParams): Promise<AgentToolResult<JobToolDetails>> {
+    async execute(rawParams): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
       const params = rawParams as JobKillToolParams;
       let job: JobInfo;
       try {

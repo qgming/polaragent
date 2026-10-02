@@ -1,14 +1,23 @@
 import type { Attachment } from "@assistant-ui/react";
 import { ComposerPrimitive, useAui, useAuiState } from "@assistant-ui/react";
-import { ArrowUp, Bot, Brain, Check, ChevronDown, FileText, Plus, Square, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUp,
+  Bot,
+  Brain,
+  ChevronDown,
+  FileText,
+  Loader2,
+  Plus,
+  Square,
+  X,
+} from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContextMeter } from "@/renderer/components/assistant-ui/elements/context-meter";
 import {
   field,
-  fieldInteractive,
-  floating,
   ghostButton,
   inkButton,
 } from "@/renderer/components/assistant-ui/elements/surfaces";
@@ -35,6 +44,8 @@ import type {
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { ComposerDock, QueueDock, TodoDock } from "./ComposerDock";
 import { commandSpec, unavailableReason } from "./commands";
+import { chipTrigger, menuPanel, PickerItem } from "./composer-chrome";
+import { ComposerContextRow } from "./composer-context";
 import { SlashCommandMenu } from "./SlashCommandMenu";
 import {
   dispatchSlashInput,
@@ -86,16 +97,6 @@ function selectSessionUsage(state: {
   return null;
 }
 
-/** chip 触发键：形状抄自 elements/composer.tsx 的 ComposerModelTrigger，三个 chip 共用 */
-const chipTrigger = cn(
-  "flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] text-foreground outline-none",
-  "transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/[0.09]",
-  "focus-visible:ring-1 focus-visible:ring-foreground/20 motion-reduce:transition-none",
-);
-
-/** 浮层菜单面板：Elements 的 floating 面（16 圆角 + 1.5 内边距） */
-const menuPanel = cn(floating, "rounded-2xl p-1.5");
-
 /** 权限三模式：真实生效 —— default 弹卡询问 / ai_review 交 AI 审批（模型＝默认路由模型）/ full 全部放行 */
 const PERMISSION_MODES = [
   { value: "default", labelKey: "chat.permissionDefault" },
@@ -125,42 +126,24 @@ const AGENT_MODE_OPTIONS = [
   },
 ] as const;
 
-/** 单选行：形状取自 ComposerMenuItem，选中态用 fieldInteractive 底 + 墨色勾（取自 model-picker） */
-function PickerItem({
-  selected,
-  onSelect,
-  children,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-start text-[13.5px] outline-none transition-colors",
-        "focus-visible:ring-1 focus-visible:ring-foreground/20",
-        selected ? fieldInteractive : "hover:bg-foreground/[0.04]",
-      )}
-    >
-      <span className="flex min-w-0 flex-1 items-center gap-2.5">{children}</span>
-      <span className="flex w-4 shrink-0 justify-end">
-        {selected && (
-          <Check className="fade-in zoom-in-90 animate-in size-3.5 text-ink-2 duration-200" />
-        )}
-      </span>
-    </button>
-  );
-}
-
-/** 附件缩略图：图片用 object URL 预览，其余用文件图标；移除走 composer scope 的 remove */
+/**
+ * 附件缩略图：图片用 object URL 预览，其余用文件图标；移除走 composer scope 的 remove。
+ *
+ * 三种状态都要画出来，因为**库把探测失败吞掉了**：`ComposerAddAttachment` 里是
+ * `try { await addAttachment(file) } catch {}`，不自己读 `status` 的话，一个读不动的
+ * 文件在界面上与正常附件长得一模一样 —— 用户只会觉得「选了没用」。
+ * （适配器的探测过程本身也在这里体现：`running` 就是「正在抽帧 / 降采样」。）
+ */
 function AttachmentThumb({ attachment }: { attachment: Attachment }) {
   const { t } = useTranslation();
   const composer = useAui().composer;
   const [url, setUrl] = useState<string | null>(null);
+  const failed = attachment.status.type === "incomplete" && attachment.status.reason === "error";
+  const busy = attachment.status.type === "running";
+  const message =
+    attachment.status.type === "incomplete" && attachment.status.reason === "error"
+      ? (attachment.status.message ?? "")
+      : "";
 
   useEffect(() => {
     if (attachment.file) {
@@ -172,17 +155,25 @@ function AttachmentThumb({ attachment }: { attachment: Attachment }) {
   }, [attachment.file]);
 
   return (
-    <div className="relative shrink-0">
+    <div className="relative shrink-0" title={failed ? message : attachment.name}>
       <div
         className={cn(
           field,
           "flex size-14 items-center justify-center overflow-hidden rounded-[14px]",
+          failed && "border-destructive/60",
         )}
       >
-        {attachment.type === "image" && url !== null ? (
+        {failed ? (
+          <AlertTriangle className="text-destructive size-5" />
+        ) : attachment.type === "image" && url !== null ? (
           <img src={url} alt={attachment.name} className="size-full object-cover" />
         ) : (
           <FileText className="size-5 text-ink-4" />
+        )}
+        {busy && (
+          <div className="bg-background/60 absolute inset-0 grid place-items-center backdrop-blur-[2px]">
+            <Loader2 className="text-ink-3 size-4 animate-spin" />
+          </div>
         )}
       </div>
       <TooltipIconButton
@@ -557,6 +548,31 @@ function ThinkingChip({ resolved }: { resolved: ResolvedThinking }) {
 }
 
 /**
+ * 输入框最多长到几行，再往上就**内部滚动**。
+ *
+ * 上限是必须的：输入框浮在消息区之上（对话中它落在 sticky 底栏里），它长多高直接从
+ * 可见的对话里扣 —— 没有上限时，一段长提示词能把上下文压到只剩一两行。
+ * 10 行是「还看得见上面在说什么」与「不用为了一段话去开外部编辑器」之间的折中。
+ *
+ * 用**行数**而不是像素：这个上限交给库（react-textarea-autosize 的 maxRows），
+ * 它按输入框真实的行高算出像素上限并写内联高度。写死像素会在字体或字号变化时对不上
+ * （行高由 text-sm/leading-relaxed 决定，而这两者都可能被调）。
+ */
+const COMPOSER_MAX_ROWS = 10;
+
+/**
+ * 输入框的两种摆法。
+ *
+ * - `docked`（默认）：对话进行中的样子 —— 贴窗口底部、跟着消息走、上方挂停靠区；
+ * - `hero`：**新会话页**的样子 —— 居中、卡片分内外两层（外层放上下文行，内层是输入面），
+ *   不挂停靠区（那一刻既没有任务清单也没有待发送队列）。
+ *
+ * 两种摆法共用同一个组件而不是各写一份：附件、斜杠菜单、瞬时提示、发送与排队的
+ * 那套行为（`handleInputKeyDown` 一整段）与摆法无关，复制一份必然分叉。
+ */
+export type ComposerVariant = "docked" | "hero";
+
+/**
  * Composer：自绘外壳（--composer-bg 面 + 24px 圆角 + --composer-shadow 抬高）
  * + 附件（选择/拖拽/粘贴）+ 权限/模型/思考 chip + 发送/停止。
  * 发送走 ComposerPrimitive.Send（runtime 原生）；运行中 Enter 走 store.queue（见下）。
@@ -564,8 +580,10 @@ function ThinkingChip({ resolved }: { resolved: ResolvedThinking }) {
  *
  * 输入框**上方**是停靠区（ComposerDock）：任务清单与待发送队列贴在外壳之外，
  * 与它共用一个宽度、圆角只在顶部 —— 见该文件顶部对位置与形态的说明。
+ * hero 摆法不挂停靠区，改挂上下文行（项目 chip，见 composer-context）。
  */
-export function Composer() {
+export function Composer({ variant = "docked" }: { variant?: ComposerVariant } = {}) {
+  const hero = variant === "hero";
   const { t } = useTranslation();
   const aui = useAui();
   const { settings } = useSettingsStore();
@@ -576,6 +594,8 @@ export function Composer() {
     s.activeSessionId === null ? EMPTY_QUEUE : (s.queueBySession[s.activeSessionId] ?? EMPTY_QUEUE),
   );
   const canSend = useAuiState((s) => s.composer.canSend);
+  /** 待发送的附件数：运行中的排队只带文本，有附件时不能排（见 handleInputKeyDown） */
+  const attachmentCount = useAuiState((s) => s.composer.attachments.length);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   /**
    * 这个会话是否正在压缩上下文（手动或自动）。
@@ -846,18 +866,29 @@ export function Composer() {
         .notifyComposer({ messageKey: "chat.commandUnavailableRunning", level: "error" });
       return;
     }
+    /**
+     * 带附件时**不排队**：主进程的队列项形状就是 `{ text, mode }`，附件排不进去。
+     * 早先的写法是「排队只带文本，附件留在输入框里」—— 结果是附件跟着**下一条**消息
+     * 发出去，而用户以为它已经跟这条一起送走了。宁可明确拒绝，也不要静默地错。
+     */
+    if (attachmentCount > 0) {
+      useUiStore
+        .getState()
+        .notifyComposer({ messageKey: "chat.attachmentQueueBlocked", level: "error" });
+      return;
+    }
     const text = commandDraft.text.trim();
     if (text.length === 0) return;
     const mode = event.ctrlKey || event.metaKey ? "steer" : "followUp";
     void useChatStore.getState().queue(text, mode);
-    // 排队内容只带文本；附件保留在 Composer 中
     aui.composer.setText("");
   };
 
   return (
     // 底部不留内边距：输入框以下的间距交给 Thread 的底栏（状态条上下各 3px，
-    // 且那条底栏是不透明的，消息不再从输入框下方透出来）
-    <div className="px-4">
+    // 且那条底栏是不透明的，消息不再从输入框下方透出来）。
+    // hero 摆法自带外层内边距（它落在新会话页的居中列里），不再叠加 px-4。
+    <div className={hero ? "w-full" : "px-4"}>
       {/*
         停靠区（任务清单 + 待发送队列）挂在**输入框上方、外壳之外**：
         它俩与输入框共用同一个宽度与面，圆角只在顶部、下沿与输入框无缝相接 ——
@@ -865,24 +896,42 @@ export function Composer() {
         （内层的方角会在圆角里露出来）。
         外轮廓（边框 + 圆角 + 两块之间的分隔线）由 ComposerDock 一处画，
         里面两块只是它的段 —— 于是「有清单没队列」「两个都有」这些组合都不用传位置。
+        hero 摆法不挂它：那一刻会话是空的，清单与队列都不可能非空。
       */}
-      <ComposerDock>
-        <TodoDock />
-        <QueueDock items={queue} />
-      </ComposerDock>
+      {!hero && (
+        <ComposerDock>
+          <TodoDock />
+          <QueueDock items={queue} />
+        </ComposerDock>
+      )}
       <ComposerPrimitive.Root
         compact={false}
+        // data-slot：探针与接线测试靠它定位（输入框是 form 元素，没有别的稳定标识）
+        data-slot="composer-root"
         className={cn(
           // 面用 Thread 根上声明的 --composer-bg（= --card）：它比页面底色亮一档，
           // 配合 --composer-shadow 才立得起来；暗色沿用 paper 口径的 popover 面。
-          "w-full rounded-[24px] border border-border/60 p-2.5 transition-colors",
+          // relative 是**斜杠菜单的锚点**：菜单自己是 absolute bottom-full，它要贴着
+          // 这张卡的上沿往上弹。原先这里没有 relative，靠的是脚注容器是 sticky（sticky
+          // 也算定位元素）—— 于是「对话中」能用、而新会话页（输入框不在脚注里）把菜单
+          // 弹到了视口顶边之外。锚点写在这里，两种摆法就都不依赖外层恰好被定位。
+          "relative w-full border border-border/60 transition-colors",
           "bg-[var(--composer-bg,var(--card))] shadow-[var(--composer-shadow)] dark:bg-popover",
           "focus-within:ring-1 focus-within:ring-foreground/20",
+          // hero：外壳只留 6px 边距，圆角收一档 —— 它比对话里那只矮，24px 会显得发胖
+          hero ? "rounded-[20px] p-1.5" : "rounded-[24px] p-2.5",
         )}
       >
+        {/* 上下文行在**外壳上**、输入面之外：它说的是「这个会话在哪」，不是输入的一部分 */}
+        {hero && <ComposerContextRow />}
         <ComposerPrimitive.AttachmentDropzone
           className={cn(
-            "-m-2.5 flex flex-col gap-2 rounded-[24px] p-2.5 transition-colors",
+            "flex flex-col gap-2 transition-colors",
+            hero
+              ? // 内层输入面：比外壳暗一档，读成「外壳里嵌着的那块输入区」
+                "rounded-[14px] bg-foreground/[0.035] p-2.5 dark:bg-foreground/[0.06]"
+              : // 对话里是单层面：负边距抵消外壳内边距，让拖拽高亮铺满整张卡
+                "-m-2.5 rounded-[24px] p-2.5",
             // 拖拽态：Elements 的蓝底 + 虚线边，用 outline 画以免多算一层盒模型
             "data-[dragging=true]:bg-blue-500/[0.04] dark:data-[dragging=true]:bg-blue-500/10",
             "data-[dragging=true]:outline-1 data-[dragging=true]:-outline-offset-1 data-[dragging=true]:outline-dashed data-[dragging=true]:outline-blue-500/40",
@@ -895,6 +944,20 @@ export function Composer() {
               {({ attachment }) => <AttachmentThumb key={attachment.id} attachment={attachment} />}
             </ComposerPrimitive.Attachments>
           </div>
+          {/*
+            模型没开图片输入时的提前说明。
+            不写这一句的话，用户会看到图片在界面上显示得好好的、模型却说「我看不到图」——
+            真正的原因是 pi-ai 在请求装配阶段把 image 块换成了
+            `(image omitted: model does not support images)`（见 transform-messages 的
+            downgradeUnsupportedImages），而这条降级在任何界面上都没有痕迹。
+          */}
+          {attachmentCount > 0 &&
+            currentModel !== null &&
+            currentModel.model.acceptsImages !== true && (
+              <p role="status" className="text-ink-3 px-2.5 text-[11.5px] leading-snug">
+                {t("chat.attachmentVisionUnsupported")}
+              </p>
+            )}
           {/*
             斜杠菜单挂在 Input 之前：ComposerMenu 自己是 absolute bottom-full，
             这里靠它贴到 composer 上沿（Root 是 relative），不占输入框的排版位置。
@@ -927,6 +990,8 @@ export function Composer() {
           <ComposerPrimitive.Input
             submitMode="enter"
             addAttachmentOnPaste
+            // 长到 10 行就封顶，再往上由 textarea 自己滚（见 COMPOSER_MAX_ROWS）
+            maxRows={COMPOSER_MAX_ROWS}
             placeholder={t("chat.inputPlaceholder")}
             onKeyDown={handleInputKeyDown}
             role="combobox"
@@ -938,6 +1003,8 @@ export function Composer() {
             }
             className={cn(
               "min-h-9 w-full resize-none bg-transparent px-2.5 py-1 text-sm leading-relaxed outline-none",
+              // 到顶之后这一层才真的有滚动条；细滚动条与消息区、侧栏同一套
+              "app-scrollbar",
               "placeholder:text-ink-4",
             )}
           />
@@ -945,7 +1012,7 @@ export function Composer() {
             <div className="flex min-w-0 items-center gap-1.5">
               <ComposerPrimitive.AddAttachment
                 multiple
-                aria-label={t("chat.attachImage")}
+                aria-label={t("chat.addAttachment")}
                 className={cn(
                   ghostButton,
                   "size-8 shrink-0 disabled:pointer-events-none disabled:opacity-30",

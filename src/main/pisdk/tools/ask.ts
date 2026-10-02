@@ -1,3 +1,5 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 // 提问工具（ask_user）：让模型在关键分叉点上停下来问用户，而不是自己猜。
 //
 // **只允许主 lane 使用**：Oint 目前只有根 lane（见 runtime.ts 的 LANE_NAME），所以这条约束
@@ -8,11 +10,6 @@
 // 与审批的关系：ask_user 是低风险工具（permissions.ts 的 LOW_RISK_TOOLS），
 // 提问本身不该再先弹一张「批准提问」的审批卡 —— 否则用户要连点两次才能回答一个问题。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import type {
   AskAnswerItem,
@@ -136,13 +133,14 @@ function formatAnswers(questions: readonly AskQuestion[], response: AskResponse)
  */
 export function createAskTool(
   deps: AskToolDeps,
-): AgentHarnessTool<ExecutionToolContext, typeof askSchema, AskToolDetails> {
+): ToolRegistration<typeof askSchema, JsonRepresentation<AskToolDetails>> {
   return {
     name: ASK_TOOL_NAME,
-    label: ASK_TOOL_NAME,
+
     description: buildAskDescription(Math.round(deps.interactions.timeoutMs() / 1000)),
     parameters: askSchema,
-    async execute(toolCallId, params): Promise<AgentToolResult<AskToolDetails>> {
+    async execute(params, api): Promise<ToolExecutionResult<JsonRepresentation<AskToolDetails>>> {
+      const toolCallId = api.callId;
       const questions = params.questions as AskQuestion[];
       // schema 已限定 1~4 题，这里再兜一层：内核换了校验口径时也不能把空提问丢给用户
       if (questions.length < 1 || questions.length > MAX_QUESTIONS) {

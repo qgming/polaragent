@@ -8,7 +8,6 @@ import type {
   ProviderStreams,
   ThinkingLevelMap,
 } from "@earendil-works/pi-ai";
-import { createModels, createProvider } from "@earendil-works/pi-ai";
 import {
   stream as completionsStream,
   streamSimple as completionsStreamSimple,
@@ -17,6 +16,7 @@ import {
   stream as responsesStream,
   streamSimple as responsesStreamSimple,
 } from "@earendil-works/pi-ai/api/openai-responses";
+import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import {
   ALL_THINKING_LEVELS,
   type ThinkingLevel,

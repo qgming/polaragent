@@ -1,3 +1,4 @@
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 // 工具装配：构建暴露给 Agent 的完整工具集。
 //
 // 分两类：
@@ -13,14 +14,7 @@
 // 与系统提示的分工：本文件写「某个工具自身是什么、边界在哪」，
 // runtime.ts 的 TOOL_GUIDANCE 写「多个工具之间怎么选」。两处都不要重复对方的内容。
 
-import {
-  type AgentHarnessTool,
-  type BashExecution,
-  createBashTool,
-  createEditTool,
-  createWriteTool,
-  type ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+import { createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { BROWSER_TOOL_NAMES } from "@/shared/contracts/browser";
 import { WEB_TOOL_NAMES } from "@/shared/contracts/web";
 import type { BrowserAutomation } from "../browser/types";
@@ -30,17 +24,8 @@ import { createBrowserTools } from "./tools/browser";
 import { createReadToolWithLineNumbers } from "./tools/read";
 import { createReadImageTool, READ_IMAGE_TOOL_NAME } from "./tools/read-image";
 import { createGlobTool, createGrepTool } from "./tools/search";
-import { createTodoTool, type TodoToolContext } from "./tools/todo";
+import { createTodoState, createTodoTool, type TodoState } from "./tools/todo";
 import { createWebTools } from "./tools/web";
-
-/**
- * 应用级工具上下文：受路径守卫约束的执行环境 + 会话级待办状态。
- *
- * 全部工具共用同一个 context 类型（不能混用更窄的类型）：`AgentHarnessTool` 的 `execute`
- * 是函数属性，参数位逆变，`AgentHarnessTool<TodoToolContext>` 无法赋给
- * `AgentHarnessTool<ExecutionToolContext>`。所以自建工具一并泛型化到这一层。
- */
-export type AppToolContext = TodoToolContext;
 
 /**
  * `buildTools` 的可选配置。
@@ -55,6 +40,8 @@ export interface BuildToolsOptions {
    * 调用方需要旧行为。生产路径的两处调用都必须传。
    */
   searchRoots?: readonly string[];
+  todo?: TodoState;
+  persistTodo?: (state: TodoState) => void | Promise<void>;
 }
 
 /** 工具名常量，供权限层与 UI 复用 */ export const TOOL_NAMES = {
@@ -87,8 +74,7 @@ const READ_DESCRIPTION =
   "什么时候用：**修改任何文件之前先读它**；需要看完整实现或其上下文时。\n" +
   "什么时候不要用：只想定位某个符号或字符串在哪 → 用 grep；文件很大而只需要片段 → 先用 grep 拿到行号，" +
   "再带 offset/limit 读那一段；只是想确认文件存在或看目录结构 → 用 glob。\n" +
-  "**要看的是一张图片（png/jpg/webp/gif）时用 read_image**：read 确实也能把图片整个读回来，" +
-  "但它**没有大小上限**，一张大图会整份进上下文；read_image 有 16 MiB 守卫并返回尺寸。" +
+  "**要看的是一张图片（png/jpg/webp/gif）时用 read_image**：read 只读取文本；read_image 有 16 MiB 守卫并返回尺寸。" +
   "SVG 不是图片而是文本，仍用 read。";
 
 const WRITE_DESCRIPTION =
@@ -105,55 +91,33 @@ const EDIT_DESCRIPTION =
   "什么时候不要用：不确定文件当前内容时（先 read）；需要跨多个文件大范围重构时逐个文件改。" +
   "oldText 里不要包含大段未改动的上下文 —— 只保留足以唯一定位的少量行，否则文件一动就会失配。";
 
-/** bash 的 prepare 回调：工作目录固定为会话 ExecutionEnv.cwd，不受进程 cwd 影响 */
-function prepareBash(execution: BashExecution, toolContext: ExecutionToolContext): void {
-  execution.cwd = toolContext.env.cwd;
-}
-
-/**
- * 内核 bash 非零退出时抛出的错误文本：`<输出>\n\nCommand exited with code N`（见内核 harness/tools/bash.js）。
- *
- * 为什么靠文案解析：内核只在**异常**里带退出码，成功时什么都不给（ToolResult 没有退出码字段），
- * 而包装层拿不到它内部那次 env.exec 的结果 —— 除了这句固定文案没有别的来源。
- */
-const BASH_EXIT_ERROR_PATTERN = /^([\s\S]*?)(?:\n\n)?Command exited with code (-?\d+)$/;
-
-/** 退出码统一成结果末尾的一行；输出自带的换行先收掉，别把退出码隔出两个空行 */
-function exitCodeLine(output: string, exitCode: number): string {
-  const body = output.replace(/\n+$/, "");
-  return body === ""
-    ? `[exited with code ${exitCode}]`
-    : `${body}\n\n[exited with code ${exitCode}]`;
-}
-
-/**
- * 给 bash 结果补上退出码。
- *
- * 内核 bash 只在非 0 退出时用异常带出退出码，成功时只回输出 —— 模型想确认「命令到底成没成」
- * 就得再跑一条 echo $?（多一次往返，而且 $? 是上一条命令的，很容易被夹在中间的命令吃掉）。
- * 这里把退出码统一成结果文本的最后一行，非 0 时保持「抛错」：失败仍然以 isError 进入转录，
- * 只是错误文本里也有同样的 [exited with code N] 行（词汇与作业工具的 exited / exit code 一致）。
- *
- * 超时、中止、起不来这些异常原样抛出：它们没有退出码，内核对它们的文案就是既有行为
- *（如 "Command timed out after N seconds"），不能改写。合并 stderr 到 stdout 由内核负责，这里不碰。
- */
+/** Native bash streams output through api.output; keep the app's explicit exit marker. */
 function withBashExitCode(
-  tool: AgentHarnessTool<AppToolContext>,
-): AgentHarnessTool<AppToolContext> {
-  const inner = tool.execute.bind(tool);
+  tool: ReturnType<typeof createBashTool>,
+): ReturnType<typeof createBashTool> {
   return {
     ...tool,
-    async execute(toolCallId, params, onUpdate, toolContext, invocation, context) {
+    async execute(params, api, context) {
+      let ending = "";
+      const streamingApi = {
+        ...api,
+        output(chunk: string | Uint8Array) {
+          const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+          ending = (ending + text).slice(-2);
+          api.output(chunk);
+        },
+      };
       try {
-        const result = await inner(toolCallId, params, onUpdate, toolContext, invocation, context);
-        const only = result.content.length === 1 ? result.content[0] : undefined;
-        if (only === undefined || only.type !== "text") return result;
-        return { ...result, content: [{ ...only, text: exitCodeLine(only.text, 0) }] };
+        const result = await tool.execute(params, streamingApi, context);
+        api.output(
+          `${ending.endsWith("\n\n") ? "" : ending.endsWith("\n") ? "\n" : "\n\n"}[exited with code 0]`,
+        );
+        return result;
       } catch (error) {
-        const message = error instanceof Error ? error.message : undefined;
-        const match = message === undefined ? null : BASH_EXIT_ERROR_PATTERN.exec(message);
-        if (match === null || match[1] === undefined || match[2] === undefined) throw error;
-        throw new Error(exitCodeLine(match[1], Number(match[2])), { cause: error });
+        const match =
+          error instanceof Error ? /^Command exited with code (-?\d+)$/.exec(error.message) : null;
+        if (match === null) throw error;
+        throw new Error(`[exited with code ${match[1]}]`, { cause: error });
       }
     },
   };
@@ -182,7 +146,7 @@ function withBashExitCode(
  *   在这里 import 会把它们拖进 runtime 的 node 单测）。
  *
  * 注意前四个参数都是**可选**的：不传就没有对应的工具。会话创建
- * （runtime 的 tools: ...）与 MCP 热替换（applyMcpTools 的 harness.setTools）两条路径
+ * （runtime 创建 registry）与 MCP 热替换（registry.install）两条路径
  * 都必须把它们带上，否则热替换之后这些工具会凭空消失（ask_user 踩过同一个坑）。
  *
  * ⚠️ **web 工具要一并带进子智能体的那条路径**：与 browser 不同，子智能体**应该**能联网
@@ -190,11 +154,11 @@ function withBashExitCode(
  * 白名单 —— 见 shared/contracts/subagent.ts 的 SUBAGENT_ASSIGNABLE_TOOLS。
  */
 export function buildTools(
-  extraTools: AgentHarnessTool<AppToolContext>[] = [],
-  askTool?: AgentHarnessTool<AppToolContext>,
-  jobTools: AgentHarnessTool<AppToolContext>[] = [],
+  extraTools: ToolRegistration[] = [],
+  askTool?: ToolRegistration,
+  jobTools: ToolRegistration[] = [],
   browserAutomation?: BrowserAutomation,
-  subagentTools: AgentHarnessTool<AppToolContext>[] = [],
+  subagentTools: ToolRegistration[] = [],
   webService?: WebService,
   /**
    * 第七个参数是**对象**而不是又一个位置参数：前六个已经排满，再加一个是纯粹的
@@ -205,13 +169,13 @@ export function buildTools(
    * 都必须传 `sessionAllowedRoots(cwd, appPath)`，否则那两个工具又变成零确认越界读。
    */
   options: BuildToolsOptions = {},
-): AgentHarnessTool<AppToolContext>[] {
+): ToolRegistration[] {
   return [
     {
-      ...withBashExitCode(createBashTool<AppToolContext>({ prepare: prepareBash })),
+      ...withBashExitCode(createBashTool()),
       description: BASH_DESCRIPTION,
     },
-    { ...createReadToolWithLineNumbers<AppToolContext>(), description: READ_DESCRIPTION },
+    { ...createReadToolWithLineNumbers(), description: READ_DESCRIPTION },
     /**
      * read_image 紧挨着 read：两者是同一个问题的两条路（读文件），只是结果形态不同
      *（文本 vs 图片）。放在一起，模型在「这个路径该用哪个」上的选择最短。
@@ -220,20 +184,16 @@ export function buildTools(
      * 而那个所有会话都有。图片能力本身由**模型**决定 —— 不支持的模型会在收到
      * image 块时报错，工具说明里已经写明了这条前提。
      */
-    createReadImageTool<AppToolContext>(),
-    { ...createWriteTool<AppToolContext>(), description: WRITE_DESCRIPTION },
-    { ...createEditTool<AppToolContext>(), description: EDIT_DESCRIPTION },
-    createGrepTool<AppToolContext>({ allowedRoots: options.searchRoots }),
-    createGlobTool<AppToolContext>({ allowedRoots: options.searchRoots }),
-    createTodoTool(),
+    createReadImageTool(),
+    { ...createWriteTool(), description: WRITE_DESCRIPTION },
+    { ...createEditTool(), description: EDIT_DESCRIPTION },
+    createGrepTool({ allowedRoots: options.searchRoots }),
+    createGlobTool({ allowedRoots: options.searchRoots }),
+    createTodoTool({ todo: options.todo ?? createTodoState(), persistTodo: options.persistTodo }),
     // 浏览器工具：操作的是主进程持有的 guest，与本会话的工作目录无关（见 tools/browser.ts）
-    ...(browserAutomation === undefined
-      ? []
-      : (createBrowserTools(browserAutomation) as AgentHarnessTool<AppToolContext>[])),
+    ...(browserAutomation === undefined ? [] : createBrowserTools(browserAutomation)),
     // 网络工具：同样是主进程单例（WebService），与工作目录无关（见 tools/web.ts）
-    ...(webService === undefined
-      ? []
-      : (createWebTools(webService) as AgentHarnessTool<AppToolContext>[])),
+    ...(webService === undefined ? [] : createWebTools(webService)),
     // 子智能体（子 lane）上线时**不要**把这些工具注入子 lane：子智能体不能自己卡住等用户
     // （ask_user），也不该自己起后台进程（作业工具），更不该操作用户正盯着的浏览器 ——
     // 它要把结果写进最终回复，由主 lane 统一提问与调度（见 tools/ask.ts 顶部注释）
@@ -261,9 +221,9 @@ export function buildTools(
  * 所以这里不需要兜底：匹配不上就是不该给。
  */
 export function restrictTools(
-  tools: AgentHarnessTool<AppToolContext>[],
+  tools: ToolRegistration[],
   allowed: readonly string[],
-): AgentHarnessTool<AppToolContext>[] {
+): ToolRegistration[] {
   const names = new Set(allowed);
   return tools.filter((tool) => names.has(tool.name));
 }

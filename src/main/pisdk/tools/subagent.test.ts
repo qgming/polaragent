@@ -1,3 +1,4 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 /**
  * 子智能体四个工具（Task / TaskWait / TaskList / TaskStop）的测试。
  *
@@ -12,7 +13,7 @@
  * 把请求原样交给它、并把返回的记录原样带出去。
  */
 
-import { type AgentHarnessToolInvocation, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_CONCURRENT_SUBAGENT_RUNS,
@@ -29,21 +30,10 @@ import {
 } from "./subagent";
 
 type SubagentTool = ReturnType<typeof createSubagentTools>[number];
-type SubagentToolParams = Parameters<SubagentTool["execute"]>[1];
-type SubagentToolContext = Parameters<SubagentTool["execute"]>[3];
+type SubagentToolParams = Parameters<SubagentTool["execute"]>[0];
 type SubagentToolResult = Awaited<ReturnType<SubagentTool["execute"]>>;
 
 /** 工具不读 toolContext（父会话 id / cwd 都在 deps 里），空壳即可 */
-const TOOL_CONTEXT = {} as SubagentToolContext;
-
-/** execute 的第六个参数（harness 上下文）：本测试不用它，给一个最小实现 */
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
 
 /** 一个可用的子智能体定义（工具不再可配：拿到的是主代理同一批） */
 function definition(name: string, patch: Partial<SubagentDefinition> = {}): SubagentDefinition {
@@ -162,12 +152,12 @@ async function invoke(
 ): Promise<SubagentToolResult> {
   const tool = createSubagentTools(deps).find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`工具不存在：${name}`);
-  return tool.execute(toolCallId, params, () => {}, TOOL_CONTEXT, INVOCATION, BACKGROUND_CONTEXT);
+  return tool.execute(params, createToolTestApi({ callId: toolCallId }), BACKGROUND_CONTEXT);
 }
 
 /** 回执的文本部分：可能是一段或多段，测试统一拼起来看 */
 function resultText(result: SubagentToolResult): string {
-  return result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+  return (result.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("\n");
 }
 
 /** 取第一次 start 的请求；没调用过直接抛错，避免断言拿到 undefined */

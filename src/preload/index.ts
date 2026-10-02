@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { OintApi } from "@/shared/contracts/api";
 import type { BrowserEvent } from "@/shared/contracts/browser";
 import type { ChatEventEnvelope } from "@/shared/contracts/chat";
@@ -39,10 +39,11 @@ const api = {
     loadMessages: (id, options) => ipcRenderer.invoke(IPC.sessions.loadMessages, { id, options }),
     setModel: (id, model) => ipcRenderer.invoke(IPC.sessions.setModel, { id, model }),
     setMode: (id, mode) => ipcRenderer.invoke(IPC.sessions.setMode, { id, mode }),
+    setCwd: (id, cwd) => ipcRenderer.invoke(IPC.sessions.setCwd, { id, cwd }),
   },
   chat: {
-    send: (sessionId, text, images, messageId, options) =>
-      ipcRenderer.invoke(IPC.chat.send, { sessionId, text, images, messageId, options }),
+    send: (sessionId, text, attachments, messageId, options) =>
+      ipcRenderer.invoke(IPC.chat.send, { sessionId, text, attachments, messageId, options }),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chat.stop, { sessionId }),
     queue: (sessionId, text, mode) => ipcRenderer.invoke(IPC.chat.queue, { sessionId, text, mode }),
     cancelQueued: (sessionId, entryId) =>
@@ -149,6 +150,18 @@ const api = {
     readFile: (request) => ipcRenderer.invoke(IPC.files.readFile, request),
     readImage: (request) => ipcRenderer.invoke(IPC.files.readImage, request),
     writeFile: (request) => ipcRenderer.invoke(IPC.files.writeFile, request),
+    /**
+     * File → 磁盘路径。这是 **preload 侧同步完成**的本地查询，不走 IPC：
+     * `webUtils.getPathForFile` 只在渲染进程（含 preload）可用，主进程拿不到 File 对象。
+     * 拿不到路径（剪贴板、Blob）时返回空串，调用方据此改走 base64。
+     */
+    pathForFile: (file) => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return "";
+      }
+    },
   },
   review: {
     summary: (sessionId) => ipcRenderer.invoke(IPC.review.summary, { sessionId }),

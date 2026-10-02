@@ -1,3 +1,4 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // read_image 工具的契约：把一张图读成「模型能看的 image 块 + 给界面的 details」。
 //
 // 全部在真实临时文件上跑（与 read.test.ts 同一套）：路径守卫、魔数嗅探与尺寸解析
@@ -12,11 +13,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createExecEnv } from "../exec-env";
 import { buildTools } from "../tools";
@@ -24,14 +22,6 @@ import type { ReadImageDetails } from "./read-image";
 
 let root: string;
 let env: ExecutionEnv;
-
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
 
 /**
  * 最小的合法 PNG：签名 + IHDR（带宽高）+ 一个空的 IDAT + IEND。
@@ -56,11 +46,8 @@ async function runReadImage(filePath: string) {
   const tool = buildTools().find((candidate) => candidate.name === "read_image");
   if (tool === undefined) throw new Error("缺少 read_image 工具");
   const result = await tool.execute(
-    "call-read-image",
     { file_path: filePath },
-    () => {},
-    { env } as never,
-    INVOCATION,
+    createToolTestApi({ env, callId: "call-read-image" }),
     BACKGROUND_CONTEXT,
   );
   /**
@@ -93,7 +80,7 @@ describe("read_image 的输出契约", () => {
   it("图片本体进 content（模型必须真正看到图）", async () => {
     const result = await runReadImage("shot.png");
 
-    const image = result.content.find((block) => block.type === "image");
+    const image = (result.content ?? []).find((block) => block.type === "image");
     expect(image).toBeDefined();
     // image 块是 base64 的字节本体，不是路径
     expect(image?.type === "image" ? image.mimeType : "").toBe("image/png");
@@ -120,7 +107,7 @@ describe("read_image 的输出契约", () => {
 
   it("给模型的信封带路径 / 类型 / 尺寸 / 体积（DSH 同款形状）", async () => {
     const result = await runReadImage("shot.png");
-    const text = result.content
+    const text = (result.content ?? [])
       .filter((block) => block.type === "text")
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");
@@ -175,11 +162,8 @@ describe("read_image 的输出契约", () => {
     if (tool === undefined) throw new Error("缺少 read_image 工具");
     await expect(
       tool.execute(
-        "call-x",
         { file_path: "   " },
-        () => {},
-        { env } as never,
-        INVOCATION,
+        createToolTestApi({ env, callId: "call-x" }),
         BACKGROUND_CONTEXT,
       ),
     ).rejects.toThrow(/non-empty/);

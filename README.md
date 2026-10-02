@@ -1,10 +1,11 @@
 <div align="center">
-  <img src="public/logo.png" alt="Oint Logo" width="128" height="128" />
+  <!-- 白底那一份：README 在 GitHub 上会跟随读者主题变深，透明底的墨色字形在暗色下看不见 -->
+  <img src="public/oint.png" alt="Oint Logo" width="128" height="128" />
 
 # Oint
 
 **基于 pisdk 的桌面 Agent 工作台**
-  把 pisdk（pi-agent-core / pi-ai）的对话、会话持久化与原生工具装进一个克制的桌面外壳：
+  基于 pi 1.0.0 官方生态（pi-durable / pi-ai / pi-mcp / Chord），提供对话、会话持久化与原生工具：
   主进程独占 Agent 运行时，渲染进程零特权，UI 以 assistant-ui 为核心。
 
   <p>
@@ -16,6 +17,8 @@
     <img alt="Local First" src="https://img.shields.io/badge/Local--First-Yes-16A34A?style=flat-square" />
   </p>
 </div>
+
+当前使用精确固定的 pi 1.0.0 生态与原生 durable 会话格式。版本调研、API 变化及验证方法见 [pi 1.0.0 重构说明](docs/pi-1.0.md)。
 
 ---
 
@@ -194,7 +197,7 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 
 ### 环境要求
 
-- Node.js 20+（`node:sqlite` 需 Node 22+，应用内由 Electron 44 提供）
+- Node.js 22.19.0+（应用内由 Electron 44 提供）
 - npm 10+
 - Windows / macOS / Linux
 
@@ -216,14 +219,13 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 
 | 脚本 | 用途 |
 | --- | --- |
-| `node scripts/probe-pisdk.mjs` | pisdk 装配探针（真实端点，验证 harness/工具/会话链路） |
-| `node scripts/probe-upgrade-087.mjs` | 内核升级探针（离线、免凭据：把 pi 0.86/0.87 的新接口逐条跑一遍 —— `openTextLineReader`、`providers/all` 枚举、`SystemMessage`/`TranscriptContext`、两种 `estimateContextTokens`、harness 装配） |
-| `node scripts/probe-packaged-kernel.mjs` | 打包内核探针（在真实 Electron 运行时里、对着 `release/*/resources/app.asar` 验证 pi 的 ESM 子路径导出、provider 目录 JSON、typebox 互通 —— 「node 下能跑」不等于「打包后能跑」） |
+| `npm run probe:kernel` | pi 1.0.0 原生探针（免凭据）：模型目录、文件系统、新版 SQLite 提交/分支/重开、MCP 握手/发现/调用 |
+| `npm run probe:packaged` | 在 Electron Node 运行时对真实 `app.asar` 运行同一组探针，并核对四个核心包的 1.0.0 版本和导入位置；先执行 `npm run pack` |
 | `node scripts/e2e-smoke.mjs` | 端到端冒烟（CDP 驱动真实 Electron，覆盖流式对话、工具调用、审批、完全访问、重启恢复） |
 | `node scripts/probe-browser-guest.mjs` | 内置浏览器探针（CDP 驱动真实 Electron，验证 webview 的 guest 真的附着、导航可用且只加载一次） |
 | `npm run probe:system` | 系统预设层探针（CDP 驱动真实 Electron，免凭据）：内置魔法提示被扫到且同名用户可覆盖、内置不可删、九个 MCP 预设的默认启停与**真实网络握手**、同 id 覆盖、启停落盘与生效，并在真实界面里验设置面板的系统 / 用户两个页签。用独立 `OINT_HOME`，不碰本机数据；联网用例 `OINT_LIVE_MCP=1 npx vitest run --project node src/main/pisdk/mcp-presets.live.test.ts` 可单独跑 |
 
-前两者从环境变量读取凭据：
+端到端模型冒烟从环境变量读取凭据：
 
 ```bash
 OINT_PROBE_API_KEY=... node scripts/e2e-smoke.mjs

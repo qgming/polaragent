@@ -8,7 +8,7 @@
 // 但生产环境用 `RepetitionInspector::new(None)` 构造，检查直接短路返回 allow ——
 // **写了但永远不跑**。所以「证明它真的会触发」比「证明它不误报」更重要。
 
-import type { JsonValue } from "@earendil-works/pi-agent-core";
+import type { JsonValue } from "@earendil-works/chord";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   createRepeatChain,

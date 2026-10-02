@@ -1,6 +1,7 @@
 import path from "node:path";
-import type { ExecutionEnv, Skill } from "@earendil-works/pi-agent-core";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Skill } from "@/main/pisdk/resource-loaders";
 import type { SkillInfo } from "@/shared/contracts/skills";
 
 type ListHandler = (event: unknown, request?: { workingDir?: string }) => Promise<SkillInfo[]>;
@@ -36,8 +37,7 @@ vi.mock("node:os", async (importOriginal) => {
 
 vi.mock("@/main/settings/store", () => ({ loadSettings: vi.fn() }));
 vi.mock("@/main/pisdk/exec-env", () => ({ createExecEnv: vi.fn() }));
-vi.mock("@earendil-works/pi-agent-core", () => ({
-  BACKGROUND_CONTEXT: {},
+vi.mock("@/main/pisdk/resource-loaders", () => ({
   loadSkills: vi.fn(),
 }));
 
@@ -54,8 +54,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { readFile } from "node:fs/promises";
-import { loadSkills } from "@earendil-works/pi-agent-core";
 import { createExecEnv } from "@/main/pisdk/exec-env";
+import { loadSkills } from "@/main/pisdk/resource-loaders";
 import { agentsSkillsDir, resolveBuiltinSkillDir } from "@/main/pisdk/resources";
 import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
@@ -76,7 +76,7 @@ function skill(name: string, dir: string): Skill {
   return {
     name,
     description: `${name} 的说明`,
-    content: "正文",
+    baseDir: `${dir}/${name}`,
     filePath: `${dir}/${name}/SKILL.md`,
   };
 }
@@ -107,7 +107,7 @@ beforeEach(() => {
   registered.handlers.clear();
   skillsByDir.clear();
   vi.mocked(loadSkills).mockImplementation(async (_env, dirs) => {
-    const dir = Array.isArray(dirs) ? dirs.join(",") : dirs;
+    const dir = typeof dirs === "string" ? dirs : dirs.join(",");
     return { skills: skillsByDir.get(dir) ?? [], diagnostics: [] };
   });
   vi.mocked(createExecEnv).mockResolvedValue({} as ExecutionEnv);

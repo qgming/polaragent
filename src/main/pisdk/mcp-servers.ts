@@ -1,8 +1,8 @@
 // MCP 服务桥：把「系统预设 + 设置里的用户 server」变成「可用的宿主工具 + 给面板看的状态」。
 //
 // 三层分工：
-// - src/main/mcp/*              协议实现（传输 + 会话），不认识设置与工具
-// - 本文件                       连接池与状态机，向运行时暴露 AgentHarnessTool
+// - src/main/mcp/*              pi-mcp 配置适配，不认识设置与工具
+// - 本文件                       连接池与状态机，向运行时暴露 pi-durable ToolRegistration
 // - src/main/ipc/mcp.ts          IPC 出口，向设置面板暴露配置 + 状态
 //
 // 两层的合并口径**不在本文件**：它住在 shared/mcp/builtin-servers.ts 的
@@ -12,7 +12,7 @@
 // 单例与权限规则库同档（进程内一份）：运行时每次建会话都来这里取当前工具，
 // 连接状态也只有一份才不会出现「面板说就绪、运行时说没连上」。
 
-import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import {
   createMcpClient,
   type McpCallResult,
@@ -41,7 +41,6 @@ import {
   resolveMcpServerEntries,
 } from "@/shared/mcp/builtin-servers";
 import { errorText } from "./error-text";
-import type { AppToolContext } from "./tools";
 import { createMcpCatalogTool, type McpCatalogServer } from "./tools/mcp-catalog";
 import { createMcpGatewayTool, type McpGatewayServer } from "./tools/mcp-gateway";
 
@@ -65,7 +64,7 @@ export interface McpToolSource {
    * 同步返回是刻意的：建会话时要用它一次性装配工具数组，
    * 而连接状态由 reload() 维护，取快照不该再去等网络。
    */
-  tools(): AgentHarnessTool<AppToolContext>[];
+  tools(): ToolRegistration[];
   /** 工具集合变化时回调（连接/断开/工具列表变化），返回取消订阅函数 */
   subscribe(listener: () => void): () => void;
 }
@@ -93,6 +92,7 @@ export interface McpServers extends McpToolSource {
     serverId: string,
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<McpCallResult>;
   dispose(): Promise<void>;
 }
@@ -109,6 +109,8 @@ interface ServerEntry {
   connectedAt?: number;
   /** 正在进行的连接尝试：并发 reload 不该把同一个 server 连两遍 */
   connecting?: Promise<void>;
+  controller?: AbortController;
+  unwatch?: () => void;
 }
 
 export interface McpServersDeps {
@@ -118,35 +120,7 @@ export interface McpServersDeps {
   createClient?: (config: McpServerConfig) => McpClient;
 }
 
-/**
- * 三层的合并口径：**系统预设 → 插件声明 → 用户配置**。
- *
- * 这两个局部包装是**唯一**注入插件 server 的地方（下面五处调用全走它们）。
- * 为什么收在这里而不是让每个调用点自己写 `pluginMcpServerConfigs()`：
- * 那是五处各写一遍同一个参数，而漏掉任何一处的症状都不一样 ——
- * 漏在 `views()` 是「面板看不到插件提供的 server」，漏在 `reload()` 是
- * 「面板看得到但连不上」，漏在 `reconnect()` 是「点重连没反应」。
- * 三种症状，同一个原因，而且都不报错。
- *
- * `pluginMcpServerConfigs()` 读的是插件贡献面快照（同步）—— 它在装配路径上，
- * 不能 await 注册表。
- */
-function entriesOf(settings: Settings): ResolvedMcpServer[] {
-  return resolveMcpServerEntries(settings, pluginMcpServerConfigs());
-}
-
-/**
- * 设置面板用的清单：**不含插件贡献的 server**。
- *
- * 与 `entriesOf` 分开是刻意的，而且分开的正是**"谁说了算"**：
- *  - 面板是给用户管自己配置的地方。插件带来的 server 用户在面板里既改不了也删不掉
- *    （它们由插件的 `mcp.json` 派生），显示出来只会制造"这里能管它"的错觉；
- *  - 运行时那一侧照常合并（`entriesOf`），所以**模型照样能用它们**。
- *
- * 代价是"插件偷偷加了 MCP server 而用户在设置里看不见"。这条由**插件详情**补上：
- * 详情里有它的权限清单（`mcp.server.local` / `mcp.server.remote` 是高风险项）
- * 与贡献物计数 —— 用户在那个插件自己的档案里看得到，而不是在一个不属于它的列表里。
- */
+// 面板管理系统与用户配置；插件的连接仍参与运行时合并，在插件详情里管理。
 function entriesForPanel(settings: Settings): ResolvedMcpServer[] {
   return resolveMcpServerEntries(settings);
 }
@@ -184,6 +158,16 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
   const entries = new Map<string, ServerEntry>();
   const listeners = new Set<() => void>();
   let disposed = false;
+  let disposal: Promise<void> | undefined;
+  let administration: Promise<unknown> = Promise.resolve();
+  const probes = new Set<McpClient>();
+
+  // Serialize configuration mutations. Network connections for different servers still run in parallel.
+  function serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const next = administration.then(operation, operation);
+    administration = next.catch(() => undefined);
+    return next;
+  }
 
   function notify(): void {
     for (const listener of [...listeners]) {
@@ -245,6 +229,10 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
   async function closeEntry(entry: ServerEntry): Promise<void> {
     const client = entry.client;
     entry.client = null;
+    entry.unwatch?.();
+    entry.unwatch = undefined;
+    entry.controller?.abort();
+    entry.controller = undefined;
     entry.status = "idle";
     entry.error = undefined;
     entry.handshake = undefined;
@@ -277,14 +265,50 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
         return;
       }
       entry.client = client;
+      const controller = new AbortController();
+      entry.controller = controller;
       entry.config = config;
       entry.status = "connecting";
       entry.error = undefined;
       notify();
 
+      let dirty = false;
+      let refreshing = false;
+      const current = (): boolean =>
+        !disposed && entry.client === client && entries.get(config.id) === entry;
+      const refresh = async (): Promise<void> => {
+        if (refreshing || !current() || entry.status !== "ready") return;
+        refreshing = true;
+        try {
+          while (dirty && current()) {
+            dirty = false;
+            const tools = await client.listTools(controller.signal);
+            if (!current()) return;
+            entry.tools = tools;
+            notify();
+          }
+        } catch (error) {
+          if (!current() || controller.signal.aborted) return;
+          entry.status = "error";
+          entry.error = `更新 MCP 工具清单失败：${errorText(error)}`;
+          entry.tools = [];
+          notify();
+        } finally {
+          refreshing = false;
+        }
+      };
+      entry.unwatch = client.onToolsChanged(() => {
+        dirty = true;
+        void refresh();
+      });
+
       // 就绪之后才断开的连接：状态必须跟着变，否则面板会一直显示「已连接」而工具已失效
       client.onClosed((reason) => {
         if (entry.client !== client || entry.status !== "ready") return;
+        entry.client = null;
+        controller.abort();
+        entry.unwatch?.();
+        entry.unwatch = undefined;
         entry.status = "error";
         entry.error = `连接已断开：${reason}`;
         entry.tools = [];
@@ -293,15 +317,16 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
 
       try {
         const handshake = await client.connect();
-        const tools = await client.listTools();
+        const tools = await client.listTools(controller.signal);
         // 期间被新的重连/关闭替换过：这次结果已经过期，直接丢弃
-        if (entry.client !== client) return;
+        if (!current()) return;
         entry.handshake = handshake;
         entry.tools = tools;
         entry.status = "ready";
         entry.connectedAt = Date.now();
+        if (dirty) void refresh();
       } catch (error) {
-        if (entry.client !== client) return;
+        if (!current()) return;
         const detail = errorText(error);
         const diagnostics = client.diagnostics();
         entry.status = "error";
@@ -327,6 +352,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
       if (existing.connecting !== undefined) return existing.connecting;
       // 已经就绪且连接参数没变：什么都不用做
       if (existing.status === "ready" && sameConnection(existing.config, config)) {
+        existing.config = config;
         return Promise.resolve();
       }
       // 配置变了或上次失败：复用条目，但连接重建
@@ -362,10 +388,10 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
    * 每台就绪的 server 出一个聚合工具 `mcp__<id>__call`；只要有 server 就带上 `mcp_tools`
    *（内置详情工具，聚合形态下它是读工具清单与参数 schema 的唯一通道）。
    */
-  function collectTools(): AgentHarnessTool<AppToolContext>[] {
-    const result: AgentHarnessTool<AppToolContext>[] = [];
+  function collectTools(): ToolRegistration[] {
+    const result: ToolRegistration[] = [];
     if (entries.size > 0) {
-      result.push(createMcpCatalogTool<AppToolContext>({ catalog }));
+      result.push(createMcpCatalogTool({ catalog }));
     }
     for (const [id, entry] of entries) {
       if (entry.status !== "ready") continue;
@@ -373,7 +399,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
         warn(`MCP 工具超过 ${MAX_MCP_TOOLS} 个，已省略其余 server（${id}）`);
         return result;
       }
-      result.push(createMcpGatewayTool<AppToolContext>(gatewayServer(id, entry), { callTool }));
+      result.push(createMcpGatewayTool(gatewayServer(id, entry), { callTool }));
     }
     return result;
   }
@@ -406,12 +432,13 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
     serverId: string,
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<McpCallResult> {
     const entry = entries.get(serverId);
     if (entry === undefined || entry.status !== "ready" || entry.client === null) {
       throw new Error(`MCP server 未连接：${serverId}`);
     }
-    return entry.client.callTool(toolName, args);
+    return entry.client.callTool(toolName, args, signal);
   }
 
   const servers: McpServers = {
@@ -428,45 +455,53 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
       // 面板：不含插件贡献的（理由见 entriesForPanel）
       return toViews(entriesForPanel(await deps.getSettings()));
     },
-    async reload() {
-      if (disposed) return [];
-      const settings = await deps.getSettings();
-      // 连接只连**生效的**那些：同 id 用户配置胜出、停用的不连（合并口径见 builtin-servers.ts）
-      const active = effectiveOf(settings);
-      const byId = new Map(active.map((config) => [config.id, config]));
+    reload() {
+      return serialize(async () => {
+        if (disposed) return [];
+        const settings = await deps.getSettings();
+        if (disposed) return [];
+        // 连接只连**生效的**那些：同 id 用户配置胜出、停用的不连（合并口径见 builtin-servers.ts）
+        const active = effectiveOf(settings);
+        const byId = new Map(active.map((config) => [config.id, config]));
 
-      for (const [id, entry] of [...entries]) {
-        const next = byId.get(id);
-        // 被删掉、被停用、或被另一层同 id 配置取代：关连接并从连接表摘掉
-        //（视图仍会以 idle 状态展示它，用户在面板里还看得见）
-        if (next === undefined) {
-          await closeEntry(entry);
-          entries.delete(id);
-          continue;
+        for (const [id, entry] of [...entries]) {
+          const next = byId.get(id);
+          // 被删掉、被停用、或被另一层同 id 配置取代：关连接并从连接表摘掉
+          //（视图仍会以 idle 状态展示它，用户在面板里还看得见）
+          if (next === undefined) {
+            await closeEntry(entry);
+            entries.delete(id);
+            continue;
+          }
+          // 连接参数变了：先关，下面统一重连
+          if (!sameConnection(entry.config, next)) await closeEntry(entry);
         }
-        // 连接参数变了：先关，下面统一重连
-        if (!sameConnection(entry.config, next)) await closeEntry(entry);
-      }
 
-      await Promise.all(active.map((config) => ensureConnected(config)));
-      notify();
-      return toViews(entriesOf(settings));
+        await Promise.all(active.map((config) => ensureConnected(config)));
+        notify();
+        return toViews(entriesForPanel(settings));
+      });
     },
-    async reconnect(serverId) {
-      const settings = await deps.getSettings();
-      const config = effectiveOf(settings).find((item) => item.id === serverId);
-      // 先断开这台（如果有连接）：不复用旧 client，否则「重连」等于什么都不做
-      const existing = entries.get(serverId);
-      if (existing !== undefined) {
-        await closeEntry(existing);
-        // 停用 / 被覆盖 / 已从设置里删掉的 server：断完就算（视图里仍以 idle 展示它）
-        if (config === undefined) entries.delete(serverId);
-      }
-      if (config !== undefined) await ensureConnected(config);
-      notify();
-      return toViews(entriesOf(settings));
+    reconnect(serverId) {
+      return serialize(async () => {
+        if (disposed) return [];
+        const settings = await deps.getSettings();
+        if (disposed) return [];
+        const config = effectiveOf(settings).find((item) => item.id === serverId);
+        // 先断开这台（如果有连接）：不复用旧 client，否则「重连」等于什么都不做
+        const existing = entries.get(serverId);
+        if (existing !== undefined) {
+          await closeEntry(existing);
+          // 停用 / 被覆盖 / 已从设置里删掉的 server：断完就算（视图里仍以 idle 展示它）
+          if (config === undefined) entries.delete(serverId);
+        }
+        if (config !== undefined) await ensureConnected(config);
+        notify();
+        return toViews(entriesForPanel(settings));
+      });
     },
     async probe(config) {
+      if (disposed) return { ok: false, reason: "MCP 服务已关闭" };
       if (!isValidMcpServerId(config.id)) {
         return { ok: false, reason: `服务器 ID 非法：${config.id}` };
       }
@@ -474,6 +509,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
       try {
         // 建客户端可能同步抛错（spawn 参数非法等）：按「试连失败」回，不把异常抛给通道
         client = makeClient(config);
+        probes.add(client);
       } catch (error) {
         return { ok: false, reason: errorText(error) };
       }
@@ -491,16 +527,23 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
         const diagnostics = client.diagnostics();
         return { ok: false, reason: diagnostics === "" ? detail : `${detail}（${diagnostics}）` };
       } finally {
+        probes.delete(client);
         await client.close().catch(() => undefined);
       }
     },
     callTool,
-    async dispose() {
-      if (disposed) return;
+    dispose() {
+      if (disposal !== undefined) return disposal;
       disposed = true;
       listeners.clear();
-      for (const entry of entries.values()) await closeEntry(entry);
-      entries.clear();
+      disposal = (async () => {
+        await Promise.all([...entries.values()].map(closeEntry));
+        entries.clear();
+        await Promise.all([...probes].map((client) => client.close().catch(() => undefined)));
+        probes.clear();
+        await administration;
+      })();
+      return disposal;
     },
   };
   return servers;

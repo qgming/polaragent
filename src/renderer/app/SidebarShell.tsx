@@ -50,17 +50,29 @@ function IconButton({
   );
 }
 
-/** 品牌标记：内置图标资源（public/logo.png，与 index.html 的 favicon 是同一份文件）。
- *  图形本身是装饰性的，应用名文本就在旁边，所以 alt 留空。
- *  draggable=false：顶行整体是窗口拖拽区，浏览器原生的图片拖拽会与之抢事件。 */
+/**
+ * 品牌标记：内置图标资源（`public/oint-logo.png`，与 index.html 的 favicon 是同一份文件）。
+ *
+ * 用**透明底**那一份（另一份 `oint.png` 是同一个图形压在白底上，见下面尺寸的说明）。
+ * 图形本身是装饰性的，应用名文本就在旁边，所以 alt 留空。
+ *
+ * `dark:invert`：图形是墨色（透明底 + 黑字形），暗色侧栏（oklch 0.19）上等于看不见 ——
+ * 反相之后才是浅色标记。这也是这里不能用白底那份的原因：白底方块在暗色侧栏上会变成
+ * 一块刺眼的白砖。
+ *
+ * 尺寸比旧标记大一档：这个图形在 1024 画布上只占 72% 的高度（旧的那份占 80%），
+ * 同样的 size-5 会看起来小一圈。
+ *
+ * draggable=false：顶行整体是窗口拖拽区，浏览器原生的图片拖拽会与之抢事件。
+ */
 function BrandMark() {
   return (
     <img
-      src="./logo.png"
+      src="./oint-logo.png"
       alt=""
       aria-hidden="true"
       draggable={false}
-      className="size-5 shrink-0 object-contain"
+      className="size-6 shrink-0 object-contain dark:invert"
     />
   );
 }

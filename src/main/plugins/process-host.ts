@@ -1,3 +1,5 @@
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { requireToolEnv } from "@/main/pisdk/tools/tool-env";
 // 插件进程池：把"哪些插件该跑、它们的工具叫什么"这件事收在一处。
 //
 // ## 与贡献面快照的关系
@@ -16,11 +18,6 @@
 // `key` 是插件 id 的归一形式（点换成 `-`）：可读，且与分区名/数据目录名同一套归一，
 // 排查时不必再想一遍"这个 key 对应哪个插件"。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
 import { dataDir, pluginDataDir } from "@/main/app/paths";
 import type {
   OintPluginManifest,
@@ -61,7 +58,7 @@ export interface PluginProcessHost {
   /** 对齐到给定的插件集合：启动新出现的、停掉不再有的、保留没变的 */
   sync(sources: readonly PluginProcessSource[]): Promise<void>;
   /** 全部插件的工具（已加前缀，可直接进 buildTools 的 extraTools） */
-  tools(): AgentHarnessTool<ExecutionToolContext>[];
+  tools(): ToolRegistration[];
   /** 插件注册的命令（已转成面板要的形状） */
   commands(): PluginCommandView[];
   /** 执行一个插件命令；id 由 commands() 给出 */
@@ -188,13 +185,7 @@ export interface PluginProcessHostOptions {
   onIssue?: (issue: PluginProcessIssue) => void;
 }
 
-/**
- * 工具集合的代号：**只在真的变了的时候 +1**。
- *
- * 运行时要靠它判断"该不该重建工具表"。用"变没变"而不是"同步过几次"：
- * 每次刷新都重建工具表的话，用户每点一次插件管理就会让所有会话的
- * `harness.setTools` 被调一次，而内核的 setTools 会打断正在进行的生成准备。
- */
+/** 工具集合实际变化才递增；runtime 在空闲时据此替换 durable registry 的插件工具。 */
 let toolGeneration = 0;
 let lastSignature = "";
 
@@ -211,24 +202,7 @@ export function createPluginProcessHost(options: PluginProcessHostOptions = {}):
   >();
   let issues: PluginProcessIssue[] = [];
   let forkImpl = options.fork;
-  /**
-   * **已经暴露过、但进程已经不在了**的工具。
-   *
-   * ## 为什么必须有这张表（这是一个真踩过的坑）
-   *
-   * 内核的 `activeToolNames` 是**创建会话时按 `tools.map(t => t.name)` 播种的**，
-   * 而 `harness.setTools` **不动它**。于是工具表一旦"少了一个名字"，
-   * 此后每次请求 `prepareGeneration` 都会发现"已激活的工具不在表里"，
-   * 直接以 `configured_tools_unavailable` 失败 —— **整个会话再也发不出消息**。
-   *
-   * 插件工具恰恰会消失：进程崩溃、插件被停用、握手失败。
-   * MCP 那边没这个问题（它的工具集由设置决定，不会因为一个进程死了而变），
-   * 所以这是插件引入的**新失败模式**。
-   *
-   * 解法是让暴露出去的工具集合**单调不减**：进程没了，工具还在，
-   * 只是调用它返回一句可读的错误。用户看到的是"这个插件的工具不可用了"，
-   * 而不是"对话发不出去了"。
-   */
+  // 本进程内曾暴露过的入口保留不可用诊断，避免已排队的工具调用得到含糊的插件错误。
   const retired = new Map<string, { pluginName: string }>();
 
   /**
@@ -391,8 +365,8 @@ export function createPluginProcessHost(options: PluginProcessHostOptions = {}):
     }
   }
 
-  function tools(): AgentHarnessTool<ExecutionToolContext>[] {
-    const tools: AgentHarnessTool<ExecutionToolContext>[] = [];
+  function tools(): ToolRegistration[] {
+    const tools: ToolRegistration[] = [];
     for (const [pluginId, entry] of running) {
       // 权限门槛：没申请 agent.tool.register 的插件，它的工具**不进工具表**
       //（与 MCP 那边"没申请权限的 server 不装载"同一条纪律）
@@ -418,7 +392,7 @@ export function createPluginProcessHost(options: PluginProcessHostOptions = {}):
       */
     if (tools.length > 0) {
       tools.push(
-        createPluginCatalogTool<ExecutionToolContext>({
+        createPluginCatalogTool({
           catalog: () =>
             [...running]
               .filter(
@@ -552,7 +526,7 @@ export function getPluginProcessHost(options?: PluginProcessHostOptions): Plugin
 }
 
 /** 当前可用的插件工具（运行时装配用） */
-export function pluginTools(): AgentHarnessTool<ExecutionToolContext>[] {
+export function pluginTools(): ToolRegistration[] {
   return getPluginProcessHost().tools();
 }
 
@@ -604,20 +578,17 @@ export function stopPluginProcesses(): void {
  *
  * 网关形态让这件事的成本小得多：一个插件只留**一个**桩，而不是每个内层工具一个。
  */
-function makeRetiredGateway(
-  pluginId: string,
-  pluginName: string,
-): AgentHarnessTool<ExecutionToolContext> {
+function makeRetiredGateway(pluginId: string, pluginName: string): ToolRegistration {
   return {
     name: pluginGatewayName(pluginId),
-    label: pluginName,
+
     description: `[插件 ${pluginId}] 当前不可用`,
     parameters: {
       type: "object",
       properties: { tool: { type: "string" }, args: { type: "object" } },
       required: ["tool"],
     },
-    async execute(): Promise<AgentToolResult<unknown>> {
+    async execute(): Promise<ToolExecutionResult> {
       return {
         content: [
           {
@@ -626,9 +597,9 @@ function makeRetiredGateway(
           },
         ],
         isError: true,
-      } as unknown as AgentToolResult<unknown>;
+      };
     },
-  } as AgentHarnessTool<ExecutionToolContext>;
+  };
 }
 
 /**
@@ -647,7 +618,7 @@ function makeGatewayTool(
   pluginName: string,
   process: PluginProcess,
   decls: readonly PluginToolDecl[],
-): AgentHarnessTool<ExecutionToolContext> {
+): ToolRegistration {
   const catalog = decls.map((decl) => `- ${decl.name}：${decl.description}`).join("\n");
   const description =
     `[插件 ${pluginId}] ${pluginName} 提供的工具。用 tool 参数指定要调用哪一个，` +
@@ -655,7 +626,7 @@ function makeGatewayTool(
 
   return {
     name: pluginGatewayName(pluginId),
-    label: pluginName,
+
     description,
     parameters: {
       type: "object",
@@ -672,7 +643,7 @@ function makeGatewayTool(
       },
       required: ["tool"],
     },
-    async execute(_toolCallId, rawParams, _onUpdate, context): Promise<AgentToolResult<unknown>> {
+    async execute(rawParams, api): Promise<ToolExecutionResult> {
       /*
         `parameters` 是手写的字面量（没有 typebox schema 可推），所以 params 是 unknown。
         在这里收窄一次，而不是每处都断言。
@@ -692,16 +663,16 @@ function makeGatewayTool(
             },
           ],
           isError: true,
-        } as unknown as AgentToolResult<unknown>;
+        };
       }
 
       // 工作目录来自**这次调用**的执行环境（一个进程服务所有会话）
-      const result = await process.call(requested, params.args ?? {}, context.env.cwd);
+      const result = await process.call(requested, params.args ?? {}, requireToolEnv(api).cwd);
       return {
         content: [{ type: "text", text: result.ok ? result.text : `错误：${result.error}` }],
         // 失败时带上 isError，界面据此把卡片标红 —— 与其它工具同款
         ...(result.ok ? {} : { isError: true }),
-      } as AgentToolResult<unknown>;
+      };
     },
-  } as AgentHarnessTool<ExecutionToolContext>;
+  };
 }

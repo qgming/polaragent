@@ -1,3 +1,5 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 // 会话级待办清单工具（与 pi 原生四件套 bash/read/write/edit 并列）。
 //
 // 语义对齐 codex 的 update_plan / opencode 的 todowrite：**整表替换**，不是增量命令。
@@ -5,16 +7,11 @@
 // 重发全表天然幂等，也不会出现「漏了一步状态」的半截状态机；增量接口在模型漏传 id 时
 // 反而更脆。代价是每次都要重发一遍条目文本，但一张计划表本来就只有几行。
 //
-// 状态放在 toolContext 里（TodoToolContext.todo），由运行时按会话 createTodoState() 造一份。
-// 每次整表替换后通过 toolContext.persistTodo 往会话里追加一条 custom entry，运行时在会话重建时
+// 运行时按会话注入 todo 状态与持久化回调，工具通过构造参数持有它们。
+// 每次整表替换后通过 options.persistTodo 往会话里追加一条 custom entry，运行时在会话重建时
 // 读回最后一条来恢复内存状态 —— 所以应用重启后清单还在（换会话仍是一张新表）。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-  JsonValue,
-} from "@earendil-works/pi-agent-core";
+import type { JsonValue } from "@earendil-works/chord";
 import { type Static, Type } from "typebox";
 
 export type TodoStatus = "pending" | "active" | "done" | "failed";
@@ -32,7 +29,7 @@ export interface TodoState {
   todos: TodoEntry[];
 }
 
-/** 每个会话一份，放在 toolContext 里传递（会话结束即释放） */
+/** 每个会话一份，由工具构造参数传递（会话结束即释放） */
 export function createTodoState(): TodoState {
   return { revision: 0, todos: [] };
 }
@@ -88,7 +85,7 @@ export function toTodoPayload(state: TodoState): JsonValue {
   };
 }
 
-export interface TodoToolContext extends ExecutionToolContext {
+export interface TodoToolOptions {
   todo: TodoState;
   /**
    * 可选的持久化回调：每次整表替换后由运行时接到会话的 appendCustomEntry 上。
@@ -236,22 +233,21 @@ function summarize(todos: readonly TodoEntry[]): string {
   return lines.join("\n");
 }
 
-/** 构造 todo 工具；状态来自 toolContext.todo，工具本身无内部状态（同一实例可服务多个会话） */
-export function createTodoTool(): AgentHarnessTool<
-  TodoToolContext,
-  typeof todoSchema,
-  TodoToolDetails
-> {
+/** 构造 todo 工具；状态来自 options.todo，工具本身无内部状态（同一实例可服务多个会话） */
+export function createTodoTool(
+  options: TodoToolOptions = { todo: createTodoState() },
+): ToolRegistration<typeof todoSchema, JsonRepresentation<TodoToolDetails>> {
   return {
     name: "todo",
-    label: "todo",
+
     description: TODO_DESCRIPTION,
     parameters: todoSchema,
-    async execute(_toolCallId, params, _onUpdate, toolContext, _invocation, _context) {
-      const state = toolContext.todo;
-      const result = (text: string): AgentToolResult<TodoToolDetails> => ({
+    async execute(params) {
+      const state = options.todo;
+      const result = (text: string): ToolExecutionResult<JsonRepresentation<TodoToolDetails>> => ({
         content: [{ type: "text", text }],
         details: { todos: state.todos, revision: state.revision },
+        isError: text.startsWith("Error:"),
       });
 
       const empty = params.todos.find((entry) => entry.text.trim() === "");
@@ -267,7 +263,7 @@ export function createTodoTool(): AgentHarnessTool<
       state.todos = todos;
       // 持久化到会话：失败只记 warning —— 待办是辅助信息，不能因此让工具调用失败
       try {
-        await toolContext.persistTodo?.(state);
+        await options.persistTodo?.(state);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         console.warn(`待办清单持久化失败（本次结果仍返回）：${detail}`);

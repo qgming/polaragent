@@ -19,6 +19,9 @@ import {
   ReasoningTrigger,
 } from "@/renderer/components/assistant-ui/elements/reasoning.aui";
 import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/thinking-indicator";
+import { ATTACHMENT_DATA_PART } from "@/renderer/runtime/attachment-payload";
+import type { AttachmentPart } from "@/shared/contracts/attachment";
+import { AttachmentCard } from "./AttachmentCard";
 import { ToolCallPart, ToolRunGroup } from "./ToolParts";
 // 工具文案来自注册表入口（不再是 ToolParts 的导出 —— 那张表已经搬到
 // features/chat/tool-presentations.ts，与面板/设置分栏的注册表同构）
@@ -265,15 +268,41 @@ const UserImagePart: ImageMessagePartComponent = (part) => (
   </div>
 );
 
+/** `data` part 的负载就是附件 part 本身（见 message-converter 的映射） */
+function AttachmentDataPart(props: { data?: unknown }): React.JSX.Element | null {
+  const part = props.data;
+  if (
+    typeof part !== "object" ||
+    part === null ||
+    (part as { type?: unknown }).type !== "attachment"
+  ) {
+    return null;
+  }
+  return (
+    <div data-slot="aui_user-message-attachment" className="py-1">
+      <AttachmentCard part={part as AttachmentPart} />
+    </div>
+  );
+}
+
 /**
  * 用户消息的正文。外壳（气泡、附件、操作栏）留在调用方：主线程是 Thread.tsx 的
  * UserMessage，面板是 SubagentPanel.tsx 的 PanelUserMessage。
  * File / Image 外面各包一层带 data-slot 的容器：那是气泡内的纵向留白，属于正文的一部分。
+ *
+ * 附件卡片走库的 `data` part 槽位（`by_name` 按 part 的 name 派发，见 message-converter
+ * 的 toThreadPart）：附件有四种形态，卡片要显示名字/大小/时长/抽帧数并带「用系统程序打开」
+ * 的动作，那超出了 Image / File part 的形状。**两个调用方共用这一份** —— 与其余正文同理。
  */
 export function UserMessageParts(): React.JSX.Element {
   return (
     <MessagePrimitive.Parts
-      components={{ ...USER_PARTS, File: UserFilePart, Image: UserImagePart }}
+      components={{
+        ...USER_PARTS,
+        File: UserFilePart,
+        Image: UserImagePart,
+        data: { by_name: { [ATTACHMENT_DATA_PART]: AttachmentDataPart } },
+      }}
     />
   );
 }

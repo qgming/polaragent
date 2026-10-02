@@ -1,3 +1,5 @@
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // 浏览器工具的行为测试：只覆盖**不依赖 Electron** 的那一层。
 //
 // 重点验三件容易写错的事：
@@ -10,7 +12,7 @@
 // 真实的页面行为（快照内容、点击坐标、串行队列）留给主进程与端到端验收：那是 Electron
 // 里的时序，在这里假装测它只会制造「测试通过但功能坏了」的假象。
 
-import type { AgentHarnessTool, ExecutionToolContext } from "@earendil-works/pi-agent-core";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
 import {
   BROWSER_TOOL_NAMES,
@@ -257,28 +259,21 @@ function trackingAutomation(
 
 /** 调用一个工具并取回给模型看的文本（要断言文案的用例用它） */
 async function callText(
-  tools: AgentHarnessTool<ExecutionToolContext>[],
+  tools: ToolRegistration[],
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`缺少工具 ${name}`);
-  const result = await tool.execute(
-    "t1",
-    args as never,
-    (() => undefined) as never,
-    {} as never,
-    {} as never,
-    {} as never,
-  );
-  const part = result.content[0];
+  const result = await tool.execute(args, createToolTestApi({ callId: "t1" }), BACKGROUND_CONTEXT);
+  const part = (result.content ?? [])[0];
   if (part === undefined || part.type !== "text") throw new Error(`${name} 没有返回文本`);
   return part.text;
 }
 
 /** 取出某个工具并调用它（参数按各自 schema 给最小合法值） */
 async function call(
-  tools: AgentHarnessTool<ExecutionToolContext>[],
+  tools: ToolRegistration[],
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<void> {
@@ -293,25 +288,21 @@ async function call(
  * 截图的全白告警就是因为只进了 content 而曾经整个丢掉。
  */
 async function callResult<TDetails = unknown>(
-  tools: AgentHarnessTool<ExecutionToolContext>[],
+  tools: ToolRegistration[],
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<{ content: { type: string; text?: string }[]; details: TDetails }> {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`缺少工具 ${name}`);
-  return (await tool.execute(
-    "t1",
-    args as never,
-    (() => undefined) as never,
-    {} as never,
-    {} as never,
-    {} as never,
-  )) as { content: { type: string; text?: string }[]; details: TDetails };
+  return (await tool.execute(args, createToolTestApi({ callId: "t1" }), BACKGROUND_CONTEXT)) as {
+    content: { type: string; text?: string }[];
+    details: TDetails;
+  };
 }
 
 /** 调用一个工具并取回它抛出的错误文案（参数校验的用例用它） */
 async function callError(
-  tools: AgentHarnessTool<ExecutionToolContext>[],
+  tools: ToolRegistration[],
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<string> {
@@ -568,10 +559,10 @@ describe("浏览器工具", () => {
     expect(text).toContain("The viewport looks blank");
 
     // 同时保留在 details 里，让界面也能提示「这张图可能是白的」
-    expect(result.details.warning).toContain("The viewport looks blank");
+    expect(result.details?.warning).toContain("The viewport looks blank");
 
     // 图片本身照常返回（告警是非致命的，不是错误）
-    expect(result.content.some((block) => block.type === "image")).toBe(true);
+    expect((result.content ?? []).some((block) => block.type === "image")).toBe(true);
   });
 
   it("没有 warning 时不加噪声行", async () => {
@@ -585,7 +576,7 @@ describe("浏览器工具", () => {
       .join("");
 
     expect(text).not.toContain("Warning:");
-    expect(result.details.warning).toBeUndefined();
+    expect(result.details?.warning).toBeUndefined();
   });
 
   it("browser_open 的 newTab 透传（开新标签而不是把当前页面顶掉），输出带标签身份", async () => {
@@ -644,7 +635,7 @@ describe("浏览器工具", () => {
     ]) {
       const tool = tools.find((candidate) => candidate.name === name);
       expect(tool, `缺少工具 ${name}`).toBeTruthy();
-      expect(tool?.label).toBe(name);
+      expect(tool?.name).toBe(name);
       expect(tool?.description).toContain("When to use it");
       expect(tool?.description).toContain("When NOT to use it");
     }

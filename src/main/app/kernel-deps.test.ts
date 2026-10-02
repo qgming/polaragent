@@ -25,9 +25,10 @@ const manifest = (name: string) => path.join(APP, "node_modules", name, "package
 const appManifest = path.join(APP, "package.json");
 
 const [PI_CORE, PI_AI] = KERNEL_PACKAGES;
+const otherKernels = KERNEL_PACKAGES.slice(2).map((name) => ({ name, version: null }));
 
 describe("readKernelDependencies", () => {
-  it("按 KERNEL_PACKAGES 顺序返回两个内核，版本取实际安装版本", async () => {
+  it("按 KERNEL_PACKAGES 顺序返回内核，版本取实际安装版本", async () => {
     const read = fakeReader({
       [appManifest]: { dependencies: { [PI_CORE]: "^0.85.1", [PI_AI]: "^0.85.1" } },
       [manifest(PI_CORE)]: { name: PI_CORE, version: "0.85.1" },
@@ -37,6 +38,7 @@ describe("readKernelDependencies", () => {
     await expect(readKernelDependencies(APP, read)).resolves.toEqual([
       { name: PI_CORE, version: "0.85.1" },
       { name: PI_AI, version: "0.85.2" },
+      ...otherKernels,
     ]);
   });
 
@@ -48,6 +50,7 @@ describe("readKernelDependencies", () => {
     await expect(readKernelDependencies(APP, read)).resolves.toEqual([
       { name: PI_CORE, version: "0.85.1" },
       { name: PI_AI, version: "0.85.1" },
+      ...otherKernels,
     ]);
   });
 
@@ -57,6 +60,7 @@ describe("readKernelDependencies", () => {
     await expect(readKernelDependencies(APP, read)).resolves.toEqual([
       { name: PI_CORE, version: null },
       { name: PI_AI, version: null },
+      ...otherKernels,
     ]);
   });
 
@@ -71,6 +75,7 @@ describe("readKernelDependencies", () => {
       { name: PI_CORE, version: "0.85.1" },
       // 版本号不是字符串：按读不到处理
       { name: PI_AI, version: null },
+      ...otherKernels,
     ]);
   });
 });

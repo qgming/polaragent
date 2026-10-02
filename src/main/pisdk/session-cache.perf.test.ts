@@ -1,91 +1,125 @@
-// P2-1 会话列表缓存的效果度量。
-//
-// `repo.list()` 对**每个会话文件**做 readdir → realpath → open → query → close，
-// 底层是同步 `node:sqlite` —— 本机 50 个会话实测每次约 220 ms 的主进程阻塞，
-// 而它原本在「列会话 / 打开会话 / 删会话 / fork」以及发送路径上都会被调到。
-//
-// 这个文件做两件事：
-//   1. **不变量**：重复 list 只扫盘一次（缓存语义，与机器性能无关，作为断言）；
-//   2. **实测数字**：打印首次与再次的耗时差异（只打印，不设阈值 ——
-//      阈值随机器与数据量漂移，写死只会变成假红）。
-//
-// 数据目录是临时目录里造出来的（不读 ~/.oint）：CI 与干净机器上都要能跑。
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import {
-  createNodeSqliteFactory,
-  SqliteSessionRepo,
-} from "@earendil-works/pi-session-backend-sqlite-node";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { createRegistry, Harness, type Storage } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { describe, expect, it } from "vitest";
 import { createSessionStore } from "./session-store";
 
-/** 造多少个会话：够让「每文件一次同步 open」的成本显形 */
-const SESSION_COUNT = 40;
-
-let baseDir: string;
-
-beforeAll(async () => {
-  baseDir = await mkdtemp(path.join(os.tmpdir(), "oint-cache-perf-"));
-  const repo = new SqliteSessionRepo({
-    directory: path.join(baseDir, "sessions"),
-    databaseFactory: createNodeSqliteFactory(),
-  });
-  const seed = createSessionStore(baseDir, repo);
-  for (let index = 0; index < SESSION_COUNT; index += 1) {
-    await seed.create({ title: `会话 ${index}`, cwd: baseDir });
-  }
-  await repo.close(BACKGROUND_CONTEXT);
-  // 索引文件必须存在：list() 会读它
-  await writeFile(path.join(baseDir, "sessions-index.json"), "{}\n", "utf8");
-});
-
-afterAll(async () => {
-  /**
-   * `maxRetries` / `retryDelay` 是**为 Windows 准备的**。
-   *
-   * SQLite 的 `-wal` / `-shm` 文件在后端刚关闭的那一刻还可能被句柄短暂占着，
-   * 于是递归删除拿到 `EBUSY`；而 `force: true` 只忽略 ENOENT，**不忽略 EBUSY**。
-   *
-   * 症状：全量跑时这个文件偶发失败、单独跑必过（并发几十个 worker 时更容易撞上），
-   * 报错是一句与断言无关的 `EBUSY: resource busy or locked, unlink ...sqlite-wal`。
-   * Node 就是为这种场景提供这两个选项的（遇到 EBUSY/EPERM/ENOTEMPTY 时线性退避重试）。
-   */
-  await rm(baseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
-
-describe("P2-1 会话列表缓存的效果", () => {
-  it("重复 list 不再扫盘（并打印实测耗时）", async () => {
-    const repo = new SqliteSessionRepo({
-      directory: path.join(baseDir, "sessions"),
-      databaseFactory: createNodeSqliteFactory(),
-    });
-    const store = createSessionStore(baseDir, repo);
-
-    let calls = 0;
-    const original = repo.list.bind(repo);
-    repo.list = ((...args: Parameters<typeof original>) => {
-      calls += 1;
-      return original(...args);
-    }) as typeof repo.list;
-
-    const first = performance.now();
-    const list = await store.list();
-    const firstMs = performance.now() - first;
-
-    const second = performance.now();
-    await store.list();
-    const secondMs = performance.now() - second;
-
-    console.log(
-      `会话数 ${list.length} ｜ 首次 list ${firstMs.toFixed(1)} ms（扫盘 ${calls} 次）｜ ` +
-        `再次 list ${secondMs.toFixed(1)} ms（累计扫盘 ${calls} 次）`,
+describe("native session metadata cache", () => {
+  it("metadata reads close their connections and history queries bound fetched rows", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "oint-bounded-history-"));
+    const seed = createSessionStore(directory);
+    const created = await seed.create({ cwd: directory });
+    await seed.create({ cwd: directory });
+    const initial = await seed.open(created.id);
+    if (!initial) throw new Error("Missing session");
+    const owner = await initial.session.bindHarness(() =>
+      Harness.open(
+        initial.storage,
+        { models: createModels(), registry: createRegistry() },
+        context,
+      ),
     );
-
-    // 只钉住「扫盘次数」这一条不变量：它是缓存语义，与机器性能无关
-    expect(list).toHaveLength(SESSION_COUNT);
-    expect(calls).toBe(1);
-    await repo.close(BACKGROUND_CONTEXT);
-  });
+    await owner.commit(async (tx) => {
+      for (let i = 0; i < 140; i++)
+        await tx.appendEntry(initial.conversationId, {
+          kind: "pi.user",
+          model: [{ role: "user", content: `message ${i}`, timestamp: i + 1 }],
+        });
+    }, context);
+    await seed.touch(created.id, { messageCount: 140 });
+    await seed.close();
+    const active = new Set<Storage>();
+    const limits: number[] = [];
+    let rows = 0;
+    const store = createSessionStore(directory, {
+      openStorage: async (file) => {
+        const storage = await openNodeSqliteStorage(file);
+        active.add(storage);
+        const close = storage.close.bind(storage);
+        storage.close = async (ctx) => {
+          try {
+            await close(ctx);
+          } finally {
+            active.delete(storage);
+          }
+        };
+        const scan = storage.scanEntries.bind(storage);
+        storage.scanEntries = async (...args) => {
+          limits.push(args[1]);
+          const page = await scan(...args);
+          rows += page.items.length;
+          return page;
+        };
+        return storage;
+      },
+    });
+    try {
+      expect(await store.list()).toHaveLength(2);
+      expect(active.size).toBe(0);
+      expect(limits).toEqual([]);
+      const recent = await store.loadMessages(created.id, { limit: 10 });
+      expect(active.size).toBe(1);
+      expect(limits).toEqual([11]);
+      expect(rows).toBe(11);
+      const opened = await store.open(created.id);
+      if (!opened || !recent.messages[0]?.entryId) throw new Error("Missing history");
+      await opened.session.getEntry(recent.messages[0].entryId, context);
+      expect(limits).toEqual([11, 2]);
+      expect(rows).toBe(13);
+      const first = await store.scanUsageSamples(created.id, 0, 5);
+      expect(first.entries).toBe(5);
+      expect(rows).toBe(153);
+      const second = await store.scanUsageSamples(created.id, first.nextSeq, 5);
+      expect(second.entries).toBe(5);
+      expect(rows).toBe(153);
+      await store.loadMessages(created.id, { limit: 2, order: "oldestFirst" });
+      expect(rows).toBe(153);
+      const writer = await opened.session.bindHarness(() =>
+        Harness.open(
+          opened.storage,
+          { models: createModels(), registry: createRegistry() },
+          context,
+        ),
+      );
+      const boundRows = rows;
+      await writer.commit(
+        (tx) =>
+          tx.appendEntry(opened.conversationId, {
+            kind: "pi.user",
+            model: [{ role: "user", content: "new", timestamp: 1000 }],
+          }),
+        context,
+      );
+      expect(await opened.session.allEntries()).toHaveLength(141);
+      expect(rows).toBe(boundRows);
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 20_000);
+  it("reuses opened storage across repeated lists", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "oint-cache-perf-"));
+    const store = createSessionStore(directory);
+    try {
+      for (let i = 0; i < 20; i++) await store.create({ title: `会话 ${i}`, cwd: directory });
+      const start = performance.now();
+      const first = await store.list();
+      const initialMs = performance.now() - start;
+      const owners = await Promise.all(first.map((session) => store.open(session.id)));
+      const repeat = performance.now();
+      expect(await store.list()).toEqual(first);
+      expect(await Promise.all(first.map((session) => store.open(session.id)))).toEqual(owners);
+      expect(first).toHaveLength(20);
+      console.log(
+        `20 sessions: initial ${initialMs.toFixed(1)} ms; cached ${(performance.now() - repeat).toFixed(1)} ms`,
+      );
+    } finally {
+      await store.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 20_000);
 });

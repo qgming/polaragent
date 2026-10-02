@@ -1,3 +1,6 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { requireToolEnv } from "./tool-env";
 // 主进程自定义工具：grep / glob（只读检索，与 pi 原生四件套 bash/read/write/edit 并列）。
 //
 // 为什么要自己写：内核只给 bash/read/write/edit。用 bash 跑 grep/rg 依赖外部可执行文件与
@@ -18,11 +21,7 @@
 import type { Dirent } from "node:fs";
 import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+
 import { Type } from "typebox";
 import { validateRealPathAccess } from "@/main/security/path-guard";
 
@@ -81,8 +80,12 @@ function count(amount: number, singular: string, plural = `${singular}s`): strin
 }
 
 /** 统一出口：content 是给模型看的文本，details 随结果一起留档 */
-function textResult<TDetails>(text: string, details: TDetails): AgentToolResult<TDetails> {
-  return { content: [{ type: "text", text }], details };
+function textResult<TDetails>(text: string, details: TDetails) {
+  return {
+    content: [{ type: "text" as const, text }],
+    details,
+    isError: text.startsWith("Error:"),
+  };
 }
 
 /** limit 归一：缺省/非有限值取默认值，其余取整并夹到 [1, max] */
@@ -315,17 +318,19 @@ export interface SearchToolOptions {
 }
 
 /** 构造 grep 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
-export function createGrepTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
+export function createGrepTool(
   options: SearchToolOptions = {},
-): AgentHarnessTool<TContext, typeof grepSchema, GrepToolDetails> {
+): ToolRegistration<typeof grepSchema, JsonRepresentation<GrepToolDetails>> {
   return {
     name: "grep",
-    label: "grep",
+
     description: GREP_DESCRIPTION,
     parameters: grepSchema,
-    async execute(_toolCallId, params, _onUpdate, { env }, _invocation, _context) {
+    async execute(params, api, context) {
+      context.abortSignal?.throwIfAborted();
+      const env = requireToolEnv(api);
       const requestedRoot = path.resolve(env.cwd, params.path ?? ".");
-      const failure = (message: string): AgentToolResult<GrepToolDetails> =>
+      const failure = (message: string): ToolExecutionResult<JsonRepresentation<GrepToolDetails>> =>
         textResult(`Error: ${message}`, {
           root: requestedRoot,
           matches: 0,
@@ -440,17 +445,19 @@ Output:
 Automatically skipped: directories ${SKIPPED_DIR_NAMES.join(", ")}; symbolic links are never followed. Paths are reported relative to the resolved root.`;
 
 /** 构造 glob 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
-export function createGlobTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
+export function createGlobTool(
   options: SearchToolOptions = {},
-): AgentHarnessTool<TContext, typeof globSchema, GlobToolDetails> {
+): ToolRegistration<typeof globSchema, JsonRepresentation<GlobToolDetails>> {
   return {
     name: "glob",
-    label: "glob",
+
     description: GLOB_DESCRIPTION,
     parameters: globSchema,
-    async execute(_toolCallId, params, _onUpdate, { env }, _invocation, _context) {
+    async execute(params, api, context) {
+      context.abortSignal?.throwIfAborted();
+      const env = requireToolEnv(api);
       const requestedRoot = path.resolve(env.cwd, params.path ?? ".");
-      const failure = (message: string): AgentToolResult<GlobToolDetails> =>
+      const failure = (message: string): ToolExecutionResult<JsonRepresentation<GlobToolDetails>> =>
         textResult(`Error: ${message}`, { root: requestedRoot, matches: 0, truncated: false });
       const resolution = await resolveSearchRoot(params.path, env.cwd, options.allowedRoots);
       if (!resolution.ok) return failure(resolution.message);

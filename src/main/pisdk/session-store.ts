@@ -1,19 +1,16 @@
-import { mkdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai/models";
 import {
-  BACKGROUND_CONTEXT,
-  type Branch,
-  type Entry,
-  type LaneConfiguration,
-  type LaneState,
-  laneConfig,
-  laneState,
-  type SessionMetadata,
-} from "@earendil-works/pi-agent-core";
-import {
-  createNodeSqliteFactory,
-  SqliteSessionRepo,
-} from "@earendil-works/pi-session-backend-sqlite-node";
+  AgentDoc,
+  createRegistry,
+  type EntryId,
+  Harness,
+  type Storage,
+} from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { dataDir, sessionWorkspaceDir, workspacesDir } from "@/main/app/paths";
 import {
   type AgentMode,
@@ -29,16 +26,21 @@ import type {
   SessionUsageRecord,
 } from "@/shared/contracts/session";
 import type { SubagentRun, SubagentRunStatus, SubagentSource } from "@/shared/contracts/subagent";
+import { createAttachmentForkCopier, removeSessionAttachments } from "./attachments";
+import {
+  AppSessionDoc,
+  AppSessionHandle,
+  type AppSessionMetadata,
+  readDocument,
+} from "./durable-session";
 import { mapEntriesToMessages } from "./message-mapper";
-import { createSessionsIndex, type SessionIndexEntry, type SessionsIndex } from "./sessions-index";
+import { createSessionsIndex, type SessionIndexEntry } from "./sessions-index";
 
-/**
- * 本地索引条目 + 从属会话字段。
- *
- * 索引条目的类型定义在 sessions-index.ts（本文件不拥有那个文件），
- * 子智能体这类「从属会话」需要多存 kind 与归属信息；这里用交叉类型扩展一次，
- * 而不是再写第二份索引实现。读取时全部字段缺省值由 toSummary 补齐（kind 缺省 = "chat"）。
- */
+export interface OpenedSession {
+  session: AppSessionHandle;
+  storage: Storage;
+  conversationId: import("@earendil-works/pi-durable").ConversationId;
+}
 type LocalIndexEntry = SessionIndexEntry & {
   /** 会话种类；缺省按 chat（旧索引里没有这个字段） */
   kind?: SessionKind;
@@ -55,13 +57,6 @@ type LocalIndexEntry = SessionIndexEntry & {
    */
   subagentRun?: SubagentRun;
 };
-
-/** sqlite 包未从入口导出 SqliteOpenSession 类型，这里从 repo 方法推导 */
-type SqliteOpenSession = Awaited<ReturnType<SqliteSessionRepo["open"]>>;
-/** repo.list() 的元素类型（带 path 等额外字段，比 SessionMetadata 更宽） */
-type SqliteSessionMetadata = Awaited<ReturnType<SqliteSessionRepo["list"]>>[number];
-
-type OpenedSession = { session: SqliteOpenSession; branch: Branch };
 
 export interface LoadMessagesOptions {
   limit?: number;
@@ -115,7 +110,9 @@ export interface SessionStore {
   list(): Promise<SessionSummary[]>;
   /** 新建会话：从属会话（subagent）通过 options 带上种类与归属信息 */
   create(options?: SessionCreateOptions): Promise<SessionSummary>;
-  open(id: string): Promise<{ session: SqliteOpenSession; branch: Branch } | undefined>;
+  open(id: string): Promise<OpenedSession | undefined>;
+  close(): Promise<void>;
+  release(id: string, owner: Harness): Promise<void>;
   /** 写 pi 会话名 + 索引标题 */
   /** 写 pi 会话名 + 索引标题 */
   rename(id: string, title: string): Promise<void>;
@@ -136,6 +133,15 @@ export interface SessionStore {
    * 会话不存在时抛错（否则会为一个拼错 / 已删的 id 留下一个没人认领的目录）。
    */
   ensureCwd(id: string): Promise<string>;
+  /**
+   * 重新绑定会话的工作目录。
+   *
+   * 新会话页上的「选择项目」用它：会话在创建时就已经有一个根（显式给的目录，或本会话的
+   * 临时工作区），所以「先选项目再开聊」只能表现为**改绑定**，而不是创建时传参。
+   *
+   * 只对还没有消息的会话开放，目标必须是已存在的目录；不满足时抛错（见实现里的说明）。
+   */
+  setCwd(id: string, cwd: string): Promise<void>;
   /** 会话自己指定的模型；未绑定返回 null（调用方据此回落到默认模型） */
   readModel(id: string): Promise<ModelRef | null>;
   /** 写会话级模型绑定；null 表示清除绑定（回到「跟随默认」） */
@@ -189,71 +195,20 @@ export interface SessionStore {
   scanUsageSamples(id: string, afterSeq: number, maxEntries: number): Promise<UsageScanResult>;
 }
 
-const MAIN_BRANCH = "main";
-const DEFAULT_PAGE_SIZE = 40;
-/** 用量扫描的页大小：见 scanUsageSamples 的注释（它决定主进程一次停多久） */
-const USAGE_SCAN_PAGE = 200;
-
-/**
- * 一条条目 → 用量样本；不是「带 usage 的助手消息」时返回 undefined。
- *
- * 时间戳优先取消息自己的 `timestamp`，条目时间戳只作兜底：条目时间戳由存储层在写入时
- * 打，而消息时间戳是模型响应本身的时间 —— 统计要的是「这次调用发生在哪天哪一刻」。
- */
-function usageSampleOf(entry: Entry): UsageSample | undefined {
-  if (entry.type !== "message") return undefined;
-  const message = entry.message;
-  if (message.role !== "assistant") return undefined;
-  const usage = message.usage;
-  if (usage === undefined || usage === null) return undefined;
-  return {
-    at: message.timestamp || entry.timestamp,
-    ...(message.provider === undefined ? {} : { serviceId: String(message.provider) }),
-    ...(message.model === undefined ? {} : { modelId: String(message.model) }),
-    inputTokens: usage.input,
-    outputTokens: usage.output,
-    cacheReadTokens: usage.cacheRead,
-    cacheWriteTokens: usage.cacheWrite,
-  };
-}
-
-/**
- * fork 校验要求源分支是「完整配置的 AgentLane」（lane.config + lane.state）。
- * 纯消息会话先用占位值临时满足校验，fork 完成后立即清除，不污染运行时附着流程。
- */
-const PLACEHOLDER_LANE_CONFIG: LaneConfiguration = {
-  model: { provider: "", modelId: "" },
-  thinkingLevel: "off",
-  activeToolNames: [],
-};
-const PLACEHOLDER_LANE_STATE: LaneState = {
-  currentOperationId: null,
-  lastOperationId: null,
-  inbox: [],
-};
-
-/**
- * 索引里的 kind 是外部 JSON，可能被手改坏，也可能是旧版本留下的：只认 "subagent"，
- * 其余（含缺省）一律按 "chat" —— 否则一个坏值会让会话从左侧栏消失。
- *
- * 旧版本给侧边聊天写下的 kind 值同样落回 "chat"：那种历史会话会作为普通会话出现在
- * 左侧栏里。这是有意为之 —— 它只是一段孤立的旧对话，让它可见是用户能看见并删掉它的
- * 唯一方式；不迁移、不加墓碑、不做特判。
- */
 function normalizeSessionKind(raw: unknown): SessionKind {
   return raw === "subagent" ? raw : "chat";
 }
 
-function toSummary(meta: SessionMetadata, entry?: LocalIndexEntry): SessionSummary {
+function toSummary(meta: AppSessionMetadata, entry?: LocalIndexEntry): SessionSummary {
   // parentSessionId 优先取 pi 元数据（fork 写在那里），本地索引的那份作为 create 场景的兜底
-  const parentSessionId = meta.parentSessionId ?? entry?.parentSessionId;
+  const parentSessionId = entry?.parentSessionId;
   return {
     id: meta.id,
     // 空串/纯空白与「没有标题」是同一件事：归一成 null，消费方只需处理一种空值（与 readTitle 同口径）
     title: entry?.title?.trim() || null,
     createdAt: meta.createdAt,
     updatedAt: entry?.updatedAt ?? meta.createdAt,
-    cwd: meta.cwd ?? entry?.cwd ?? "",
+    cwd: entry?.cwd ?? "",
     kind: normalizeSessionKind(entry?.kind),
     ...(parentSessionId === undefined ? {} : { parentSessionId }),
     ...(entry?.parentToolCallId === undefined ? {} : { parentToolCallId: entry.parentToolCallId }),
@@ -474,646 +429,458 @@ function parseUsageRecord(raw: unknown): SessionUsageRecord | undefined {
   };
 }
 
-/** 创建会话存储；测试可注入临时目录与自定义 repo（如控制时钟） */
-export function createSessionStore(baseDir: string, repo?: SqliteSessionRepo): SessionStore {
-  const activeRepo =
-    repo ??
-    new SqliteSessionRepo({
-      directory: path.join(baseDir, "sessions"),
-      databaseFactory: createNodeSqliteFactory(),
-    });
+export interface SessionStoreOptions {
+  now?: () => number;
+  openStorage?: (file: string) => Promise<Storage>;
+}
+const PAGE_SIZE = 40;
+const SESSION_ID = /^[a-f0-9-]{36}$/i;
+
+/** App metadata stays in the index; native transcripts live in a dedicated Pi 1.0 directory. */
+export function createSessionStore(
+  baseDir: string,
+  options: SessionStoreOptions = {},
+): SessionStore {
+  const directory = path.join(baseDir, "sessions-v1");
   const index = createSessionsIndex(baseDir);
-  // 同 id 复用打开结果，避免 repo 层重复 open 触发 "Session is already open"
+  const now = options.now ?? Date.now;
+  const openStorage = options.openStorage ?? openNodeSqliteStorage;
   const handles = new Map<string, Promise<OpenedSession | undefined>>();
-  /**
-   * `activeRepo.list()` 的结果缓存。
-   *
-   * 为什么必须有：那次调用对**每个会话文件**做 readdir → realpath → open → query → close，
-   * 底层是同步 `node:sqlite`（`DatabaseSync`）。本机实测 50 个会话 = **每次约 220 ms 的主进程
-   * 阻塞**，而它在「列会话」「打开会话」「删会话」「fork」以及发送路径上都会被调到 ——
-   * 表现为每切一次会话 UI 卡一下，且随会话数线性变差。
-   *
-   * 失效策略：只在**会改变会话集合或元数据**的操作上置空，下次 list() 重新扫一遍。
-   * 逐条精确更新容易漏（`messageCount` 等字段由各处 touch 写入），而重扫一次
-   * 只在写操作后发生，代价可接受。
-   */
-  let metaCache: SqliteSessionMetadata[] | null = null;
+  const removing = new Set<string>();
+  let metadata: Map<string, AppSessionMetadata> | undefined;
+  let metadataRead: Promise<Map<string, AppSessionMetadata>> | undefined;
+  const filename = (id: string) => {
+    if (!SESSION_ID.test(id)) throw new Error(`非法会话 ID：${id}`);
+    return path.join(directory, `${id}.sqlite`);
+  };
 
-  /** 取会话元数据（带缓存）；调用方**不要**改写返回的数组 */
-  async function listMetas(): Promise<SqliteSessionMetadata[]> {
-    if (metaCache !== null) return metaCache;
-    const metas = await activeRepo.list(undefined, BACKGROUND_CONTEXT);
-    metaCache = metas;
-    return metas;
-  }
-
-  /** 让元数据缓存失效（任何可能改变会话集合/元数据的写入之后调用） */
-  function invalidateMetas(): void {
-    metaCache = null;
-  }
-
-  function updateIndex(id: string, patch: LocalIndexEntry): Promise<void> {
-    return index.update(id, patch).catch((error: unknown) => {
-      console.warn(`更新会话索引失败 ${id}: ${String(error)}`);
-    });
-  }
-
-  function openHandle(id: string): Promise<OpenedSession | undefined> {
-    const cached = handles.get(id);
-    if (cached) return cached;
-    const opened = (async (): Promise<OpenedSession | undefined> => {
+  async function openHandle(id: string): Promise<OpenedSession | undefined> {
+    if (!SESSION_ID.test(id) || removing.has(id)) return undefined;
+    const existing = handles.get(id);
+    if (existing) {
+      const opened = await existing;
+      if (opened?.session.releasing) {
+        await opened.session.releasing;
+        return openHandle(id);
+      }
+      return opened;
+    }
+    const pending = (async () => {
+      if (!(await stat(filename(id)).catch(() => undefined))?.isFile()) return undefined;
+      const storage = await openStorage(filename(id));
       try {
-        const metas = await listMetas();
-        const meta = metas.find((item) => item.id === id);
-        if (!meta) {
-          console.warn(`打开会话失败，元数据不存在: ${id}`);
-          return undefined;
+        const value = await readDocument(storage, AppSessionDoc.definition.kind);
+        if (
+          value?.id !== id ||
+          typeof value.createdAt !== "number" ||
+          typeof value.activeConversation !== "number"
+        ) {
+          throw new Error("缺少有效的会话元数据");
         }
-        const session = await activeRepo.open(meta, BACKGROUND_CONTEXT);
-        const branch = await session.branch(MAIN_BRANCH, BACKGROUND_CONTEXT);
-        if (!branch) {
-          await session.close(BACKGROUND_CONTEXT);
-          console.warn(`打开会话失败，缺少 ${MAIN_BRANCH} 分支: ${id}`);
-          return undefined;
-        }
-        return { session, branch };
+        const conversations = await storage.scanConversations(
+          {},
+          Number.MAX_SAFE_INTEGER,
+          undefined,
+          BACKGROUND_CONTEXT,
+        );
+        const active = conversations.items.find((entry) => entry.id === value.activeConversation);
+        if (!active) throw new Error("当前会话不存在");
+        const session = new AppSessionHandle(
+          storage,
+          { id, createdAt: value.createdAt },
+          active.id,
+          () => {
+            if (handles.get(id) === pending) handles.delete(id);
+          },
+          (await index.read())[id]?.messageCount,
+        );
+        return { session, storage, conversationId: active.id };
       } catch (error) {
-        console.warn(`打开会话失败 ${id}: ${String(error)}`);
-        return undefined;
+        await storage.close(BACKGROUND_CONTEXT);
+        throw error;
       }
     })();
-    handles.set(id, opened);
-    // 失败结果不缓存，允许调用方稍后重试
-    void opened.then((value) => {
-      if (!value && handles.get(id) === opened) handles.delete(id);
-    });
-    return opened;
+    handles.set(id, pending);
+    void pending.then(
+      (value) => {
+        if (!value && handles.get(id) === pending) handles.delete(id);
+      },
+      () => {
+        if (handles.get(id) === pending) handles.delete(id);
+      },
+    );
+    return pending;
   }
 
-  async function closeHandle(id: string): Promise<void> {
-    const pending = handles.get(id);
-    handles.delete(id);
-    if (!pending) return;
-    const opened = await pending;
-    if (!opened) return;
+  async function listMetas(): Promise<Map<string, AppSessionMetadata>> {
+    if (metadata) return metadata;
+    if (metadataRead) return metadataRead;
+    metadataRead = (async () => {
+      const found = new Map<string, AppSessionMetadata>();
+      const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      });
+      for (const file of files) {
+        if (!file.endsWith(".sqlite")) continue;
+        const id = file.slice(0, -7);
+        if (!SESSION_ID.test(id)) continue;
+        try {
+          const cached = await handles.get(id);
+          if (cached) {
+            found.set(id, cached.session.metadata);
+            continue;
+          }
+          const storage = await openStorage(filename(id));
+          try {
+            const value = await readDocument(storage, AppSessionDoc.definition.kind);
+            if (value?.id !== id || typeof value.createdAt !== "number")
+              throw new Error("无效会话元数据");
+            found.set(id, { id, createdAt: value.createdAt });
+          } finally {
+            await storage.close(BACKGROUND_CONTEXT);
+          }
+        } catch (error) {
+          console.warn(`读取会话失败 ${id}: ${String(error)}`);
+        }
+      }
+      metadata = found;
+      return found;
+    })();
     try {
-      await opened.session.close(BACKGROUND_CONTEXT);
-    } catch (error) {
-      console.warn(`关闭会话失败 ${id}: ${String(error)}`);
+      return await metadataRead;
+    } finally {
+      metadataRead = undefined;
     }
   }
 
-  async function list(): Promise<SessionSummary[]> {
-    try {
-      const metas = await listMetas();
-      const entries = await index.read();
-      // 历史会话（索引里没有 cwd）在这里补上临时工作区，见该函数的注释
-      await bindMissingWorkspaces(metas, entries);
-      return metas
-        .map((meta) => toSummary(meta, entries[meta.id]))
-        .sort((left, right) => right.updatedAt - left.updatedAt);
-    } catch (error) {
-      console.warn(`列出会话失败: ${String(error)}`);
-      return [];
-    }
+  async function updateIndex(id: string, patch: LocalIndexEntry) {
+    await index.update(id, patch);
   }
-
-  async function create(options: SessionCreateOptions = {}): Promise<SessionSummary> {
-    try {
-      // parentSessionId 是 pi 元数据的一部分（fork 也写在那里）：从这里传下去，
-      // 子会话与父会话的关联在底层就固定了，重启后 list 仍读得回来
-      const session = await activeRepo.create(
-        options.parentSessionId === undefined
-          ? undefined
-          : { parentSessionId: options.parentSessionId },
-        BACKGROUND_CONTEXT,
-      );
-      const branch = await session.createBranch(MAIN_BRANCH, null, BACKGROUND_CONTEXT);
-      if (options.title) await session.setName(options.title, BACKGROUND_CONTEXT);
-      handles.set(session.metadata.id, Promise.resolve({ session, branch }));
-      // 会话集合变了：下次 list() 必须重新扫盘（否则新建的会话不会出现在列表里）
-      invalidateMetas();
-
-      /**
-       * 工作目录：调用方给了就用它（在项目里新建的会话绑定项目目录；子会话继承父会话），
-       * 没给就给这个会话建一个临时工作区 —— 会话从此**总是**有一个能用的根，
-       * 文件面板 / 终端 / 执行环境不必再各自处理「没有绑定」这一种情况。
-       *
-       * 空白串按「没给」处理：它会拼出含糊的相对路径，下游很容易变成「进程当前目录」。
-       */
-      const explicitCwd = options.cwd?.trim() ? options.cwd : undefined;
-      const cwd = explicitCwd ?? (await ensureWorkspaceDir(session.metadata.id));
-
-      // 其余从属字段（kind / 工具调用 id / 子智能体名 / 运行 id）落在本地索引里：
-      // SQLite 后端的 create 只收 { id, parentSessionId }，多出来的字段没有地方放
-      const entry: LocalIndexEntry = {
-        cwd,
-        ...(options.title === undefined ? {} : { title: options.title }),
-        ...(options.kind === undefined ? {} : { kind: options.kind }),
-        ...(options.parentSessionId === undefined
-          ? {}
-          : { parentSessionId: options.parentSessionId }),
-        ...(options.parentToolCallId === undefined
-          ? {}
-          : { parentToolCallId: options.parentToolCallId }),
-        ...(options.agentName === undefined ? {} : { agentName: options.agentName }),
-        ...(options.delegationId === undefined ? {} : { delegationId: options.delegationId }),
-        updatedAt: session.metadata.createdAt,
-        messageCount: 0,
-      };
-      await updateIndex(session.metadata.id, entry);
-      return toSummary(session.metadata, entry);
-    } catch (error) {
-      // 创建失败没有可用空值，记录后抛给调用方决定如何提示
-      console.warn(`创建会话失败: ${String(error)}`);
-      throw error;
-    }
+  async function ensureWorkspaceDir(id: string) {
+    const cwd = sessionWorkspaceDir(id, baseDir);
+    await mkdir(cwd, { recursive: true });
+    return cwd;
   }
-
-  async function rename(id: string, title: string): Promise<void> {
-    const opened = await openHandle(id);
-    if (!opened) return;
+  async function list() {
+    const metas = await listMetas();
+    const entries = await index.read();
+    for (const meta of metas.values()) {
+      if (!entries[meta.id]?.cwd?.trim()) {
+        const cwd = await ensureWorkspaceDir(meta.id);
+        entries[meta.id] = { ...entries[meta.id], cwd };
+        await updateIndex(meta.id, { cwd });
+      }
+    }
+    return [...metas.values()]
+      .map((meta) => toSummary(meta, entries[meta.id]))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  async function create(input: SessionCreateOptions = {}) {
+    const id = randomUUID();
+    const createdAt = now();
+    const cwd = input.cwd?.trim() ? input.cwd : await ensureWorkspaceDir(id);
+    await mkdir(directory, { recursive: true });
+    const storage = await openStorage(filename(id));
+    const harness = await Harness.open(
+      storage,
+      { models: createModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    );
     try {
-      await opened.session.setName(title, BACKGROUND_CONTEXT);
-    } catch (error) {
-      console.warn(`重命名会话失败 ${id}: ${String(error)}`);
+      const root = await harness.root(BACKGROUND_CONTEXT, { agent: { cwd } });
+      await harness.commit(async (tx) => {
+        Object.assign(await tx.doc(AppSessionDoc), { id, createdAt, activeConversation: root.id });
+      }, BACKGROUND_CONTEXT);
+    } finally {
+      await harness.close(BACKGROUND_CONTEXT);
+    }
+    const entry: LocalIndexEntry = {
+      cwd,
+      updatedAt: createdAt,
+      messageCount: 0,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
+      ...(input.parentToolCallId === undefined ? {} : { parentToolCallId: input.parentToolCallId }),
+      ...(input.agentName === undefined ? {} : { agentName: input.agentName }),
+      ...(input.delegationId === undefined ? {} : { delegationId: input.delegationId }),
+    };
+    await updateIndex(id, entry);
+    const meta = { id, createdAt };
+    if (metadataRead) await metadataRead;
+    metadata?.set(id, meta);
+    return toSummary(meta, entry);
+  }
+  async function rename(id: string, title: string) {
+    if (await openHandle(id)) await updateIndex(id, { title });
+  }
+  async function readTitle(id: string) {
+    return (await index.read())[id]?.title?.trim() || null;
+  }
+  async function readCwd(id: string) {
+    const cwd = (await index.read())[id]?.cwd;
+    return cwd?.trim() ? cwd : null;
+  }
+  async function ensureCwd(id: string) {
+    if (!(await openHandle(id))) throw new Error(`会话不存在：${id}`);
+    const cwd = await readCwd(id);
+    if (cwd) return cwd;
+    const generated = await ensureWorkspaceDir(id);
+    await updateIndex(id, { cwd: generated });
+    return generated;
+  }
+  async function removeWorkspace(id: string, cwd: string | null) {
+    if (!cwd) return;
+    const target = path.resolve(cwd);
+    if (path.dirname(target) !== path.resolve(workspacesDir(baseDir))) return;
+    const entries = await index.read();
+    if (
+      Object.entries(entries).some(
+        ([other, entry]) => other !== id && entry.cwd && path.resolve(entry.cwd) === target,
+      )
+    )
       return;
-    }
-    await updateIndex(id, { title });
+    await rm(target, { recursive: true, force: true });
   }
-
-  async function readTitle(id: string): Promise<string | null> {
-    const title = (await index.read())[id]?.title?.trim() ?? "";
-    return title === "" ? null : title;
+  async function setCwd(id: string, cwd: string) {
+    const target = cwd.trim();
+    if (!target) throw new Error("工作目录不能为空");
+    const opened = await openHandle(id);
+    if (!opened) throw new Error(`会话不存在：${id}`);
+    if ((await opened.session.getStats(BACKGROUND_CONTEXT)).messageCount > 0)
+      throw new Error("会话已有消息，不能再改工作目录");
+    if (!(await stat(target).catch(() => undefined))?.isDirectory())
+      throw new Error(`目录不存在：${target}`);
+    const previous = await readCwd(id);
+    await updateIndex(id, { cwd: target });
+    if (previous && path.resolve(previous) !== path.resolve(target))
+      await removeWorkspace(id, previous);
   }
-
-  async function readCwd(id: string): Promise<string | null> {
-    // 只 trim 用于判空，返回原值——路径本身的首尾空白不真正剪掉
-    const cwd = (await index.read())[id]?.cwd ?? "";
-    return cwd.trim() === "" ? null : cwd;
-  }
-
-  /**
-   * 建一个会话的临时工作目录（幂等）。**只建目录、不写索引**：
-   * 两个调用点（create / ensureCwd）紧接着都要写索引，分开写会让新建会话多一次
-   * 「读 JSON → 改 → 写 JSON」的往返。
-   */
-  async function ensureWorkspaceDir(id: string): Promise<string> {
-    const dir = sessionWorkspaceDir(id, baseDir);
-    await mkdir(dir, { recursive: true });
-    return dir;
-  }
-
-  /**
-   * 会话的工作目录，没有就现补一个临时工作区并绑定（见接口注释）。
-   *
-   * 为什么补的是临时工作区而不是回落到进程当前目录：后者会让「能访问哪些文件」随
-   * 启动方式漂移（开发时是仓库目录，打包后可能是安装目录），而临时工作区是会话自己的
-   * 一个固定目录，且随会话一起被清理（见 removeWorkspace）。
-   */
-  async function ensureCwd(id: string): Promise<string> {
-    const bound = await readCwd(id);
-    if (bound !== null) return bound;
-    // 只给真实存在的会话建目录：否则一个拼错 / 已删的 id 会留下一个没人认领的目录
-    const exists = (await listMetas()).some((item) => item.id === id);
-    if (!exists) throw new Error(`会话不存在：${id}`);
-    const dir = await ensureWorkspaceDir(id);
-    // 写索引失败不抛（updateIndex 自己只记警告）：目录已经建好，本次调用能正常用，
-    // 下次再补一次即可（幂等）—— 不该让「读一个目录」因为写索引失败而整体失败
-    await updateIndex(id, { cwd: dir });
-    return dir;
-  }
-
-  /**
-   * 给索引里还没有 cwd 的**历史会话**补上临时工作区（写回索引，下次读到的就是真值）。
-   *
-   * 为什么挂在 list 上而不是启动时跑一遍：列表是「界面要知道这些会话长什么样」的唯一入口，
-   * 谁先问谁触发，而且**一定会被 await**。启动时补的话，窗口加载与补写之间存在竞态，
-   * 列表会先返回一批空 cwd 的会话 —— 那正是这次要修的毛病。
-   *
-   * 已经绑定过的会话在这里只做一次内存判断，不产生任何写入。
-   */
-  async function bindMissingWorkspaces(
-    metas: SqliteSessionMetadata[],
-    entries: SessionsIndex,
-  ): Promise<void> {
-    for (const meta of metas) {
-      // pi 元数据里的 cwd 优先（toSummary 同口径）：它写了值就不该被我们覆盖
-      if (meta.cwd?.trim() || entries[meta.id]?.cwd?.trim()) continue;
+  async function remove(id: string) {
+    const entries = await index.read();
+    const visited = new Set<string>();
+    const removeOne = async (target: string): Promise<void> => {
+      if (visited.has(target)) return;
+      visited.add(target);
+      removing.add(target);
       try {
-        const dir = await ensureWorkspaceDir(meta.id);
-        const entry = entries[meta.id];
-        if (entry) entry.cwd = dir;
-        else entries[meta.id] = { cwd: dir };
-        await updateIndex(meta.id, { cwd: dir });
-      } catch (error) {
-        // 单个会话补不上（磁盘满 / 权限）不该让整个列表失败：它下次 list 会再试一次
-        console.warn(`为会话补建临时工作目录失败 ${meta.id}: ${String(error)}`);
+        for (const [child, raw] of Object.entries(entries)) {
+          const entry = raw as LocalIndexEntry;
+          if (entry.kind === "subagent" && entry.parentSessionId === target) await removeOne(child);
+        }
+        const opened = await handles.get(target);
+        if (opened) await opened.session.close();
+        if (SESSION_ID.test(target)) await rm(filename(target), { force: true });
+        const cwd = await readCwd(target);
+        await index.remove(target);
+        metadata?.delete(target);
+        await removeWorkspace(target, cwd);
+        await removeSessionAttachments(target, baseDir);
+      } finally {
+        removing.delete(target);
       }
-    }
-  }
-
-  async function readModel(id: string): Promise<ModelRef | null> {
-    return normalizeModelRef((await index.read())[id]?.model);
-  }
-
-  /**
-   * 写会话级模型绑定。null 会作为显式值写进索引（覆盖旧的绑定）——
-   * 「取消绑定、回到跟随默认」必须能落盘，否则重启后旧的绑定又回来了。
-   */
-  async function setModel(id: string, model: ModelRef | null): Promise<void> {
-    await updateIndex(id, { model });
-  }
-
-  /**
-   * 会话自己指定的智能体模式；没绑定时返回 null（调用方回落到设置里的默认）。
-   *
-   * 与 readModel 一样：**只认合法值**，索引里被手改坏的值一律按「未绑定」处理，
-   * 而不是把垃圾字符串透给提示词装配。
-   */
-  async function readAgentMode(id: string): Promise<AgentMode | null> {
-    const raw = (await index.read())[id]?.agentMode;
-    return raw === "standard" || raw === "orchestrate" ? raw : null;
-  }
-
-  async function setAgentMode(id: string, mode: AgentMode | null): Promise<void> {
-    await updateIndex(id, { agentMode: mode });
-  }
-
-  async function setArchived(id: string, archived: boolean): Promise<void> {
-    await updateIndex(id, { archived });
-  }
-
-  async function setPinned(id: string, pinned: boolean): Promise<void> {
-    await updateIndex(id, { pinned });
-  }
-
-  /**
-   * 删除一个会话，**并连带删除它名下的子智能体会话**。
-   *
-   * 为什么必须级联：子会话是真实落盘的会话（kind = "subagent"，parentSessionId 指向父），
-   * 它们**不出现在左侧栏**（list 时按 hidden kind 过滤）。所以父会话一删，
-   * 这些子会话就成了**永远看不见、也删不掉的磁盘垃圾** —— 每派一次子智能体就留一份。
-   *
-   * 顺序：先收集子会话 id（要在删父之前读索引，删完就没得找了），
-   * 再逐个走与父会话完全相同的删除路径（close → repo.delete → 清索引 → 清临时工作区），
-   * 最后删父。子会话的删除失败**不阻断**父会话的删除 —— 父删不掉才是用户能感知的问题，
-   * 而残留的子会话还有「下次删除父级时再试一次」的机会。
-   */
-  async function remove(id: string): Promise<void> {
-    // 先找出子会话：必须在删父之前读，删完索引条目就没了
-    let childIds: string[] = [];
-    try {
-      const entries = await index.read();
-      childIds = Object.entries(entries)
-        .filter(([childId, entry]) => {
-          if (childId === id) return false;
-          const record = entry as LocalIndexEntry | undefined;
-          return record?.kind === "subagent" && record.parentSessionId === id;
-        })
-        .map(([childId]) => childId);
-    } catch (error) {
-      // 读索引失败不该阻断删除：至多留下几个孤儿，而不是让用户删不掉会话
-      console.warn(`读取子会话列表失败（父会话 ${id}）：${String(error)}`);
-    }
-
-    for (const childId of childIds) {
-      try {
-        await removeOne(childId);
-      } catch (error) {
-        console.warn(`删除子会话失败 ${childId}（父会话 ${id}）：${String(error)}`);
-      }
-    }
-
+    };
     await removeOne(id);
   }
 
-  /** 删除单个会话（不含级联）；remove 的级联逻辑复用它 */
-  async function removeOne(id: string): Promise<void> {
-    await closeHandle(id);
-    /**
-     * 先记下工作目录：索引条目马上就要删掉，删完就无从知道这个会话用的是哪个目录了。
-     * 读到的可能是 null（历史会话还没补过），那时没有什么可清的。
-     */
-    const cwd = await readCwd(id);
-    let deleted = true;
+  async function fork(id: string, externalId: string) {
+    const source = await openHandle(id);
+    if (!source) throw new Error(`源会话不存在：${id}`);
+    const history = await source.session.allEntries();
+    const cutoff = history.findIndex((entry) => entry.entryId === externalId);
+    if (cutoff < 0) throw new Error(`条目不存在：${externalId}`);
+    const selected = history[cutoff];
+    if (!selected) throw new Error(`条目不存在：${externalId}`);
+    const sourceIndex = (await index.read())[id];
+    const created = await create({
+      title: sourceIndex?.title ? `${sourceIndex.title} · 分支` : undefined,
+      cwd: sourceIndex?.cwd,
+      parentSessionId: id,
+    });
+    const destination = await openHandle(created.id);
+    if (!destination) throw new Error("无法创建分支会话");
+    const owner = await destination.session.bindHarness(() =>
+      Harness.open(
+        destination.storage,
+        { models: createModels(), registry: createRegistry() },
+        BACKGROUND_CONTEXT,
+      ),
+    );
     try {
-      const meta = (await listMetas()).find((item) => item.id === id);
-      if (meta) await activeRepo.delete(meta, BACKGROUND_CONTEXT);
-    } catch (error) {
-      deleted = false;
-      console.warn(`删除会话失败 ${id}: ${String(error)}`);
-    }
-    // 无论删除成功与否都失效：失败的删除也可能已经动过文件
-    invalidateMetas();
-    if (deleted) {
-      try {
-        await index.remove(id);
-      } catch (error) {
-        console.warn(`删除会话索引失败 ${id}: ${String(error)}`);
-      }
-      await removeWorkspace(id, cwd);
-    }
-  }
-
-  /**
-   * 这个工作区目录是否还被**别的**会话用着（有会话的 cwd 指向它）。
-   *
-   * 工作目录会被继承：分支会话（fork）接着源会话的目录，子会话也接着父会话的目录。
-   * 所以删掉其中一个会话时不能直接清目录 —— 它还是另一个会话的根，清掉之后那边的
-   * bash 与文件面板会指向一个不存在的目录。谁还在用就留着，等最后一个使用者被删时再清。
-   */
-  async function workspaceInUse(dir: string, exceptId: string): Promise<boolean> {
-    const target = path.resolve(dir);
-    const entries = await index.read();
-    for (const [sessionId, entry] of Object.entries(entries)) {
-      if (sessionId === exceptId) continue;
-      const cwd = entry.cwd?.trim();
-      if (cwd !== undefined && cwd !== "" && path.resolve(cwd) === target) return true;
-    }
-    return false;
-  }
-
-  /**
-   * 清掉这个会话用的临时工作区。
-   *
-   * 判据是**「cwd 是 workspaces 根的直接子目录」**，而不是「cwd 等于按会话 id 算出来的
-   * 那个目录」：分支会话继承的是**源会话**的目录（目录名只由源会话 id 决定），按 id 算
-   * 就永远清不到它。反过来，用户显式绑定的项目目录一定在 workspaces 根之外，因此不会被清
-   * ——「只有临时会话里的文件跟着会话删」这条要求就落在这个判断上。
-   *
-   * 只认直接子目录（不含 workspaces 根本身）：根是所有会话共用的，绝不能成为清理目标。
-   *
-   * 只在会话真的删掉之后调用：删除失败时那个会话还在，它的文件不该被清。
-   * 清理失败只记警告：留下一个目录比「删不掉的会话」好处理得多。
-   */
-  async function removeWorkspace(id: string, cwd: string | null): Promise<void> {
-    if (cwd === null) return;
-    const managed = path.resolve(workspacesDir(baseDir));
-    const target = path.resolve(cwd);
-    if (path.dirname(target) !== managed) return;
-    try {
-      if (await workspaceInUse(target, id)) return;
-      await rm(target, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(`清理会话临时工作目录失败 ${target}: ${String(error)}`);
-    }
-  }
-
-  async function fork(id: string, entryId: string): Promise<SessionSummary> {
-    try {
-      const meta = (await listMetas()).find((item) => item.id === id);
-      if (!meta) throw new Error(`源会话不存在: ${id}`);
-      const source = await openHandle(id);
-      if (!source) throw new Error(`无法打开源会话: ${id}`);
-
-      const hasConfig =
-        (await source.session.getValue(laneConfig(MAIN_BRANCH), BACKGROUND_CONTEXT)) !== undefined;
-      const hasState =
-        (await source.session.getValue(laneState(MAIN_BRANCH), BACKGROUND_CONTEXT)) !== undefined;
-      const needsPlaceholder = !hasConfig || !hasState;
-      if (needsPlaceholder) {
-        await source.session.setValue(
-          laneConfig(MAIN_BRANCH),
-          PLACEHOLDER_LANE_CONFIG,
+      const copyAttachments = createAttachmentForkCopier(id, created.id, baseDir);
+      const copiedHistory = await Promise.all(
+        history.slice(0, cutoff + 1).map(async ({ record }) => ({
+          ...record,
+          ...(record.model ? { model: await copyAttachments(record.model) } : {}),
+          ...(record.edits
+            ? {
+                edits: await Promise.all(
+                  record.edits.map(async (edit) =>
+                    edit.action === "replace"
+                      ? { ...edit, messages: await copyAttachments(edit.messages) }
+                      : edit,
+                  ),
+                ),
+              }
+            : {}),
+        })),
+      );
+      const sourcePoint = await source.storage.entry(selected.record.id, BACKGROUND_CONTEXT);
+      const agentRecord =
+        sourcePoint &&
+        (await source.storage.findDocument(
+          {
+            kind: AgentDoc.definition.kind,
+            scope: { kind: "conversation", conversationId: source.session.activeConversationId },
+          },
+          sourcePoint.commitSeq,
           BACKGROUND_CONTEXT,
-        );
-        await source.session.setValue(
-          laneState(MAIN_BRANCH),
-          PLACEHOLDER_LANE_STATE,
-          BACKGROUND_CONTEXT,
-        );
-      }
-
-      let forked: SqliteOpenSession | undefined;
-      let forkedBranch: Branch | undefined;
-      try {
-        forked = await activeRepo.fork(
-          meta,
-          { scope: "branch", branch: MAIN_BRANCH, entryId, position: "at" },
-          BACKGROUND_CONTEXT,
-        );
-        forkedBranch = await forked.branch(MAIN_BRANCH, BACKGROUND_CONTEXT);
-        if (!forkedBranch) throw new Error(`分支会话缺少 ${MAIN_BRANCH} 分支`);
-        if (needsPlaceholder) {
-          // 派生会话也去掉占位元数据，保持与新建会话一致的「等待附着」状态
-          await forked.deleteValue(laneConfig(MAIN_BRANCH), BACKGROUND_CONTEXT);
-          await forked.deleteValue(laneState(MAIN_BRANCH), BACKGROUND_CONTEXT);
+        ));
+      const agent =
+        agentRecord &&
+        sourcePoint &&
+        (await source.storage.document(agentRecord.id, sourcePoint.commitSeq, BACKGROUND_CONTEXT));
+      await owner.commit(async (tx) => {
+        const agentDraft = await tx.doc(AgentDoc, destination.conversationId);
+        if (agent) Object.assign(agentDraft, agent.value);
+        const ids = new Map<EntryId, EntryId>();
+        for (const record of copiedHistory) {
+          const copy = await tx.appendEntry(destination.conversationId, {
+            kind: record.kind,
+            ...(record.model ? { model: record.model } : {}),
+            ...(record.data === undefined ? {} : { data: record.data }),
+            ...(record.head === undefined
+              ? {}
+              : { head: record.head === record.id ? "self" : ids.get(record.head) }),
+            ...(record.edits === undefined
+              ? {}
+              : {
+                  edits: record.edits.map((edit) => {
+                    const target = ids.get(edit.target);
+                    if (target === undefined) throw new Error("上下文编辑指向分支外的条目");
+                    return { ...edit, target };
+                  }),
+                }),
+          });
+          ids.set(record.id, copy.id);
         }
-      } finally {
-        if (needsPlaceholder) {
-          await source.session
-            .deleteValue(laneConfig(MAIN_BRANCH), BACKGROUND_CONTEXT)
-            .catch(() => undefined);
-          await source.session
-            .deleteValue(laneState(MAIN_BRANCH), BACKGROUND_CONTEXT)
-            .catch(() => undefined);
-        }
-      }
-
-      if (!forked || !forkedBranch) throw new Error("分支会话创建结果不完整");
-      handles.set(forked.metadata.id, Promise.resolve({ session: forked, branch: forkedBranch }));
-      // 分支是一个新会话：会话集合变了
-      invalidateMetas();
-
-      const stats = await forked.getStats(BACKGROUND_CONTEXT);
-      // 索引只读一次：标题、模型、工作目录都取自这一份快照
-      const sourceEntry = (await index.read())[id];
-      /**
-       * 工作目录同样继承源会话：分支接着同一段对话，文件也在同一个目录里。
-       *
-       * 源会话没绑定工作目录（历史会话）时给分支建一个自己的临时工作区 ——
-       * 这里不省这一步：分支随后就可能被打开，那时它得有一个存在的根。
-       * 继承来的工作区可能被两个会话共用，删源会话时由 workspaceInUse 兜住。
-       */
-      const cwd = sourceEntry?.cwd?.trim()
-        ? sourceEntry.cwd
-        : await ensureWorkspaceDir(forked.metadata.id);
-      const entry: SessionIndexEntry = {
-        ...(sourceEntry?.title ? { title: `${sourceEntry.title} · 分支` } : {}),
-        updatedAt: Date.now(),
-        messageCount: stats.messageCount,
-        // 继承源会话的模型绑定：分支接着同一段（由那个模型产生的）上下文，
-        // 让它悄悄改用默认模型与「分支」的语义不符
-        model: sourceEntry?.model ?? null,
-        cwd,
-      };
-      await updateIndex(forked.metadata.id, entry);
-      return toSummary(forked.metadata, entry);
+      }, BACKGROUND_CONTEXT);
+      await updateIndex(created.id, {
+        model: sourceIndex?.model ?? null,
+        agentMode: sourceIndex?.agentMode ?? null,
+        messageCount: (await destination.session.getStats(BACKGROUND_CONTEXT)).messageCount,
+      });
     } catch (error) {
-      // fork 失败同样没有可用的空值，记录后抛给调用方
-      console.warn(`创建分支会话失败 ${id}: ${String(error)}`);
+      await destination.session.close();
+      await remove(created.id);
       throw error;
+    } finally {
+      await destination.session.close();
     }
+    return toSummary(created, (await index.read())[created.id]);
   }
 
   async function loadMessages(
     id: string,
     options: LoadMessagesOptions = {},
   ): Promise<LoadMessagesResult> {
-    const limit = options.limit ?? DEFAULT_PAGE_SIZE;
     const opened = await openHandle(id);
     if (!opened) return { messages: [], compactionSummaries: [] };
-
-    try {
-      // 默认取尾部（newestFirst + cursor），再倒转为时间正序；oldestFirst 用于从会话开头读
-      const order = options.order ?? "newestFirst";
-      const raw = await opened.branch.findEntries(
-        {
-          order,
-          limit,
-          ...(options.beforeSeq === undefined ? {} : { cursor: { seq: options.beforeSeq } }),
-        },
-        BACKGROUND_CONTEXT,
-      );
-      const ordered = order === "newestFirst" ? [...raw].reverse() : [...raw];
-      const { messages, compactionSummaries } = mapEntriesToMessages(ordered);
-      // 游标指向「已读到的另一端」：尾部模式向上翻，开头模式向下翻
-      const cursorSeq =
-        order === "newestFirst" ? ordered[0]?.seq : ordered[ordered.length - 1]?.seq;
-      // 批次未取满说明已到分支边界；取满才给游标继续翻页
-      const nextCursor = raw.length === limit && cursorSeq !== undefined ? cursorSeq : undefined;
-
-      // 索引 messageCount 与真实统计对账，避免运行结束后列表计数滞后（不刷新 updatedAt）
-      const entry = (await index.read())[id];
-      const stats = await opened.session.getStats(BACKGROUND_CONTEXT);
-      if (entry?.messageCount !== stats.messageCount) {
-        await updateIndex(id, { messageCount: stats.messageCount });
-      }
-
-      return {
-        messages,
-        compactionSummaries,
-        ...(nextCursor === undefined ? {} : { nextCursor }),
-      };
-    } catch (error) {
-      console.warn(`加载会话消息失败 ${id}: ${String(error)}`);
-      return { messages: [], compactionSummaries: [] };
-    }
+    const limit = Math.max(1, options.limit ?? PAGE_SIZE);
+    const newest = options.order !== "oldestFirst";
+    const result = newest
+      ? await opened.session.newestPage(limit, options.beforeSeq, BACKGROUND_CONTEXT)
+      : await opened.session.oldestPage(limit, options.beforeSeq ?? 0, BACKGROUND_CONTEXT);
+    const page = result.entries;
+    const mapped = mapEntriesToMessages(page);
+    const next = newest ? page[0]?.sequence : page.at(-1)?.sequence;
+    const messageCount = opened.session.knownMessageCount();
+    if (messageCount !== undefined && (await index.read())[id]?.messageCount !== messageCount)
+      await updateIndex(id, { messageCount });
+    return {
+      ...mapped,
+      ...(result.hasMore && next !== undefined ? { nextCursor: next } : {}),
+    };
   }
-
-  async function touch(id: string, patch: SessionIndexEntry = {}): Promise<void> {
-    await updateIndex(id, { ...patch, updatedAt: patch.updatedAt ?? Date.now() });
-  }
-
-  /**
-   * 读用量快照。索引是外部 JSON，读回来必须校验形状 ——
-   * 半截写入、手改、旧版本字段缺失都不该让底栏渲染出 NaN。
-   */
-  async function readUsage(id: string): Promise<SessionUsageRecord | undefined> {
-    const entry = (await index.read())[id];
-    return parseUsageRecord(entry?.usage);
-  }
-
-  /** 写用量快照；刻意不经过 touch，因此不会刷新 updatedAt（见接口注释） */
-  async function writeUsage(id: string, usage: SessionUsageRecord): Promise<void> {
-    await updateIndex(id, { usage });
-  }
-
-  async function saveSubagentRun(childSessionId: string, run: SubagentRun): Promise<void> {
-    // 失败只记录：运行记录是「给下一个进程看的账」，写不进去不该让正在跑的运行失败（见接口注释）
-    await updateIndex(childSessionId, { subagentRun: run });
-  }
-
-  /**
-   * 增量扫描用量样本（见接口注释）。
-   *
-   * 分页而不是一次读完：底层是同步 `node:sqlite`，一次查询的条目数直接决定主进程停多久。
-   * 一页 200 条实测在 10ms 量级；预算用尽就带着 `done: false` 返回，宁可多跑几个来回，
-   * 也不让统计把界面卡住。
-   */
   async function scanUsageSamples(
     id: string,
     afterSeq: number,
     maxEntries: number,
   ): Promise<UsageScanResult> {
-    const budget = Math.max(1, Math.floor(maxEntries));
     const opened = await openHandle(id);
-    // 打不开就当作「已扫完」：统计是旁路，一个坏会话不该让整份报告失败或无限重试
     if (!opened) return { samples: [], nextSeq: afterSeq, entries: 0, done: true };
-
+    const result = await opened.session.oldestPage(
+      Math.max(1, Math.floor(maxEntries)),
+      afterSeq,
+      BACKGROUND_CONTEXT,
+    );
+    const page = result.entries;
     const samples: UsageSample[] = [];
-    let cursor = afterSeq;
-    let entries = 0;
-    try {
-      for (;;) {
-        const remaining = budget - entries;
-        if (remaining <= 0) return { samples, nextSeq: cursor, entries, done: false };
-        const limit = Math.min(USAGE_SCAN_PAGE, remaining);
-        const raw = await opened.branch.findEntries(
-          {
-            order: "oldestFirst",
-            limit,
-            // afterSeq 为 0（没扫过）时不带游标：从分支开头开始
-            ...(cursor > 0 ? { cursor: { seq: cursor } } : {}),
-          },
-          BACKGROUND_CONTEXT,
-        );
-        // 空页 = 已到分支末尾
-        if (raw.length === 0) return { samples, nextSeq: cursor, entries, done: true };
-        for (const entry of raw) {
-          entries += 1;
-          const sample = usageSampleOf(entry);
-          if (sample !== undefined) samples.push(sample);
-        }
-        const lastSeq = raw[raw.length - 1]?.seq;
-        if (lastSeq !== undefined) cursor = lastSeq;
-        // 取满一页才可能有下一页（与 loadMessages 的游标口径一致）
-        if (raw.length < limit) return { samples, nextSeq: cursor, entries, done: true };
+    for (const entry of page)
+      for (const message of entry.record.model ?? []) {
+        if (message.role !== "assistant") continue;
+        samples.push({
+          at: message.timestamp,
+          serviceId: message.provider,
+          modelId: message.model,
+          inputTokens: message.usage.input,
+          outputTokens: message.usage.output,
+          cacheReadTokens: message.usage.cacheRead,
+          cacheWriteTokens: message.usage.cacheWrite,
+        });
       }
-    } catch (error) {
-      console.warn(`扫描会话用量失败 ${id}: ${String(error)}`);
-      // 出错也按「扫完」收尾并保留已推进的游标：否则这个会话每次统计都会重试一遍
-      return { samples, nextSeq: cursor, entries, done: true };
-    }
+    return {
+      samples,
+      nextSeq: page.at(-1)?.sequence ?? afterSeq,
+      entries: page.length,
+      done: !result.hasMore,
+    };
   }
-
-  async function listSubagentRunsFor(parentSessionId: string): Promise<SubagentRun[]> {
-    const entries = await index.read();
-    const runs: SubagentRun[] = [];
-    for (const raw of Object.values(entries) as unknown[]) {
-      // 条目本身也可能被手改坏（写成字符串 / null）：跳过，绝不让一条坏数据把整份列表带塌
-      if (typeof raw !== "object" || raw === null) continue;
-      const entry = raw as LocalIndexEntry;
-      if (entry.kind !== "subagent" || entry.parentSessionId !== parentSessionId) continue;
-      const run = parseSubagentRun(entry.subagentRun);
-      // sessionId 对不上的记录（例如被贴到了别的条目下）同样跳过
-      if (run === undefined || run.sessionId !== parentSessionId) continue;
-      runs.push(run);
-    }
-    // 与 listSubagentRuns 一样按派发顺序升序：调用方（面板 / 对账 / 工具文案）不必再排一次
-    return runs.sort((left, right) => left.startedAt - right.startedAt);
+  async function close() {
+    const opened = await Promise.all(handles.values());
+    await Promise.all(opened.map((value) => value?.session.close()));
   }
-
   return {
     list,
     create,
     open: openHandle,
+    close,
+    release: async (id, owner) => {
+      const opened = await handles.get(id);
+      if (opened) await opened.session.unbindHarness(owner);
+    },
     rename,
     readTitle,
-    setArchived,
-    setPinned,
     readCwd,
     ensureCwd,
-    readModel,
-    setModel,
-    readAgentMode,
-    setAgentMode,
+    setCwd,
     remove,
     fork,
     loadMessages,
-    readUsage,
-    writeUsage,
-    touch,
-    saveSubagentRun,
-    listSubagentRunsFor,
     scanUsageSamples,
+    setArchived: (id, archived) => updateIndex(id, { archived }),
+    setPinned: (id, pinned) => updateIndex(id, { pinned }),
+    readModel: async (id) => normalizeModelRef((await index.read())[id]?.model),
+    setModel: (id, model) => updateIndex(id, { model }),
+    readAgentMode: async (id) => normalizeAgentMode((await index.read())[id]?.agentMode),
+    setAgentMode: (id, agentMode) => updateIndex(id, { agentMode }),
+    readUsage: async (id) => parseUsageRecord((await index.read())[id]?.usage),
+    writeUsage: (id, usage) => updateIndex(id, { usage }),
+    touch: (id, patch = {}) => updateIndex(id, { ...patch, updatedAt: patch.updatedAt ?? now() }),
+    saveSubagentRun: (id, subagentRun) => updateIndex(id, { subagentRun }),
+    listSubagentRunsFor: async (parentSessionId) =>
+      Object.values(await index.read())
+        .filter((value) => value && typeof value === "object")
+        .map((entry) => entry as LocalIndexEntry)
+        .filter((entry) => entry.kind === "subagent" && entry.parentSessionId === parentSessionId)
+        .map((entry) => parseSubagentRun(entry.subagentRun))
+        .filter((run): run is SubagentRun => run !== undefined && run.sessionId === parentSessionId)
+        .sort((a, b) => a.startedAt - b.startedAt),
   };
 }
 
 let defaultStore: SessionStore | null = null;
-
-/** 默认单例：会话库位于 dataDir()/sessions，索引位于数据根下的 sessions-index.json */
 export function getSessionStore(): SessionStore {
   defaultStore ??= createSessionStore(dataDir());
   return defaultStore;

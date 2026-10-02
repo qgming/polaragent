@@ -1,252 +1,223 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { McpAbortError } from "@earendil-works/pi-mcp";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServerConfig } from "@/shared/contracts/mcp";
-import { createMcpClient } from "./client";
-import { encodeMessage, type JsonRpcRequest, parseIncoming } from "./jsonrpc";
-import type { McpTransport } from "./transport";
+import { createMcpClient, type McpClient } from "./client";
 
-/** 一条最小可用的 server 配置（测试只用得到 id 与 transport） */
-function makeConfig(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
-  return {
-    id: "mcp-test",
-    name: "test",
-    enabled: true,
-    transport: "stdio",
-    command: "noop",
-    args: [],
-    env: {},
-    cwd: "",
-    url: "",
-    headers: {},
-    createdAt: 0,
-    ...overrides,
-  };
+const config = (overrides: Partial<McpServerConfig> = {}): McpServerConfig => ({
+  id: "test",
+  name: "test",
+  enabled: true,
+  transport: "http",
+  command: "",
+  args: [],
+  env: {},
+  cwd: "",
+  url: "",
+  headers: {},
+  createdAt: 0,
+  ...overrides,
+});
+const tool = (name: string) => ({ name, description: name, inputSchema: { type: "object" } });
+const cleanups: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.unstubAllEnvs();
+});
+
+async function httpFixture() {
+  const seen: { method: string; params?: Record<string, unknown> }[] = [];
+  const streams = new Set<ServerResponse>();
+  let deleted = false;
+  const server = createServer(async (req, res) => {
+    if (req.method === "DELETE") {
+      deleted = true;
+      res.writeHead(200).end();
+      return;
+    }
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": ready\n\n");
+      streams.add(res);
+      req.on("close", () => streams.delete(res));
+      return;
+    }
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    seen.push(message);
+    if (message.id === undefined) {
+      res.writeHead(202).end();
+      return;
+    }
+    const reply = (result: unknown) =>
+      res
+        .writeHead(200, { "content-type": "application/json", "mcp-session-id": "fixture" })
+        .end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    if (message.method === "initialize") {
+      reply({
+        protocolVersion: message.params.protocolVersion,
+        capabilities: { tools: { listChanged: true } },
+        serverInfo: { name: "fixture", version: "1" },
+      });
+    } else if (message.method === "tools/list") {
+      reply(
+        message.params?.cursor
+          ? { tools: [tool("one"), tool("two")] }
+          : { tools: [tool("one")], nextCursor: "second" },
+      );
+    } else if (message.params.name === "wait") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": waiting\n\n");
+      streams.add(res);
+      req.on("close", () => streams.delete(res));
+    } else if (message.params.name === "stream") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        `data: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "streamed before EOF" }] } })}\n\n`,
+      );
+      streams.add(res);
+      req.on("close", () => streams.delete(res));
+    } else {
+      reply({
+        content: [
+          { type: "text", text: "hello" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          { type: "resource", resource: { uri: "test://resource", text: "resource text" } },
+        ],
+        isError: message.params.name === "error",
+      });
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No fixture address");
+  const client = createMcpClient({
+    config: config({ url: `http://127.0.0.1:${address.port}/mcp` }),
+    warn: () => {},
+  });
+  cleanups.push(async () => {
+    await client.close();
+    for (const stream of streams) stream.destroy();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  return { client, seen, streams, deleted: () => deleted };
 }
 
-type Outcome = { result: unknown } | { error: { code: number; message: string } };
-
-interface ScriptedTransport extends McpTransport {
-  /** 出站报文原文（断言协议行为用） */
-  sent: string[];
-  /** 收到的通知方法名 */
-  notifications: string[];
-  /** 模拟 server 主动发一条报文 */
-  push(text: string): void;
-  /** 模拟连接断开 */
-  emitClose(reason: string): void;
-}
-
-/**
- * 脚本化传输：send 时按 method 决定回什么，避免测试里猜微任务时序。
- * handler 返回 undefined 表示「故意不回」，用来测超时/断开路径。
- */
-function createScriptedTransport(
-  handler: (request: JsonRpcRequest) => Outcome | undefined,
-): ScriptedTransport {
-  const sent: string[] = [];
-  const notifications: string[] = [];
-  const messageListeners = new Set<(text: string) => void>();
-  const closeListeners = new Set<(reason: string) => void>();
-  let closed: string | null = null;
-
-  const push = (text: string): void => {
-    for (const listener of [...messageListeners]) listener(text);
-  };
-
-  return {
-    label: "scripted",
-    sent,
-    notifications,
-    push,
-    emitClose(reason) {
-      closed = reason;
-      for (const listener of [...closeListeners]) listener(reason);
-    },
-    async send(text) {
-      sent.push(text);
-      const message = parseIncoming(text) as JsonRpcRequest | { method: string } | null;
-      if (message === null) return;
-      if (!("id" in message)) {
-        notifications.push(message.method);
-        return;
-      }
-      const outcome = handler(message);
-      if (outcome === undefined) return;
-      // 回执放在下一微任务：真实传输不会在 send 里同步回调
-      queueMicrotask(() => push(encodeMessage({ jsonrpc: "2.0", id: message.id, ...outcome })));
-    },
-    onMessage(listener) {
-      if (closed !== null) return;
-      messageListeners.add(listener);
-    },
-    onClose(listener) {
-      if (closed !== null) {
-        listener(closed);
-        return;
-      }
-      closeListeners.add(listener);
-    },
-    describeFailure() {
-      return "stderr：boom";
-    },
-    setProtocolVersion() {
-      // 版本头只对 http 传输有意义
-    },
-    async close() {
-      if (closed !== null) return;
-      closed = "已主动关闭";
-      for (const listener of [...closeListeners]) listener(closed);
-    },
-  };
-}
-
-/** 标准握手应答 */
-function initializeOutcome(): Outcome {
-  return {
-    result: {
-      protocolVersion: "2025-06-18",
-      capabilities: { tools: {} },
-      serverInfo: { name: "demo", version: "1.0.0" },
-    },
-  };
-}
-
-describe("createMcpClient", () => {
-  it("握手：发 initialize，收到结果后发 notifications/initialized", async () => {
-    const transport = createScriptedTransport((request) =>
-      request.method === "initialize" ? initializeOutcome() : { result: {} },
-    );
-    const client = createMcpClient({ config: makeConfig(), transport });
-
-    const handshake = await client.connect();
-
-    expect(handshake).toEqual({
-      protocolVersion: "2025-06-18",
-      serverName: "demo",
-      serverVersion: "1.0.0",
+describe("pi-mcp native HTTP integration", () => {
+  it("negotiates, follows pagination, deduplicates and preserves native image/resource content", async () => {
+    const { client, seen } = await httpFixture();
+    expect((await client.connect()).serverName).toBe("fixture");
+    expect((await client.listTools()).map((item) => item.name)).toEqual(["one", "two"]);
+    const result = await client.callTool("echo", { q: "kept" });
+    expect(result.content).toEqual([
+      { type: "text", text: "hello" },
+      { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      { type: "text", text: "resource text" },
+    ]);
+    expect(seen.find((item) => item.method === "tools/call")?.params).toMatchObject({
+      arguments: { q: "kept" },
     });
-    expect(transport.notifications).toEqual(["notifications/initialized"]);
-    const first = parseIncoming(transport.sent[0] ?? "") as JsonRpcRequest;
-    expect(first.method).toBe("initialize");
-    expect(first.params).toMatchObject({ clientInfo: { name: "oint" } });
+    expect((await client.callTool("error", {})).isError).toBe(true);
   });
 
-  it("tools/list：跟随 nextCursor 翻页并按名字去重", async () => {
-    const transport = createScriptedTransport((request) => {
-      if (request.method === "initialize") return initializeOutcome();
-      if (request.method === "tools/list") {
-        const cursor = (request.params as { cursor?: string } | undefined)?.cursor;
-        if (cursor === undefined) {
-          return {
-            result: {
-              tools: [
-                { name: "read_file", description: "读文件", inputSchema: { type: "object" } },
-                { name: "stat", inputSchema: { type: "object" } },
-              ],
-              nextCursor: "page-2",
-            },
-          };
-        }
-        return {
-          result: {
-            tools: [
-              // 与第一页重名：应被去重
-              { name: "stat", inputSchema: { type: "object" } },
-              {
-                name: "write_file",
-                annotations: { readOnlyHint: false },
-                inputSchema: { type: "object" },
-              },
-            ],
-          },
-        };
-      }
-      return { result: {} };
-    });
-    const client = createMcpClient({ config: makeConfig(), transport });
-    await client.connect();
-
-    const tools = await client.listTools();
-
-    expect(tools.map((tool) => tool.name)).toEqual(["read_file", "stat", "write_file"]);
-    // 没给 description 的条目回落空串，readOnly 只在 server 声明时出现
-    expect(tools[1]?.description).toBe("");
-    expect(tools[1]?.readOnly).toBeUndefined();
-    expect(tools[2]?.readOnly).toBe(false);
+  it("dispatches live tool notifications and reads SSE responses before EOF", async () => {
+    const fixture = await httpFixture();
+    await fixture.client.connect();
+    const changed = vi.fn();
+    fixture.client.onToolsChanged(changed);
+    await vi.waitFor(() => expect(fixture.streams.size).toBe(1));
+    for (const stream of fixture.streams)
+      stream.write('data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n');
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+    expect((await fixture.client.callTool("stream", {})).content).toEqual([
+      { type: "text", text: "streamed before EOF" },
+    ]);
   });
 
-  it("tools/call：结果文本化，并把参数原样传下去", async () => {
-    const transport = createScriptedTransport((request) => {
-      if (request.method === "initialize") return initializeOutcome();
-      if (request.method === "tools/call") {
-        return {
-          result: {
-            content: [{ type: "text", text: "hello" }],
-            isError: false,
-          },
-        };
-      }
-      return { result: {} };
-    });
-    const client = createMcpClient({ config: makeConfig(), transport });
-    await client.connect();
-
-    const result = await client.callTool("greet", { who: "world" });
-
-    expect(result).toEqual({ text: "hello", isError: false });
-    const call = transport.sent
-      .map((text) => parseIncoming(text) as JsonRpcRequest)
-      .find((message) => message.method === "tools/call");
-    expect(call?.params).toEqual({ name: "greet", arguments: { who: "world" } });
-  });
-
-  it("server 反向请求：回 -32601 而不是静默挂起", async () => {
-    const transport = createScriptedTransport((request) =>
-      request.method === "initialize" ? initializeOutcome() : { result: {} },
+  it("forwards cancellation and closes active requests and the HTTP session", async () => {
+    const fixture = await httpFixture();
+    await fixture.client.connect();
+    const controller = new AbortController();
+    const pending = fixture.client.callTool("wait", {}, controller.signal);
+    const rejected = expect(pending).rejects.toBeInstanceOf(McpAbortError);
+    await vi.waitFor(() =>
+      expect(fixture.seen.some((item) => item.method === "tools/call")).toBe(true),
     );
-    const client = createMcpClient({ config: makeConfig(), transport });
-    await client.connect();
-    transport.sent.length = 0;
+    controller.abort();
+    await rejected;
+    await vi.waitFor(() =>
+      expect(fixture.seen.some((item) => item.method === "notifications/cancelled")).toBe(true),
+    );
+    const second = fixture.client.callTool("wait", {});
+    const closed = expect(second).rejects.toThrow();
+    await fixture.client.close();
+    await closed;
+    expect(fixture.deleted()).toBe(true);
+  });
+});
 
-    transport.push('{"jsonrpc":"2.0","id":"srv-1","method":"sampling/createMessage","params":{}}');
-    await new Promise((resolve) => setTimeout(resolve, 0));
+const STDIO_SERVER = `
+import readline from "node:readline";
+const input = readline.createInterface({ input: process.stdin });
+input.on("line", line => {
+ const m = JSON.parse(line);
+ if (m.id === undefined) return;
+ let result;
+ if(m.method === "initialize") result = { protocolVersion:m.params.protocolVersion, capabilities:{tools:{}},serverInfo:{name:"stdio",version:"1"} };
+ else if(m.method === "tools/list") result = {tools:[{name:"env",inputSchema:{type:"object"}}]};
+ else result = {content:[{type:"text",text:JSON.stringify({private:process.env.OINT_TEST_PRIVATE_TOKEN,explicit:process.env.EXPLICIT_TOKEN})}]};
+ process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:m.id,result})+"\\n");
+});
+`;
 
-    expect(transport.sent).toHaveLength(1);
-    expect(parseIncoming(transport.sent[0] ?? "")).toEqual({
-      jsonrpc: "2.0",
-      id: "srv-1",
-      error: { code: -32601, message: "客户端不支持 sampling/createMessage" },
+describe("pi-mcp native stdio integration", () => {
+  async function stdioFixture(shim: boolean): Promise<McpClient> {
+    const dir = await mkdtemp(path.join(tmpdir(), "oint mcp "));
+    cleanups.push(async () => {
+      if (path.dirname(path.resolve(dir)) !== path.resolve(tmpdir()))
+        throw new Error("Unsafe test cleanup");
+      await rm(dir, { recursive: true, force: true });
     });
+    const script = path.join(dir, "server.mjs");
+    await writeFile(script, STDIO_SERVER);
+    const command = shim ? path.join(dir, "server.cmd") : process.execPath;
+    if (shim) await writeFile(command, `@"${process.execPath}" "${script}" %*\r\n`);
+    const client = createMcpClient({
+      config: config({
+        transport: "stdio",
+        command,
+        args: shim ? [] : [script],
+        env: { EXPLICIT_TOKEN: "provided" },
+      }),
+      warn: () => {},
+    });
+    cleanups.push(() => client.close());
+    return client;
+  }
+
+  it("starts a real process with a spaced path and does not inherit parent secrets", async () => {
+    vi.stubEnv("OINT_TEST_PRIVATE_TOKEN", "must-not-leak");
+    const client = await stdioFixture(false);
+    expect((await client.connect()).serverName).toBe("stdio");
+    expect((await client.listTools())[0]?.name).toBe("env");
+    expect((await client.callTool("env", {})).content).toEqual([
+      { type: "text", text: '{"explicit":"provided"}' },
+    ]);
+    await client.close();
+    await expect(client.listTools()).rejects.toThrow();
   });
 
-  it("连接断开：挂在飞行中的请求以断开原因被拒绝", async () => {
-    const transport = createScriptedTransport((request) =>
-      // 故意不回 tools/call，等断开
-      request.method === "initialize" ? initializeOutcome() : undefined,
-    );
-    const client = createMcpClient({ config: makeConfig(), transport });
-    await client.connect();
-
-    const pending = client.callTool("slow", {});
-    transport.emitClose("进程已结束（退出码 1）");
-
-    await expect(pending).rejects.toThrow("MCP 连接已断开");
-  });
-
-  it("协议错误：把 server 的 error 对象转成异常文本", async () => {
-    const transport = createScriptedTransport((request) =>
-      request.method === "initialize"
-        ? initializeOutcome()
-        : { error: { code: -32601, message: "method not found" } },
-    );
-    const client = createMcpClient({ config: makeConfig(), transport });
-    await client.connect();
-
-    await expect(client.listTools()).rejects.toThrow("method not found（code -32601）");
-  });
-
-  it("diagnostics 透传传输层的诊断信息", () => {
-    const transport = createScriptedTransport(() => undefined);
-    const client = createMcpClient({ config: makeConfig(), transport });
-    expect(client.diagnostics()).toBe("stderr：boom");
-  });
+  it.skipIf(process.platform !== "win32")(
+    "runs Windows .cmd shims with spaced paths through native cross-spawn",
+    async () => {
+      const client = await stdioFixture(true);
+      expect((await client.connect()).serverName).toBe("stdio");
+      expect((await client.listTools())[0]?.name).toBe("env");
+    },
+  );
 });

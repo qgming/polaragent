@@ -11,11 +11,7 @@
 // 它只读**已经在内存里的**能力清单（连接时 listTools 的结果），不额外发网络请求、
 // 不触碰工作区，因此判为低风险、免审批（见 pisdk/permissions.ts 的 LOW_RISK_TOOLS）。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import type { McpConnectionStatus, McpServerSource } from "@/shared/contracts/mcp";
 import { MCP_CATALOG_TOOL_NAME } from "@/shared/contracts/mcp";
@@ -44,14 +40,14 @@ export interface McpCatalogSource {
   catalog(): McpCatalogServer[];
 }
 
-export interface McpCatalogDetails {
+export type McpCatalogDetails = {
   /** 本次回答的层级：servers / tools / tool */
   level: "servers" | "tools" | "tool" | "error";
   serverId?: string;
   toolName?: string;
   /** 命中的条目数（error 时为 0） */
   count: number;
-}
+};
 
 /** 单条说明在「工具清单」里的截断长度：清单只用来选工具，不需要完整描述 */
 const TOOL_LINE_DESCRIPTION = 140;
@@ -145,9 +141,7 @@ function renderTool(server: McpCatalogServer, tool: McpCatalogTool): string {
  * 返回值三态：servers（没传 server）/ tools（传了 server）/ tool（传了 server + tool）。
  * 参数不认识时给一句可读错误而不是抛异常 —— 与 MCP 工具包装层同一口径。
  */
-export function createMcpCatalogTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
-  source: McpCatalogSource,
-): AgentHarnessTool<TContext> {
+export function createMcpCatalogTool(source: McpCatalogSource): ToolRegistration {
   const parameters = Type.Object(
     {
       server: Type.Optional(
@@ -160,18 +154,19 @@ export function createMcpCatalogTool<TContext extends ExecutionToolContext = Exe
 
   return {
     name: MCP_CATALOG_TOOL_NAME,
-    label: MCP_CATALOG_TOOL_NAME,
+    replay: "safe",
     description: DESCRIPTION,
     parameters,
-    async execute(_toolCallId, params): Promise<AgentToolResult<McpCatalogDetails>> {
+    async execute(params): Promise<ToolExecutionResult<McpCatalogDetails>> {
       const args = isRecord(params) ? params : {};
       const serverId = typeof args.server === "string" ? args.server.trim() : "";
       const toolName = typeof args.tool === "string" ? args.tool.trim() : "";
       const servers = source.catalog();
 
-      const fail = (text: string): AgentToolResult<McpCatalogDetails> => ({
+      const fail = (text: string): ToolExecutionResult<McpCatalogDetails> => ({
         content: [{ type: "text", text: `Error: ${text}` }],
         details: { level: "error", count: 0 },
+        isError: true,
       });
 
       if (serverId === "") {

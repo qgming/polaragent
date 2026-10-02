@@ -4,24 +4,10 @@
 // 与三条错误路径（服务器不存在、工具不存在、tool 没配 server）都要钉住 ——
 // 这条链断了，模型只能靠猜字段名调聚合工具。
 
-import type { AgentHarnessToolInvocation, ExecutionEnv } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it } from "vitest";
 import { MCP_CATALOG_TOOL_NAME } from "@/shared/contracts/mcp";
 import { createMcpCatalogTool, type McpCatalogServer } from "./mcp-catalog";
-
-/**
- * execute 的完整签名是六个参数（工具调用 id、参数、进度回调、工具上下文、调用描述、后台上下文）。
- * 这里给出与 jobs.test.ts 同款的最小替身：本工具只用前两个，其余原样透传。
- */
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-const CONTEXT = { env: { cwd: "/tmp" } as ExecutionEnv };
 
 function server(overrides: Partial<McpCatalogServer> = {}): McpCatalogServer {
   return {
@@ -54,7 +40,7 @@ function makeTool(servers: McpCatalogServer[]) {
     description: tool.description,
     execute: (_id: string, params: unknown): Promise<LooseResult> =>
       tool
-        .execute("call-1", params, () => {}, CONTEXT, INVOCATION, BACKGROUND_CONTEXT)
+        .execute(params, {} as Parameters<typeof tool.execute>[1], BACKGROUND_CONTEXT)
         .then((result) => result as unknown as LooseResult),
   };
 }

@@ -1,3 +1,4 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // bash 结果的退出码与 spill 契约：装配在 tools.ts 里的包装必须让每条结果都带 [exited with code N]，
 // 且不改变内核原有的行为 —— stderr 仍合并进输出、超时仍抛内核的文案、非零退出仍是错误。
 // 另外钉住「截断后给出的 Full output 路径能被 read 打开」：spill 目录必须在会话环境的允许根里。
@@ -7,11 +8,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createExecEnv } from "../exec-env";
 import { buildTools } from "../tools";
@@ -19,35 +17,40 @@ import { buildTools } from "../tools";
 let root: string;
 let env: ExecutionEnv;
 
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-
 type BashOutcome = { ok: true; text: string } | { ok: false; error: Error };
 
 /** 走装配后的 bash 工具（包装在 tools.ts），异常也收进返回值里方便断言 */
 async function runBash(command: string, timeout?: number): Promise<BashOutcome> {
   const tool = buildTools().find((candidate) => candidate.name === "bash");
   if (tool === undefined) throw new Error("缺少 bash 工具");
+  let output = "";
+  const diagnostics: string[] = [];
   try {
     const result = await tool.execute(
-      "call-bash",
       { command, ...(timeout === undefined ? {} : { timeout }) },
-      () => {},
-      { env } as never,
-      INVOCATION,
+      createToolTestApi({
+        env,
+        callId: "call-bash",
+        output: (chunk) => {
+          output += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        },
+        diagnostic: (item) => diagnostics.push(item.message),
+      }),
       BACKGROUND_CONTEXT,
     );
-    return {
-      ok: true,
-      text: result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
-    };
+    const text =
+      result.content?.map((block) => (block.type === "text" ? block.text : "")).join("\n") ??
+      output;
+    return { ok: true, text: [text, ...diagnostics].join("\n") };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+    const caught = error instanceof Error ? error : new Error(String(error));
+    return {
+      ok: false,
+      error:
+        output === ""
+          ? caught
+          : new Error(`${output.trimEnd()}\n\n${caught.message}`, { cause: caught }),
+    };
   }
 }
 
@@ -120,14 +123,11 @@ describe("超长输出的 spill 文件", () => {
       const read = buildTools().find((candidate) => candidate.name === "read");
       if (read === undefined) throw new Error("缺少 read 工具");
       const readResult = await read.execute(
-        "call-read",
         { path: spillPath },
-        () => {},
-        { env } as never,
-        INVOCATION,
+        createToolTestApi({ env, callId: "call-read" }),
         BACKGROUND_CONTEXT,
       );
-      const text = readResult.content
+      const text = (readResult.content ?? [])
         .map((block) => (block.type === "text" ? block.text : ""))
         .join("\n");
       // spill 在系统临时目录下：曾经的允许根只有工作目录与数据目录，read 会直接拒绝这条路径

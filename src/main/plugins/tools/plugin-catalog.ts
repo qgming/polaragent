@@ -1,3 +1,4 @@
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 // `plugin_tools` —— 插件内层工具的目录。
 //
 // ## 为什么网关之外还需要它
@@ -14,11 +15,6 @@
 //（MCP 的 server 可能连不上，插件的进程可能没起来），合并会让"哪一边出问题了"
 // 变得读不出来。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { PluginToolDecl } from "@/shared/contracts/plugin-rpc";
 
@@ -53,9 +49,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function createPluginCatalogTool<
-  TContext extends ExecutionToolContext = ExecutionToolContext,
->(source: PluginCatalogSource): AgentHarnessTool<TContext> {
+export function createPluginCatalogTool(source: PluginCatalogSource): ToolRegistration {
   const parameters = Type.Object(
     {
       plugin: Type.Optional(
@@ -68,10 +62,10 @@ export function createPluginCatalogTool<
 
   return {
     name: PLUGIN_CATALOG_TOOL_NAME,
-    label: PLUGIN_CATALOG_TOOL_NAME,
+
     description: DESCRIPTION,
     parameters,
-    async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+    async execute(params): Promise<ToolExecutionResult> {
       const args = isRecord(params) ? params : {};
       const pluginId = typeof args.plugin === "string" ? args.plugin.trim() : "";
       const toolName = typeof args.tool === "string" ? args.tool.trim() : "";
@@ -81,14 +75,12 @@ export function createPluginCatalogTool<
         参数不认识时给一句**可读错误**而不是抛异常 —— 与 MCP 目录工具、
         与插件工具包装层同一口径：模型要的是"读得懂的纠正"。
       */
-      const fail = (text: string): AgentToolResult<unknown> =>
-        ({
-          content: [{ type: "text", text: `Error: ${text}` }],
-        }) as unknown as AgentToolResult<unknown>;
+      const fail = (text: string): ToolExecutionResult => ({
+        content: [{ type: "text", text: `Error: ${text}` }],
+      });
 
-      /** 一段纯文本结果。`details` 是内核要求的字段，这里没有额外结构化数据可给 */
-      const say = (text: string): AgentToolResult<unknown> =>
-        ({ content: [{ type: "text", text }] }) as unknown as AgentToolResult<unknown>;
+      /** 纯文本结果无需额外 details。 */
+      const say = (text: string): ToolExecutionResult => ({ content: [{ type: "text", text }] });
 
       if (pluginId === "") {
         if (toolName !== "") {
@@ -104,7 +96,7 @@ export function createPluginCatalogTool<
                 text: "当前没有插件提供工具。（插件被停用、进程没起来，或它本来就不注册工具。）",
               },
             ],
-          } as unknown as AgentToolResult<unknown>;
+          };
         }
         const lines = catalog.map(
           (entry) =>
@@ -119,7 +111,7 @@ export function createPluginCatalogTool<
               text: `提供了工具的插件：\n${lines.join("\n")}\n\n用 plugin_tools({ plugin: "<id>" }) 看某个插件的工具与参数。`,
             },
           ],
-        } as unknown as AgentToolResult<unknown>;
+        };
       }
 
       const entry = catalog.find((item) => item.pluginId === pluginId);
@@ -148,7 +140,7 @@ export function createPluginCatalogTool<
               text: `插件「${entry.pluginName}」（${entry.pluginId}）的工具：\n\n${blocks.join("\n\n")}`,
             },
           ],
-        } as unknown as AgentToolResult<unknown>;
+        };
       }
 
       const tool = entry.tools.find((item) => item.name === toolName);
@@ -173,5 +165,5 @@ export function createPluginCatalogTool<
         ].join("\n"),
       );
     },
-  } as AgentHarnessTool<TContext>;
+  };
 }

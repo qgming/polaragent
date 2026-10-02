@@ -32,12 +32,20 @@ export function EmptyStateSuggestions({ className, ...props }: ComponentProps<"d
   return (
     <div
       data-slot="empty-state-suggestions"
-      className={cn("flex flex-wrap justify-center gap-2", className)}
+      // role=group：这一排是一组并列的起手式，读屏时会先报出组的名字再逐条读
+      role="group"
+      className={cn("flex flex-wrap items-center justify-center gap-2", className)}
       {...props}
     />
   );
 }
 
+/**
+ * 一枚起手提示 chip：图标 + 短标签，等宽胶囊。
+ *
+ * 高度与 composer 里那排 chip 对齐（h-8），因为它俩在空会话页上只隔一个输入框 ——
+ * 高度差一档就会看出来是两套控件。图标由调用方给（每条提示自己的字形）。
+ */
 export function EmptyStateSuggestion({
   index = 0,
   className,
@@ -51,7 +59,7 @@ export function EmptyStateSuggestion({
       style={{ animationDelay: `${120 + index * 70}ms`, ...style }}
       className={cn(
         paper,
-        "fade-in slide-in-from-bottom-2 animate-in fill-mode-both focus-visible:ring-foreground/20 rounded-full px-4 py-2 text-[13px] transition-transform duration-500 outline-none hover:-translate-y-px focus-visible:ring-1 active:scale-[0.96] motion-reduce:animate-none",
+        "fade-in slide-in-from-bottom-2 animate-in fill-mode-both text-ink-2 hover:text-foreground focus-visible:ring-foreground/20 inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[13px] transition-[transform,color] duration-500 outline-none hover:-translate-y-px focus-visible:ring-1 active:scale-[0.96] motion-reduce:animate-none",
         className,
       )}
       {...props}

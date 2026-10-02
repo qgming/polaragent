@@ -42,6 +42,22 @@ function settingsFixture(services: Settings["services"] = []): Settings {
   };
 }
 
+/**
+ * 同一**自然周**（周一起，见 series.ts 的口径）内的两天，且都在过去。
+ *
+ * 为什么不能直接用「今天与昨天」：今天是周一时，昨天是上周日 —— 两天落在不同的自然周，
+ * 「每周合计」那条断言会**假失败**（每周口径下两天的值本来就不该相等）。
+ * 这个坑每周一都会踩一次，所以锚到「四周前那个周一与周二」：它一定在过去、
+ * 一定在同一周、也一定落在热力图的 371 天窗口里。
+ */
+function sameWeekPair(): [string, string] {
+  const now = new Date();
+  const sinceMonday = (now.getDay() + 6) % 7;
+  const thisMonday = new Date(now.getTime() - sinceMonday * 86_400_000);
+  const monday = new Date(thisMonday.getTime() - 28 * 86_400_000);
+  return [localDay(monday), localDay(new Date(monday.getTime() + 86_400_000))];
+}
+
 /** 两天的数据、两个模型，且第二天明显更重（用来验档位与趋势） */
 function reportFixture(overrides: Partial<UsageStatsReport> = {}): UsageStatsReport {
   const today = localDay(new Date());
@@ -149,7 +165,19 @@ describe("热力图", () => {
   });
 
   it("切到「每周」：同一周的两天变成同一个值（那是本周合计）", () => {
-    const report = reportFixture();
+    // 这两天的日期**由用例自己锚定**（见 sameWeekPair）：用「今天与昨天」会在周一时跨周，
+    // 让这条断言每周一假失败一次。
+    const [first, second] = sameWeekPair();
+    const report = reportFixture({
+      days: [
+        { date: first, tokens: 200, models: { "svc|deepseek-chat": 200 } },
+        {
+          date: second,
+          tokens: 800,
+          models: { "svc|deepseek-chat": 500, "svc|glm-4": 300 },
+        },
+      ],
+    });
     useStatsStore.setState({ report });
     const { container } = render(<StatsPanel />);
 
@@ -160,19 +188,14 @@ describe("热力图", () => {
           ?.getAttribute("data-value"),
       );
 
-    const [yesterday, today] = report.days;
-    if (yesterday === undefined || today === undefined) throw new Error("用例数据缺失");
-
     // 每日口径：两天的值不同
-    expect(heatValue(yesterday.date)).toBe(200);
-    expect(heatValue(today.date)).toBe(800);
+    expect(heatValue(first)).toBe(200);
+    expect(heatValue(second)).toBe(800);
 
     fireEvent.click(screen.getByRole("button", { name: "每周" }));
     // 每周口径：落在同一周的两天共享该周合计（1000）
-    const first = heatValue(yesterday.date);
-    const second = heatValue(today.date);
-    expect(first).toBe(second);
-    expect(first).toBe(1000);
+    expect(heatValue(first)).toBe(heatValue(second));
+    expect(heatValue(first)).toBe(1000);
   });
 
   it("切到「累计」：值单调不减", () => {

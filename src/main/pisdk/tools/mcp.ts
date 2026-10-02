@@ -4,6 +4,7 @@
 // 所以这里不再有「一个远端工具 = 一个宿主工具」的包装器 —— 那套代码随暴露策略一起删掉了。
 // 留下的是聚合工具与 `mcp_tools` 都要用的三样东西。
 
+import type { LlmContent } from "@earendil-works/pi-mcp";
 import type { McpCallResult } from "@/main/mcp/client";
 
 /** 单条结果的文本上限：行数与字符数任一超标都截断 */
@@ -16,11 +17,53 @@ export interface McpToolCaller {
     serverId: string,
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<McpCallResult>;
 }
 
+/** One aggregate budget across all content blocks, including native image payloads. */
+export function truncateMcpContent(content: readonly LlmContent[]): {
+  content: LlmContent[];
+  truncated: boolean;
+} {
+  const kept: LlmContent[] = [];
+  let chars = MAX_RESULT_CHARS;
+  let lines = MAX_RESULT_LINES;
+  let imageChars = 8 * 1024 * 1024;
+  let images = 4;
+  let truncated = false;
+  for (const block of content) {
+    if (kept.length >= 128) {
+      truncated = true;
+      break;
+    }
+    if (block.type === "image") {
+      if (images === 0 || block.data.length > imageChars) {
+        truncated = true;
+        continue;
+      }
+      kept.push(block);
+      images -= 1;
+      imageChars -= block.data.length;
+      continue;
+    }
+    const text = block.text.split("\n").slice(0, Math.max(0, lines)).join("\n").slice(0, chars);
+    if (text !== block.text) truncated = true;
+    if (text === "") continue;
+    kept.push({ type: "text", text });
+    chars -= text.length;
+    lines -= text.split("\n").length;
+  }
+  if (truncated)
+    kept.push({
+      type: "text",
+      text: "[结果过长已截断：已限制总文本、图片数量与图片大小，请缩小范围或分次调用]",
+    });
+  return { content: kept, truncated };
+}
+
 /** details：给日志与 UI 回填用，字段都是原始类型（要能过 IPC 的结构化克隆） */
-export interface McpToolDetails {
+export type McpToolDetails = {
   qualifiedName: string;
   serverId: string;
   toolName: string;
@@ -29,7 +72,7 @@ export interface McpToolDetails {
   /** 输出是否被截断 */
   truncated: boolean;
   durationMs: number;
-}
+};
 
 export interface TruncatedText {
   text: string;

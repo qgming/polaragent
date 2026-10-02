@@ -1,11 +1,18 @@
-import type { AgentMessage, Entry, MessageEntry } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
+import { type EntryId, MemoryStorage, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import type { AppEntry } from "./durable-session";
+
+const ids = await Promise.all(
+  Array.from({ length: 100 }, () => new MemoryStorage().mintId<EntryId>()),
+);
+
 import { describe, expect, it, vi } from "vitest";
 import type { ToolCallPart } from "@/shared/contracts/session";
-import { mapEntriesToMessages } from "./message-mapper";
+import { mapEntriesToMessages, mapUserParts } from "./message-mapper";
 
-type UserMessage = Extract<AgentMessage, { role: "user" }>;
-type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
-type ToolResultMessage = Extract<AgentMessage, { role: "toolResult" }>;
+type UserMessage = Extract<Message, { role: "user" }>;
+type AssistantMessage = Extract<Message, { role: "assistant" }>;
+type ToolResultMessage = Extract<Message, { role: "toolResult" }>;
 
 const USAGE: AssistantMessage["usage"] = {
   input: 10,
@@ -17,8 +24,21 @@ const USAGE: AssistantMessage["usage"] = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function messageEntry(id: string, seq: number, message: AgentMessage): MessageEntry {
-  return { id, type: "message", parentId: null, seq, timestamp: 1_000 + seq, message };
+function messageEntry(id: string, seq: number, message: Message): AppEntry {
+  const native = ids[seq];
+  if (native === undefined) throw new Error("Missing test id");
+  return {
+    record: {
+      id: native,
+      conversationId: ROOT_CONVERSATION_ID,
+      kind: message.role === "toolResult" ? "pi.tool-result" : `pi.${message.role}`,
+      model: [message],
+    },
+    entryId: id,
+    parentId: null,
+    sequence: seq,
+    createdAt: 1_000 + seq,
+  };
 }
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
@@ -49,7 +69,7 @@ function toolResultMessage(
 
 describe("mapEntriesToMessages", () => {
   it("映射 user/assistant 内容块并把 toolResult 回填到对应调用", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry("u1", 1, { role: "user", content: "你好", timestamp: 1 } satisfies UserMessage),
       messageEntry(
         "a1",
@@ -112,7 +132,7 @@ describe("mapEntriesToMessages", () => {
   });
 
   it("user 图片内容映射为 dataUrl", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry("u1", 1, {
         role: "user",
         content: [
@@ -139,7 +159,7 @@ describe("mapEntriesToMessages", () => {
    * 所以这里同时钉住「截图带图」与「read_image 不带图」这一对相反的口径。
    */
   it("截图的 toolResult 回读时带上图片；read_image 刻意不带（它给 path，界面现取）", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry(
         "a1",
         1,
@@ -188,7 +208,7 @@ describe("mapEntriesToMessages", () => {
   });
 
   it("无结果的调用保持 running，出错结果标记 error", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry(
         "a1",
         1,
@@ -227,7 +247,7 @@ describe("mapEntriesToMessages", () => {
       patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-旧\n+新\n",
       firstChangedLine: 1,
     };
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry(
         "a1",
         1,
@@ -255,7 +275,7 @@ describe("mapEntriesToMessages", () => {
   });
 
   it("工具未给 details 时不写入该字段", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry(
         "a1",
         1,
@@ -275,7 +295,7 @@ describe("mapEntriesToMessages", () => {
   });
 
   it("找不到对应调用的 toolResult 被忽略", () => {
-    const entries: Entry[] = [
+    const entries: AppEntry[] = [
       messageEntry(
         "t1",
         1,
@@ -285,36 +305,19 @@ describe("mapEntriesToMessages", () => {
     expect(mapEntriesToMessages(entries).messages).toEqual([]);
   });
 
-  it("compaction 进摘要、branch_summary/custom 被忽略", () => {
-    const entries: Entry[] = [
-      {
-        id: "c1",
-        parentId: null,
-        seq: 1,
-        timestamp: 1,
-        type: "compaction",
-        summary: "旧对话摘要",
-        retainedTail: [],
-        tokensBefore: 100,
-        fromHook: false,
-      },
-      { id: "cu1", parentId: null, seq: 2, timestamp: 2, type: "custom", customType: "note" },
-      {
-        id: "b1",
-        parentId: null,
-        seq: 3,
-        timestamp: 3,
-        type: "branch_summary",
-        fromId: null,
-        summary: "分支摘要",
-        fromHook: false,
-      },
+  it("native compaction collects its model summary while bookkeeping stays invisible", () => {
+    const compact = messageEntry("c1", 1, { role: "user", content: "旧对话摘要", timestamp: 1 });
+    compact.record = { ...compact.record, kind: "pi.compaction" };
+    const note = messageEntry("n1", 2, { role: "user", content: "hidden", timestamp: 2 });
+    note.record = { ...note.record, kind: "todo", model: undefined };
+    const entries = [
+      compact,
+      note,
       messageEntry("u1", 4, { role: "user", content: "继续", timestamp: 4 }),
     ];
-
-    const { messages, compactionSummaries } = mapEntriesToMessages(entries);
-    expect(compactionSummaries).toEqual(["旧对话摘要"]);
-    expect(messages.map((message) => message.id)).toEqual(["u1"]);
+    const result = mapEntriesToMessages(entries);
+    expect(result.compactionSummaries).toEqual(["旧对话摘要"]);
+    expect(result.messages.map((message) => message.id)).toEqual(["u1"]);
   });
 
   it("未知内容块跳过且不抛错", () => {
@@ -325,9 +328,9 @@ describe("mapEntriesToMessages", () => {
         { type: "text", text: "正常文本" },
         { type: "unknown-block", foo: 1 },
       ],
-    } as unknown as AgentMessage;
+    } as unknown as Message;
 
-    const entries: Entry[] = [messageEntry("a1", 1, weird)];
+    const entries: AppEntry[] = [messageEntry("a1", 1, weird)];
     expect(() => mapEntriesToMessages(entries)).not.toThrow();
     expect(mapEntriesToMessages(entries).messages[0]?.parts).toEqual([
       { type: "text", text: "正常文本" },
@@ -344,5 +347,133 @@ describe("mapEntriesToMessages", () => {
     };
     const { messages } = mapEntriesToMessages([messageEntry("a1", 1, failed)]);
     expect(messages[0]).toMatchObject({ status: "error", error: "网络异常" });
+  });
+});
+
+/**
+ * 附件在消息里的往返：信封 + 图片块 → 附件 part。
+ *
+ * 这里钉住的是**界面能不能把附件卡片还原出来**。实时回显与历史回读共用同一个
+ * `mapUserParts`（见该函数的说明），所以这一组用例同时覆盖「刚发出去」与
+ * 「刷新之后」两种情形 —— 它们必须长得一模一样。
+ */
+describe("mapUserParts 的附件还原", () => {
+  // 路径用正斜杠写：这些用例验的是**信封的解析**，不是 Windows 路径的转义
+  //（转义那一组在 attachments.test.ts 里，用真实的双反斜杠路径钉住）
+  const ENVELOPE_IMAGE =
+    '<attachment index="1" kind="image" name="shot.png" mime="image/png" bytes="68" ' +
+    'path="D:/proj/attachments/s1/abc.png" frames="1" width="2" height="2" />\n' +
+    "<content>\nThe image below is this file, sent so you can look at it.\n</content>";
+
+  const ENVELOPE_VIDEO =
+    '<attachment index="1" kind="video" name="demo.mp4" mime="video/mp4" bytes="1024" ' +
+    'path="D:/proj/demo.mp4" frames="2" duration="6.20" frame-times="1.55,4.65" />\n' +
+    "<content>\nThe 2 images below are frames sampled evenly from this video (6.2s).\n</content>";
+
+  const ENVELOPE_TEXT =
+    '<attachment index="1" kind="text" name="notes.md" mime="text/markdown" bytes="9" ' +
+    'path="D:/proj/notes.md" frames="0" lines="2" />\n' +
+    "<content>\n第一行\n第二行\n</content>";
+
+  it("信封 + 图片块 → 一条附件 part，帧留在 part 上", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [
+        { type: "text", text: "看这张图" },
+        { type: "text", text: ENVELOPE_IMAGE },
+        { type: "image", data: "QUJD", mimeType: "image/png" },
+      ],
+      timestamp: 1,
+    });
+
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toEqual({ type: "text", text: "看这张图" });
+    expect(parts[1]).toEqual({
+      type: "attachment",
+      index: 1,
+      kind: "image",
+      name: "shot.png",
+      mimeType: "image/png",
+      size: 68,
+      path: "D:/proj/attachments/s1/abc.png",
+      frames: [{ mimeType: "image/png", dataUrl: "data:image/png;base64,QUJD" }],
+      width: 2,
+      height: 2,
+    });
+  });
+
+  it("视频：帧数与时长进 part（界面要显示「模型只看到这几帧」）", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [
+        { type: "text", text: ENVELOPE_VIDEO },
+        { type: "image", data: "QQ==", mimeType: "image/jpeg" },
+        { type: "image", data: "Qg==", mimeType: "image/jpeg" },
+      ],
+      timestamp: 1,
+    });
+    expect(parts[0]).toMatchObject({
+      type: "attachment",
+      kind: "video",
+      frameCount: 2,
+      durationSeconds: 6.2,
+    });
+    expect((parts[0] as { frames: unknown[] }).frames).toHaveLength(2);
+  });
+
+  it("文本附件没有帧，行数照常带出", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [{ type: "text", text: ENVELOPE_TEXT }],
+      timestamp: 1,
+    });
+    expect(parts[0]).toMatchObject({ type: "attachment", kind: "text", totalLines: 2 });
+    expect((parts[0] as { frames?: unknown }).frames).toBeUndefined();
+  });
+
+  it("多条附件各自配自己的帧（交错顺序不能串）", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [
+        { type: "text", text: ENVELOPE_IMAGE },
+        { type: "image", data: "QUJD", mimeType: "image/png" },
+        { type: "text", text: ENVELOPE_VIDEO },
+        { type: "image", data: "QQ==", mimeType: "image/jpeg" },
+        { type: "image", data: "Qg==", mimeType: "image/jpeg" },
+      ],
+      timestamp: 1,
+    });
+    expect(parts.map((part) => (part.type === "attachment" ? part.name : part.type))).toEqual([
+      "shot.png",
+      "demo.mp4",
+    ]);
+    expect((parts[0] as { frames: unknown[] }).frames).toHaveLength(1);
+    expect((parts[1] as { frames: unknown[] }).frames).toHaveLength(2);
+  });
+
+  it("旧会话（没有信封的裸图片块）继续显示成图片", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [{ type: "image", data: "QUJD", mimeType: "image/png" }],
+      timestamp: 1,
+    });
+    expect(parts).toEqual([
+      { type: "image", mimeType: "image/png", dataUrl: "data:image/png;base64,QUJD" },
+    ]);
+  });
+
+  it("帧数对不上时按实际块数收（信封只是提示，解析以块为准）", () => {
+    const parts = mapUserParts({
+      role: "user",
+      content: [
+        { type: "text", text: ENVELOPE_VIDEO },
+        { type: "image", data: "QQ==", mimeType: "image/jpeg" },
+        { type: "text", text: "信封说 2 帧，实际只有 1 帧" },
+      ],
+      timestamp: 1,
+    });
+    expect(parts).toHaveLength(2);
+    expect((parts[0] as { frames: unknown[] }).frames).toHaveLength(1);
+    expect(parts[1]).toEqual({ type: "text", text: "信封说 2 帧，实际只有 1 帧" });
   });
 });

@@ -187,9 +187,39 @@ export const enUS = {
     newChat: "New chat",
     welcome: "What would you like to do today?",
     welcomeSubtitle: "Hand the task to Oint — it can read and write code and run commands.",
+    // New-chat page: the "which project does this run in" row and the starter prompts below it
+    welcomeProject: "Project this chat runs in",
+    welcomeProjectNone: "No project",
+    welcomeProjectPicker: "Project",
+    welcomeProjectEmpty: "No projects yet. Add a folder and new chats can run inside it.",
+    welcomeProjectHint:
+      "The folder a new chat runs in; the project you pick becomes its working root",
+    welcomeProjectFailed: "Could not switch project: {{reason}}",
+    welcomeSuggestions: "Starter prompts",
+    // Short labels for the starter chips; bodies come from resources/prompts/<name>.md
+    promptPlan: "Plan a change",
+    promptDebug: "Debug an issue",
+    promptReview: "Review changes",
+    promptVerify: "Pre-ship checks",
+    promptCommit: "Commit message",
+    promptMap: "Map a module",
     composerDisabledHint: "The conversation area will be wired up in a later version",
-    attachImage: "Add image",
+
+    addAttachment: "Add attachment (image / video / file)",
     removeAttachment: "Remove attachment",
+    // Readings and states shown on an attachment card
+    attachmentPending: "Not saved yet — openable in a moment",
+    attachmentFrames: "{{count}} frames",
+    attachmentLines: "{{count}} lines",
+    attachmentDownscaled: "downscaled",
+    attachmentTruncated: "truncated",
+    // Shown when the model has image input turned off: the attachment still goes through,
+    // but the model gets a text description instead of the picture itself
+    attachmentVisionUnsupported:
+      "This model has image input turned off — images arrive as a text description",
+    // The queue only carries text, so a message with attachments cannot be queued
+    attachmentQueueBlocked:
+      "Queuing only supports plain text: wait for this turn to finish, or remove the attachments",
     editMessage: "Edit message",
     editMessageDesc: "Change this message and send it again; replies after it are discarded",
     // i18next 的复数键：单数用 _one、其余用 _other（中文没有复数，只用普通键）

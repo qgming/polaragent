@@ -75,7 +75,7 @@ describe("buildTools", () => {
       expect(tool.parameters).toBeTruthy();
       expect(typeof tool.execute).toBe("function");
       // label 是 AgentTool 的必填字段，UI 直接拿它显示
-      expect(tool.label).toBeTruthy();
+      expect(tool.name).toBeTruthy();
     }
   });
 
@@ -86,7 +86,7 @@ describe("buildTools", () => {
     for (const name of BROWSER_TOOL_NAME_LIST) {
       expect(names).toContain(name);
       const tool = tools.find((candidate) => candidate.name === name);
-      expect(tool?.label).toBe(name);
+      expect(tool?.name).toBe(name);
     }
     expect(tools).toHaveLength(
       NATIVE_TOOLS.length + CUSTOM_TOOLS.length + BROWSER_TOOL_NAME_LIST.length,
@@ -128,13 +128,13 @@ describe("buildTools", () => {
    *
    * 这两条断言钉的是「描述不许声称本仓不做的行为」。
    */
-  it("read 的描述如实说明它也能读图、但没有大小上限（不能把模型支开）", () => {
+  it("read 只读文本，图片明确交给 read_image", () => {
     const tools = buildTools();
     const read = tools.find((tool) => tool.name === TOOL_NAMES.read);
 
     expect(read?.description).toContain("read_image");
-    // 关键的诚实之处：承认 read 读得到图，并点明它的风险
-    expect(read?.description).toContain("没有大小上限");
+    // 原生 read 只读文本，图片继续由应用的 read_image 工具负责
+    expect(read?.description).toContain("只读取文本");
     // 不能再出现那句与实现相反的话
     expect(read?.description).not.toContain("看不到图");
   });
@@ -152,7 +152,7 @@ describe("buildTools", () => {
     for (const name of CUSTOM_TOOLS) {
       const tool = tools.find((candidate) => candidate.name === name);
       expect(tool, `缺少工具 ${name}`).toBeTruthy();
-      expect(tool?.label).toBe(name);
+      expect(tool?.name).toBe(name);
     }
   });
 
@@ -187,7 +187,7 @@ describe("网络工具", () => {
     expect(names).toContain(WEB_TOOL_NAMES.search);
     expect(names).toContain(WEB_TOOL_NAMES.fetch);
     for (const name of Object.values(WEB_TOOL_NAMES)) {
-      expect(tools.find((tool) => tool.name === name)?.label).toBe(name);
+      expect(tools.find((tool) => tool.name === name)?.name).toBe(name);
     }
   });
 

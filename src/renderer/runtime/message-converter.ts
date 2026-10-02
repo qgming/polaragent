@@ -6,6 +6,7 @@ import type {
 } from "@assistant-ui/react";
 import { fromThreadMessageLike } from "@assistant-ui/react";
 import type { ChatMessage, ChatPart } from "@/shared/contracts";
+import { ATTACHMENT_DATA_PART } from "./attachment-payload";
 
 /** ThreadMessageLike 的 content 元素类型（从库类型推导，保证兼容） */
 type ThreadPart =
@@ -120,6 +121,20 @@ function toThreadPart(part: ChatPart, resolveChild?: ChildMessageResolver): Thre
     }
     case "image":
       return { type: "image", image: part.dataUrl };
+    case "attachment":
+      /**
+       * 附件走库的 `data` part 槽位（`name` 由渲染层的附件卡片组件按名派发）。
+       *
+       * 为什么不用 image/file part：附件有四种形态（图片 / 视频 / 文本 / 其他文件），
+       * 而卡片要显示的是「名字 + 大小 + 时长 + 抽帧数」这一整套读数，还要带「用系统
+       * 默认程序打开」这类动作 —— 那超出了 ImageMessagePart / FileMessagePart 的形状。
+       * `data` 是库为「宿主自定义的 part」留的槽位，形状原样保留，正是这里要的。
+       */
+      return {
+        type: "data",
+        name: ATTACHMENT_DATA_PART,
+        data: part,
+      } as ThreadPart;
   }
 }
 
@@ -184,24 +199,10 @@ export function appendMessageToText(message: AppendMessage): string {
     .join("");
 }
 
-/** 从 image part 提取图片：dataUrl 拆出 mimeType 与 base64 数据，否则原样透传 */
-export function appendMessageToImages(
-  message: AppendMessage,
-): { data: string; mimeType: string }[] {
-  if (typeof message.content === "string") return [];
-  const images: { data: string; mimeType: string }[] = [];
-  for (const part of message.content) {
-    if (part.type !== "image") continue;
-    const { data, mimeType } = splitDataUrl(part.image);
-    images.push({ data, mimeType });
-  }
-  return images;
-}
-
-/** 拆分 data URL：data:image/png;base64,xxxx → { mimeType: "image/png", data: "xxxx" } */
-function splitDataUrl(image: string): { data: string; mimeType: string } {
-  const match = /^data:([^;,]+)[^,]*,([\s\S]*)$/.exec(image);
-  if (match) return { data: match[2] ?? "", mimeType: match[1] ?? "application/octet-stream" };
-  // 非 dataUrl（裸 base64 / 引用）：无法得知类型，原样透传
-  return { data: image, mimeType: "application/octet-stream" };
-}
+/**
+ * 附件不在 `message.content` 里 —— 它在 `message.attachments`。
+ *
+ * 提取逻辑见 attachment-payload.ts 的 appendMessageToAttachments。这里留一句指路，
+ * 因为**这正是那次「图片从来没发出去」的根因**：`content` 里只有文本，
+ * 库把附件放在与它并列的另一个字段上。
+ */

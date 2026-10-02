@@ -40,6 +40,8 @@ export interface ApprovalService {
      * 缺省 false：老调用点与测试不传就是主会话语义。
      */
     isSubagent?: boolean;
+    /** Native tool invocation cancellation, including the settings-loading admission window. */
+    signal?: AbortSignal;
   }): Promise<ApprovalDecision>;
   /** 渲染进程回传决定 */
   respond(id: string, decision: ApprovalDecision, note?: string): void;
@@ -60,6 +62,7 @@ interface PendingApproval {
   promise: Promise<ApprovalDecision>;
   resolve: (decision: ApprovalDecision) => void;
   workingDir?: string;
+  cleanupAbort?: () => void;
 }
 
 /**
@@ -93,6 +96,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
   // toolCallId → 未决请求 id，保证同一次工具调用不重复弹卡
   const pendingByToolCall = new Map<string, string>();
   const records: ApprovalRecord[] = [];
+  const admissions = new Map<string, Set<{ cancelled: boolean }>>();
 
   function emitSafe(sessionId: string, event: ChatEvent): void {
     try {
@@ -134,6 +138,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     const entry = pendingById.get(id);
     if (!entry) return false;
     pendingById.delete(id);
+    entry.cleanupAbort?.();
     if (pendingByToolCall.get(entry.toolCallId) === id) pendingByToolCall.delete(entry.toolCallId);
     record(entry, decision, decidedBy, note);
     emitSafe(entry.request.sessionId, { type: "approval-resolved", id, decision });
@@ -187,15 +192,33 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     /** 会话实际使用的模型；AI 预审据此选模型，缺省时审批器回落默认模型 */
     modelRef?: ModelRef;
     isSubagent?: boolean;
+    signal?: AbortSignal;
   }): Promise<ApprovalDecision> {
+    if (input.signal?.aborted) return "deny";
     const duplicate = findPending(input.toolCallId);
     if (duplicate) return duplicate.promise;
+    const admission = { cancelled: false };
+    const sessionAdmissions = admissions.get(input.sessionId) ?? new Set();
+    sessionAdmissions.add(admission);
+    admissions.set(input.sessionId, sessionAdmissions);
 
     // 只有「帮我审批」（含子智能体在「默认权限」下映射来的那一档）启用 AI 预审，
     // 其余模式一律等用户确认；读取设置失败时退回用户审批（审批卡照常弹出，不打断链路）。
     let aiApprover: AiApprover | undefined;
+    let removeSetupAbort = () => {};
     try {
-      const settings = await deps.getSettings();
+      const settings = await (input.signal === undefined
+        ? deps.getSettings()
+        : Promise.race([
+            deps.getSettings(),
+            new Promise<undefined>((resolve) => {
+              const cancel = () => resolve(undefined);
+              input.signal?.addEventListener("abort", cancel, { once: true });
+              removeSetupAbort = () => input.signal?.removeEventListener("abort", cancel);
+              if (input.signal?.aborted) cancel();
+            }),
+          ]));
+      if (settings === undefined) return "deny";
       if (
         effectivePermissionMode(settings.permissionMode, input.isSubagent === true) ===
           "ai_review" &&
@@ -205,7 +228,12 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
       }
     } catch (error) {
       console.warn(`读取审批设置失败，退回用户审批：${String(error)}`);
+    } finally {
+      removeSetupAbort();
+      sessionAdmissions.delete(admission);
+      if (sessionAdmissions.size === 0) admissions.delete(input.sessionId);
     }
+    if (input.signal?.aborted || admission.cancelled) return "deny";
 
     // settings 读取期间可能已有同 toolCallId 的请求完成登记
     const raced = findPending(input.toolCallId);
@@ -234,6 +262,14 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
     };
     pendingById.set(request.id, entry);
     pendingByToolCall.set(input.toolCallId, request.id);
+    if (input.signal !== undefined) {
+      const abort = () => {
+        request.reason = "运行已停止";
+        settle(request.id, "deny", "user", "运行已停止");
+      };
+      input.signal.addEventListener("abort", abort, { once: true });
+      entry.cleanupAbort = () => input.signal?.removeEventListener("abort", abort);
+    }
     emitSafe(request.sessionId, { type: "approval-requested", request });
     if (aiApprover) void runAiApproval(entry, aiApprover);
     return promise;
@@ -255,6 +291,7 @@ export function createApprovalService(deps: ApprovalServiceDeps): ApprovalServic
   }
 
   function cancelSession(sessionId: string): void {
+    for (const admission of admissions.get(sessionId) ?? []) admission.cancelled = true;
     for (const entry of [...pendingById.values()]) {
       if (entry.request.sessionId !== sessionId) continue;
       entry.request.reason = "运行已停止";

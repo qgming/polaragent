@@ -1,3 +1,5 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 // 两个网络工具：web_search / web_fetch。
 //
 // 与其它自建工具的差异：它们**完全不碰工作区**，也不操作主进程持有的 UI 资源
@@ -16,11 +18,6 @@
 //
 // 文案用英文，与内核四件套、todo、jobs、browser 一致；面向维护者的注释是中文。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
 import {
   WEB_TOOL_NAMES,
@@ -262,8 +259,12 @@ export function describeWebError(error: unknown): string {
 }
 
 /** 统一出口：文本 + details */
-function textResult<TDetails>(text: string, details: TDetails): AgentToolResult<TDetails> {
-  return { content: [{ type: "text", text }], details };
+function textResult<TDetails>(text: string, details: TDetails) {
+  return {
+    content: [{ type: "text" as const, text }],
+    details,
+    isError: text.startsWith("Error:"),
+  };
 }
 
 /**
@@ -272,15 +273,13 @@ function textResult<TDetails>(text: string, details: TDetails): AgentToolResult<
  * 未传 service 就没有工具（与 createBrowserTools 同款）—— 于是单测里
  * buildTools() 不传这个参数时结果与加它之前完全一致。
  */
-export function createWebTools<TContext extends ExecutionToolContext = ExecutionToolContext>(
-  service: WebService,
-): AgentHarnessTool<TContext>[] {
-  const search: AgentHarnessTool<TContext, typeof webSearchSchema, WebSearchDetails> = {
+export function createWebTools(service: WebService): ToolRegistration[] {
+  const search: ToolRegistration<typeof webSearchSchema, JsonRepresentation<WebSearchDetails>> = {
     name: WEB_TOOL_NAMES.search,
-    label: WEB_TOOL_NAMES.search,
+
     description: WEB_SEARCH_DESCRIPTION,
     parameters: webSearchSchema,
-    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
+    async execute(params) {
       const query = params.query.trim();
       if (query === "") {
         return textResult("Error: query must be a non-empty string.", {
@@ -315,12 +314,12 @@ export function createWebTools<TContext extends ExecutionToolContext = Execution
     },
   };
 
-  const fetchTool: AgentHarnessTool<TContext, typeof webFetchSchema, WebFetchDetails> = {
+  const fetchTool: ToolRegistration<typeof webFetchSchema, JsonRepresentation<WebFetchDetails>> = {
     name: WEB_TOOL_NAMES.fetch,
-    label: WEB_TOOL_NAMES.fetch,
+
     description: WEB_FETCH_DESCRIPTION,
     parameters: webFetchSchema,
-    async execute(_toolCallId, params, _onUpdate, _toolContext, _invocation, _context) {
+    async execute(params) {
       const url = params.url.trim();
       if (url === "") {
         return textResult("Error: url must be a non-empty string.", {
@@ -349,7 +348,7 @@ export function createWebTools<TContext extends ExecutionToolContext = Execution
     },
   };
 
-  return [search as AgentHarnessTool<TContext>, fetchTool as AgentHarnessTool<TContext>];
+  return [search, fetchTool];
 }
 
 /** 供测试与调用方复用的参数类型 */

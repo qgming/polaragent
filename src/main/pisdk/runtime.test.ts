@@ -11,20 +11,16 @@ import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import {
-  abortStaleOperation,
   agentMessageText,
   applyToolEnd,
   buildSystemPrompt,
   createChatRuntime,
   deriveRulePattern,
   getChatRuntime,
-  isLaneBusy,
   keptToolCallIds,
   loadAgentResources,
-  needsModelWrite,
   type PendingEntry,
   pairEntryWithMessage,
-  readLaneModelRef,
   sessionAllowedRoots,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
@@ -558,147 +554,5 @@ describe("getChatRuntime", () => {
 
     await runtime.dispose();
     expect(() => getChatRuntime()).toThrow("聊天运行时尚未初始化");
-  });
-});
-
-/**
- * 遗留活跃操作：上一次进程在运行中被关掉后，lane 里会留着「当前操作 id」，
- * 之后任何 prompt 都会被 pi 以 LaneBusy 拒收 —— 这里只覆盖我们自己的判断与收敛动作，
- * 真 lane 需要模型与存储，留给端到端验收。
- */
-describe("遗留操作清理", () => {
-  /**
-   * 假 lane：`inspectExecution` 报告当前压着什么操作（null = 没有），abort 记调用次数。
-   *
-   * 两个都要：判定「是不是遗留操作」靠 inspectExecution，收敛靠 abort ——
-   * 只看 abort 的次数测不出「压缩期间不该被清掉」这条新口径。
-   */
-  function fakeLane(
-    outcome: { ok: true } | { ok: false; error: unknown } | Error,
-    current: { kind: "run" | "compaction" | "navigation" } | null = null,
-  ) {
-    let calls = 0;
-    const lane = {
-      inspectExecution: async () => ({
-        lane: "main",
-        tipId: null,
-        current:
-          current === null
-            ? null
-            : { id: "op1", kind: current.kind, startedAt: 0, status: "running" as const },
-      }),
-      abort: async () => {
-        calls += 1;
-        if (outcome instanceof Error) throw outcome;
-        return outcome.ok ? { ok: true, value: {} } : { ok: false, error: outcome.error };
-      },
-    };
-    return {
-      lane: lane as unknown as Parameters<typeof abortStaleOperation>[0],
-      calls: () => calls,
-    };
-  }
-
-  it("abort 收敛成功即视为清理完成", async () => {
-    const { lane, calls } = fakeLane({ ok: true });
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(true);
-    expect(calls()).toBe(1);
-  });
-
-  it("没有活跃操作（abort 返回错误）时不视为清理完成", async () => {
-    const { lane } = fakeLane({
-      ok: false,
-      error: { _tag: "NoActiveOperation", message: "no active operation" },
-    });
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
-  });
-
-  it("abort 抛异常时吞掉异常并返回 false（关闭流程不该被它带崩）", async () => {
-    const { lane } = fakeLane(new Error("存储写入失败"));
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
-  });
-
-  /**
-   * 本函数被调用的场景是「prompt 被 LaneBusy 拒了 → 清掉遗留再重试」。
-   * 而 LaneBusy 也会由**正在跑的压缩/导航**触发：那时 abort 会把用户刚发起的
-   * `/compact` 直接杀掉，所以必须只收敛 run 类残留。
-   */
-  it("lane 上压着压缩时不 abort（否则一次发送会杀掉正在跑的压缩）", async () => {
-    const { lane, calls } = fakeLane({ ok: true }, { kind: "compaction" });
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
-    expect(calls()).toBe(0);
-  });
-
-  it("lane 上压着导航时同样不 abort", async () => {
-    const { lane, calls } = fakeLane({ ok: true }, { kind: "navigation" });
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(false);
-    expect(calls()).toBe(0);
-  });
-
-  it("压着的确实是遗留的 run 时照常收敛", async () => {
-    const { lane, calls } = fakeLane({ ok: true }, { kind: "run" });
-    await expect(abortStaleOperation(lane, "s1")).resolves.toBe(true);
-    expect(calls()).toBe(1);
-  });
-});
-
-describe("isLaneBusy", () => {
-  it("按 _tag 识别 pi 的 LaneBusy", () => {
-    expect(
-      isLaneBusy({ _tag: "LaneBusy", message: 'Lane "main" already has an active operation' }),
-    ).toBe(true);
-  });
-
-  it("其它错误与非法值都不误判", () => {
-    // 注意：LaneBusy 是带 tag 的普通对象，不是 Error 子类 —— 文案里出现 LaneBusy 的 Error 不算
-    expect(isLaneBusy(new Error('Lane "main" already has an active operation'))).toBe(false);
-    expect(isLaneBusy({ _tag: "InvalidMessage" })).toBe(false);
-    expect(isLaneBusy(null)).toBe(false);
-    expect(isLaneBusy("LaneBusy")).toBe(false);
-  });
-
-  describe("readLaneModelRef / needsModelWrite（模型是否要写回 lane）", () => {
-    it("lane 里解析得出模型时取出它的坐标", async () => {
-      const lane = {
-        getModel: async () => ({ id: "m2", provider: "svc-b" }),
-      } as unknown as Parameters<typeof readLaneModelRef>[0];
-      await expect(readLaneModelRef(lane)).resolves.toEqual({
-        serviceId: "svc-b",
-        modelId: "m2",
-      });
-    });
-
-    it("lane 里解析不出模型（存储的是已删除的服务）→ null", async () => {
-      const lane = {
-        getModel: async () => undefined,
-      } as unknown as Parameters<typeof readLaneModelRef>[0];
-      await expect(readLaneModelRef(lane)).resolves.toBeNull();
-    });
-
-    it("与期望一致时不写（避免每条消息都落一次配置更新）", () => {
-      expect(
-        needsModelWrite(
-          { serviceId: "svc-a", modelId: "m1" },
-          { serviceId: "svc-a", modelId: "m1" },
-        ),
-      ).toBe(false);
-    });
-
-    it("引用不同、或 lane 里读不出模型时必须写", () => {
-      expect(
-        needsModelWrite(
-          { serviceId: "svc-a", modelId: "m1" },
-          { serviceId: "svc-a", modelId: "m2" },
-        ),
-      ).toBe(true);
-      expect(
-        needsModelWrite(
-          { serviceId: "svc-a", modelId: "m1" },
-          { serviceId: "svc-b", modelId: "m1" },
-        ),
-      ).toBe(true);
-      // null = lane 里的模型已不可解析：不写的话之后每次运行都会 model_unavailable
-      expect(needsModelWrite(null, { serviceId: "svc-a", modelId: "m1" })).toBe(true);
-    });
   });
 });

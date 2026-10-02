@@ -1,24 +1,22 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { type AgentMessage, BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core";
-import {
-  createNodeSqliteFactory,
-  SqliteSessionRepo,
-} from "@earendil-works/pi-session-backend-sqlite-node";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Message } from "@earendil-works/pi-ai";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionWorkspaceDir } from "@/main/app/paths";
 import type { TextPart } from "@/shared/contracts/session";
 import type { SubagentRun } from "@/shared/contracts/subagent";
-import { createSessionStore, type SessionStore } from "./session-store";
+import { createSessionStore, type OpenedSession, type SessionStore } from "./session-store";
 import { createSessionsIndex } from "./sessions-index";
 
 let baseDir: string;
-let repo: SqliteSessionRepo;
 let store: SessionStore;
 let clock: number;
 
-function userMessage(text: string): AgentMessage {
+function userMessage(text: string): Message {
   return { role: "user", content: text, timestamp: Date.now() };
 }
 
@@ -27,20 +25,37 @@ function textOf(message: { parts: unknown[] } | undefined): string {
   return part?.text ?? "";
 }
 
+async function appendMessage(
+  opened: OpenedSession,
+  message: Message,
+  _context = BACKGROUND_CONTEXT,
+) {
+  const owner = await opened.session.bindHarness(() =>
+    Harness.open(
+      opened.storage,
+      { models: createModels(), registry: createRegistry() },
+      BACKGROUND_CONTEXT,
+    ),
+  );
+  const record = await owner.commit(
+    (tx) =>
+      tx.appendEntry(opened.session.activeConversationId, {
+        kind: message.role === "toolResult" ? "pi.tool-result" : `pi.${message.role}`,
+        model: [message],
+      }),
+    BACKGROUND_CONTEXT,
+  );
+  return opened.session.projectEntry(record).entryId;
+}
+
 beforeEach(async () => {
   baseDir = await mkdtemp(path.join(os.tmpdir(), "oint-sessions-"));
   clock = 1_700_000_000_000;
-  // 注入递增时钟，保证 list 排序断言稳定
-  repo = new SqliteSessionRepo({
-    directory: path.join(baseDir, "sessions"),
-    databaseFactory: createNodeSqliteFactory(),
-    now: () => (clock += 1_000),
-  });
-  store = createSessionStore(baseDir, repo);
+  store = createSessionStore(baseDir, { now: () => (clock += 1000) });
 });
 
 afterEach(async () => {
-  await repo.close(BACKGROUND_CONTEXT);
+  await store.close();
   await rm(baseDir, { recursive: true, force: true });
 });
 
@@ -54,15 +69,14 @@ describe("session-store", () => {
    */
   describe("会话元数据缓存", () => {
     it("连续两次 list 只扫盘一次", async () => {
-      await store.create({ title: "会话一" });
+      const created = await store.create({ title: "会话一" });
       await store.list();
-      const spy = vi.spyOn(repo, "list");
+      const opened = await store.open(created.id);
 
       await store.list();
       await store.list();
 
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
+      expect(await store.open(created.id)).toBe(opened);
     });
 
     it("create 之后缓存失效：新建的会话立刻出现在列表里", async () => {
@@ -87,7 +101,7 @@ describe("session-store", () => {
       const source = await store.create({ title: "源" });
       const opened = await store.open(source.id);
       if (!opened) throw new Error("源会话应能打开");
-      const entry = await opened.branch.appendMessage(userMessage("一"), BACKGROUND_CONTEXT);
+      const entry = await appendMessage(opened, userMessage("一"), BACKGROUND_CONTEXT);
       await store.list();
 
       const forked = await store.fork(source.id, entry);
@@ -131,7 +145,7 @@ describe("session-store", () => {
     const opened = await store.open(summary.id);
     expect(opened).toBeDefined();
     if (!opened) throw new Error("会话应能打开");
-    await expect(opened.session.getName(BACKGROUND_CONTEXT)).resolves.toBe("新标题");
+    await expect(store.readTitle(summary.id)).resolves.toBe("新标题");
   });
 
   it("readTitle 区分「还没命名」与已有标题", async () => {
@@ -152,7 +166,7 @@ describe("session-store", () => {
     if (!opened) throw new Error("会话应能打开");
 
     for (const text of ["第一问", "第一答", "第二问", "第二答"]) {
-      await opened.branch.appendMessage(userMessage(text), BACKGROUND_CONTEXT);
+      await appendMessage(opened, userMessage(text), BACKGROUND_CONTEXT);
     }
     const head = await store.loadMessages(summary.id, { limit: 2, order: "oldestFirst" });
     expect(head.messages.map(textOf)).toEqual(["第一问", "第一答"]);
@@ -174,10 +188,9 @@ describe("session-store", () => {
     const opened = await store.open(source.id);
     expect(opened).toBeDefined();
     if (!opened) throw new Error("源会话应能打开");
-    const branch = opened.branch;
-    const firstEntry = await branch.appendMessage(userMessage("一"), BACKGROUND_CONTEXT);
-    const secondEntry = await branch.appendMessage(userMessage("二"), BACKGROUND_CONTEXT);
-    await branch.appendMessage(userMessage("三"), BACKGROUND_CONTEXT);
+    await appendMessage(opened, userMessage("一"), BACKGROUND_CONTEXT);
+    const secondEntry = await appendMessage(opened, userMessage("二"), BACKGROUND_CONTEXT);
+    await appendMessage(opened, userMessage("三"), BACKGROUND_CONTEXT);
 
     const forked = await store.fork(source.id, secondEntry);
     expect(forked.parentSessionId).toBe(source.id);
@@ -185,10 +198,12 @@ describe("session-store", () => {
     expect(forked.messageCount).toBe(2);
 
     const forkedMessages = await store.loadMessages(forked.id);
-    expect(forkedMessages.messages.map((message) => message.id)).toEqual([firstEntry, secondEntry]);
+    expect(forkedMessages.messages.every((message) => message.entryId?.startsWith("entry:"))).toBe(
+      true,
+    );
     expect(forkedMessages.messages.map((message) => textOf(message))).toEqual(["一", "二"]);
 
-    // 源会话不受影响，占位 lane 元数据已清理
+    // 源会话不受影响，原生分支副本没有修改源记录
     const sourceMessages = await store.loadMessages(source.id);
     expect(sourceMessages.messages).toHaveLength(3);
 
@@ -213,13 +228,12 @@ describe("session-store", () => {
     const opened = await store.open(summary.id);
     expect(opened).toBeDefined();
     if (!opened) throw new Error("分页会话应能打开");
-    const branch = opened.branch;
     for (let i = 1; i <= 60; i += 1) {
-      await branch.appendMessage(userMessage(`消息${i}`), BACKGROUND_CONTEXT);
+      await appendMessage(opened, userMessage(`消息${i}`), BACKGROUND_CONTEXT);
     }
 
-    const entries = await branch.findEntries({ order: "oldestFirst" }, BACKGROUND_CONTEXT);
-    const seqs = entries.map((entry) => entry.seq);
+    const entries = await opened.session.allEntries();
+    const seqs = entries.map((entry) => entry.sequence);
     expect(seqs).toHaveLength(60);
 
     const firstPage = await store.loadMessages(summary.id, { limit: 40 });
@@ -250,7 +264,7 @@ describe("session-store", () => {
       messages: [],
       compactionSummaries: [],
     });
-    expect(warn).toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -443,7 +457,7 @@ describe("session-store", () => {
    *
    * 三组不变量：
    *   1. 建会话时就把目录建出来（执行环境要拿它当 cwd，不存在会直接跑不起来）；
-   *   2. 历史会话（索引里没有 cwd）由 ensureCwd / list 补上，且补出来的值会落盘；
+   *   2. 缺失目录绑定的会话（索引里没有 cwd）由 ensureCwd / list 补上，且补出来的值会落盘；
    *   3. 删会话只清这一份目录，用户显式保存到别处（含子会话共享的父工作区）的文件不受影响。
    */
   describe("会话临时工作区", () => {
@@ -466,9 +480,9 @@ describe("session-store", () => {
       await expect(store.readCwd(blank.id)).resolves.toBe(sessionWorkspaceDir(blank.id, baseDir));
     });
 
-    it("ensureCwd：历史会话现补一个临时工作区并落盘，重复调用是同一个目录", async () => {
+    it("ensureCwd：缺失目录绑定的会话现补一个临时工作区并落盘，重复调用是同一个目录", async () => {
       const legacy = await store.create({ cwd: "D:\\legacy" });
-      // 模拟旧版本写下的索引条目：把 cwd 抹掉（JSON 里没有这个键）
+      // 模拟损坏的写下的索引条目：把 cwd 抹掉（JSON 里没有这个键）
       await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
       await expect(store.readCwd(legacy.id)).resolves.toBeNull();
 
@@ -480,7 +494,7 @@ describe("session-store", () => {
       await expect(store.ensureCwd(legacy.id)).resolves.toBe(dir);
     });
 
-    it("list 给历史会话补上临时工作区（界面看到的 cwd 与主进程用的是同一个）", async () => {
+    it("list 给缺失目录绑定的会话补上临时工作区（界面看到的 cwd 与主进程用的是同一个）", async () => {
       const legacy = await store.create({ cwd: "D:\\legacy" });
       await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
 
@@ -543,7 +557,7 @@ describe("session-store", () => {
       await writeFile(path.join(sourceDir, "shared.md"), "x\n", "utf8");
       const opened = await store.open(source.id);
       if (!opened) throw new Error("源会话应能打开");
-      const entry = await opened.branch.appendMessage(userMessage("一"), BACKGROUND_CONTEXT);
+      const entry = await appendMessage(opened, userMessage("一"), BACKGROUND_CONTEXT);
 
       const forked = await store.fork(source.id, entry);
       // 分支接着同一段对话，文件也在同一个目录里
@@ -556,6 +570,78 @@ describe("session-store", () => {
       // 分支也没了，这时才真正清掉
       await store.remove(forked.id);
       await expect(stat(sourceDir)).rejects.toThrow();
+    });
+  });
+
+  /**
+   * 新会话页「选择项目」的落点。
+   *
+   * 会话在创建时就有一个根（显式给的目录，或本会话的临时工作区），所以「先选项目再开聊」
+   * 只能是**改绑定**。这里验的是那条通道的三条拒绝理由与一次清理 —— 它们都属于
+   * 「改了就说不清」或「改了会留垃圾」的那一类，出了错在界面上看不出来。
+   */
+  describe("setCwd（改绑工作目录）", () => {
+    it("把空会话改绑到项目目录，并把原来的临时工作区清掉", async () => {
+      const created = await store.create({ title: "新会话" });
+      const tempDir = sessionWorkspaceDir(created.id, baseDir);
+      await writeFile(path.join(tempDir, "scratch.md"), "临时\n", "utf8");
+
+      const projectDir = path.join(baseDir, "user-project");
+      await mkdir(projectDir, { recursive: true });
+
+      await store.setCwd(created.id, projectDir);
+
+      await expect(store.readCwd(created.id)).resolves.toBe(projectDir);
+      // 列表里也变了：侧栏靠它分组（项目 / 最近）
+      const row = (await store.list()).find((item) => item.id === created.id);
+      expect(row?.cwd).toBe(projectDir);
+      // 原来那个临时工作区只跟着这个会话存在，换根之后它没有主人了
+      await expect(stat(tempDir)).rejects.toThrow();
+    });
+
+    it("显式绑定的目录不会被当成临时工作区清掉", async () => {
+      const realDir = path.join(baseDir, "user-project");
+      await mkdir(realDir, { recursive: true });
+      await writeFile(path.join(realDir, "keep.md"), "用户文件\n", "utf8");
+      const bound = await store.create({ cwd: realDir });
+
+      const otherDir = path.join(baseDir, "another");
+      await mkdir(otherDir, { recursive: true });
+      await store.setCwd(bound.id, otherDir);
+
+      // 判据是「cwd 是不是 workspaces 根的直接子目录」：用户目录不在其中，必须原样留着
+      await expect(stat(path.join(realDir, "keep.md"))).resolves.toBeDefined();
+    });
+
+    it("已有消息的会话拒绝改（相对路径是按当时的根解析的）", async () => {
+      const used = await store.create({ title: "聊过了" });
+      const opened = await store.open(used.id);
+      if (!opened) throw new Error("Missing session");
+      await appendMessage(opened, userMessage("已有内容"));
+
+      const projectDir = path.join(baseDir, "user-project");
+      await mkdir(projectDir, { recursive: true });
+
+      await expect(store.setCwd(used.id, projectDir)).rejects.toThrow(/已有消息/);
+      await expect(store.readCwd(used.id)).resolves.toBe(sessionWorkspaceDir(used.id, baseDir));
+    });
+
+    it("目标不是已存在的目录时拒绝（不留一个下次发送必然失败的根）", async () => {
+      const created = await store.create();
+      const missing = path.join(baseDir, "nope");
+
+      await expect(store.setCwd(created.id, missing)).rejects.toThrow(/目录不存在/);
+      await expect(store.setCwd(created.id, "   ")).rejects.toThrow(/不能为空/);
+      await expect(store.readCwd(created.id)).resolves.toBe(
+        sessionWorkspaceDir(created.id, baseDir),
+      );
+    });
+
+    it("会话不存在时拒绝（不为拼错的 id 写出一条指向任意目录的索引项）", async () => {
+      const projectDir = path.join(baseDir, "user-project");
+      await mkdir(projectDir, { recursive: true });
+
+      await expect(store.setCwd("not-exists", projectDir)).rejects.toThrow(/会话不存在/);
     });
   });
 

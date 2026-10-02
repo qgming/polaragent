@@ -21,6 +21,10 @@ release
 # 应用以本仓库为工作目录运行时产生的项目级配置/资源目录
 .oint/
 
+# Local dependency research and implementation notes
+.slim/deepwork/
+.slim/pi-research/
+
 # 日志 / 系统文件
 *.log
 # 运行时日志目录（当前代码未使用，保留目录但别让它被提交）

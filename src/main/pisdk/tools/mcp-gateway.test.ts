@@ -5,12 +5,8 @@
 // 2. **转发**：`{ tool, arguments }` 要原样落到 server 的对应工具上，details 里留下真实内层工具名；
 // 3. **纠错**：工具名写错时回一份可用清单（而不是让模型再花一轮去查）。
 
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
-import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import { describe, expect, it, vi } from "vitest";
 import type { McpRemoteTool } from "@/main/mcp/client";
 import { qualifyMcpToolName } from "@/shared/contracts/mcp";
 import type { McpToolCaller } from "./mcp";
@@ -21,19 +17,6 @@ import {
   type McpGatewayServer,
 } from "./mcp-gateway";
 
-/**
- * 工具的 execute 需要六个参数（调用 id、参数、进度回调、工具上下文、调用描述、后台上下文）。
- * 这里把它收成一个两参数的包装，测试只关心前两个 —— 与 jobs.test.ts 同一手法。
- */
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-const CONTEXT = { env: { cwd: "/tmp" } as ExecutionEnv };
-
 type GatewayTool = ReturnType<typeof createMcpGatewayTool>;
 /** 只取测试要断言的两项：文本与 details（details 用宽松记录类型即可） */
 type LooseResult = {
@@ -43,7 +26,7 @@ type LooseResult = {
 
 function callTool(tool: GatewayTool, params: unknown): Promise<LooseResult> {
   return tool
-    .execute("call-1", params, () => {}, CONTEXT, INVOCATION, BACKGROUND_CONTEXT)
+    .execute(params, {} as Parameters<typeof tool.execute>[1], BACKGROUND_CONTEXT)
     .then((result) => result as unknown as LooseResult);
 }
 
@@ -65,7 +48,7 @@ function fakeCaller(result = { text: "ok", isError: false }) {
   const caller: McpToolCaller = {
     async callTool(serverId, toolName, args) {
       calls.push({ serverId, toolName, args });
-      return result;
+      return { content: [{ type: "text" as const, text: result.text }], isError: result.isError };
     },
   };
   return { caller, calls };
@@ -184,7 +167,8 @@ describe("createMcpGatewayTool", () => {
 
     const result = await callTool(tool, { tool: "search" });
 
-    expect(textOf(result)).toBe("Error: 参数不合法");
+    expect(textOf(result)).toContain("Error:");
+    expect(textOf(result)).toContain("参数不合法");
     expect(result.details?.isError).toBe(true);
   });
 
@@ -231,5 +215,43 @@ describe("聚合工具与远端工具的命名关系", () => {
   it("聚合工具名 = qualifyMcpToolName(serverId, 'call')", () => {
     const remote: McpRemoteTool = { name: "call", description: "", inputSchema: {} };
     expect(qualifyMcpToolName("x", remote.name)).toBe("mcp__x__call");
+  });
+});
+
+describe("native content and cancellation", () => {
+  it("passes images through and budgets all text blocks together", async () => {
+    const tool = createMcpGatewayTool(gatewayServer(), {
+      callTool: async () => ({
+        content: [
+          { type: "text", text: "a".repeat(30_000) },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+          { type: "text", text: "b".repeat(30_000) },
+        ],
+        isError: false,
+      }),
+    });
+    const result = await callTool(tool, { tool: "search" });
+    expect(result.content.some((block) => block.type === "image")).toBe(true);
+    expect(textOf(result).length).toBeLessThan(51_000);
+    expect(result.details?.truncated).toBe(true);
+  });
+
+  it("forwards the Chord abort signal and does not convert cancellation into a tool error", async () => {
+    const controller = new AbortController();
+    const called = vi.fn(async (_server, _tool, _args, signal?: AbortSignal) => {
+      expect(signal).toBe(controller.signal);
+      controller.abort(new Error("cancelled"));
+      signal?.throwIfAborted();
+      return { content: [], isError: false };
+    });
+    const tool = createMcpGatewayTool(gatewayServer(), { callTool: called });
+    await expect(
+      tool.execute(
+        { tool: "search" },
+        {} as Parameters<typeof tool.execute>[1],
+        withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
+      ),
+    ).rejects.toThrow("cancelled");
+    expect(called).toHaveBeenCalledOnce();
   });
 });

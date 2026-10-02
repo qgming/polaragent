@@ -7,13 +7,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Value } from "typebox/value";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 import type { JobInfo } from "@/shared/contracts/job";
 import { createJobService, type JobService } from "../jobs";
 import {
@@ -56,19 +55,11 @@ function nodeCommand(file: string): string {
 
 type JobTool = ReturnType<typeof createJobTools>[number];
 type JobToolResult = Awaited<ReturnType<JobTool["execute"]>>;
-type ToolParams = Parameters<JobTool["execute"]>[1];
-
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
+type ToolParams = Parameters<JobTool["execute"]>[0];
 
 /** 作业工具只读 toolContext.env.cwd（缺省工作目录），最小替身即可 */
 function toolContext(cwd = dir): { env: ExecutionEnv } {
-  return { env: { cwd } as ExecutionEnv };
+  return { env: new NodeExecutionEnv({ cwd }) };
 }
 
 function toolsFor(sessionId: string, jobs: JobService): JobTool[] {
@@ -82,21 +73,27 @@ function toolNamed(tools: JobTool[], name: string): JobTool {
 }
 
 function runTool(tool: JobTool, params: ToolParams, cwd = dir): Promise<JobToolResult> {
-  return tool.execute("call-1", params, () => {}, toolContext(cwd), INVOCATION, BACKGROUND_CONTEXT);
+  return tool.execute(
+    params,
+    createToolTestApi({ ...toolContext(cwd), callId: "call-1" }),
+    BACKGROUND_CONTEXT,
+  );
 }
 
 function textOf(result: JobToolResult): string {
-  return result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+  return (result.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n");
 }
 
 /** 单个作业的 details（与 JobToolDetails 同形） */
 function jobDetails(result: JobToolResult): JobInfo {
-  return (result.details as { job: JobInfo }).job;
+  return (result.details as unknown as { job: JobInfo }).job;
 }
 
 /** job_list 的 details（与 JobListToolDetails 同形） */
 function listDetails(result: JobToolResult): JobInfo[] {
-  return (result.details as { jobs: JobInfo[] }).jobs;
+  return (result.details as unknown as { jobs: JobInfo[] }).jobs;
 }
 
 async function waitForStatus(
@@ -155,7 +152,7 @@ describe("createJobTools", () => {
       JOB_KILL_TOOL_NAME,
     ]);
     // 渲染层按 label 找图标：这里与工具名同源
-    expect(tools.map((tool) => tool.label)).toEqual(tools.map((tool) => tool.name));
+    expect(tools.map((tool) => tool.name)).toEqual(tools.map((tool) => tool.name));
 
     const background = toolNamed(tools, BASH_BACKGROUND_TOOL_NAME);
     expect(Value.Check(background.parameters, { command: "npm run dev" })).toBe(true);

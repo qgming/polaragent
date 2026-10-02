@@ -2,13 +2,8 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  applyShellOutputUpdate,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-  getOrThrow,
-  type ShellOutputView,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { type ExecutionEnv, getOrThrow } from "@earendil-works/pi-durable/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createExecEnv, resolveBashPath } from "./exec-env";
 
@@ -44,6 +39,23 @@ describe("resolveBashPath", () => {
 });
 
 describe("createExecEnv 路径守卫", () => {
+  it("native filesystem identity is shared and new truncate/flush methods stay guarded", async () => {
+    const other = await createExecEnv({ cwd: os.tmpdir() });
+    expect(env.id).toBe(other.id);
+    expect(env.id).not.toBe("");
+    const file = path.join(root, "truncate-native.txt");
+    getOrThrow(await env.writeFile(file, "abcdef", BACKGROUND_CONTEXT));
+    getOrThrow(await env.truncateFile(file, 3, BACKGROUND_CONTEXT));
+    getOrThrow(await env.flushFile(file, BACKGROUND_CONTEXT));
+    expect(getOrThrow(await env.readTextFile(file, BACKGROUND_CONTEXT))).toBe("abc");
+    for (const result of [
+      await env.truncateFile(outsideFile, 0, BACKGROUND_CONTEXT),
+      await env.flushFile(outsideFile, BACKGROUND_CONTEXT),
+    ]) {
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("permission_denied");
+    }
+  });
   it("允许 cwd 内写入，拒绝 cwd 外写入且不产生文件", async () => {
     const inside = path.join(root, "sub", "a.txt");
     const writeInside = await env.writeFile(inside, "hello", BACKGROUND_CONTEXT);
@@ -107,13 +119,12 @@ describe("createExecEnv 路径守卫", () => {
   });
 
   it("cwd 内 exec 可用且能取回 stdout（无可用 shell 则跳过）", async () => {
-    let view: ShellOutputView | undefined;
+    let output = "";
     const result = await env.exec(
       'node -e "console.log(1+1)"',
       {
-        capture: { limits: { maxBytes: 64 * 1024, maxLines: 200 } },
-        onUpdate: (update) => {
-          view = applyShellOutputUpdate(view, update);
+        onOutput: (text) => {
+          output += text;
         },
       },
       BACKGROUND_CONTEXT,
@@ -125,6 +136,6 @@ describe("createExecEnv 路径守卫", () => {
       return;
     }
     expect(result.value.exitCode).toBe(0);
-    expect(view?.text ?? "").toContain("2");
+    expect(output).toContain("2");
   });
 });

@@ -1,24 +1,10 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { requireToolEnv } from "./tool-env";
 // `read_image`：把一张图片读成**模型能看的 image 块** + 给界面渲染用的 details。
 //
-// ## 为什么需要它（用户的明确要求）
-//
-// 内核的 `read` 其实已经认图片（魔数命中就回「文本说明 + image 块」，见 pi-agent-core 的
-// read.js）。但那不够，有三处缺口：
-//
-// 1. **界面上看不见**：`read` 的结果里那个 image 块在 Oint 的渲染层没有任何消费方 ——
-//    toolResultValue 只取文本块，图片字节直接被丢掉，用户点开详情只看到一句
-//    「Read image file [image/png]」。而「点开就是图片」正是用户要的形态。
-// 2. **模型拿不到尺寸**：没有宽高，模型无法判断一张图是图标还是整页截图，
-//    也没法把图上量到的坐标换算回原图（DSH 的 read_image 专门为此在信封里写尺寸）。
-// 3. **读什么图不明确**：用户上传的图、文件夹里的图、截图工具产出的图，模型没有
-//    一个统一的入口去「再看一眼」—— 只能靠 bash + base64 之类绕路（而那条路会把
-//    一大坨 base64 灌进上下文）。
-//
-// ## 形态：与 DSH 的 read_image 对齐
-//
-// 命名、参数名（file_path）、诊断措辞、无扩展名靠内容嗅探、以及「不要为了看图去装图片库」
-// 这句提示，全部照 DSH 的 read_image 来（见 .dsh 里 dsh-tool-fs 的实现）。
-// 这样两边的模型体验一致，将来对照排查也不用再做一次翻译。
+// pi-durable 的 read 只读文本；本工具保留图片检查能力，并将尺寸、路径等元数据交给界面。
+// 图片数据通过原生 image 内容块进入模型，details 只保存元数据以避免重复存储。
 //
 // ## 与内核 read 的分工
 //
@@ -40,12 +26,7 @@
 //
 // 模型侧不受影响：图片本体照常以 image 内容块返回（它必须真正看到图）。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
-import { getOrThrow } from "@earendil-works/pi-agent-core";
+import { getOrThrow } from "@earendil-works/pi-durable/env";
 import { type Static, Type } from "typebox";
 import {
   declaredUnsupportedImageExtension,
@@ -70,7 +51,7 @@ export type ReadImageToolParams = Static<typeof readImageSchema>;
 /**
  * 单张图片的字节上限（16 MiB）。
  *
- * 与内核 read 的图片分支不同（那个没有上限）：这里的图会被编成 base64 塞进 image 内容块，
+ * 这里的图片被编码为 base64 内容块，
  * 而内容块要过 IPC 结构化克隆、并在模型下一次请求里作为输入重新编码。
  * 16 MiB 足够覆盖屏幕截图与手机照片（iPhone 的 HEIC 转 PNG 后常在 3~8 MiB），
  * 再大就该让模型先缩小。
@@ -144,22 +125,21 @@ function formatImageEnvelope(path: string, details: ReadImageDetails["image"]): 
  * 见 exec-env.ts 的 createExecEnv）：这里不重复实现一遍守卫，
  * 否则两处判据迟早会漂移，而「守卫只有一份」正是那条边界可信的前提。
  */
-export function createReadImageTool<
-  TContext extends ExecutionToolContext = ExecutionToolContext,
->(): AgentHarnessTool<TContext, typeof readImageSchema, ReadImageDetails> {
+export function createReadImageTool(): ToolRegistration<
+  typeof readImageSchema,
+  JsonRepresentation<ReadImageDetails>
+> {
   return {
     name: READ_IMAGE_TOOL_NAME,
-    label: READ_IMAGE_TOOL_NAME,
+
     description: DESCRIPTION,
     parameters: readImageSchema,
     async execute(
-      _toolCallId,
       rawParams,
-      _onUpdate,
-      { env },
-      _invocation,
+      api,
       context,
-    ): Promise<AgentToolResult<ReadImageDetails>> {
+    ): Promise<ToolExecutionResult<JsonRepresentation<ReadImageDetails>>> {
+      const env = requireToolEnv(api);
       const params = rawParams as ReadImageToolParams;
       const requested = params.file_path.trim();
       if (requested === "") throw new Error("file_path must be a non-empty string");

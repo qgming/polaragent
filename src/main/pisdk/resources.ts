@@ -1,6 +1,6 @@
 // 资源目录解析：技能、提示模板、子智能体定义这些「磁盘上的目录」只应有一处解析规则。
 //
-// 为什么单独放一个文件：ipc 下的各列表通道（设置面板用）与 pisdk runtime（装配 AgentHarness
+// 为什么单独放一个文件：ipc 下的各列表通道（设置面板用）与 pisdk runtime（装配 durable prompt sections
 // 时把技能与提示模板注入 harness）必须看到同一批目录，否则「面板里显示的」和「实际注入的」
 // 会悄悄漂移。抽出本文件就是为了共用这一份解析。
 //
@@ -14,6 +14,14 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { dataDir } from "@/main/app/paths";
 import { pluginContributionDirs } from "@/main/plugins/contributions";
+
+export {
+  formatSkillsForSystemPrompt,
+  loadPromptTemplates,
+  loadSkills,
+  type PromptTemplate,
+  type Skill,
+} from "./resource-loaders";
 
 /**
  * 跨工具共享的技能目录：`~/.agents/skills`。

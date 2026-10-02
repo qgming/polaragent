@@ -1,3 +1,6 @@
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 /**
  * 插件进程池的调度与权限门槛。
  *
@@ -106,8 +109,8 @@ afterEach(async () => {
  * 造一个完整的假实现等于把内核的接口抄一遍，而那抄本会随内核升级而过期。
  * 所以显式断言到最小形状：**这是一处刻意的窄化，不是"没管类型"**。
  */
-function toolContext(cwd: string): never {
-  return { env: { cwd } } as never;
+function toolContext(cwd: string) {
+  return { env: new NodeExecutionEnv({ cwd }) };
 }
 
 /** 造一个插件目录（含 main.js），返回它的来源描述 */
@@ -300,12 +303,9 @@ describe("工具名与调用", () => {
 
     const tool = host.tools()[0];
     const promise = tool?.execute(
-      "call-1",
       { tool: "echo", args: { value: 1 } },
-      () => {},
-      toolContext(pluginRoot),
-      {} as never,
-      {} as never,
+      createToolTestApi({ ...toolContext(pluginRoot), callId: "call-1" }),
+      BACKGROUND_CONTEXT,
     );
     const fake = fakes.get(fakeKey(path.join(source.dir, "main.js")));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -324,12 +324,9 @@ describe("工具名与调用", () => {
 
     const tool = host.tools()[0];
     const promise = tool?.execute(
-      "call-1",
       { tool: "echo" },
-      () => {},
-      toolContext(pluginRoot),
-      {} as never,
-      {} as never,
+      createToolTestApi({ ...toolContext(pluginRoot), callId: "call-1" }),
+      BACKGROUND_CONTEXT,
     );
     const fake = fakes.get(fakeKey(path.join(source.dir, "main.js")));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -350,12 +347,9 @@ describe("工具名与调用", () => {
     void host
       .tools()[0]
       ?.execute(
-        "call-1",
         { tool: "echo" },
-        () => {},
-        toolContext("/some/workspace"),
-        {} as never,
-        {} as never,
+        createToolTestApi({ ...toolContext("/some/workspace"), callId: "call-1" }),
+        BACKGROUND_CONTEXT,
       );
     const fake = fakes.get(fakeKey(path.join(source.dir, "main.js")));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -396,12 +390,9 @@ describe("同步：停掉不该跑的", () => {
     // 而调用它得到的是"插件没在跑"，不是"工具不存在"
     const stub = host.tools().find((tool) => tool.name === toolName);
     const result = (await stub?.execute(
-      "c1",
       { tool: "echo" },
-      () => {},
-      toolContext("/tmp"),
-      {} as never,
-      {} as never,
+      createToolTestApi({ ...toolContext("/tmp"), callId: "c1" }),
+      BACKGROUND_CONTEXT,
     )) as { content: { text: string }[]; isError?: boolean };
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("没有运行");
@@ -428,12 +419,9 @@ describe("同步：停掉不该跑的", () => {
 
     const tool = host.tools().find((item) => item.name === pluginGatewayName("dev.example.k2"));
     const promise = tool?.execute(
-      "c1",
       { tool: "echo" },
-      () => {},
-      toolContext("/tmp"),
-      {} as never,
-      {} as never,
+      createToolTestApi({ ...toolContext("/tmp"), callId: "c1" }),
+      BACKGROUND_CONTEXT,
     );
     const fake = fakes.get(fakeKey(path.join(source.dir, "main.js")));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -620,7 +608,11 @@ describe("插件命令", () => {
 
     const toolPromise = host
       .tools()[0]
-      ?.execute("c1", { tool: "status" }, () => {}, toolContext("/tmp"), {} as never, {} as never);
+      ?.execute(
+        { tool: "status" },
+        createToolTestApi({ ...toolContext("/tmp"), callId: "c1" }),
+        BACKGROUND_CONTEXT,
+      );
     const commandPromise = host.runCommand("dev-example-both:sync", "", "/tmp");
     const fake = await waitForFake(source.dir);
     await new Promise((resolve) => setTimeout(resolve, 0));

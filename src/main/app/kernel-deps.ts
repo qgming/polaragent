@@ -1,4 +1,4 @@
-// 内核依赖：读取 pisdk 两个 pi 包的实际版本，供「关于」面板展示。
+// 内核依赖：读取实际安装的 pi 生态版本，供「关于」面板展示。
 //
 // 取值顺序：node_modules/<name>/package.json 的 version（真实安装版本）
 // → 应用 package.json 里声明的范围（去掉 ^ / ~ 等前缀）
@@ -11,7 +11,12 @@ import path from "node:path";
 import type { KernelDependency } from "@/shared/contracts/app";
 
 /** 需要展示的内核包；数组顺序即面板中的排列顺序 */
-export const KERNEL_PACKAGES = ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai"] as const;
+export const KERNEL_PACKAGES = [
+  "@earendil-works/pi-durable",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-mcp",
+  "@earendil-works/chord",
+] as const;
 
 /** 文件读取注入点（默认 node:fs/promises 的 readFile） */
 export type KernelFileReader = (file: string) => Promise<string>;

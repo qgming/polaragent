@@ -20,15 +20,12 @@
 // 也把省下来的上下文又还回去了。`{ tool, arguments }` 是通用形状，代价是模型需要知道内层工具名 ——
 // 这个信息放在 description 的**紧凑索引**里（工具名 + 一句话），以及 `mcp_tools` 的完整清单里。
 
-import type {
-  AgentHarnessTool,
-  AgentToolResult,
-  ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
+import { McpAbortError } from "@earendil-works/pi-mcp";
 import { Type } from "typebox";
 import type { McpCallResult } from "@/main/mcp/client";
 import { mcpGatewayToolName, qualifyMcpToolName } from "@/shared/contracts/mcp";
-import { type McpToolCaller, type McpToolDetails, truncateForModel } from "./mcp";
+import { type McpToolCaller, type McpToolDetails, truncateMcpContent } from "./mcp";
 
 /** description 里最多列几个工具名（其余折叠成一句提示） */
 const MAX_INDEXED_TOOLS = 40;
@@ -48,10 +45,10 @@ export interface McpGatewayServer {
   tools: readonly { name: string; description: string }[];
 }
 
-export interface McpGatewayDetails extends McpToolDetails {
+export type McpGatewayDetails = McpToolDetails & {
   /** 被调用的内层工具名 */
   innerTool: string;
-}
+};
 
 /** 内层工具的紧凑索引：`- 名字 — 一句话`，超出预算就折叠 */
 export function buildGatewayIndex(tools: McpGatewayServer["tools"]): {
@@ -114,10 +111,10 @@ export function buildGatewayDescription(server: McpGatewayServer): string {
  * 三个收尾与逐个展开时一致（见 tools/mcp.ts）：结果截断、失败文本化、details 回填。
  * 额外的一件：**工具名不认识时把可用清单回给模型**，省掉一次「再查一遍」的往返。
  */
-export function createMcpGatewayTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
+export function createMcpGatewayTool(
   server: McpGatewayServer,
   caller: McpToolCaller,
-): AgentHarnessTool<TContext> {
+): ToolRegistration {
   const qualifiedName = mcpGatewayToolName(server.serverId);
   const known = new Map(server.tools.map((tool) => [tool.name, tool]));
 
@@ -137,10 +134,11 @@ export function createMcpGatewayTool<TContext extends ExecutionToolContext = Exe
 
   return {
     name: qualifiedName,
-    label: qualifiedName,
     description: buildGatewayDescription(server),
     parameters,
-    async execute(_toolCallId, params): Promise<AgentToolResult<McpGatewayDetails>> {
+    async execute(params, _api, context): Promise<ToolExecutionResult<McpGatewayDetails>> {
+      const signal = context?.abortSignal;
+      signal?.throwIfAborted();
       const args =
         typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
       const innerTool = typeof args.tool === "string" ? args.tool.trim() : "";
@@ -165,6 +163,7 @@ export function createMcpGatewayTool<TContext extends ExecutionToolContext = Exe
 
       if (innerTool === "") {
         return {
+          isError: true,
           content: [
             {
               type: "text",
@@ -176,6 +175,7 @@ export function createMcpGatewayTool<TContext extends ExecutionToolContext = Exe
       }
       if (!known.has(innerTool)) {
         return {
+          isError: true,
           content: [
             {
               type: "text",
@@ -187,17 +187,27 @@ export function createMcpGatewayTool<TContext extends ExecutionToolContext = Exe
       }
 
       try {
-        const result: McpCallResult = await caller.callTool(server.serverId, innerTool, innerArgs);
-        const clipped = truncateForModel(result.text);
-        const text = result.isError ? `Error: ${clipped.text}` : clipped.text;
+        const result: McpCallResult = await caller.callTool(
+          server.serverId,
+          innerTool,
+          innerArgs,
+          signal,
+        );
+        const clipped = truncateMcpContent(result.content);
+        const content = result.isError
+          ? [{ type: "text" as const, text: "Error: MCP 工具返回错误。" }, ...clipped.content]
+          : clipped.content;
         return {
-          content: [{ type: "text", text }],
+          content,
+          isError: result.isError,
           details: details(result.isError, clipped.truncated, innerTool),
         };
       } catch (error) {
+        if (signal?.aborted || error instanceof McpAbortError) throw error;
         const message = error instanceof Error ? error.message : String(error);
         return {
           content: [{ type: "text", text: `Error: 调用 MCP 工具失败：${message}` }],
+          isError: true,
           details: details(true, false, innerTool),
         };
       }

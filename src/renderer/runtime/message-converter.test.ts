@@ -1,7 +1,8 @@
 import type { AppendMessage } from "@assistant-ui/react";
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/shared/contracts";
-import { appendMessageToImages, appendMessageToText, toThreadMessage } from "./message-converter";
+import { appendMessageToAttachments } from "./attachment-payload";
+import { appendMessageToText, toThreadMessage } from "./message-converter";
 
 /** 构造最小可用的 AppendMessage（user 消息） */
 function makeAppend(content: AppendMessage["content"]): AppendMessage {
@@ -324,21 +325,115 @@ describe("appendMessageToText", () => {
   });
 });
 
-describe("appendMessageToImages", () => {
-  it("dataUrl 拆出 mimeType 与 base64 数据", () => {
-    const append = makeAppend([{ type: "image", image: "data:image/png;base64,QUJD" }]);
-    expect(appendMessageToImages(append)).toEqual([{ data: "QUJD", mimeType: "image/png" }]);
+/**
+ * 附件提取的回归测试。
+ *
+ * 这里钉住的是那次「图片从来没发出去」的根因：**附件不在 `message.content` 里**，
+ * 而在与它并列的 `message.attachments` 上。任何只扫 content 的写法都会静默返回空数组 ——
+ * 界面上不显示、模型也收不到，而没有任何一处报错。
+ */
+describe("appendMessageToAttachments", () => {
+  /** 附件负载所在的 data part（与 attachment-adapter 写进去的形状一致） */
+  function dataAttachment(payload: unknown, status: "complete" | "requires-action" = "complete") {
+    return {
+      id: "a1",
+      type: "file",
+      name: "shot.png",
+      status:
+        status === "complete"
+          ? { type: "complete" as const }
+          : { type: "requires-action" as const, reason: "composer-send" as const },
+      content: [{ type: "data" as const, name: "oint.attachment", data: payload }],
+    };
+  }
+
+  const PAYLOAD = {
+    kind: "image" as const,
+    name: "shot.png",
+    mimeType: "image/png",
+    size: 2048,
+    path: "D:\\proj\\shot.png",
+    images: [{ mimeType: "image/png", data: "QUJD" }],
+  };
+
+  it("从 attachments 字段取出附件（而不是从 content）", () => {
+    const append: AppendMessage = {
+      ...makeAppend([{ type: "text", text: "看这张图" }]),
+      attachments: [dataAttachment(PAYLOAD)] as never,
+    };
+    expect(appendMessageToAttachments(append)).toEqual([PAYLOAD]);
   });
 
-  it("非 dataUrl 原样透传并给默认 mimeType", () => {
-    const append = makeAppend([{ type: "image", image: "rawbase64" }]);
-    expect(appendMessageToImages(append)).toEqual([
-      { data: "rawbase64", mimeType: "application/octet-stream" },
+  it("content 里没有附件时返回空数组 —— 这就是旧实现恒为空的原因", () => {
+    const append: AppendMessage = {
+      ...makeAppend([{ type: "text", text: "看这张图" }]),
+      attachments: [dataAttachment(PAYLOAD)] as never,
+    };
+    // 旧实现扫的是 content：那里只有文本，于是永远取不到图
+    expect(append.content).toEqual([{ type: "text", text: "看这张图" }]);
+    expect(appendMessageToAttachments(append)).toHaveLength(1);
+  });
+
+  it("没有 attachments 字段时返回空数组", () => {
+    expect(appendMessageToAttachments(makeAppend([{ type: "text", text: "hi" }]))).toEqual([]);
+  });
+
+  it("已有负载的附件一律带上，不看它停在哪个状态上", () => {
+    // 宁可发出去，也不要因为状态没推到位而静默丢掉用户贴的文件。
+    // 真正「还没探测完」的形状是**没有 content**（见下一条），那种情况由适配器的
+    // pending 表在 send() 里兜住，不靠这里过滤。
+    const append: AppendMessage = {
+      ...makeAppend([]),
+      attachments: [dataAttachment(PAYLOAD, "requires-action")] as never,
+    };
+    expect(appendMessageToAttachments(append)).toEqual([PAYLOAD]);
+  });
+
+  it("还没有负载（探测中）的附件取不到东西", () => {
+    const append: AppendMessage = {
+      ...makeAppend([]),
+      attachments: [
+        {
+          id: "a3",
+          type: "file",
+          name: "shot.png",
+          status: { type: "running", reason: "uploading", progress: 0 },
+          file: {},
+        },
+      ] as never,
+    };
+    expect(appendMessageToAttachments(append)).toEqual([]);
+  });
+
+  it("负载形状不对时忽略，不抛错", () => {
+    const append: AppendMessage = {
+      ...makeAppend([]),
+      attachments: [dataAttachment({ nope: true })] as never,
+    };
+    expect(appendMessageToAttachments(append)).toEqual([]);
+  });
+
+  it("旧形状兜底：图片直接放在 content 里的 image part 也能取到", () => {
+    const append: AppendMessage = {
+      ...makeAppend([]),
+      attachments: [
+        {
+          id: "a2",
+          type: "image",
+          name: "legacy.png",
+          status: { type: "complete" },
+          content: [{ type: "image", image: "data:image/png;base64,QUJD" }],
+        },
+      ] as never,
+    };
+    expect(appendMessageToAttachments(append)).toEqual([
+      {
+        kind: "image",
+        name: "image",
+        mimeType: "image/png",
+        size: 0,
+        images: [{ mimeType: "image/png", data: "QUJD" }],
+      },
     ]);
-  });
-
-  it("忽略文本 part", () => {
-    const append = makeAppend([{ type: "text", text: "hi" }]);
-    expect(appendMessageToImages(append)).toEqual([]);
   });
 });

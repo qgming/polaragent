@@ -1,15 +1,18 @@
-import type { AgentMessage, Entry } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
+import type { AttachmentPart } from "@/shared/contracts/attachment";
 import type {
   ChatMessage,
   ChatMessageUsage,
   ChatPart,
   ToolCallPart,
 } from "@/shared/contracts/session";
+import { type AttachmentEnvelope, parseAttachmentEnvelope } from "./attachments";
+import type { AppEntry } from "./durable-session";
 import { toolPartImages } from "./tool-images";
 
-type UserMessage = Extract<AgentMessage, { role: "user" }>;
-type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
-type ToolResultMessage = Extract<AgentMessage, { role: "toolResult" }>;
+type UserMessage = Extract<Message, { role: "user" }>;
+type AssistantMessage = Extract<Message, { role: "assistant" }>;
+type ToolResultMessage = Extract<Message, { role: "toolResult" }>;
 
 /** 记录已映射出的 tool-call part，等待后续 toolResult 条目回填 */
 type PendingToolCalls = Map<string, ToolCallPart>;
@@ -22,6 +25,97 @@ function toDataUrl(mimeType: string, data: string): string {
 function warnUnknownBlock(entryId: string, block: unknown): void {
   const type = typeof block === "object" && block !== null && "type" in block ? block.type : block;
   console.warn(`跳过未知内容块 (entry ${entryId}): ${String(type)}`);
+}
+
+/**
+ * 用户消息的内容块 → UI 的 part 列表。
+ *
+ * **实时回显（runtime 的 message_start）与历史回读（mapEntriesToMessages）共用这一个函数**，
+ * 这是刻意的：附件在模型侧是「信封文本 + 图片块」两段，界面要还原成一张附件卡片；
+ * 如果两条路各写一份解析，实时看到的与刷新之后看到的迟早会不一样 —— 而那种不一致
+ * 只有「刷新一下附件就变了样」这种很难归因的现象才会暴露。
+ *
+ * 还原规则：
+ *   · 文本块以 `<attachment ` 开头 → 起一条附件，随后的 N 个图片块（信封里的 `frames`）
+ *     是它的图；N 个收满即收工，接着按普通文本处理；
+ *   · 不匹配信封的图片块 → 退回裸 `ImagePart`。这是**旧会话**的形状（附件功能之前
+ *     用户贴的图只有 image 块，没有信封），回读时必须继续显示，不能因为升级就丢历史；
+ *   · 帧数对不上（信封说 3 帧、实际只有 1 个图片块）时按实际数量收 —— 解析以**块为准**，
+ *     信封只是提示，否则一次异常落盘会让后面所有附件错位。
+ */
+export function mapUserParts(message: UserMessage, label = "(user)"): ChatPart[] {
+  const parts: ChatPart[] = [];
+  if (typeof message.content === "string") {
+    if (message.content.trim().length > 0) parts.push({ type: "text", text: message.content });
+    return parts;
+  }
+
+  /** 正在收图的附件：信封已出现，帧还没收满 */
+  let pending: {
+    envelope: AttachmentEnvelope;
+    frames: { mimeType: string; dataUrl: string }[];
+  } | null = null;
+
+  const flush = (): void => {
+    if (pending === null) return;
+    parts.push(toAttachmentPart(pending.envelope, pending.frames));
+    pending = null;
+  };
+
+  for (const block of message.content) {
+    if (block.type === "text") {
+      const envelope = parseAttachmentEnvelope(block.text);
+      if (envelope !== null) {
+        flush();
+        // 声明 0 帧（文本/二进制附件）时当场收工，不必等下一个块来触发
+        if (envelope.frames > 0) pending = { envelope, frames: [] };
+        else parts.push(toAttachmentPart(envelope, []));
+        continue;
+      }
+      flush();
+      if (block.text.trim().length > 0) parts.push({ type: "text", text: block.text });
+      continue;
+    }
+    if (block.type === "image") {
+      const frame = { mimeType: block.mimeType, dataUrl: toDataUrl(block.mimeType, block.data) };
+      if (pending !== null) {
+        pending.frames.push(frame);
+        if (pending.frames.length >= pending.envelope.frames) flush();
+        continue;
+      }
+      parts.push({ type: "image", mimeType: block.mimeType, dataUrl: frame.dataUrl });
+      continue;
+    }
+    warnUnknownBlock(label, block);
+  }
+  flush();
+  return parts;
+}
+
+/** 信封 + 收到的帧 → 附件 part（展示态） */
+function toAttachmentPart(
+  envelope: AttachmentEnvelope,
+  frames: readonly { mimeType: string; dataUrl: string }[],
+): AttachmentPart {
+  return {
+    type: "attachment",
+    index: envelope.index,
+    kind: envelope.kind,
+    name: envelope.name,
+    mimeType: envelope.mimeType,
+    size: envelope.bytes,
+    path: envelope.path,
+    ...(frames.length === 0 ? {} : { frames: [...frames] }),
+    ...(envelope.durationSeconds === undefined
+      ? {}
+      : { durationSeconds: envelope.durationSeconds }),
+    ...(envelope.width === undefined ? {} : { width: envelope.width }),
+    ...(envelope.height === undefined ? {} : { height: envelope.height }),
+    ...(envelope.kind === "video" ? { frameCount: frames.length } : {}),
+    ...(envelope.totalLines === undefined ? {} : { totalLines: envelope.totalLines }),
+    ...(envelope.textTruncated === true ? { textTruncated: true } : {}),
+    ...(envelope.downscaled === true ? { downscaled: true } : {}),
+  };
 }
 
 function mapUsage(message: AssistantMessage): ChatMessageUsage | undefined {
@@ -44,25 +138,15 @@ function mapUserMessage(
   createdAt: number,
   parentId: string | null,
 ): ChatMessage {
-  const parts: ChatPart[] = [];
-  if (typeof message.content === "string") {
-    if (message.content.trim().length > 0) parts.push({ type: "text", text: message.content });
-  } else {
-    for (const block of message.content) {
-      if (block.type === "text") {
-        if (block.text.trim().length > 0) parts.push({ type: "text", text: block.text });
-      } else if (block.type === "image") {
-        parts.push({
-          type: "image",
-          mimeType: block.mimeType,
-          dataUrl: toDataUrl(block.mimeType, block.data),
-        });
-      } else {
-        warnUnknownBlock(entryId, block);
-      }
-    }
-  }
-  return { id: entryId, entryId, parentId, role: "user", createdAt, parts, status: "complete" };
+  return {
+    id: entryId,
+    entryId,
+    parentId,
+    role: "user",
+    createdAt,
+    parts: mapUserParts(message, entryId),
+    status: "complete",
+  };
 }
 
 function mapAssistantMessage(
@@ -151,7 +235,7 @@ function applyToolResult(message: ToolResultMessage, pending: PendingToolCalls):
  * 忽略 compaction / branch_summary / custom 条目本身，仅收集压缩摘要文本预览；
  * 每个 message 条目保持一条 ChatMessage（不跨条目合并），保证 entryId 精确对应分支点。
  */
-export function mapEntriesToMessages(entries: Entry[]): {
+export function mapEntriesToMessages(entries: readonly AppEntry[]): {
   messages: ChatMessage[];
   compactionSummaries: string[];
 } {
@@ -160,24 +244,36 @@ export function mapEntriesToMessages(entries: Entry[]): {
   const pending: PendingToolCalls = new Map();
 
   for (const entry of entries) {
-    if (entry.type === "compaction") {
-      compactionSummaries.push(entry.summary);
+    if (entry.record.kind === "pi.compaction") {
+      for (const message of entry.record.model ?? []) {
+        if (message.role !== "user") continue;
+        compactionSummaries.push(
+          typeof message.content === "string"
+            ? message.content
+            : message.content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("\n"),
+        );
+      }
       continue;
     }
-    if (entry.type !== "message") continue;
-
-    const { message } = entry;
-    const createdAt = entry.timestamp || message.timestamp;
-    if (message.role === "user") {
-      messages.push(mapUserMessage(entry.id, message, createdAt, entry.parentId));
-    } else if (message.role === "assistant") {
-      messages.push(mapAssistantMessage(entry.id, message, createdAt, pending, entry.parentId));
-    } else if (message.role === "toolResult") {
-      // toolResult 是独立消息条目：只回填对应 tool-call，不单独成条
-      applyToolResult(message, pending);
-    } else {
-      const role = (message as { role?: unknown }).role;
-      console.warn(`跳过未知消息角色 (entry ${entry.id}): ${String(role)}`);
+    if (!["pi.user", "pi.assistant", "pi.tool-result"].includes(entry.record.kind)) continue;
+    for (const message of entry.record.model ?? []) {
+      const createdAt = entry.createdAt;
+      if (message.role === "user") {
+        messages.push(mapUserMessage(entry.entryId, message, createdAt, entry.parentId));
+      } else if (message.role === "assistant") {
+        messages.push(
+          mapAssistantMessage(entry.entryId, message, createdAt, pending, entry.parentId),
+        );
+      } else if (message.role === "toolResult") {
+        // toolResult 是独立消息条目：只回填对应 tool-call，不单独成条
+        applyToolResult(message, pending);
+      } else {
+        const role = (message as { role?: unknown }).role;
+        console.warn(`跳过未知消息角色 (entry ${entry.entryId}): ${String(role)}`);
+      }
     }
   }
 

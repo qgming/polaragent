@@ -5,9 +5,21 @@
 // tools/mcp-gateway.test.ts 里，本文件只留截断规则本身。
 
 import { describe, expect, it } from "vitest";
-import { truncateForModel } from "./mcp";
+import { truncateForModel, truncateMcpContent } from "./mcp";
 
 describe("truncateForModel", () => {
+  it("MCP 图片也有总大小与数量预算", () => {
+    const image = {
+      type: "image" as const,
+      data: "a".repeat(3 * 1024 * 1024),
+      mimeType: "image/png",
+    };
+    const result = truncateMcpContent([image, image, image]);
+    expect(result.content.filter((block) => block.type === "image")).toHaveLength(2);
+    expect(result.truncated).toBe(true);
+    const count = truncateMcpContent(Array.from({ length: 10 }, () => ({ ...image, data: "abc" })));
+    expect(count.content.filter((block) => block.type === "image")).toHaveLength(4);
+  });
   it("短文本不动", () => {
     expect(truncateForModel("hello")).toEqual({ text: "hello", truncated: false });
   });

@@ -1,5 +1,7 @@
 # pi 内核升级 0.85.1 → 0.87.0
 
+> 历史记录：当前项目已改用 pi 1.0.0 原生生态，本文 API 和旧探针不再适用于当前代码。请见 [最新调研与重构说明](pi-1.0.md)。
+
 > 升级日期：本次提交 · 影响范围：`@earendil-works/pi-agent-core` / `pi-ai` /
 > `pi-session-backend-sqlite-node`，外加 `typebox` 对齐。
 > 原则：**全面改用新 API，不保留旧 API 兼容代码**。

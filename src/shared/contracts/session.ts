@@ -37,6 +37,7 @@ export interface SessionCreateOptions {
   delegationId?: string;
 }
 
+import type { AttachmentPart } from "./attachment";
 import type { AgentMode, ModelRef } from "./common";
 
 export interface SessionSummary {
@@ -166,7 +167,19 @@ export interface ImagePart {
   dataUrl: string;
 }
 
-export type ChatPart = TextPart | ReasoningPart | ToolCallPart | ImagePart;
+/**
+ * 用户消息里的附件。
+ *
+ * 与 `ImagePart` 并存而不是取代它：`ImagePart` 是**历史**（旧会话里用户贴的图只有裸
+ * image 块，没有信封），回读时必须继续认它。新的发送路径一律产出 `AttachmentPart`，
+ * 因为图片只是附件的一种 —— 视频、文本、PDF 都需要「名字 + 路径 + 读数」这一层。
+ *
+ * 图片/视频的缩略图走 `thumbnail`：它是从落盘那份的第一个内容块重建的，所以刷新窗口、
+ * 重开应用之后照样在，不需要另存一份。
+ */
+export type { AttachmentPart };
+
+export type ChatPart = TextPart | ReasoningPart | ToolCallPart | ImagePart | AttachmentPart;
 
 export interface ChatMessageUsage {
   inputTokens: number;

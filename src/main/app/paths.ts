@@ -27,6 +27,11 @@ const DATA_SUBDIRS = [
   "subagents",
   "cache",
   "plugins",
+  /**
+   * 会话附件库（`<会话 id>/<摘要>.<ext>`，见 main/pisdk/attachments.ts）。
+   * 这里只建根目录：每个会话的子目录在第一次有附件时才建。
+   */
+  "attachments",
 ] as const;
 
 /** 数据目录权限：只允许当前用户访问（Windows 忽略该位） */

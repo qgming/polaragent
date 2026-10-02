@@ -1,36 +1,35 @@
-// 会话运行时：装配 AgentHarness、把 pi 事件桥接为 ChatEvent、维护运行/队列/审批门。
+// 会话运行时：原生 pi-durable Harness / Conversation 与应用交互服务。
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  AgentHarness,
-  type AgentHarnessTool,
-  type AgentLane,
-  type AgentMessage,
-  type AgentToolResult,
-  BACKGROUND_CONTEXT,
-  type CustomMessage,
-  createCustomMessage,
-  type ExecutionEnv,
-  type ExecutionToolContext,
-  formatSkillsForSystemPrompt,
-  type HarnessEvent,
-  type HarnessEventType,
-  loadPromptTemplates,
-  loadSkills,
-  type PromptTemplate,
-  type Skill,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Message as AgentMessage } from "@earendil-works/pi-ai";
 import {
   type Api,
   clampThinkingLevel,
-  type ImageContent,
   type Model,
   type MutableModels,
   type Usage,
 } from "@earendil-works/pi-ai";
+import {
+  CompactionTask,
+  type Conversation,
+  type Cursor,
+  createRegistry,
+  defineExtension,
+  type Extension,
+  GenerationTask,
+  Harness,
+  hook,
+  type Registry,
+  type SubmissionId,
+  section,
+  type ToolRegistration,
+  ToolTask,
+} from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { dataDir } from "@/main/app/paths";
 import { pluginContributionDirs } from "@/main/plugins/contributions";
 import { previewToolText } from "@/main/plugins/hooks";
@@ -39,6 +38,7 @@ import {
   pluginTools,
   pluginToolsGeneration,
 } from "@/main/plugins/process-host";
+import type { ChatAttachment } from "@/shared/contracts/attachment";
 import type {
   ChatEvent,
   ChatEventEnvelope,
@@ -74,12 +74,14 @@ import type { BrowserAutomation } from "../browser/types";
 import type { WebService } from "../web/types";
 import { agentModeSection, shouldIncludeDelegationRules } from "./agent-mode-prompt";
 import type { ApprovalService } from "./approvals";
+import { buildUserContent, sessionAttachmentsDir } from "./attachments";
 import { errorText } from "./error-text";
 import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
 import { buildJobResult } from "./job-delivery";
 import { createJobService, type JobService } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
+import { mapEntriesToMessages, mapUserParts } from "./message-mapper";
 import {
   assessToolRisk,
   commandWarning,
@@ -97,11 +99,24 @@ import {
 import { buildSubagentResult } from "./report-delivery";
 import {
   agentsSkillsDir,
+  formatSkillsForSystemPrompt,
+  loadPromptTemplates,
+  loadSkills,
+  type PromptTemplate,
   resolveBuiltinPromptDir,
   resolveBuiltinSkillDir,
   resolvePromptTemplateDirs,
   resolveSkillDirs,
+  type Skill,
 } from "./resources";
+import {
+  compactionReceipt,
+  createRuntimeEventBridge,
+  type RuntimeEvent as HarnessEvent,
+  type RuntimeEventType as HarnessEventType,
+  type RuntimeEventBridge,
+  type RuntimeToolResult,
+} from "./runtime-events";
 import {
   deriveContextBreakdown,
   estimateTokens,
@@ -142,7 +157,7 @@ import {
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
 import { toolPartImages } from "./tool-images";
-import { type AppToolContext, buildTools, restrictTools, TOOL_NAMES } from "./tools";
+import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
 import { createSubagentTools, SUBAGENT_TOOL_NAMES } from "./tools/subagent";
@@ -217,18 +232,16 @@ export interface ChatRuntimeDeps {
   mcp?: McpToolSource;
 }
 
-/**
- * 当前 lane 的 tip（条目 id，可能为 null 表示空会话）。
- *
- * `known: false` 表示读取失败 —— 与「tip 是 null」是两回事，调用方必须能区分：
- * 把读失败当成 null 会让「回退到会话开头」被误判成「目标已是 tip」而跳过导航。
- */
 async function currentTip(
   runtime: SessionRuntime,
 ): Promise<{ known: boolean; tipId: string | null }> {
   try {
-    const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
-    return { known: true, tipId: info.tipId };
+    const page = await runtime.conversation.entries({}, 1, undefined, BACKGROUND_CONTEXT);
+    const entry = page.items[0];
+    return {
+      known: true,
+      tipId: entry === undefined ? null : await runtime.session.externalEntryId(entry.id),
+    };
   } catch (error) {
     console.warn(`读取当前 tip 失败：${errorText(error)}`);
     return { known: false, tipId: null };
@@ -239,25 +252,15 @@ export interface ChatRuntime {
   send(
     sessionId: string,
     text: string,
-    images?: ImageContent[],
+    attachments?: ChatAttachment[],
     messageId?: string,
     options?: ChatSendOptions,
   ): Promise<void>;
   stop(sessionId: string): Promise<void>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
-  /**
-   * 撤销一条还没被消费的排队消息（entryId = 内核队列项的 entryId）。
-   *
-   * 已经开跑或已经不存在的条目是**无操作**：这是用户点「移除」与 lane 取走那条消息之间
-   * 的正常竞态，为它抛错只会让界面弹一个没有意义的失败提示。
-   */
+
   cancelQueued(sessionId: string, entryId: string): Promise<void>;
-  /**
-   * 手动压缩上下文（`/compact` 指令）。
-   *
-   * 返回**结果对象**而不是抛错：lane 忙、没什么可压都是正常结局，界面要按 code 给文案
-   * （见 shared/contracts/chat 的 CompactOutcome）。
-   */
+
   compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
   /**
    * 该会话当前流式消息的完整快照；没有在流的消息时为 null。
@@ -288,19 +291,12 @@ export interface ChatRuntime {
    * 与作业退出唤醒**同一格预算** —— 两套预算各算各的，等于把自激的上限翻倍。
    */
   deliverSubagentReport(run: SubagentRun): void;
-  /**
-   * 切换会话使用的模型（null = 跟随设置里的默认模型）。
-   *
-   * 热切换：直接把新模型写到 lane 的配置上（内核 `lane.setModel`），**不重建 harness、
-   * 不动会话句柄** —— 于是同一段对话的上下文完整保留，下一条消息就用新模型。
-   * 运行中拒绝（同一次运行里换模型会让工具调用/思考历史跨供应商）。
-   */
+
   setModel(sessionId: string, model: ModelRef | null): Promise<SetSessionModelResult>;
   closeSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
-/** before_tool 钩子判定结果：返回 block 即阻断工具调用 */
 export interface ToolPermissionResult {
   block: { reason: string; terminate?: boolean };
 }
@@ -334,17 +330,25 @@ interface SessionRuntime {
    * null = 当前设置里一个可用模型都没有（此时发送会报「请先配置模型服务」）。
    */
   modelRef: ModelRef | null;
-  /**
-   * harness 创建时的模型注册表快照。
-   *
-   * 请求阶段只查这份快照（内核 `prepareGeneration` 用 lane.models.getModel），所以切换模型前
-   * 必须在这里先查一遍：设置里新加的服务/模型还没进这份注册表，写进去只会让下一次运行以
-   * `model_unavailable` 失败。
-   */
+
   models: MutableModels;
   session: SessionHandle;
-  harness: AgentHarness<ExecutionToolContext>;
-  lane: AgentLane;
+  harness: Harness;
+  conversation: Conversation;
+  registry: Registry;
+  extension: Extension;
+  events: RuntimeEventBridge;
+  todo: TodoState;
+  persistTodo: (state: TodoState) => Promise<void>;
+  stopping?: Promise<void>;
+  compacting?: boolean;
+  admission?: Promise<void>;
+  admitted?: () => void;
+  sendController?: AbortController;
+  sendSettled?: Promise<void>;
+  compactionTokens: Map<number, number>;
+  effects: Set<Promise<unknown>>;
+  toolRefresh?: Promise<void>;
   env: ExecutionEnv;
   /**
    * 本会话真正在用的模型（会话绑定优先，之后随 `setModel` 热切换）。
@@ -355,15 +359,7 @@ interface SessionRuntime {
   model: Model<Api>;
   rules: PermissionRuleStore;
   running: boolean;
-  /**
-   * 本会话是否正有一次 send 走在「已进入、还没开跑」的窗口里。
-   *
-   * 为什么不能只看 `running`：`send` 要 await 两个异步步骤（对齐模型、对齐思考档位）
-   * 才把 running 置真，而并发进来的第二次 send 在这个窗口里看到的 running 仍是 false ——
-   * 两次都调 lane.prompt，第二个被内核以 LaneBusy 拒收，随后**重试分支会 abort 掉
-   * 第一个调用方的活跃运行**（一次用户消息静默杀死另一次）。
-   * 这个标志在**任何 await 之前**同步置位，把窗口关掉。
-   */
+
   sending: boolean;
   /** 本次运行的本地 runId，保证 run-started 与 run-ended 对应 */
   runId?: string;
@@ -392,14 +388,7 @@ interface SessionRuntime {
    *   这种情形必须新发一条错误消息，而不是改写历史。
    */
   runAssistantMessageId?: string;
-  /**
-   * 已建好但还没拿到 entryId 的消息，按建立顺序排队。
-   *
-   * 条目要到消息落盘时才产生（entry_added 事件），而渲染层需要 entryId 才有「分支」入口、
-   * 重新生成也需要它作为回退点。**必须带角色**：一次运行会先落用户条目再落助手条目，
-   * 只按顺序弹队首会把助手条目配到用户消息上（用户消息永远拿不到 id、助手拿到错 id，
-   * 重新生成随即报 "target must differ from the current tip"）。
-   */
+
   pendingEntries: PendingEntry[];
   /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
   pendingUserMessageId?: string;
@@ -412,13 +401,8 @@ interface SessionRuntime {
    * 丢掉中间态不丢信息，下一份会把内容补齐。
    */
   toolOutputAt: Map<string, number>;
-  /**
-   * 本会话创建时装配的那四个子智能体工具（只有主会话有，子智能体会话是空数组）。
-   *
-   * 存一份是为了 MCP 热替换：`harness.setTools` 是**整表替换**，
-   * 不带回去这些工具就会在那次替换后凭空消失（ask_user 踩过同一个坑）。
-   */
-  subagentTools: AgentHarnessTool<AppToolContext>[];
+
+  subagentTools: ToolRegistration[];
   /**
    * 这个 runtime 属于一个**子智能体子会话**（`kind === "subagent"` 的隐藏会话）。
    *
@@ -433,12 +417,7 @@ interface SessionRuntime {
   unsubscribers: Array<() => void>;
   /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
   titleAttempted?: boolean;
-  /**
-   * MCP 工具集合在本轮运行期间变过（连上/断开/工具列表变化）。
-   *
-   * 运行中不动工具集：`harness.setTools` 会影响正在进行的这一轮，
-   * 于是先记下，等 run_end 再一次性应用（下一轮就带新工具）。
-   */
+
   mcpToolsStale?: boolean;
   /**
    * 建这张工具表时，插件工具集合的代号。
@@ -477,29 +456,12 @@ interface SessionRuntime {
    * 放在会话上而不是进程级：两条会话的重复绝不该互相触发提醒。
    */
   repeatChain: RepeatChain;
-  /**
-   * 待注入的重复提醒文本。
-   *
-   * 为什么需要这一格中转：检测发生在 `after_tool`（工具刚跑完），而**往上下文里
-   * 追加一条消息**必须在 `transform_context`（请求组装前）做。两个钩子的时机不同，
-   * 所以中间要有个暂存位。注入后即清空。
-   *
-   * 内核没有 dsh 的 `additionalContexts`，所以这里是唯一的投递路径（见 repeat-guard 文件头）。
-   */
+
   pendingRepeatNotice?: string;
-  /**
-   * 待注入的**插件钩子**补充说明（`PostToolUse` / `PostToolUseFailure` 的
-   * `additionalContext`，见 main/plugins/hooks.ts）。
-   *
-   * 与 `pendingRepeatNotice` 同一格中转、同一个理由（检测在 `after_tool`，
-   * 投递必须在 `transform_context`）、同一条注入路径（custom 条目，用户看不到）。
-   * 单独一格而不是复用上面那一格：两者的内容与来源不同，而注入后的清理时机也不同 ——
-   * 合成一格会让"重复提醒把插件的说明挤掉"这种静默丢失成为可能。
-   */
+
   pendingPluginContext?: string;
 }
 
-/** 等待 entry_added 配对的消息：id 与角色（角色用来和条目对齐） */
 export interface PendingEntry {
   messageId: string;
   role: "user" | "assistant";
@@ -518,9 +480,6 @@ function getRuleStore(): PermissionRuleStore {
   return getSharedPermissionRuleStore(dataDir());
 }
 
-/** 我们只用一条 lane：pi 侧固定叫 main */
-const LANE_NAME = "main";
-
 /**
  * 工具流式输出的节流窗口（毫秒）。
  *
@@ -529,78 +488,20 @@ const LANE_NAME = "main";
  * 用途足够（人眼读日志本来就跟不上更快），而 IPC 量降到每秒 5 次封顶。
  */
 const TOOL_OUTPUT_INTERVAL_MS = 200;
-/**
- * lane 配置里**实际**在用的模型引用；读不出来（模型已从注册表消失）返回 null。
- *
- * 为什么需要单独读它：内核在 lane 已有存储配置时完全忽略 harness 的 seed
- * （harness.js 的 `stored.kind === "lane"` 分支），所以「我们期望用哪个」与「lane 里存的是哪个」
- * 是两件事。只有拿**实际值**做基准，才能发现需要写回的情况 —— 否则「跟随默认」的会话在用户
- * 改了默认模型之后会一直用旧模型，且没有任何地方会去纠正。
- */
-export async function readLaneModelRef(lane: AgentLane): Promise<ModelRef | null> {
-  const model = await lane.getModel(BACKGROUND_CONTEXT);
-  if (!model) return null;
-  return { serviceId: String(model.provider), modelId: model.id };
+
+export async function readConversationModelRef(
+  conversation: Conversation,
+): Promise<ModelRef | null> {
+  const model = (await conversation.agent(BACKGROUND_CONTEXT)).model;
+  return model === undefined ? null : { serviceId: model.provider, modelId: model.modelId };
 }
 
-/**
- * 是否需要把模型写回 lane。
- *
- * 引用不一致、或 lane 里压根解析不出模型（存储的是已删除的服务）时都要写：
- * 后一种情况若不写，之后每次运行都会以 `model_unavailable` 失败。
- */
-export function needsModelWrite(laneRef: ModelRef | null, desired: ModelRef): boolean {
+export function needsModelWrite(currentRef: ModelRef | null, desired: ModelRef): boolean {
   return (
-    laneRef === null ||
-    laneRef.serviceId !== desired.serviceId ||
-    laneRef.modelId !== desired.modelId
+    currentRef === null ||
+    currentRef.serviceId !== desired.serviceId ||
+    currentRef.modelId !== desired.modelId
   );
-}
-
-/**
- * pi 的 LaneBusy：这条 lane 里已经压着一个活跃操作，新的 prompt / compact / navigate 都会被拒收。
- * 它是带 tag 的错误对象（不是 Error 子类），所以按 `_tag` 而不是 instanceof 识别。
- */
-export function isLaneBusy(error: unknown): boolean {
-  return (
-    typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === "LaneBusy"
-  );
-}
-
-/** pi 的带 tag 错误对象（不是 Error 子类）按 `_tag` 识别，与 isLaneBusy 同一手法 */
-export function isTaggedError(error: unknown, tag: string): boolean {
-  return typeof error === "object" && error !== null && (error as { _tag?: unknown })._tag === tag;
-}
-
-/**
- * 收敛 lane 里遗留的操作，返回是否成功。
- *
- * abort 是 pi 自己的收敛路径：不请求模型，只把该操作写成 aborted 终态、把 lane 的
- * currentOperationId 清空，已落盘的消息不受影响 —— 正适合清「上一次进程没收尾留下的」操作。
- * 没有活跃操作时 abort 会返回 NoActiveOperation，此时返回 false 让调用方决定怎么处理。
- * （导出是为了让单测能直接盖住这条判断，主进程内部不该有别处调用。）
- *
- * **只收敛 `run` 类操作**：本函数的调用场景是「prompt 被 LaneBusy 拒了 → 清掉遗留再重试」，
- * 而 LaneBusy 也会由**正经的压缩/导航**触发（用户在跑 `/compact`，或分支正在收尾）。
- * 早先这里无条件 abort，于是「压缩期间按发送」会**把正在跑的压缩杀掉**再发消息 ——
- * 用户看到的是「压缩莫名其妙没了」。压缩与导航都有明确的发起方，不该被一次发送顺手清掉。
- */
-export async function abortStaleOperation(lane: AgentLane, sessionId: string): Promise<boolean> {
-  try {
-    const info = await lane.inspectExecution(BACKGROUND_CONTEXT);
-    const current = info.current;
-    if (current !== null && current.kind !== "run") {
-      console.warn(`会话 ${sessionId} 的 lane 上压着 ${current.kind} 操作，不按遗留操作清理`);
-      return false;
-    }
-    const result = await lane.abort(BACKGROUND_CONTEXT);
-    if (result.ok) return true;
-    console.warn(`清理会话 ${sessionId} 的遗留操作失败：${errorText(result.error)}`);
-    return false;
-  } catch (error) {
-    console.warn(`清理会话 ${sessionId} 的遗留操作异常：${errorText(error)}`);
-    return false;
-  }
 }
 
 function safeStringify(value: unknown): string {
@@ -623,26 +524,13 @@ function mapUsage(usage: Usage): ChatMessageUsage {
   };
 }
 
-/** 用户消息内容块 → ChatPart（文本 / 图片），与历史回读的映射保持一致 */
-function mapUserParts(message: Extract<AgentMessage, { role: "user" }>): ChatPart[] {
-  const parts: ChatPart[] = [];
-  if (typeof message.content === "string") {
-    if (message.content !== "") parts.push({ type: "text", text: message.content });
-    return parts;
-  }
-  for (const block of message.content) {
-    if (block.type === "text") {
-      parts.push({ type: "text", text: block.text });
-    } else if (block.type === "image") {
-      parts.push({
-        type: "image",
-        mimeType: block.mimeType,
-        dataUrl: `data:${block.mimeType};base64,${block.data}`,
-      });
-    }
-  }
-  return parts;
-}
+/**
+ * 用户消息内容块 → ChatPart。
+ *
+ * 实现放在 message-mapper，与**历史回读共用同一份** —— 实时回显与刷新后的显示
+ * 必须逐字一致，两条路各写一份解析的话，附件卡片会在刷新前后长得不一样。
+ */
+export { mapUserParts } from "./message-mapper";
 
 /**
  * 取一条消息的可见文本。**助手与用户都要能取**。
@@ -674,7 +562,7 @@ export function agentMessageText(message: AgentMessage): string {
 }
 
 /** 工具结果里的文本块拼起来；没有文本块时是空串 */
-function toolResultText(result: AgentToolResult<unknown>): string {
+function toolResultText(result: RuntimeToolResult): string {
   return result.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -682,7 +570,7 @@ function toolResultText(result: AgentToolResult<unknown>): string {
 }
 
 /** 工具结果 → UI 值：优先文本，其次 details，最后原样返回 */
-function toolResultValue(result: AgentToolResult<unknown>): unknown {
+function toolResultValue(result: RuntimeToolResult): unknown {
   const text = toolResultText(result);
   if (text !== "") return text;
   if (result.details !== undefined) return result.details;
@@ -722,7 +610,7 @@ export function pairEntryWithMessage(
  */
 export function applyToolEnd(
   part: ToolCallPart,
-  result: AgentToolResult<unknown>,
+  result: RuntimeToolResult,
   isError: boolean,
 ): void {
   part.result = toolResultValue(result);
@@ -735,7 +623,7 @@ export function applyToolEnd(
   const images = toolPartImages(part.toolName, result.content);
   if (images !== undefined) part.images = images;
   part.isError = isError;
-  part.status = isError ? "error" : "done";
+  if (part.status !== "denied") part.status = isError ? "error" : "done";
 }
 
 /**
@@ -828,18 +716,6 @@ export function deriveRulePattern(
   return undefined;
 }
 
-/**
- * 工具使用指导：对齐 dsh/opencode 的做法，把「什么时候用哪个工具」写进系统提示。
- *
- * 这是对四个原生工具 description 的补充而非替代 —— pi 提供的 description 偏操作说明
- * （返回什么、怎么截断），不讲使用场景；两者的分工见 tools.ts 顶部的注释。
- *
- * **写成函数而不是常量数组**：web 工具的可用性取决于设置（webSearch.enabled），
- * 而系统提示是每轮现算的（AgentHarness.create 的 systemPrompt 是函数形式），
- * 所以这里能按当前设置决定写不写 web 那两条 —— 避免出现
- * 「提示里讲了 web_search，但工具表里没有它」这种自相矛盾的状态。
- * 前六条与之前逐字相同。
- */
 export function buildToolGuidance(webEnabled: boolean): string {
   const lines = [
     "工具使用：",
@@ -926,7 +802,6 @@ export async function buildSystemPrompt(
   // web 那两条只在工具真的可用时才写（见 buildToolGuidance 的说明）
   const sections = [identity, buildToolGuidance(settings.webSearch.enabled)];
 
-  // 技能以「名称 + 描述 + 文件路径」的紧凑索引注入，完整 SKILL.md 由模型按需通过 lane.skill 读取。
   // 该索引稳定不变，放在提示前缀里不会破坏缓存 —— 但**不要**在这里拼接技能全文。
   if (skillsSection !== undefined && skillsSection !== "") sections.push(skillsSection);
 
@@ -951,22 +826,6 @@ export interface LoadedAgentResources {
   skillsSection: string;
 }
 
-/**
- * 读取技能与提示模板并拼出系统提示里的技能索引。
- *
- * 两条必须遵守的约束：
- * 1. **路径守卫**：调用方构造的 ExecutionEnv 的 allowedRoots 必须已包含全部技能目录，
- *    否则 listDir/readTextFile 会被 validatePathAccess 拒绝 —— 表现为「目录存在却 0 个技能」，
- *    而且只有 diagnostics 里能看到 list_failed，很容易被当成「没有技能」。
- * 2. **不得阻断会话**：技能只是增强，任何失败都只记 warning 并以空结果继续，
- *    绝不能让 AgentHarness.create 因此抛错。
- *
- * `disabledSkillNames` 在这里过滤；`disableModelInvocation` 的过滤在
- * formatSkillsForSystemPrompt 内部完成（它只把可被模型主动调用的技能写进索引），这里不重复过滤。
- *
- * `appPath` 是**可选**的：给了才扫描随包分发的内置技能（`<appPath>/resources/skills`）。
- * 测试与不关心内置技能的调用方可以省略。
- */
 export async function loadAgentResources(
   env: ExecutionEnv,
   settings: Settings,
@@ -1010,16 +869,6 @@ export async function loadAgentResources(
   return { skills, promptTemplates, skillsSection: formatSkillsForSystemPrompt(skills) };
 }
 
-/**
- * 子智能体子会话的登记表：子会话 id → 它的定义与父会话。
- *
- * 为什么放在模块级而不是 SessionRuntime 上：`createRuntime` 装配工具与系统提示时必须知道
- * 「这是不是一个子智能体会话」，而那一刻 runtime 对象还不存在（同一个先有鸡还是先有蛋的问题，
- * 见下面 laneRef / runtimeRef 的注释）。登记由 subagent-runner 在建好子会话、发出第一条消息
- * 之前完成，所以装配阶段一定读得到。
- *
- * 只增不减不行：会话关闭 / 运行收尾都要注销，否则同一个会话 id 被复用时会认错身份。
- */
 const subagentSessions = new Map<string, SubagentSessionSpec>();
 
 /** 子智能体子会话的装配依据：定义 + 它归属的父会话 */
@@ -1084,27 +933,36 @@ const TODO_ENTRY_TYPE = "todo";
  *
  * 读不到、或数据不合法，都只是「当作空表」并记 warning：待办是辅助信息，不能阻断会话创建。
  */
-async function restoreTodoState(lane: AgentLane, todo: TodoState): Promise<void> {
+async function restoreTodoState(conversation: Conversation, todo: TodoState): Promise<void> {
   try {
-    const entry = await lane.findEntry(
-      { type: "custom", customType: TODO_ENTRY_TYPE, order: "newestFirst", limit: 1 },
-      BACKGROUND_CONTEXT,
-    );
-    if (entry === undefined || entry.type !== "custom") return;
-    const data = entry.data;
-    if (typeof data !== "object" || data === null || Array.isArray(data)) return;
-    const record = data as Record<string, unknown>;
-    const todos = parseTodoEntries(record.todos);
-    if (todos === undefined) return;
-    todo.todos = todos;
-    const revision = record.revision;
-    if (typeof revision === "number" && Number.isInteger(revision) && revision >= 0) {
-      todo.revision = revision;
-    }
+    let cursor: Cursor | undefined;
+    do {
+      const page = await conversation.entries({}, 100, cursor, BACKGROUND_CONTEXT);
+      for (const entry of page.items) {
+        const data = entry.data;
+        if (typeof data !== "object" || data === null || Array.isArray(data)) continue;
+        const record = data as Record<string, unknown>;
+        const payload =
+          record.customType === TODO_ENTRY_TYPE
+            ? record.data
+            : entry.kind === TODO_ENTRY_TYPE
+              ? data
+              : undefined;
+        if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+        const value = payload as Record<string, unknown>;
+        const todos = parseTodoEntries(value.todos);
+        if (todos === undefined) continue;
+        todo.todos = todos;
+        if (typeof value.revision === "number") todo.revision = value.revision;
+        return;
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
   } catch (error) {
-    console.warn(`恢复待办清单失败，按空清单继续：${errorText(error)}`);
+    console.warn(`恢复待办失败：${errorText(error)}`);
   }
 }
+
 /**
  * 会话 ExecutionEnv 的允许根：工作目录 + **数据目录下的资源子目录** + 系统临时目录。
  *
@@ -1231,6 +1089,15 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
+  function scheduleEffect(runtime: SessionRuntime, work: Promise<unknown>): void {
+    runtime.effects.add(work);
+    void work
+      .finally(() => runtime.effects.delete(work))
+      .catch((error: unknown) => {
+        console.warn(`会话后台更新失败：${errorText(error)}`);
+      });
+  }
+
   function emitSessionStats(runtime: SessionRuntime): void {
     emitSafe(runtime.sessionId, {
       type: "session-stats",
@@ -1267,8 +1134,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     handler: (event: Extract<HarnessEvent, { type: T }>) => void | Promise<void>,
   ): void {
     runtime.unsubscribers.push(
-      runtime.harness.events.on(type, (event) => {
-        void Promise.resolve()
+      runtime.events.on(type, (event) => {
+        return Promise.resolve()
           .then(() => handler(event))
           .catch((error: unknown) => {
             console.warn(`处理会话事件失败（${type}）：${errorText(error)}`);
@@ -1377,7 +1244,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.lastAssistantMessageId = messageId;
       // 会话统计：assistant 消息开始计时（message_start → message_end 为一步）
       runtime.stats = onMessageStart(runtime.stats, messageId, createdAt);
-      // 排队等 entry_added 把条目 id 配回来（渲染层的「分支」入口需要它）
       runtime.pendingEntries.push({ messageId, role: "assistant" });
       emitSafe(runtime.sessionId, {
         type: "message-added",
@@ -1389,6 +1255,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           status: "streaming",
         },
       });
+      handleMessageUpdate(runtime, {
+        type: "message_update",
+        usage: message.usage,
+        changes: [{ type: "message", message }],
+      });
       return;
     }
     if (message.role === "user") {
@@ -1396,7 +1267,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const reuseId = runtime.pendingUserMessageId;
       runtime.pendingUserMessageId = undefined;
       const messageId = reuseId ?? randomUUID();
-      // 用户消息也要 entryId：重新生成要靠它把 lane 退回这条（退回后新回复成为兄弟条目）
       runtime.pendingEntries.push({ messageId, role: "user" });
       emitSafe(runtime.sessionId, {
         type: "message-added",
@@ -1417,85 +1287,92 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): void {
     const stream = runtime.stream;
     if (!stream) return;
-    const update = event.event;
-
-    if (
-      update.type === "text_start" ||
-      update.type === "text_delta" ||
-      update.type === "text_end"
-    ) {
-      const { part, index, created } = partFor(stream, update.contentIndex, "text");
-      const textPart = part as TextPart;
-      if (update.type === "text_delta") {
-        // 会话统计：首个非空正文增量的到达时间即 TTFT 的第一 token
-        runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
-        textPart.text += update.delta;
-        // 少了 start 的防御路径：增量落在新 part 上，先把创建事件补出去，渲染层才有落点
-        if (created) upsertPart(runtime, stream, index, textPart);
-        emitDelta(runtime, stream, index, "text", update.delta);
-        return;
+    const applyBlock = (
+      contentIndex: number,
+      block: Extract<AgentMessage, { role: "assistant" }>["content"][number],
+    ): void => {
+      if (block.type === "text" || block.type === "thinking") {
+        const { part, index } = partFor(
+          stream,
+          contentIndex,
+          block.type === "text" ? "text" : "reasoning",
+        );
+        part.text = block.type === "text" ? block.text : block.thinking;
+        if (part.text.length > 0)
+          runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
+        upsertPart(runtime, stream, index, part);
+      } else if (block.type === "toolCall") {
+        const { part, index } = toolPartFor(stream, contentIndex, block);
+        part.args = structuredClone(block.arguments);
+        part.argsText = safeStringify(block.arguments);
+        runtime.toolParts.set(part.toolCallId, {
+          messageId: stream.messageId,
+          partIndex: index,
+          part,
+        });
+        upsertPart(runtime, stream, index, part);
       }
-      // start 是结构事件（创建 part），end 带权威全文：两者都全量下发。
-      // end 的全量顺带校正渲染层可能丢掉的增量，所以增量协议始终是「可丢的优化通道」。
-      if (update.type === "text_end") textPart.text = update.content;
-      upsertPart(runtime, stream, index, textPart);
-      return;
-    }
-
-    // reasoning=false 时也可能出现 thinking 事件，这里完全按增量防御性处理
-    if (
-      update.type === "thinking_start" ||
-      update.type === "thinking_delta" ||
-      update.type === "thinking_end"
-    ) {
-      const { part, index, created } = partFor(stream, update.contentIndex, "reasoning");
-      const reasoningPart = part as ReasoningPart;
-      if (update.type === "thinking_delta") {
-        // 会话统计：推理 delta 也算首 token（模型先吐思考再吐正文时 TTFT 应含思考）
+    };
+    for (const change of event.changes) {
+      if (change.type === "message") {
+        change.message.content.forEach((block, index) => {
+          applyBlock(index, block);
+        });
+      } else if ("block" in change) {
+        applyBlock(change.contentIndex, change.block);
+      } else if (change.type === "toolcall_delta") {
+        const index = stream.partIndexByContent.get(change.contentIndex);
+        const part = index === undefined ? undefined : stream.parts[index];
+        if (index === undefined || part?.type !== "tool-call" || !part.args) continue;
+        // Native deltas append to a string within the arguments object, including array elements.
+        let target: unknown = part.args;
+        const route = change.path;
+        for (const key of route.slice(0, -1)) {
+          if (
+            typeof target !== "object" ||
+            target === null ||
+            key === "__proto__" ||
+            key === "constructor" ||
+            key === "prototype"
+          ) {
+            target = undefined;
+            break;
+          }
+          target = (target as Record<string | number, unknown>)[key];
+        }
+        const key = route.at(-1);
+        if (
+          typeof target !== "object" ||
+          target === null ||
+          key === undefined ||
+          key === "__proto__" ||
+          key === "constructor" ||
+          key === "prototype"
+        )
+          continue;
+        const record = target as Record<string | number, unknown>;
+        record[key] = String(record[key] ?? "") + change.delta;
+        part.argsText = safeStringify(part.args);
+        upsertPart(runtime, stream, index, part);
+      } else {
+        const { part, index, created } = partFor(
+          stream,
+          change.contentIndex,
+          change.type === "text_delta" ? "text" : "reasoning",
+        );
         runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
-        reasoningPart.text += update.delta;
-        if (created) upsertPart(runtime, stream, index, reasoningPart);
-        emitDelta(runtime, stream, index, "reasoning", update.delta);
-        return;
-      }
-      if (update.type === "thinking_end") reasoningPart.text = update.content;
-      upsertPart(runtime, stream, index, reasoningPart);
-      return;
-    }
-
-    if (update.type === "toolcall_start" || update.type === "toolcall_delta") {
-      const content = update.partial.content[update.contentIndex];
-      if (content?.type !== "toolCall") return;
-      const { part, index, created } = toolPartFor(stream, update.contentIndex, content);
-      runtime.toolParts.set(part.toolCallId, {
-        messageId: stream.messageId,
-        partIndex: index,
-        part,
-      });
-      if (update.type === "toolcall_delta") {
-        part.argsText += update.delta;
+        part.text += change.delta;
         if (created) upsertPart(runtime, stream, index, part);
-        emitDelta(runtime, stream, index, "args", update.delta);
-        return;
+        else
+          emitDelta(
+            runtime,
+            stream,
+            index,
+            change.type === "text_delta" ? "text" : "reasoning",
+            change.delta,
+          );
       }
-      upsertPart(runtime, stream, index, part);
-      return;
     }
-
-    if (update.type === "toolcall_end") {
-      const { part, index } = toolPartFor(stream, update.contentIndex, update.toolCall);
-      part.toolCallId = update.toolCall.id;
-      part.toolName = update.toolCall.name;
-      part.args = update.toolCall.arguments;
-      part.argsText = safeStringify(update.toolCall.arguments);
-      runtime.toolParts.set(part.toolCallId, {
-        messageId: stream.messageId,
-        partIndex: index,
-        part,
-      });
-      upsertPart(runtime, stream, index, part);
-    }
-    // start / done / error 等类型不需要额外动作
   }
 
   function handleMessageEnd(
@@ -1505,6 +1382,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const message = event.message;
     const stream = runtime.stream;
     if (message.role !== "assistant" || !stream) return;
+    handleMessageUpdate(runtime, {
+      type: "message_update",
+      usage: message.usage,
+      changes: [{ type: "message", message }],
+    });
     const failed = message.stopReason === "error";
     emitSafe(runtime.sessionId, {
       type: "message-updated",
@@ -1657,22 +1539,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "run_end" }>,
   ): void {
-    /**
-     * 陈旧 run_end：丢掉，别拿它给**当前**这一轮盖章。
-     *
-     * 场景：用户点停止 → `stop()` 立刻把 running 置 false 并发出 run-ended，
-     * 然后 await 那次很慢的 `lane.abort()`（正在跑的工具没有中断通道）。
-     * 用户随即又发了一条 → 新的 send 起了一轮新运行。此时旧操作的 run_end 才到。
-     * 早先这里无条件 `running = false`，于是**新一轮刚跑起来就被翻成「未运行」**，
-     * UI 在流式中途停转（`:2212` 那句「runEnded 保证不会把状态翻回去」并没有实现）。
-     *
-     * 判据必须是**内核自己的 runId**（`kernelRunId`，由 run_start 捕获），
-     * 不能拿 send 里另生成的本地 runId 去比 —— 那是两套互不相干的 id 空间，
-     * 比出来的结果恒为「不相等」，正常收尾会被全部误丢（会话永远停在 running）。
-     *
-     * 宽松侧兜底：没捕获到 kernelRunId 时照常处理。宁可多收尾一次（幂等），
-     * 也不要因为缺少一个 id 就把这一轮永久挂住。
-     */
+    const alreadyEnded = runtime.runEnded;
+
     if (runtime.kernelRunId !== undefined && event.runId !== runtime.kernelRunId) {
       return;
     }
@@ -1725,7 +1593,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.stats = onRunEnd(runtime.stats);
     emitSessionStats(runtime);
     // 用量快照随会话落盘：下一轮或重启后打开这个会话时，底栏不必重算就有数
-    void persistUsage(runtime);
+    scheduleEffect(runtime, persistUsage(runtime));
     // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出。
     // 子智能体被**重复调用守卫**硬档终止时，runner 已经先落过 failed 终态（带原因），
     // noteSubagentRunEnd 是先到者为准的幂等操作，所以这里不会把它覆盖成 aborted。
@@ -1738,20 +1606,21 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.queue = [];
     pruneToolParts(runtime);
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
-    emitSafe(runtime.sessionId, {
-      type: "run-ended",
-      runId: runtime.runId ?? event.runId,
-      reason: event.status,
-    });
-    void touchSession(runtime);
+    if (!alreadyEnded)
+      emitSafe(runtime.sessionId, {
+        type: "run-ended",
+        runId: runtime.runId ?? event.runId,
+        reason: event.status,
+      });
+    scheduleEffect(runtime, touchSession(runtime));
     // 一轮问答结束：会话还没名字时，用这轮内容生成标题
-    void maybeTitleSession(runtime, event.status);
+    scheduleEffect(runtime, maybeTitleSession(runtime, event.status));
     // 本轮跑动期间 MCP 工具集合变过：现在这一轮结束了，可以安全换工具（下一轮生效）
     if (
       runtime.mcpToolsStale === true ||
       runtime.pluginToolsGeneration !== pluginToolsGeneration()
     ) {
-      void applyExtraTools(runtime);
+      scheduleEffect(runtime, applyExtraTools(runtime));
     }
   }
 
@@ -1805,7 +1674,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitContextBreakdown(runtime, event.row.usage);
   }
 
-  /** queue_update 是 lane 的真实队列，直接映射为 UI 队列项 */
   function handleQueueUpdate(
     runtime: SessionRuntime,
     event: Extract<HarnessEvent, { type: "queue_update" }>,
@@ -1829,15 +1697,19 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   async function compactionDetails(
     runtime: SessionRuntime,
     entryId: string | undefined,
-  ): Promise<{ summaryPreview: string; tokensBefore: number; retainedCount: number } | undefined> {
+  ): Promise<{ summaryPreview: string; tokensBefore?: number; retainedCount: number } | undefined> {
     if (entryId === undefined) return undefined;
     try {
       const entry = await runtime.session.getEntry(entryId, BACKGROUND_CONTEXT);
-      if (entry?.type !== "compaction") return undefined;
+      if (entry?.record.kind !== "pi.compaction") return undefined;
+      const summary = entry.record.model?.map(agentMessageText).join("\n") ?? "";
+      const context = await runtime.conversation.context(BACKGROUND_CONTEXT);
       return {
-        summaryPreview: entry.summary.slice(0, 200),
-        tokensBefore: entry.tokensBefore,
-        retainedCount: entry.retainedTail.length,
+        summaryPreview: summary.slice(0, 200),
+        ...(entry.record.byTaskId === undefined
+          ? {}
+          : { tokensBefore: runtime.compactionTokens.get(entry.record.byTaskId) }),
+        retainedCount: context.entries.filter((item) => item.id !== entry.record.id).length,
       };
     } catch {
       // 摘要读取失败不影响压缩结果展示
@@ -1940,6 +1812,84 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   function registerEvents(runtime: SessionRuntime): void {
+    const updateUsage = (usage: Extract<HarnessEvent, { type: "native_usage" }>["usage"]): void => {
+      runtime.tokenUsage = Object.values(usage.models).reduce(
+        (total, sample) => ({
+          uncachedInputTokens: total.uncachedInputTokens + sample.input,
+          outputTokens: total.outputTokens + sample.output,
+          cacheReadTokens: total.cacheReadTokens + sample.cacheRead,
+          cacheWriteTokens: total.cacheWriteTokens + sample.cacheWrite,
+        }),
+        { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      );
+      emitTokenUsage(runtime);
+    };
+    subscribe(runtime, "native_usage", ({ usage }) => updateUsage(usage));
+    subscribe(runtime, "snapshot", ({ snapshot }) => {
+      updateUsage(snapshot.usage);
+      if (snapshot.run !== undefined) {
+        runtime.kernelRunId = String(snapshot.run.inputs[0]);
+        if (!runtime.running) {
+          runtime.running = true;
+          runtime.runEnded = false;
+          runtime.runId = randomUUID();
+          emitSafe(runtime.sessionId, { type: "run-started", runId: runtime.runId });
+        }
+      }
+      const message = snapshot.generation?.message;
+      if (message !== undefined) {
+        if (runtime.stream === undefined)
+          handleMessageStart(runtime, { type: "message_start", message });
+        else
+          handleMessageUpdate(runtime, {
+            type: "message_update",
+            usage: message.usage,
+            changes: [{ type: "message", message }],
+          });
+      }
+      const missingTools = new Set(
+        snapshot.tools
+          .filter((tool) => !runtime.toolParts.has(tool.callId))
+          .map((tool) => tool.callId),
+      );
+      if (missingTools.size > 0) {
+        const history = mapEntriesToMessages(
+          snapshot.entries.map((entry) => runtime.session.projectEntry(entry)),
+        ).messages;
+        for (const message of history) {
+          if (
+            !message.parts.some(
+              (part) => part.type === "tool-call" && missingTools.has(part.toolCallId),
+            )
+          )
+            continue;
+          emitSafe(runtime.sessionId, { type: "message-added", message });
+          message.parts.forEach((part, partIndex) => {
+            if (part.type === "tool-call")
+              runtime.toolParts.set(part.toolCallId, { messageId: message.id, partIndex, part });
+          });
+        }
+      }
+      for (const tool of snapshot.tools) {
+        const ref = runtime.toolParts.get(tool.callId);
+        if (ref !== undefined && tool.output !== undefined) {
+          ref.part.partialOutput = tool.output;
+          emitSafe(runtime.sessionId, {
+            type: "part-output",
+            messageId: ref.messageId,
+            partIndex: ref.partIndex,
+            text: tool.output,
+          });
+        }
+      }
+      for (const compaction of snapshot.compactions) {
+        emitSafe(runtime.sessionId, {
+          type: "compaction-started",
+          reason: compaction.reason,
+          startedAt: Date.now(),
+        });
+      }
+    });
     subscribe(runtime, "message_start", (event) => handleMessageStart(runtime, event));
     subscribe(runtime, "message_update", (event) => handleMessageUpdate(runtime, event));
     subscribe(runtime, "message_end", (event) => handleMessageEnd(runtime, event));
@@ -1950,6 +1900,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     subscribe(runtime, "run_start", (event) => {
       // 记下内核这一轮的 id：run_end 判「是不是上一轮的尾巴」全靠它（见 handleRunEnd）
       runtime.kernelRunId = event.runId;
+      if (runtime.runEnded || runtime.runId === undefined) {
+        runtime.runId = randomUUID();
+        emitSafe(runtime.sessionId, { type: "run-started", runId: runtime.runId });
+      }
+      runtime.running = true;
+      runtime.runEnded = false;
       // 本轮助手消息记录也要清空：run_end 靠它区分「本轮失败」与「上一轮的尾巴」（见该字段注释）
       runtime.runAssistantMessageId = undefined;
     });
@@ -1988,19 +1944,27 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           : { tokensBefore: details.tokensBefore, retainedCount: details.retainedCount }),
         ...(event.status === "failed" ? { error: errorText(event.error) } : {}),
       });
+      scheduleEffect(runtime, persistUsage(runtime));
     });
   }
 
-  /**
-   * 把当前 MCP 工具数组写回 harness（内核的 setTools 支持热替换工具集）。
-   *
-   * 只在没有运行中进行时调用：会话句柄、lane、上下文都不变，换的只是工具表，
-   * 于是「新连上的 server 的工具」下一轮就能用。
-   *
-   * 工具表是**整表替换**：这里必须把会话的 ask 工具一并重建传进去，
-   * 否则 MCP 刷新一次，ask_user 就会凭空消失（见 tools.ts 的 buildTools 注释）。
-   */
-  async function applyExtraTools(runtime: SessionRuntime): Promise<void> {
+  function applyExtraTools(runtime: SessionRuntime): Promise<void> {
+    if (runtime.toolRefresh !== undefined) return runtime.toolRefresh;
+    const work = refreshExtraTools(runtime);
+    runtime.toolRefresh = work;
+    void work
+      .finally(() => {
+        if (runtime.toolRefresh === work) runtime.toolRefresh = undefined;
+      })
+      .catch(() => undefined);
+    return work;
+  }
+
+  async function refreshExtraTools(runtime: SessionRuntime): Promise<void> {
+    if (runtime.running || runtime.stopping !== undefined || (await hasActiveOperation(runtime))) {
+      runtime.mcpToolsStale = true;
+      return;
+    }
     runtime.mcpToolsStale = false;
     runtime.pluginToolsGeneration = pluginToolsGeneration();
     try {
@@ -2011,39 +1975,26 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           而"谁是插件工具"由 process-host 的前缀（plugin__）区分。
         */
         [...(deps.mcp?.tools() ?? []), ...pluginTools()],
-        createAskTool({ sessionId: runtime.sessionId, interactions }),
+        runtime.isSubagent
+          ? undefined
+          : createAskTool({ sessionId: runtime.sessionId, interactions }),
         jobToolsFor(runtime.sessionId),
         deps.browser,
-        /**
-         * 子智能体工具**必须原样带回去**。
-         *
-         * `harness.setTools` 是**整表替换**（不是增量），漏掉这一项会让
-         * Task / TaskWait / TaskList / TaskStop 从这张表里消失。
-         *
-         * 而消失的后果不是「少几个工具」而是**整个会话失效**：内核的 `activeToolNames`
-         * 是创建时按 `tools.map(t => t.name)` 播种的、`setTools` 不动它，
-         * 于是此后每次请求 `prepareGeneration` 都发现「已激活的工具不在表里」，
-         * 直接以 `configured_tools_unavailable` 失败 —— 请求根本发不出去。
-         * 触发条件还很低：`mcp-servers.ts` 的 `reload()` **无条件** notify，
-         * 而 `bootstrap.ts` 每次启动都会调它（即使用户一个 MCP server 都没配）。
-         *
-         * 字段的存在理由见 SessionRuntime.subagentTools 的注释。
-         */
+
         runtime.subagentTools,
         deps.web,
-        /**
-         * grep / glob 的检索围栏。
-         *
-         * **必须带上**：`setTools` 是整表替换，而这两个工具的围栏是**构造时闭包捕获**的 ——
-         * 漏掉这一项，热替换之后的 grep/glob 就退回成"零确认越界读"
-         *（tools/search.ts 的 resolveSearchRoot 里写了那条路径为什么危险）。
-         *
-         * 用 `runtime.env.cwd` 而不是重新解析：会话的工作目录就是执行环境的 cwd，
-         * 两者不可能不一致（它由 createRuntime 一次算好）。
-         */
-        { searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath) },
+
+        {
+          searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath),
+          todo: runtime.todo,
+          persistTodo: runtime.persistTodo,
+        },
       );
-      await runtime.harness.setTools(nextTools, BACKGROUND_CONTEXT);
+      const whitelist = subagentSessions.get(runtime.sessionId)?.definition.tools;
+      const selected = whitelist === undefined ? nextTools : restrictTools(nextTools, whitelist);
+      runtime.extension = defineExtension({ ...runtime.extension, tools: selected });
+      runtime.registry.install(runtime.extension);
+      await runtime.conversation.configure({ tools: selected }, BACKGROUND_CONTEXT);
       /**
        * 工具表变了，「工具定义」那一段的估算必须跟着变。
        *
@@ -2068,7 +2019,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     toolName: string,
     toolCallId: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<ToolPermissionResult | undefined> {
+    signal?.throwIfAborted();
     const settings = await deps.getSettings();
     // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
     if (settings.permissionMode === "full") return undefined;
@@ -2107,6 +2060,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       toolName,
       argsText,
       risk,
+      signal,
       // 交给 AI 预审：它需要工作目录来判断操作是否越出项目范围
       workingDir: runtime.env.cwd,
       ...(warning === undefined ? {} : { warning }),
@@ -2171,17 +2125,19 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const spec = subagentSessions.get(sessionId);
     // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录、
     // appPath 兜住随包分发的内置技能，tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
+    //
+    // 会话附件目录**只加在这里，不加进 searchRoots**（见下面两处 searchRoots）：
+    // 信封里给了模型绝对路径，read / read_image 按路径打开要能过守卫；但附件是二进制
+    // 与整篇文本，让 grep / glob 去扫它只会把结果淹掉 —— 那是「按路径读」而不是「检索」。
     const env = await createExecEnv({
       cwd,
-      allowedRoots: sessionAllowedRoots(cwd, deps.appPath),
+      allowedRoots: [...sessionAllowedRoots(cwd, deps.appPath), sessionAttachmentsDir(sessionId)],
     });
 
     const loaded = await loadAgentResources(env, settings, cwd, deps.appPath);
 
-    // 会话级待办状态：create() 时就得交给工具，而 lane 要等 create 之后才有 ——
-    // 所以持久化回调走一个可变的 laneRef（工具真正调用它时 lane 一定已就绪）
     const todo = createTodoState();
-    let laneRef: AgentLane | undefined;
+    let conversationRef: Conversation | undefined;
 
     const { models } = buildProviders(settings);
     /**
@@ -2200,12 +2156,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       throw new Error("请先在设置中配置模型服务");
     }
 
-    /**
-     * 子智能体工具（Task 系列）只在**主会话**装配：子智能体不允许再委派（见 tools/subagent.ts），
-     * 而且它们需要父会话 id、聊天运行时与运行管理器 —— 这三样只有 runtime.ts 拿得到（见 tools.ts 注释）。
-     * 「本会话现在用哪个模型 / 哪一档」走 runtimeRef：装配时 runtime 还没建好（与 laneRef 同一个套路）。
-     */
     let runtimeRef: SessionRuntime | undefined;
+    const persistTodo = async (state: TodoState): Promise<void> => {
+      const active = runtimeRef?.conversation ?? conversationRef;
+      if (active === undefined) throw new Error("待办会话尚未就绪");
+      await active.commit(async (tx) => {
+        await tx.appendEntry(active.id, { kind: TODO_ENTRY_TYPE, data: toTodoPayload(state) });
+      }, BACKGROUND_CONTEXT);
+    };
     /**
      * 父会话真实拥有的工具名，供 Task 的临时定义校验白名单。
      *
@@ -2256,30 +2214,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           })
         : [];
 
-    /**
-     * 系统提示：
-     * - 主会话：交互式提示（工作目录 + 工具指导 + 工作规则 + 技能索引 + AGENTS.md），
-     *   再追加**子智能体索引**与**委派路由段**；
-     * - 子智能体：换成定义里的 prompt 正文 + 子智能体的工作规则。刻意不给它技能索引、
-     *   也不给它子智能体索引：它是被派来干一件具体的事，不能再委派（契约不允许嵌套）。
-     *
-     * 索引与路由段的分工（两段刻意分开，见 subagent-prompt.ts 的文件头）：
-     * - **索引**（`<available_subagents>`）是**目录**，两个模式都有 —— 没有它，
-     *   通用模式下的模型看不见用户自定义的子智能体（内置那些能从 Task 描述里看到）；
-     * - **路由段**是**策略**（该不该派、怎么派、怎么收敛），**只有编排模式**注入
-     *   （判据见 agent-mode-prompt.ts 的 shouldIncludeDelegationRules）。
-     *
-     * ⚠️ **必须把结果真的交给内核**：`AgentHarness.create` 的 `systemPrompt` 缺省时，
-     * 内核的 `resolveSystemPrompt` 直接返回空串（`generation.js`）—— 也就是说
-     * 「算出来了但没传」等价于**完全没有系统提示**，而且不会有任何报错。
-     * 这个坑曾经真的踩过：整段提示（身份 / 工具指导 / 技能索引 / AGENTS.md /
-     * 子智能体清单 / 委派规则）只被用来估了个 token 数，一个字都没进模型。
-     *
-     * 用**函数形式**而不是字符串：内核每个 generation 都调一次（`resolveSystemPrompt`
-     * 对函数型配置现算），于是**切换模式在下一次请求就生效**，不必重建 harness。
-     * 静态部分（技能索引、子智能体清单、AGENTS.md）在会话创建时算一次就够，
-     * 只有模式与语言每次现读 —— 否则每轮都要扫一遍磁盘。
-     */
     const availableSubagents = spec === undefined ? await loadEnabledSubagents(settings, cwd) : [];
     /** 静态骨架 + 动态模式 → 完整系统提示（主会话用） */
     const composeMainPrompt = async (): Promise<string> => {
@@ -2335,7 +2269,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         子智能体拿到的是同一批工具对象，所以它也自动受同一个围栏约束 ——
         这正是「过滤发生在已装配好的那份工具表上」的好处（见 restrictTools 的说明）。
       */
-      { searchRoots: sessionAllowedRoots(env.cwd, deps.appPath) },
+      {
+        searchRoots: sessionAllowedRoots(env.cwd, deps.appPath),
+        todo,
+        persistTodo,
+      },
     );
     // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
     const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
@@ -2348,347 +2286,242 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
     const toolsTokens = estimateToolsTokens(tools);
-    const created = await AgentHarness.create(
-      {
-        session: opened.session,
-        models,
-        model,
-        tools,
-        /**
-         * 函数形式：每个 generation 现算（内核 resolveSystemPrompt 对函数型配置每轮求值）。
-         * 于是切换模式在下一次请求就生效，不必重建 harness。
-         *
-         * **这一行是系统提示唯一的投递点** —— 漏掉它时内核返回空串，
-         * 模型拿不到任何身份、规则、技能索引与 AGENTS.md，且不会有任何报错。
-         */
-        systemPrompt: resolvePrompt,
-        toolContext: {
-          env,
-          todo,
-          persistTodo: async (state: TodoState) => {
-            await laneRef?.appendCustomEntry(
-              TODO_ENTRY_TYPE,
-              toTodoPayload(state),
-              BACKGROUND_CONTEXT,
-            );
+    const registry = createRegistry();
+    const extension = defineExtension({
+      name: "oint",
+      tools,
+      sections: [
+        section(
+          "oint",
+          async () => {
+            const prompt = await resolvePrompt();
+            if (runtimeRef !== undefined)
+              runtimeRef.contextBreakdown.systemTokens = estimateTokens(prompt);
+            return prompt;
+          },
+          { tag: false },
+        ),
+      ],
+    });
+    registry.install(extension);
+    const harness = await opened.session.bindHarness(() =>
+      Harness.open(
+        opened.storage,
+        {
+          models,
+          registry,
+          env: () => env,
+          settings: {
+            compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
           },
         },
-        resources: { skills: loaded.skills, promptTemplates: loaded.promptTemplates },
-        // 档位：子智能体以定义为准（没写才跟随设置），主会话按设置
-        thinkingLevel: spec?.definition.thinkingLevel ?? settings.thinkingLevel,
-        compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
-      },
-      BACKGROUND_CONTEXT,
+        BACKGROUND_CONTEXT,
+      ),
     );
-    const lane = await created.harness.lane(LANE_NAME, BACKGROUND_CONTEXT);
-    laneRef = lane;
-    // 必须在返回 runtime 之前恢复：否则重启后的第一次 todo 调用会以空表为基准覆盖用户清单
-    await restoreTodoState(lane, todo);
-
-    /**
-     * **把「这个会话能用哪些工具」对齐到 lane 上。**
-     *
-     * ## 不对齐会怎样（这是一个线上真实报错）
-     *
-     * 内核在 lane **已有存储配置**时直接恢复那份配置、完全忽略 seed
-     *（harness.js 的 `stored.kind === "lane"` 分支）—— 与上面那段模型注释同一个机制。
-     * 而 `activeToolNames` **就在那份存储配置里**（它是按事件持久化的，见 reducer 的
-     * `snapshot.configuration.activeToolNames = event.value`）。
-     *
-     * 于是：一个会话第二次打开时，它拿到的是**上次存下的工具名清单**。
-     * 只要工具表在此期间变过，清单里就会出现表里没有的名字，此后**每一次发送**都以
-     * `One or more configured tools are unavailable in this process` 失败 ——
-     * 报错在生成阶段，与"你发了什么"无关，所以看起来像会话坏了。
-     *
-     * 触发它不需要插件：任何工具集合的变动都会。而插件让它变得**日常** ——
-     * 插件可以启用/停用、进程可以崩溃、工具名可以改版（本轮就把 `plugin__…__<工具>`
-     * 改成了 `plugin__…__call`）。
-     *
-     * ## 为什么每次创建 runtime 都写一遍
-     *
-     * 与 `applyModel` 同一个理由：**内核信存储、不信 seed**，所以"对齐"这件事必须由
-     * 我们这边每次显式做。不这样做的话，`activeToolNames` 会永远停在会话第一次附着时的
-     * 那份快照上。
-     *
-     * 注意它与下面 `applyExtraTools` 的分工：那一条管的是"本轮之后工具表变了"，
-     * 这一条管的是"打开会话时先与当前表对齐"。两条缺一不可 ——
-     * 只有前一条时，坏掉的清单会一直拦着请求，而修复要等到某一轮成功结束之后。
-     */
-    await lane.setActiveTools(
-      builtTools.map((tool) => tool.name),
-      BACKGROUND_CONTEXT,
-    );
-
-    /**
-     * 用 **lane 实际恢复出来的模型**初始化 runtime 的模型视图，而不是「我们期望的那个值」。
-     *
-     * 这一步是必需的：内核在 lane 已有存储配置时完全忽略 seed（harness.js 的
-     * `stored.kind === "lane"` 分支），所以恢复出来的可能与我们刚解析的期望值不同 ——
-     * 例如「跟随默认」的会话在上次运行时存的是旧的默认模型，之后用户在设置里换了默认。
-     * 若这里写期望值，下面的 applyModel 会以为「已经一致」而永不写回，请求就一直发给旧模型；
-     * 同理，存储里留着已删除的服务时，模型对象解析不出来（undefined），也必须让它走写回路径。
-     */
-    const laneModel = await lane.getModel(BACKGROUND_CONTEXT);
-    const currentRef = await readLaneModelRef(lane);
-    const currentModel: Model<Api> = laneModel ?? model;
-
-    const runtime: SessionRuntime = {
-      sessionId,
-      session: opened.session,
-      harness: created.harness,
-      lane,
-      model: currentModel,
-      modelRef: currentRef,
-      models,
-      env,
-      rules: getRuleStore(),
-      running: false,
-      sending: false,
-      runEnded: false,
-      pendingEntries: [],
-      toolParts: new Map(),
-      toolOutputAt: new Map(),
-      queue: [],
-      unsubscribers: [],
-      // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
-      subagentTools,
-      // 身份在创建时就定下（spec 读得到即子智能体会话），见字段注释
-      isSubagent: spec !== undefined,
-      repeatChain: createRepeatChain(),
-      stats: initSessionStatsState(),
-      tokenUsage: {
-        uncachedInputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-      },
-      contextBreakdown: { systemTokens, toolsTokens },
-    };
-    // 供子智能体工具的依赖读取「本会话现在用哪个模型 / 哪一档」（装配时 runtime 还不存在）
-    runtimeRef = runtime;
-    runtime.unsubscribers.push(
-      created.harness.hooks.on("before_tool", async (event) => {
-        try {
-          /*
-            **插件钩子排在宿主的权限门之前，而且只能加限制。**
-
-            顺序是刻意的：插件拦下的调用**不该再弹审批卡**（用户批准一次注定被拒的操作
-            只会让人困惑）。反过来的顺序（先审批再让插件拦）会让"我点了允许但它还是没跑"
-            变成一个没有解释的现象。
-
-            能力边界由类型保证：钩子的返回值里**没有 `allow`**（见 hooks.ts 的注释）——
-            它不可能放行宿主的门本来要拦的东西。那个门永远是最后一道。
-          */
-          const verdict = await dispatchPluginHooks("PreToolUse", {
-            toolName: event.toolName,
-            args: event.args,
-            workspaceDir: runtime.env.cwd,
-          });
-          for (const failure of verdict.failures) {
-            console.warn(
-              `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
-            );
-          }
-          if (verdict.block !== undefined) {
-            return { block: { reason: verdict.block } };
-          }
-          return await gateTool(runtime, event.toolName, event.toolCallId, event.args);
-        } catch (error) {
-          /*
-            任何异常都按安全侧默认拒绝。
-
-            这一段现在盖住两件事：**插件钩子的分发**与**宿主的权限门**。
-            钩子自身的失败**不会**走到这里（`dispatchHooks` 把每条失败都变成结论，
-            见 hooks.ts），所以到这里的只有实现层面的意外 —— 那时按拒绝处理是对的，
-            但文案要如实覆盖两件事，不能只说"权限校验失败"。
-          */
-          console.warn(`工具前置校验失败（${event.toolName}）：${errorText(error)}`);
-          return { block: { reason: "工具前置校验失败，已拒绝该操作" } };
-        }
-      }),
-    );
-
-    /**
-     * **插件的工具事件钩子**（`PostToolUse` / `PostToolUseFailure`）。
-     *
-     * 只观察，永不改写工具结果 —— 返回 `undefined` 是刻意的，与上面那个重复调用守卫
-     * 同一条口径（四家共识：只提醒 / 只中止，不篡改调用本身）。
-     *
-     * 与"重复调用守卫"分成两个注册而不是合成一个：两者的失败语义与数据来源都不同，
-     * 合成一个会让"钩子崩了"与"守卫崩了"在日志里长得一样（两者都必须不能影响工具结果，
-     * 所以各自 catch 各自的）。
-     */
-    runtime.unsubscribers.push(
-      created.harness.hooks.on("after_tool", async (event) => {
-        try {
-          const eventName = event.isError ? "PostToolUseFailure" : "PostToolUse";
-          const verdict = await dispatchPluginHooks(eventName, {
-            toolName: event.toolName,
-            args: event.args,
-            workspaceDir: runtime.env.cwd,
-            isError: event.isError,
-            ...(previewToolText(event.content) === undefined
-              ? {}
-              : { text: previewToolText(event.content) }),
-          });
-          for (const failure of verdict.failures) {
-            console.warn(
-              `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
-            );
-          }
-          if (verdict.additionalContext !== undefined) {
-            // 只暂存，投递交给 transform_context（与重复提醒同一条路径、同一个理由）
-            runtime.pendingPluginContext = verdict.additionalContext;
-          }
-        } catch (error) {
-          // 钩子只是增强：它自己出错绝不能影响工具调用的结果
-          console.warn(`插件钩子分发失败（${event.toolName}）：${errorText(error)}`);
-        }
-        return undefined;
-      }),
-    );
-
-    /**
-     * **重复调用守卫**（取代了原来的 maxTurns 截断，见 repeat-guard.ts 的文件头）。
-     *
-     * 为什么挂 `after_tool` 而不是 `before_tool`：
-     * - 与四家实现（opencode / Roo / Cline / OpenHands）一致，它们都在**执行之后**计数；
-     * - 而且被权限门拒绝的调用也应当计数 —— 模型反复尝试被拒的调用，
-     *   恰恰是最需要打断的那类循环。`before_tool` 的返回值里插不进「顺便记一笔」。
-     *
-     * 两个会话类型一视同仁：主会话也会陷入重复，没有理由只守卫子智能体。
-     */
-    runtime.unsubscribers.push(
-      created.harness.hooks.on("after_tool", async (event) => {
-        try {
-          const verdict = inspectRepeat(runtime.repeatChain, event.toolName, event.args);
-          if (verdict === null) return undefined;
-          if (verdict.level === "soft") {
-            // 只暂存，投递交给 transform_context（两个钩子的时机不同）
-            runtime.pendingRepeatNotice = softRepeatNotice(
-              verdict.toolName,
-              verdict.count,
-              verdict.argsText,
-            );
-            console.warn(
-              `重复调用守卫：${runtime.sessionId} 连续 ${verdict.count} 次调用 ${verdict.toolName}`,
-            );
-            return undefined;
-          }
-          /**
-           * 硬档：终止这次运行。
-           *
-           * **先把终态定下来再请求中止**（顺序不能反）：`noteSubagentRunEnd` 是幂等的、
-           * 先到者为准，所以这次运行的结局会是「失败：检测到重复调用」而不是笼统的
-           * 「已停止」—— 用户与主代理都要能看出**这是异常**，不是跑太久了。
-           */
-          if (subagentSessions.has(runtime.sessionId)) {
-            noteSubagentRunEnd(runtime.sessionId, {
-              status: "failed",
-              error: hardRepeatReason(verdict.toolName, verdict.count),
-            });
-          }
-          console.warn(
-            `重复调用守卫：${runtime.sessionId} 连续 ${verdict.count} 次调用 ${verdict.toolName}，已终止`,
-          );
-          // 不 await：本函数在工具回调里，等中止会让这一轮卡在这儿（stop 自己的注释也是这个理由）
-          void stop(runtime.sessionId);
-        } catch (error) {
-          // 守卫只是增强：它自己出错绝不能影响工具调用的结果
-          console.warn(`重复调用守卫失败（${event.toolName}）：${errorText(error)}`);
-        }
-        // 守卫从不改写工具结果（四家共识：只提醒 / 只中止，不篡改调用本身）
-        return undefined;
-      }),
-    );
-
-    /**
-     * 把暂存的重复提醒**作为一条 user 角色的 custom 消息**追加进请求。
-     *
-     * 为什么用 custom 而不是普通 user 消息：
-     * - `convertToLlm` 把它转成 user 角色（模型看得见，与 dsh 的做法一致）；
-     * - 而 message-mapper **忽略 custom 条目**，所以它不会出现在用户的对话流里 ——
-     *   它是给模型的自纠提示，不是用户说的话，不该伪装成用户发言。
-     *
-     * 注入后立刻清空：提醒只该出现在它触发之后的那一次请求里，
-     * 留着会让它跟着整段历史一直重复。
-     */
-    /**
-     * 上下文分解里「系统提示」那一段**每轮重算**。
-     *
-     * 它本来只在会话创建时算一次（见 createRuntime 里的 systemTokens）。但系统提示是
-     * **函数形式、每个 generation 现算**的：切换智能体模式会增删「委派路由段」，
-     * AGENTS.md 改了也同理。固定项一旦陈旧，`messageTokens = 压力 − 系统 − 工具`
-     * 的误差就整份转嫁到「对话消息」段 —— 上下文环的三段占比是错的，且不会报任何错。
-     *
-     * 挂在 `transform_context` 而不是 `before_request`：这个 event 直接带着
-     * `systemPrompt`（本轮真正要发出去的那一份），不必再去求值一次 resolvePrompt
-     *（那是 async 且要读设置，放进请求路径上不划算）。
-     *
-     * 这里**不发事件**：`emitContextBreakdown` 在不带 usage 样本时会把 messageTokens
-     * 置 0，那是给「还没有任何样本」准备的语义。正确顺序本来就是
-     * 「本钩子更新 → 本次请求的 usage 到达 → 带新值发出」，所以只更新即可。
-     */
-    runtime.unsubscribers.push(
-      created.harness.hooks.on("transform_context", (event) => {
-        const systemTokens = estimateTokens(event.systemPrompt);
-        if (systemTokens !== runtime.contextBreakdown.systemTokens) {
-          runtime.contextBreakdown = { ...runtime.contextBreakdown, systemTokens };
-        }
-        return undefined;
-      }),
-    );
-
-    runtime.unsubscribers.push(
-      created.harness.hooks.on("transform_context", (event) => {
-        const notice = runtime.pendingRepeatNotice;
-        const pluginContext = runtime.pendingPluginContext;
-        if (notice === undefined && pluginContext === undefined) return;
-        runtime.pendingRepeatNotice = undefined;
-        runtime.pendingPluginContext = undefined;
-        /*
-          两条暂存各自成一条 custom 条目，不是拼成一段：
-          它们的**来源不同**（宿主守卫 vs 插件钩子），合成一段之后
-          模型与读日志的人都分不出"这句话是谁说的"，而排查时那正是第一个要问的问题。
-        */
-        const extra = [
-          ...(notice === undefined
-            ? []
-            : [createCustomMessage("repeat-notice", notice, false, undefined, Date.now())]),
-          ...(pluginContext === undefined
-            ? []
-            : [createCustomMessage("plugin-hook", pluginContext, false, undefined, Date.now())]),
-        ];
-        return { messages: [...event.messages, ...extra] };
-      }),
-    );
-
-    // MCP 工具集合变化（server 连上/断开/工具列表变了）时刷新本会话的工具数组。
-    // 运行中不打断当前这一轮：只打标记，等 run_end 再应用。
-    if (deps.mcp !== undefined) {
-      const mcp = deps.mcp;
-      runtime.unsubscribers.push(
-        mcp.subscribe(() => {
-          if (runtime.running) {
-            runtime.mcpToolsStale = true;
-            return;
-          }
-          void applyExtraTools(runtime);
-        }),
+    try {
+      const conversation =
+        (await harness.conversation(opened.conversationId, BACKGROUND_CONTEXT)) ??
+        (await harness.root(BACKGROUND_CONTEXT));
+      conversationRef = conversation;
+      await conversation.configure(
+        {
+          tools,
+          cwd,
+          model: { provider: modelRef.serviceId, modelId: modelRef.modelId },
+          thinkingLevel: clampThinkingLevel(
+            model,
+            spec?.definition.thinkingLevel ?? settings.thinkingLevel,
+          ),
+        },
+        BACKGROUND_CONTEXT,
       );
-    }
+      await restoreTodoState(conversation, todo);
+      const currentRef = await readConversationModelRef(conversation);
+      const currentModel = model;
+      const events = await createRuntimeEventBridge({
+        harness,
+        conversationId: conversation.id,
+        projectEntry: (entry) => opened.session.projectEntry(entry),
+        externalEntryId: (id) => opened.session.externalEntryId(id),
+      });
+      const savedUsage = await deps.sessionStore.readUsage(sessionId);
+      const runtime: SessionRuntime = {
+        sessionId,
+        session: opened.session,
+        harness,
+        conversation,
+        registry,
+        extension,
+        events,
+        todo,
+        persistTodo,
+        compactionTokens: new Map(),
+        effects: new Set(),
+        model: currentModel,
+        modelRef: currentRef,
+        models,
+        env,
+        rules: getRuleStore(),
+        running: false,
+        sending: false,
+        runEnded: false,
+        pendingEntries: [],
+        toolParts: new Map(),
+        toolOutputAt: new Map(),
+        queue: [],
+        unsubscribers: [],
+        // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
+        subagentTools,
+        // 身份在创建时就定下（spec 读得到即子智能体会话），见字段注释
+        isSubagent: spec !== undefined,
+        repeatChain: createRepeatChain(),
+        stats: { ...initSessionStatsState(), ...savedUsage?.stats },
+        tokenUsage: {
+          uncachedInputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        contextBreakdown: { systemTokens, toolsTokens },
+      };
+      // 供子智能体工具的依赖读取「本会话现在用哪个模型 / 哪一档」（装配时 runtime 还不存在）
+      runtimeRef = runtime;
+      const terminateCalls = new Set<string>();
+      runtime.extension = defineExtension({
+        ...extension,
+        hooks: [
+          hook(ToolTask, {
+            beforeTool: async (call, _api, context) => {
+              try {
+                context.abortSignal?.throwIfAborted();
+                const verdict = await dispatchPluginHooks("PreToolUse", {
+                  toolName: call.name,
+                  args: call.arguments,
+                  workspaceDir: runtime.env.cwd,
+                });
+                for (const failure of verdict.failures)
+                  console.warn(
+                    `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
+                  );
+                if (verdict.block !== undefined) return { block: verdict.block };
+                context.abortSignal?.throwIfAborted();
+                const permission = await gateTool(
+                  runtime,
+                  call.name,
+                  call.id,
+                  call.arguments,
+                  context.abortSignal,
+                );
+                if (permission?.block.terminate === true) terminateCalls.add(call.id);
+                return permission === undefined ? undefined : { block: permission.block.reason };
+              } catch (error) {
+                console.warn(`工具前置校验失败（${call.name}）：${errorText(error)}`);
+                return { block: "工具前置校验失败，已拒绝该操作" };
+              }
+            },
+            afterTool: async (call, result) => {
+              try {
+                const verdict = await dispatchPluginHooks(
+                  result.isError ? "PostToolUseFailure" : "PostToolUse",
+                  {
+                    toolName: call.name,
+                    args: call.arguments,
+                    workspaceDir: runtime.env.cwd,
+                    isError: result.isError ?? false,
+                    ...(previewToolText(result.content ?? []) === undefined
+                      ? {}
+                      : { text: previewToolText(result.content ?? []) }),
+                  },
+                );
+                for (const failure of verdict.failures)
+                  console.warn(
+                    `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
+                  );
+                if (verdict.additionalContext !== undefined)
+                  runtime.pendingPluginContext = verdict.additionalContext;
+              } catch (error) {
+                console.warn(`插件钩子分发失败（${call.name}）：${errorText(error)}`);
+              }
+              try {
+                const verdict = inspectRepeat(runtime.repeatChain, call.name, call.arguments);
+                if (verdict?.level === "soft")
+                  runtime.pendingRepeatNotice = softRepeatNotice(
+                    verdict.toolName,
+                    verdict.count,
+                    verdict.argsText,
+                  );
+                if (verdict?.level === "hard") {
+                  if (runtime.isSubagent)
+                    noteSubagentRunEnd(runtime.sessionId, {
+                      status: "failed",
+                      error: hardRepeatReason(verdict.toolName, verdict.count),
+                    });
+                  void stop(runtime.sessionId);
+                }
+              } catch (error) {
+                console.warn(`重复调用守卫失败（${call.name}）：${errorText(error)}`);
+              }
+              if (terminateCalls.delete(call.id))
+                return { ...result, control: { ...result.control, terminate: true } };
+              return undefined;
+            },
+          }),
+          hook(GenerationTask, {
+            beforeRequest: ({ messages }) => {
+              const notices = [runtime.pendingRepeatNotice, runtime.pendingPluginContext].filter(
+                (text): text is string => text !== undefined,
+              );
+              runtime.pendingRepeatNotice = undefined;
+              runtime.pendingPluginContext = undefined;
+              if (notices.length === 0) return undefined;
+              return {
+                messages: [
+                  ...messages,
+                  ...notices.map((content) => ({
+                    role: "user" as const,
+                    content,
+                    timestamp: Date.now(),
+                  })),
+                ],
+              };
+            },
+          }),
+          hook(CompactionTask, {
+            beforeCompact: ({ messages }, api) => {
+              runtime.compactionTokens.set(api.taskId, estimateTokens(safeStringify(messages)));
+              return undefined;
+            },
+          }),
+        ],
+      });
+      registry.install(runtime.extension);
 
-    // 遗留操作：上一次进程在运行中被关掉（退出 / 崩溃 / 开发期热重载）时，pi 会把「当前操作 id」
-    // 留在会话里，下次 attach 原样读回 —— 这条 lane 就天生「有活跃操作」，之后任何
-    // prompt / compact 都会被 LaneBusy 拒收。这里在装配阶段先收敛掉。
-    if (created.open.some((operation) => operation.lane === LANE_NAME)) {
-      await abortStaleOperation(lane, sessionId);
+      // MCP 工具集合变化（server 连上/断开/工具列表变了）时刷新本会话的工具数组。
+      // 运行中不打断当前这一轮：只打标记，等 run_end 再应用。
+      if (deps.mcp !== undefined) {
+        const mcp = deps.mcp;
+        runtime.unsubscribers.push(
+          mcp.subscribe(() => {
+            if (runtime.running || runtime.sending || runtime.stopping !== undefined) {
+              runtime.mcpToolsStale = true;
+              return;
+            }
+            scheduleEffect(runtime, applyExtraTools(runtime));
+          }),
+        );
+      }
+
+      await applyModel(runtime, settings);
+      registerEvents(runtime);
+      await runtime.events.start();
+      // Recovered durable tasks keep their native interruption/replay semantics. No blanket abort-on-open.
+      harness.resume();
+      return runtime;
+    } catch (error) {
+      await harness.close(BACKGROUND_CONTEXT);
+      await opened.session.unbindHarness(harness);
+      throw error;
     }
-    // 让 lane 的模型与我们这边的判定对齐：内核在 lane 已有存储配置时忽略 seed，
-    // 所以「跟随默认」的会话换了默认模型、或存储里留着已删除的服务，都要在这里纠正
-    await applyModel(runtime, settings);
-    registerEvents(runtime);
-    return runtime;
   }
 
   function ensureRuntime(sessionId: string): Promise<SessionRuntime> {
@@ -2712,6 +2545,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   /** prompt 异常/失败时收尾：错误消息 + run-ended，保证 UI 不会一直转圈 */
   function emitRunFailure(runtime: SessionRuntime, runId: string, cause: unknown): void {
     if (runtime.runEnded) return;
+    runtime.runEnded = true;
     const text = errorText(cause);
     const stream = runtime.stream;
     if (stream) {
@@ -2738,16 +2572,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSafe(runtime.sessionId, { type: "run-ended", runId, reason: "failed" });
   }
 
-  /**
-   * 把「这个会话该用哪个模型」落到 lane 上（会话绑定优先，否则设置里的默认模型）。
-   *
-   * 为什么不能只靠 harness 的 seed：内核在 lane **已有存储配置**时直接恢复那份配置、完全忽略
-   * seed（harness.js 的 `stored.kind === "lane"` 分支）。也就是说 seed 只在会话第一次附着时
-   * 生效 —— 于是「跟随默认模型」在会话第二次打开后就不再跟着默认走了，用户改了默认模型也
-   * 不会传导到这些会话。所以每次发送前用我们这边的判定对齐一次。
-   *
-   * 已经一致时不写：setConfiguration 会往会话里落一条配置更新，没必要每条消息写一次。
-   */
   async function applyModel(runtime: SessionRuntime, settings: Settings): Promise<void> {
     /**
      * 子智能体的模型：定义里固定了就按定义（pin），否则**继承父会话实际在用的那个** ——
@@ -2769,7 +2593,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return;
     }
 
-    // 与 lane 里的**实际**配置比较（不是拿「我们上次写的那个」比）：重启后 lane 恢复出来的是
     // 存储里的旧模型，只有以实际值为基准才能发现差异。规则见 needsModelWrite 的注释
     if (!needsModelWrite(runtime.modelRef, ref)) {
       // 引用没变，但 Model 对象可能因设置改动（窗口、能力开关）而更新：跟着换掉即可
@@ -2779,8 +2602,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     try {
       // 内核只记 {provider, modelId}，真正的模型对象由 harness 的 models 注册表解析
-      await runtime.lane.setModel(
-        { provider: ref.serviceId, modelId: ref.modelId },
+      await runtime.conversation.configure(
+        { model: { provider: ref.serviceId, modelId: ref.modelId } },
         BACKGROUND_CONTEXT,
       );
     } catch (error) {
@@ -2791,18 +2614,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.model = model;
   }
 
-  /**
-   * 把设置里的思考档位应用到 lane —— 每条消息前一次，改完设置下一条即生效。
-   *
-   * 为什么需要这一步：harness 创建时就把 thinkingLevel 定进了配置，之后内核每次请求都从
-   * 那份配置取值；不在发送前刷新，用户在设置里改的档位要等重启才起作用（而且 clamp 过的
-   * 结果写不回设置 —— 设置里的档位是「用户想要什么」，lane 上的是「这个模型实际能用什么」）。
-   *
-   * 就低不就地取档由内核 clampThinkingLevel 决定（优先往高找、再往低找），与请求阶段的
-   * clamp 完全同一套规则，不会出现「界面显示 A、请求发的是 B」。
-   *
-   * 失败只告警不中断：档位调不动不该让消息发不出去。
-   */
   async function applyThinkingLevel(runtime: SessionRuntime, settings: Settings): Promise<void> {
     try {
       // 子智能体以定义为准（没写才跟随设置）：否则「定义里写了 high 的子智能体」会被这里的设置值
@@ -2811,9 +2622,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         runtime.model,
         subagentSessions.get(runtime.sessionId)?.definition.thinkingLevel ?? settings.thinkingLevel,
       );
-      const current = await runtime.lane.getThinkingLevel(BACKGROUND_CONTEXT);
+      const current = (await runtime.conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
       if (current === desired) return;
-      await runtime.lane.setThinkingLevel(desired, BACKGROUND_CONTEXT);
+      await runtime.conversation.configure({ thinkingLevel: desired }, BACKGROUND_CONTEXT);
     } catch (error) {
       console.warn(
         `应用思考档位失败（沿用当前值）：${error instanceof Error ? error.message : String(error)}`,
@@ -2824,35 +2635,40 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   async function send(
     sessionId: string,
     text: string,
-    images?: ImageContent[],
+    attachments?: ChatAttachment[],
     messageId?: string,
     options?: ChatSendOptions,
-    internal?: { message?: CustomMessage },
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
-    /**
-     * 并发闸门：同步置位，**早于下面任何 await**。
-     *
-     * 只看 `running` 是不够的 —— 从进入本函数到 `running = true`（`:1917` 附近）之间隔着
-     * `applyModel` / `applyThinkingLevel` 两个 await，并发进来的第二次 send 在这个窗口里
-     * 看到的 running 仍是 false。两次都会走到 lane.prompt，第二个被内核以 LaneBusy 拒收，
-     * 而重试分支会 `abortStaleOperation` 再重发 —— 把**第一个调用方的活跃运行**中止掉。
-     *
-     * 运行中 / 启动中的重复 send 一律转为排队（followUp）：这与渲染层「运行中按回车
-     * 就是排队」的既有行为一致，只是判定从「await 之后」提前到了「await 之前」。
-     *
-     * 这里直接调 `enqueueToLane` 而不是 `queue`：`queue` 在空闲时会转回 `send`，
-     * 而此刻闸门已占、`running` 可能还是 false —— 走那条路会无限互相递归。
-     */
+    if (runtime.stopping !== undefined) await runtime.stopping;
+    if (runtime.sendController?.signal.aborted) await runtime.sendSettled;
+
     if (runtime.running || runtime.sending) {
-      await enqueueToLane(runtime, text, "followUp");
+      await enqueueInput(runtime, text, "followUp", attachments, messageId);
       return;
     }
     runtime.sending = true;
+    const controller = new AbortController();
+    runtime.sendController = controller;
+    let settled = () => {};
+    runtime.sendSettled = new Promise<void>((resolve) => {
+      settled = resolve;
+    });
+    runtime.admission = new Promise<void>((resolve) => {
+      runtime.admitted = resolve;
+    });
     try {
-      await sendLocked(runtime, text, images, messageId, options, internal);
+      await sendLocked(runtime, text, attachments, messageId, options, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
     } finally {
       runtime.sending = false;
+      runtime.admitted?.();
+      runtime.admission = undefined;
+      runtime.admitted = undefined;
+      runtime.sendController = undefined;
+      runtime.sendSettled = undefined;
+      settled();
     }
   }
 
@@ -2860,36 +2676,32 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   async function sendLocked(
     runtime: SessionRuntime,
     text: string,
-    images: ImageContent[] | undefined,
+    attachments: ChatAttachment[] | undefined,
     messageId: string | undefined,
     options: ChatSendOptions | undefined,
-    internal: { message?: CustomMessage } | undefined,
+    signal: AbortSignal,
   ): Promise<void> {
+    await runtime.toolRefresh;
+    signal.throwIfAborted();
+    if (runtime.mcpToolsStale || runtime.pluginToolsGeneration !== pluginToolsGeneration()) {
+      await applyExtraTools(runtime);
+    }
     // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
     const settings = await deps.getSettings();
+    signal.throwIfAborted();
     await applyModel(runtime, settings);
+    signal.throwIfAborted();
     await applyThinkingLevel(runtime, settings);
+    signal.throwIfAborted();
 
     runtime.running = true;
     runtime.runEnded = false;
-    /**
-     * 重复调用守卫：**用户的新指令清空链**。
-     *
-     * 全新指令意味着前提变了 —— 模型接下来重复上一轮的调用完全可能是对的
-     * （「再跑一次那个测试」），把它算作循环就是误报。
-     *
-     * 只在**用户真的说话**时清（`internal` 是系统内部消息，如重复调用提醒），
-     * 那不是用户意图，不该顺手洗白一条已经形成的循环。
-     */
-    if (internal?.message === undefined) {
-      runtime.repeatChain = createRepeatChain();
-    }
-    // 上一次运行若因异常没能收到全部 entry_added，队列里会留下过期项：新一次运行先清空
+
+    runtime.repeatChain = createRepeatChain();
     runtime.pendingEntries = [];
     // 记录渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
-    // 系统通知消息（internal.message）没有乐观 id：通过 message_start 事件自带 id，不走 pending
-    if (internal?.message === undefined) runtime.pendingUserMessageId = messageId;
+    runtime.pendingUserMessageId = messageId;
     const runId = randomUUID();
     runtime.runId = runId;
     /**
@@ -2900,58 +2712,73 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (!subagentSessions.has(runtime.sessionId)) abortSubagentRunsForParent(runtime.sessionId);
     emitSafe(runtime.sessionId, { type: "run-started", runId });
     try {
+      signal.throwIfAborted();
       const rewound = options?.rewindToEntryId;
       if (rewound !== undefined) {
-        // 编辑：先把 tip 退回该用户消息的**父**条目，下面再把 text 作为新用户消息发出。
-        // 目标已经是 tip 时跳过导航：pi 对「导航到当前 tip」直接报
-        // "Navigation target must differ from the current tip"。
-        // tip 读不到时按「未知」处理，照常尝试导航，由 pi 给真实错误。
+        // 编辑在目标父条目处分支，保留原会话历史；目标已是末尾时直接继续。
         const tip = await currentTip(runtime);
         if (!tip.known || tip.tipId !== rewound) {
-          const nav = await runtime.lane.navigateTree(rewound, undefined, BACKGROUND_CONTEXT);
-          if (!nav.ok) {
-            emitRunFailure(runtime, runId, nav.error);
-            return;
-          }
+          const selected = await runtime.session.forkAndSelect(rewound, BACKGROUND_CONTEXT);
+          const selectedEvents = await createRuntimeEventBridge({
+            harness: runtime.harness,
+            conversationId: selected.id,
+            projectEntry: (entry) => runtime.session.projectEntry(entry),
+            externalEntryId: (id) => runtime.session.externalEntryId(id),
+          });
+          await runtime.events.stop();
+          runtime.conversation = selected;
+          runtime.events = selectedEvents;
+          registerEvents(runtime);
+          await runtime.events.start();
+          // Native forks restore historical AgentDoc. Reapply the user's current choices for this new run.
+          await selected.configure(
+            {
+              model: { provider: runtime.model.provider, modelId: runtime.model.id },
+              thinkingLevel: await effectiveThinkingLevel(runtime, settings),
+              tools: runtime.extension.tools ?? [],
+              extensions: [runtime.extension],
+              cwd: runtime.env.cwd,
+            },
+            BACKGROUND_CONTEXT,
+          );
+          Object.assign(runtime.todo, createTodoState());
+          await restoreTodoState(selected, runtime.todo);
         }
       }
-      /**
-       * 必须带上要追加的消息。
-       *
-       * 不能靠「回退 + 空 prompt 沿用已有用户消息」来省掉这次重发：pi 的 `acceptRun` 在
-       * 「prompt 为空且无图片」时确实不追加消息，但紧接着就以
-       * `InvalidMessage{reason:"empty"}`（"Acceptance must append at least one message"）拒收。
-       * 所以 `text` 一律原样传下去。
-       */
-      let result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
+      // 原样提交交错的附件信封与图片块；附件落盘完成且本次发送未取消后才受理输入。
+      const userMessage: AgentMessage = {
+        role: "user",
+        content: await buildUserContent(runtime.sessionId, text, attachments),
+        timestamp: Date.now(),
+      };
+      signal.throwIfAborted();
+      const submission = await runtime.conversation.submit(
+        {
+          type: "input",
+          content: userMessage.content,
+          requestId: messageId ?? runId,
+          whenBusy: "followUp",
+        },
+        BACKGROUND_CONTEXT,
+      );
+      runtime.admitted?.();
+      const receipt = await submission.wait(BACKGROUND_CONTEXT);
+      await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
+      await runtime.events.flush();
       if (
-        !result.ok &&
-        isLaneBusy(result.error) &&
-        (await abortStaleOperation(runtime.lane, runtime.sessionId))
+        receipt.status === "unanswered" &&
+        receipt.reason !== "aborted" &&
+        receipt.reason !== "reset" &&
+        !runtime.runEnded
       ) {
-        // lane 里还压着没收尾的操作（例如上次 stop 的 abort 没收敛）：清掉再重试一次，
-        // 让用户看到真实结果而不是 `Lane "main" already has an active operation`。
-        // prompt 被拒时不会追加消息，所以重试不会写出重复的用户消息。
-        result = await runtime.lane.prompt(text, images, BACKGROUND_CONTEXT);
-      }
-      if (!result.ok) {
-        emitRunFailure(runtime, runId, result.error);
-      } else if (result.value.status === "failed" && !runtime.runEnded) {
-        /**
-         * 内核有**两条**失败通道，这里必须都覆盖：
-         * - `!result.ok` —— 操作被拒（LaneBusy、InvalidMessage…）；
-         * - `ok:true` + `value.status === "failed"` —— 操作被受理但这个 run 失败了
-         *   （典型是 `configured_tools_unavailable`：请求根本没发出去）。
-         *
-         * 后者正常情况下已经由 `run_end` → `handleRunEnd` 呈现（那条路径在**本轮没产出
-         * 任何助手消息**时会新发一条错误消息）。这里的判断是兜底：万一那条 run_end 被
-         * `handleRunEnd` 当作陈旧事件丢掉，失败就会**完全不可见**（UI 停在「没回应」）。
-         * `emitRunFailure` 自带 `runEnded` 幂等闸门，所以已呈现过时它不会重复发。
-         */
-        emitRunFailure(runtime, runId, result.value.error?.message ?? "运行失败（内核未给出原因）");
+        emitRunFailure(
+          runtime,
+          runId,
+          typeof receipt.detail === "string" ? receipt.detail : receipt.reason,
+        );
       }
     } catch (error) {
-      emitRunFailure(runtime, runId, error);
+      if (!signal.aborted) emitRunFailure(runtime, runId, error);
     } finally {
       // 无论正常结束还是异常退出，都回收运行态并清空排队展示
       runtime.running = false;
@@ -3068,15 +2895,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    * **两处 buildTools 调用都必须带上**（会话创建 + MCP 热替换）：工具表是整表替换，
    * 漏一处就会出现「MCP 一刷新，作业工具凭空消失」。
    */
-  function jobToolsFor(sessionId: string): AgentHarnessTool<ExecutionToolContext>[] {
-    return createJobTools({ sessionId, jobs }) as AgentHarnessTool<ExecutionToolContext>[];
+  function jobToolsFor(sessionId: string): ToolRegistration[] {
+    return createJobTools({ sessionId, jobs }) as ToolRegistration[];
   }
 
-  /** lane 上是否压着没收尾的操作（压缩、导航等不经过 running 标记） */
   async function hasActiveOperation(runtime: SessionRuntime): Promise<boolean> {
     try {
-      const info = await runtime.lane.inspectExecution(BACKGROUND_CONTEXT);
-      return info.current !== null;
+      const info = await runtime.harness.inspect(BACKGROUND_CONTEXT);
+      return (
+        runtime.compacting === true ||
+        info.tasks.some((task) => task.record.conversationId === runtime.conversation.id)
+      );
     } catch (error) {
       // 读不出来按「没有」处理：宁可放行也不要因为一次读取失败把功能锁死
       console.warn(`读取 lane 执行状态失败：${errorText(error)}`);
@@ -3084,19 +2913,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
-  /**
-   * 切换会话模型（热切换）。
-   *
-   * 只改 lane 的模型配置，不重建 harness、不动会话句柄 —— 上下文因此完整保留，
-   * 下一条消息就用新模型。这与「改全局默认模型」是两件事：那个只影响新会话。
-   *
-   * 这些情况不切换：
-   * - 会话正在运行（或 runtime 正在创建）→ running：同一次运行里换模型会让工具调用与
-   *   思考历史跨供应商，而「创建中」只落盘会让这一次发送仍用旧绑定；
-   * - lane 上压着压缩 / 导航 → running：那次操作与它启动时的配置绑定，中途改配置对不上；
-   * - 目标模型在设置里不存在，或不在本会话的模型注册表里 → no-model；
-   * - 会话还没建 runtime → 只落盘绑定，等第一次发送时按绑定建起来。
-   */
   async function setModel(
     sessionId: string,
     model: ModelRef | null,
@@ -3135,28 +2951,16 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   async function stop(sessionId: string): Promise<void> {
-    const runtime = runtimes.get(sessionId);
+    const runtime = runtimes.get(sessionId) ?? (await creations.get(sessionId));
     if (!runtime) return;
+    if (runtime.stopping !== undefined) return runtime.stopping;
+    runtime.sendController?.abort();
+    runtime.admitted?.();
     deps.approvals.cancelSession(sessionId);
     interactions.cancelSession(sessionId);
     runtime.queue = [];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
-    /**
-     * 先把「这次运行结束了」定下来，再去请求内核中止。
-     *
-     * 为什么顺序不能反：`lane.abort()` 不只是「请求中止」，它会 `await this.drive({operationId})`
-     * —— 也就是**驱动那一轮跑到能收尾为止**再返回。而正在执行的工具没有中断通道
-     *（工具只从 `context.abortSignal` 拿到信号，我们的工具集一个都没读），
-     * 所以一条长命令会把 abort 拖到它自己结束。原来这里 await 完才（在失败分支）改 running，
-     * 用户看到的就是「点了停止没反应」。
-     *
-     * 现在把顺序反过来：用户按下的那一刻运行就算结束了 —— UI 立刻脱离 running、
-     * 队列清空、也不再接受新的插话。内核那次 abort 仍是**必须**发出去的（否则这一轮
-     * 的工具调用还会继续、还会往会话里写），只是不再拿它的完成当作用户看到结果的前提。
-     *
-     * 与 handleRunEnd 的关系：那边收到 run_end 时会再设一次 running=false 并写终态，
-     * 都是幂等的；`runEnded` 标志保证不会把状态翻回去（见 handleRunEnd 末尾）。
-     */
+
     runtime.running = false;
     runtime.runEnded = true;
     runtime.queue = [];
@@ -3167,7 +2971,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       reason: "aborted",
     });
     try {
-      await runtime.lane.abort(BACKGROUND_CONTEXT);
+      const stopping = runtime.conversation.abort(BACKGROUND_CONTEXT);
+      runtime.stopping = stopping;
+      try {
+        await stopping;
+        await runtime.events.flush();
+      } finally {
+        if (runtime.stopping === stopping) runtime.stopping = undefined;
+      }
     } catch (error) {
       console.warn(`请求中止运行失败 ${sessionId}：${errorText(error)}`);
     }
@@ -3183,43 +2994,37 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      *（模型接下来重复调用可能是合理的反应）。
      */
     runtime.repeatChain = createRepeatChain();
-    /**
-     * 空闲时直接按发送处理，避免消息无声挂起。
-     *
-     * `sending` 也要判：那一刻有一轮 send 正走在「已进入、还没开跑」的窗口里
-     * （见 SessionRuntime.sending 的说明）。此时**不能**转回 send —— 那条路会立刻
-     * 走「闸门已占」的分支再调回本函数，形成 send ↔ queue 的无限互相递归。
-     * 交给 lane 入队才是对的：即将开始的那一轮会把它一起带出去。
-     */
+
     if (!runtime.running && !runtime.sending) {
       await send(sessionId, text);
       return;
     }
-    await enqueueToLane(runtime, text, mode);
+    await enqueueInput(runtime, text, mode);
   }
 
-  /**
-   * 真正把消息交给 lane 的队列入队。
-   *
-   * 从 `queue` 里抽出来，是为了让 `send` 的「闸门已占」分支能直接调它 ——
-   * 那条分支若走 `queue`，而 `queue` 在空闲时又转回 `send`，两者会无限递归。
-   * 本函数**不做任何路由判断**，只负责入队与占位项的生命周期。
-   */
-  async function enqueueToLane(
+  async function enqueueInput(
     runtime: SessionRuntime,
     text: string,
     mode: "steer" | "followUp",
+    attachments?: ChatAttachment[],
+    messageId?: string,
   ): Promise<void> {
+    const admissionSignal = runtime.sendController?.signal;
+    await runtime.admission;
+    if (runtime.stopping !== undefined) await runtime.stopping;
+    await runtime.toolRefresh;
+    if (admissionSignal?.aborted) return;
     const item: QueuedMessage = { id: randomUUID(), text, mode };
     runtime.queue = [...runtime.queue, item];
     emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
     try {
-      const result =
-        mode === "steer"
-          ? await runtime.lane.steer(text, undefined, BACKGROUND_CONTEXT)
-          : await runtime.lane.followUp(text, undefined, BACKGROUND_CONTEXT);
-      if (!result.ok) throw new Error(`消息入队失败：${errorText(result.error)}`);
-      // 已交给 lane：移除本地占位项，真实队列由 queue_update 事件同步
+      const content = attachments?.length
+        ? await buildUserContent(runtime.sessionId, text, attachments)
+        : text;
+      await runtime.conversation.submit(
+        { type: "input", content, whenBusy: mode, requestId: messageId ?? item.id },
+        BACKGROUND_CONTEXT,
+      );
       runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
       emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
     } catch (error) {
@@ -3229,60 +3034,48 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
-  /**
-   * 撤销一条还没被消费的排队消息。
-   *
-   * 内核的 `cancelQueued` 已经处理了三种结局（cancelled / already_consumed / not_found），
-   * 这里**只做路由**：`already_consumed` 与 `not_found` 都不算失败 —— 前者是用户点下
-   * 「移除」的同时 lane 正好把它取走了（消息照常发出去，界面随即由 queue_update 收正），
-   * 后者是重复点击。为这两种情况抛错会让界面弹一个「移除失败」，而实际上没有任何东西需要修。
-   *
-   * 不在这里本地删 `runtime.queue`：真实队列由 `queue_update` 事件同步（见 handleQueueUpdate），
-   * 本地再删一次只会多一处可能与内核不一致的状态。
-   *
-   * `ensureRuntime` 用**不创建**的那条路（`runtimes.get`）：移除一条排队消息是「对既有运行
-   * 做减法」，会话根本没打开时无事可做，不该为它把存储与 harness 拉起来。
-   */
   async function cancelQueued(sessionId: string, entryId: string): Promise<void> {
     const runtime = runtimes.get(sessionId);
     if (runtime === undefined) return;
-    const result = await runtime.lane.cancelQueued(entryId, BACKGROUND_CONTEXT);
-    if (!result.ok) {
-      // 会话已关闭（Closed）：队列随会话一起没了，用户的意图已经达成，不报错
-      console.warn(`撤销排队消息失败 ${sessionId}：${errorText(result.error)}`);
-      return;
-    }
-    if (result.value.kind === "cancelled") return;
-    // 已经被取走 / 找不到：都不是错误，见上面的说明
-    console.info(`排队消息未撤销（${result.value.kind}）：${entryId}`);
+    const id = Number(entryId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    await runtime.harness.abortSubmission(
+      id as SubmissionId,
+      BACKGROUND_CONTEXT,
+      runtime.conversation.id,
+    );
   }
 
-  /**
-   * 手动压缩上下文（`/compact` 指令的后端）。
-   *
-   * `busy` / `nothing` 是**正常结局**，不是故障：lane 上压着别的操作（正在跑一轮、
-   * 已经在压缩、或正在导航）与「对话还短得没什么可压」都会走到这里。把它们抛成异常
-   * 会让渲染层只能显示一句主进程的中文，且要自己从字符串里猜该给什么提示 ——
-   * 所以这里返回带 code 的结果对象，文案由界面按语言决定。
-   *
-   * 真正的压缩过程通过 `compaction-started` / `compaction-ended` 事件汇报（见 registerEvents）。
-   */
   async function compact(sessionId: string, instructions?: string): Promise<CompactOutcome> {
     const runtime = await ensureRuntime(sessionId);
-    const options =
-      instructions === undefined || instructions.trim() === ""
-        ? undefined
-        : { customInstructions: instructions.trim() };
-    const result = await runtime.lane.compact(options, BACKGROUND_CONTEXT);
-    if (result.ok) return { ok: true };
-    const failure = result.error;
-    if (isLaneBusy(failure)) {
+    if (
+      runtime.running ||
+      runtime.sending ||
+      runtime.compacting ||
+      (await hasActiveOperation(runtime))
+    ) {
       return { ok: false, code: "busy", message: "会话正忙，暂时无法压缩上下文" };
     }
-    if (isTaggedError(failure, "NothingToCompact")) {
-      return { ok: false, code: "nothing", message: "没有可压缩的历史" };
+    runtime.compacting = true;
+    try {
+      const task = await runtime.conversation.compact(
+        instructions?.trim() || undefined,
+        BACKGROUND_CONTEXT,
+      );
+      const receipt = await compactionReceipt(runtime.harness, task);
+      if (receipt.status === "completed") return { ok: true };
+      if (receipt.status === "declined")
+        return { ok: false, code: "nothing", message: "没有可压缩的历史" };
+      return {
+        ok: false,
+        code: "failed",
+        message: `压缩上下文失败：${errorText(receipt.error ?? receipt.status)}`,
+      };
+    } catch (error) {
+      return { ok: false, code: "failed", message: `压缩上下文失败：${errorText(error)}` };
+    } finally {
+      runtime.compacting = false;
     }
-    return { ok: false, code: "failed", message: `压缩上下文失败：${errorText(failure)}` };
   }
 
   function isRunning(sessionId: string): boolean {
@@ -3317,6 +3110,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   }
 
   async function closeSession(sessionId: string): Promise<void> {
+    await creations.get(sessionId);
     // 子智能体子会话（或它的父会话）：注销定义登记 —— 放在「有没有 runtime」之前，
     // 因为登记表是模块级的，即便这个会话已经没有运行时也不该在里面留下条目。
     unregisterSubagentSession(sessionId);
@@ -3327,6 +3121,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return;
     }
     runtimes.delete(sessionId);
+    runtime.sendController?.abort();
+    runtime.admitted?.();
     deps.approvals.cancelSession(sessionId);
     interactions.cancelSession(sessionId);
     jobs.cancelSession(sessionId);
@@ -3340,11 +3136,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       }
     }
 
-    // 运行中直接关掉（退出/释放）会把「活跃操作」留在会话里，下次打开就是 LaneBusy；
-    // 先尽力收敛一次，失败也不阻塞关闭流程 —— 这里已经不再需要这次运行的结果了
-    if (runtime.running) {
-      await abortStaleOperation(runtime.lane, runtime.sessionId);
+    // 关闭前取消本次任务和尚在准备的发送，再等待后台索引写入完成。
+    try {
+      await runtime.stopping;
+      await runtime.conversation.abort(BACKGROUND_CONTEXT);
+    } catch (error) {
+      console.warn(`关闭前中止会话失败 ${sessionId}：${errorText(error)}`);
     }
+    await runtime.sendSettled;
     /**
      * `forgetSubagentRuns` 必须在 abort **之后**。
      *
@@ -3355,12 +3154,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      */
     forgetSubagentRuns(sessionId);
     try {
+      await runtime.events.stop();
+      await Promise.allSettled([...runtime.effects]);
       await runtime.harness.close(BACKGROUND_CONTEXT);
     } catch (error) {
       console.warn(`关闭 Agent 运行时失败 ${sessionId}：${errorText(error)}`);
     }
     try {
-      await runtime.session.close(BACKGROUND_CONTEXT);
+      await runtime.session.unbindHarness(runtime.harness);
     } catch (error) {
       console.warn(`关闭会话失败 ${sessionId}：${errorText(error)}`);
     }

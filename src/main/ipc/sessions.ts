@@ -29,7 +29,7 @@ export function registerSessionsIpc(): void {
    * 删除会话：**先关运行时再删库**。
    *
    * 顺序不能反：`store.remove` 会把 SQLite 文件删掉，而运行时还持有那个会话的
-   * `AgentHarness` / `AgentLane` / `ExecutionEnv` 与一堆事件订阅 —— 先删文件的话，
+   * 原生 `Harness` / `Conversation` / `ExecutionEnv` 与事件订阅 —— 先删文件的话，
    * 运行时就成了「指向已删除存储的活对象」，之后任何收尾（abort、close）都打在空处。
    * 早先这里没接 closeSession，于是每删一个会话就漏一整套运行时资源。
    */
@@ -76,6 +76,16 @@ export function registerSessionsIpc(): void {
       await store.setAgentMode(request.id, request.mode);
       return { ok: true };
     },
+  );
+  /**
+   * 重新绑定工作目录：只写会话索引，与 setMode 同一个理由 —— 根在下一次请求装配时
+   * 才被读（bootstrap 的 resolveWorkingDir 每次现读索引），所以落盘就够了。
+   *
+   * 没有活动会话时这个通道用不上：那种情况下渲染层直接把选中的项目交给
+   * `sessions:create`，不必先建再改。
+   */
+  handle(IPC.sessions.setCwd, "重绑会话工作目录", (request: { id: string; cwd: string }) =>
+    store.setCwd(request.id, request.cwd),
   );
   /**
    * 加载消息：顺带把该会话持久化的用量快照带回去。

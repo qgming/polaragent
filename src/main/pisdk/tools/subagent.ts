@@ -1,3 +1,5 @@
+import type { JsonRepresentation } from "@earendil-works/chord";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 // 子智能体工具（Task / TaskWait / TaskList / TaskStop）：把「一件独立的工作交给另一条会话去跑」做成工具。
 //
 // 装配方式与 ask_user、作业四件套相同（见 tools/ask.ts 的 createAskTool 与 tools/jobs.ts 的 createJobTools）：
@@ -16,7 +18,6 @@
 //           失败（名字写错 / 并发上限 / 起不来）时是 { error }，渲染层按类型区分即可；
 // - 其余三个：{ runs: SubagentRun[] }。
 
-import type { AgentHarnessTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
 import {
   MAX_CONCURRENT_SUBAGENT_RUNS,
@@ -24,7 +25,6 @@ import {
   type SubagentDefinition,
   type SubagentRun,
 } from "@/shared/contracts/subagent";
-import type { AppToolContext } from "../tools";
 
 /** 四个工具的名字：UI 图标表、权限层与测试都按它们登记 */
 export const SUBAGENT_TOOL_NAMES = {
@@ -121,17 +121,15 @@ export interface SubagentRunsDetails {
  * 四个工具的参数 schema 各不相同，装配处却只把它们当「同一批工具」放进数组 ——
  * 统一到调用方给的具体 schema，避免联合类型在 execute 参数位的逆变冲突（同 tools/jobs.ts 的写法）。
  */
-type SubagentHarnessTool<TParameters extends TSchema, TDetails extends object> = AgentHarnessTool<
-  AppToolContext,
-  TParameters,
-  TDetails
->;
+type SubagentToolDefinition<
+  TParameters extends TSchema,
+  TDetails extends object,
+> = ToolRegistration<TParameters, JsonRepresentation<TDetails>>;
 
 /**
- * 失败回执：文本按仓库约定以 "Error:" 开头（内核只把「工具抛错」当 isError，见 execution/tools.js），
+ * 失败回执：文本按仓库约定以 "Error:" 开头，
  * 同时显式带上 isError，让渲染层与测试不必去匹配文案前缀。
  */
-type ErrorToolResult<TDetails extends object> = AgentToolResult<TDetails> & { isError: true };
 
 const definitionSchema = Type.Object({
   name: Type.String({
@@ -361,11 +359,12 @@ export function normalizeWhitelist(
 }
 
 /** 失败回执：文本给模型，isError 给渲染层与测试（内核只把工具抛错当错误，见文件头注释） */
-function errorResult<TDetails extends object>(
-  details: TDetails,
-  text: string,
-): ErrorToolResult<TDetails> {
-  return { content: [{ type: "text", text: `Error: ${text}` }], details, isError: true };
+function errorResult<TDetails extends object>(details: TDetails, text: string) {
+  return {
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    details,
+    isError: true as const,
+  };
 }
 
 /** 主 AI 临时定义的子智能体：只活在这次运行里（source: "temp"），模型/档位跟随主会话 */
@@ -471,13 +470,14 @@ function summarizeRun(run: SubagentRun, now: number): string {
  * 需要父会话 id、可用定义与运行管理器，所以由运行时按会话创建后注入 tools.ts 的 buildTools
  * （第 5 个参数，见该函数注释）。工具本身没有内部状态：一次调用就是一次「问运行管理器」。
  */
-export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<AppToolContext>[] {
-  const task: SubagentHarnessTool<typeof taskSchema, SubagentTaskDetails> = {
+export function createSubagentTools(deps: SubagentToolDeps): ToolRegistration[] {
+  const task: SubagentToolDefinition<typeof taskSchema, SubagentTaskDetails> = {
     name: SUBAGENT_TOOL_NAMES.task,
-    label: "Task",
+
     description: TASK_DESCRIPTION,
     parameters: taskSchema,
-    async execute(toolCallId, params) {
+    async execute(params, api) {
+      const toolCallId = api.callId;
       // 重派：先按 id 找出要接续的那次运行（用对账后的列表 —— 索引里的历史运行也在里面）。
       // 未知 id 与「还在跑」都当场拒绝：前者会让模型以为重来过了，后者会真的把同一件事跑两遍
       const resumeOf = params.resumeOf?.trim() ?? "";
@@ -652,12 +652,12 @@ export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<Ap
     },
   };
 
-  const wait: SubagentHarnessTool<typeof waitSchema, SubagentRunsDetails> = {
+  const wait: SubagentToolDefinition<typeof waitSchema, SubagentRunsDetails> = {
     name: SUBAGENT_TOOL_NAMES.wait,
-    label: "Task Wait",
+
     description: WAIT_DESCRIPTION,
     parameters: waitSchema,
-    async execute(_toolCallId, params) {
+    async execute(params) {
       const mode = params.mode ?? "all";
       const minCompleted = params.minCompleted ?? 1;
       const timeoutSeconds = Math.min(
@@ -688,9 +688,9 @@ export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<Ap
     },
   };
 
-  const list: SubagentHarnessTool<typeof listSchema, SubagentRunsDetails> = {
+  const list: SubagentToolDefinition<typeof listSchema, SubagentRunsDetails> = {
     name: SUBAGENT_TOOL_NAMES.list,
-    label: "Task List",
+
     description: LIST_DESCRIPTION,
     parameters: listSchema,
     async execute() {
@@ -705,12 +705,12 @@ export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<Ap
     },
   };
 
-  const stop: SubagentHarnessTool<typeof stopSchema, SubagentRunsDetails> = {
+  const stop: SubagentToolDefinition<typeof stopSchema, SubagentRunsDetails> = {
     name: SUBAGENT_TOOL_NAMES.stop,
-    label: "Task Stop",
+
     description: STOP_DESCRIPTION,
     parameters: stopSchema,
-    async execute(_toolCallId, params) {
+    async execute(params) {
       const requested = [...new Set(params.delegationIds)];
       const stopped = await deps.stop(requested);
       const known = new Set(stopped.map((run) => run.delegationId));
@@ -728,7 +728,7 @@ export function createSubagentTools(deps: SubagentToolDeps): AgentHarnessTool<Ap
     },
   };
 
-  return [task, wait, list, stop] as AgentHarnessTool<AppToolContext>[];
+  return [task, wait, list, stop];
 }
 
 /**

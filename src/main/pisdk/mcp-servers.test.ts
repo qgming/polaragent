@@ -1,5 +1,6 @@
-import type { AgentHarnessTool } from "@earendil-works/pi-agent-core";
-import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { describe, expect, it, vi } from "vitest";
 import type { McpCallResult, McpClient, McpHandshake, McpRemoteTool } from "@/main/mcp/client";
 import {
   MCP_CATALOG_TOOL_NAME,
@@ -10,7 +11,14 @@ import type { Settings } from "@/shared/contracts/settings";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { BUILTIN_MCP_SERVERS } from "@/shared/mcp/builtin-servers";
 import { createMcpServers, type McpServers } from "./mcp-servers";
-import type { AppToolContext } from "./tools";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function makeConfig(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
   return {
@@ -117,7 +125,10 @@ function createFakeClient(options: {
     },
     async callTool(name: string): Promise<McpCallResult> {
       options.log.push(`call:${options.config.id}:${name}`);
-      return { text: `ok:${name}`, isError: false };
+      return { content: [{ type: "text", text: `ok:${name}` }], isError: false };
+    },
+    onToolsChanged() {
+      return () => {};
     },
     onClosed(listener) {
       closedListeners.add(listener);
@@ -171,10 +182,14 @@ type LooseTool = {
   ) => Promise<{ content: { type: string; text?: string }[]; details?: Record<string, unknown> }>;
 };
 
-function looseTool(tools: AgentHarnessTool<AppToolContext>[], name: string): LooseTool {
+function looseTool(tools: ToolRegistration[], name: string): LooseTool {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`工具不存在：${name}`);
-  return tool as unknown as LooseTool;
+  return {
+    ...tool,
+    execute: (_id, params) =>
+      tool.execute(params, {} as Parameters<typeof tool.execute>[1], BACKGROUND_CONTEXT),
+  } as LooseTool;
 }
 describe("createMcpServers", () => {
   it("reload：只连接已启用的 server，工具名带 mcp__<id>__ 前缀", async () => {
@@ -328,7 +343,7 @@ describe("createMcpServers", () => {
 
     await servers.reload();
     await expect(servers.callTool("mcp-a", "read_file", {})).resolves.toEqual({
-      text: "ok:read_file",
+      content: [{ type: "text", text: "ok:read_file" }],
       isError: false,
     });
     expect(log).toContain("call:mcp-a:read_file");
@@ -575,5 +590,158 @@ describe("createMcpServers：一律聚合", () => {
     // 注意：没有 reload，entries 为空
 
     expect(servers.tools().map((tool) => tool.name)).toEqual([]);
+  });
+});
+
+describe("native MCP lifecycle races", () => {
+  it("dispose closes an initializing connection and prevents its late result from becoming ready", async () => {
+    const connected = deferred<McpHandshake>();
+    let started = false;
+    let closed = false;
+    const servers = createMcpServers({
+      getSettings: async () => makeSettings([makeConfig()]),
+      createClient: (config) => ({
+        ...createFakeClient({ config, log: [], tools: [READ_FILE] }),
+        async connect() {
+          started = true;
+          return connected.promise;
+        },
+        async close() {
+          closed = true;
+          connected.resolve({
+            serverName: "late",
+            serverVersion: "1",
+            protocolVersion: "2025-06-18",
+          });
+        },
+      }),
+    });
+    const reload = servers.reload();
+    await vi.waitFor(() => expect(started).toBe(true));
+    await servers.dispose();
+    await reload;
+    expect(closed).toBe(true);
+    expect(servers.tools()).toEqual([]);
+    expect(userViews(await servers.views())[0]?.state.status).toBe("idle");
+  });
+  it("coalesces notifications and ignores results from a replaced client", async () => {
+    const log: string[] = [];
+    let changed: (() => void) | undefined;
+    const blocked = deferred<McpRemoteTool[]>();
+    let calls = 0;
+    let creations = 0;
+    const servers = createMcpServers({
+      getSettings: async () => makeSettings([makeConfig()]),
+      warn: () => {},
+      createClient: (config) => {
+        const client = createFakeClient({ config, log, tools: [READ_FILE] });
+        creations += 1;
+        if (creations !== 1) return client;
+        return {
+          ...client,
+          onToolsChanged(listener) {
+            changed = listener;
+            return () => {};
+          },
+          async listTools() {
+            calls += 1;
+            return calls === 1 ? [READ_FILE] : blocked.promise;
+          },
+        };
+      },
+    });
+    await servers.reload();
+    changed?.();
+    changed?.();
+    changed?.();
+    expect(calls).toBe(2);
+    await servers.reconnect("mcp-a");
+    blocked.resolve([{ ...READ_FILE, name: "stale" }]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(userViews(await servers.views())[0]?.state.tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+    ]);
+    expect(calls).toBe(2);
+    await servers.dispose();
+  });
+
+  it("refreshes again when another notification arrives during a refresh", async () => {
+    let changed: (() => void) | undefined;
+    const blocked = deferred<McpRemoteTool[]>();
+    let calls = 0;
+    const servers = createMcpServers({
+      getSettings: async () => makeSettings([makeConfig()]),
+      warn: () => {},
+      createClient: (config) => ({
+        ...createFakeClient({ config, log: [] }),
+        onToolsChanged(listener) {
+          changed = listener;
+          return () => {};
+        },
+        async listTools() {
+          calls += 1;
+          if (calls === 2) return blocked.promise;
+          return [{ ...READ_FILE, name: calls === 1 ? "first" : "latest" }];
+        },
+      }),
+    });
+    await servers.reload();
+    changed?.();
+    changed?.();
+    changed?.();
+    blocked.resolve([READ_FILE]);
+    await vi.waitFor(() => expect(calls).toBe(3));
+    expect(userViews(await servers.views())[0]?.state.tools[0]?.name).toBe("latest");
+    await servers.dispose();
+  });
+
+  it("serializes config changes during connection and ends on the latest configuration", async () => {
+    let current = makeSettings([makeConfig()]);
+    const blocked = deferred<void>();
+    const log: string[] = [];
+    let started = false;
+    const servers = createMcpServers({
+      getSettings: async () => current,
+      warn: () => {},
+      createClient: (config) => {
+        const client = createFakeClient({ config, log });
+        return {
+          ...client,
+          async connect() {
+            if (config.command === "noop") {
+              started = true;
+              await blocked.promise;
+            }
+            return client.connect();
+          },
+        };
+      },
+    });
+    const first = servers.reload();
+    await vi.waitFor(() => expect(started).toBe(true));
+    current = makeSettings([makeConfig({ command: "updated" })]);
+    const second = servers.reload();
+    blocked.resolve();
+    await Promise.all([first, second]);
+    expect(log.filter((line) => line.startsWith("connect:"))).toHaveLength(2);
+    expect(log.filter((line) => line.startsWith("close:"))).toHaveLength(1);
+    expect(userViews(await servers.views())[0]?.config.command).toBe("updated");
+    await servers.dispose();
+  });
+
+  it("dispose prevents delayed settings reads and queued reconnects from spawning clients", async () => {
+    const settings = deferred<Settings>();
+    const createClient = vi.fn((config) => createFakeClient({ config, log: [] }));
+    const servers = createMcpServers({ getSettings: () => settings.promise, createClient });
+    const reload = servers.reload();
+    await Promise.resolve();
+    const reconnect = servers.reconnect("mcp-a");
+    const dispose = servers.dispose();
+    settings.resolve(makeSettings([makeConfig()]));
+    await Promise.all([reload, reconnect, dispose]);
+    expect(createClient).not.toHaveBeenCalled();
+    await servers.reconnect("mcp-a");
+    expect(createClient).not.toHaveBeenCalled();
   });
 });

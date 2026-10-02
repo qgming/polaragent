@@ -1,50 +1,38 @@
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // todo 工具的行为测试：只验状态机与对外契约（revision、整表替换、id 分配、details 形状），
 // 不碰文件系统——它本来就只依赖 toolContext.todo。
 
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it } from "vitest";
 import {
   createTodoState,
   createTodoTool,
   parseTodoEntries,
   type TodoState,
-  type TodoToolContext,
+  type TodoToolOptions,
   toTodoPayload,
 } from "./todo";
 
 /** todo 不读 env，最小替身即可（不为测试构造完整 ExecutionEnv） */
-function toolContext(todo: TodoState): TodoToolContext {
-  return { env: { cwd: process.cwd() } as ExecutionEnv, todo };
+function toolContext(todo: TodoState): TodoToolOptions {
+  return { todo };
 }
 
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
-
-type TodoParams = Parameters<ReturnType<typeof createTodoTool>["execute"]>[1];
+type TodoParams = Parameters<ReturnType<typeof createTodoTool>["execute"]>[0];
 type TodoOutcome = Awaited<ReturnType<ReturnType<typeof createTodoTool>["execute"]>>;
 
-function runTodo(context: TodoToolContext, params: TodoParams): Promise<TodoOutcome> {
-  return createTodoTool().execute(
-    "call-todo",
+function runTodo(context: TodoToolOptions, params: TodoParams): Promise<TodoOutcome> {
+  return createTodoTool(context).execute(
     params,
-    () => {},
-    context,
-    INVOCATION,
+    createToolTestApi({ callId: "call-todo" }),
     BACKGROUND_CONTEXT,
   );
 }
 
 function textOf(outcome: TodoOutcome): string {
-  return outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+  return (outcome.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n");
 }
 
 /** 摘要的最后一行是 done/total 计数 */
@@ -75,7 +63,7 @@ describe("todo", () => {
       ],
     });
     // 渲染层 parseTodoDetail 逐字段校验，多一个自造字段就会被整份丢掉
-    expect(Object.keys(outcome.details.todos[0] ?? {}).sort()).toEqual(["id", "status", "text"]);
+    expect(Object.keys(outcome.details?.todos[0] ?? {}).sort()).toEqual(["id", "status", "text"]);
     // 状态是就地写回 toolContext.todo（运行时与 UI 持有的是同一个引用）
     expect(context.todo).toBe(state);
     expect(state.todos).toHaveLength(3);
@@ -135,8 +123,8 @@ describe("todo", () => {
       ],
     });
 
-    expect(outcome.details.todos.map((entry) => entry.id)).toEqual(["t2", "t1"]);
-    expect(outcome.details.todos.map((entry) => entry.text)).toEqual(["Second", "First"]);
+    expect(outcome.details?.todos.map((entry) => entry.id)).toEqual(["t2", "t1"]);
+    expect(outcome.details?.todos.map((entry) => entry.text)).toEqual(["Second", "First"]);
   });
 
   it("显式 id 原样保留，重复 id 与新增条目自动补号且不撞号", async () => {
@@ -147,7 +135,7 @@ describe("todo", () => {
         { id: "ship", text: "Ship it", status: "pending" },
       ],
     });
-    expect(first.details.todos.map((entry) => entry.id)).toEqual(["build", "ship"]);
+    expect(first.details?.todos.map((entry) => entry.id)).toEqual(["build", "ship"]);
 
     // 第三条复用已占用的 "ship"：必须另取一个空号，且整表内不重复
     const second = await runTodo(toolContext(state), {
@@ -157,7 +145,7 @@ describe("todo", () => {
         { id: "ship", text: "Extra work", status: "pending" },
       ],
     });
-    const ids = second.details.todos.map((entry) => entry.id);
+    const ids = second.details?.todos.map((entry) => entry.id) ?? [];
     expect(ids).toHaveLength(3);
     expect(new Set(ids).size).toBe(3);
     expect(ids[0]).toBe("build");
@@ -173,13 +161,13 @@ describe("todo", () => {
       ],
     });
 
-    expect(outcome.details.todos[0]).toEqual({
+    expect(outcome.details?.todos[0]).toEqual({
       id: "t1",
       text: "Deploy to staging",
       status: "failed",
       reason: "network unreachable",
     });
-    expect(Object.keys(outcome.details.todos[0] ?? {}).sort()).toEqual([
+    expect(Object.keys(outcome.details?.todos[0] ?? {}).sort()).toEqual([
       "id",
       "reason",
       "status",
@@ -270,7 +258,7 @@ describe("todo 持久化载荷", () => {
   it("每次整表替换都会调用 persistTodo，参数就是更新后的状态", async () => {
     const todo = createTodoState();
     const seen: TodoState[] = [];
-    const context: TodoToolContext = {
+    const context: TodoToolOptions = {
       ...toolContext(todo),
       persistTodo: (state) => {
         seen.push({ revision: state.revision, todos: [...state.todos] });
@@ -287,7 +275,7 @@ describe("todo 持久化载荷", () => {
 
   it("persistTodo 抛错时工具仍返回结果，内存状态不回滚", async () => {
     const todo = createTodoState();
-    const context: TodoToolContext = {
+    const context: TodoToolOptions = {
       ...toolContext(todo),
       persistTodo: () => {
         throw new Error("磁盘满了");
@@ -297,7 +285,7 @@ describe("todo 持久化载荷", () => {
     const outcome = await runTodo(context, { todos: [{ text: "a", status: "active" }] });
 
     expect(textOf(outcome)).toContain("revision 1");
-    expect(outcome.details.todos).toHaveLength(1);
+    expect(outcome.details?.todos).toHaveLength(1);
     expect(todo.revision).toBe(1);
   });
 });

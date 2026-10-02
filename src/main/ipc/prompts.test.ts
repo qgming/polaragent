@@ -1,6 +1,7 @@
 import path from "node:path";
-import type { ExecutionEnv, PromptTemplate } from "@earendil-works/pi-agent-core";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PromptTemplate } from "@/main/pisdk/resource-loaders";
 import type { PromptTemplateInfo } from "@/shared/contracts/prompts";
 
 /** 内置层目录：app.getAppPath() 返回 /app，路径按平台拼接（Windows 下是反斜杠） */
@@ -27,13 +28,12 @@ vi.mock("electron", () => ({
 // 本测试只覆盖「目录顺序 → 扫描结果 → 合并/兜底」的纯逻辑，不碰文件系统。
 vi.mock("@/main/app/paths", () => ({ dataDir: () => "/data-oint" }));
 vi.mock("@/main/pisdk/exec-env", () => ({ createExecEnv: vi.fn() }));
-vi.mock("@earendil-works/pi-agent-core", () => ({
-  BACKGROUND_CONTEXT: {},
+vi.mock("@/main/pisdk/resource-loaders", () => ({
   loadPromptTemplates: vi.fn(),
 }));
 
-import { loadPromptTemplates } from "@earendil-works/pi-agent-core";
 import { createExecEnv } from "@/main/pisdk/exec-env";
+import { loadPromptTemplates } from "@/main/pisdk/resource-loaders";
 import { IPC } from "@/shared/contracts/ipc";
 import { registerPromptsIpc } from "./prompts";
 
@@ -43,8 +43,8 @@ const templatesByDir = new Map<string, PromptTemplate[]>();
 /** 构造 loadPromptTemplates 的最小返回值；description 缺省表示内核没解析出描述 */
 function template(name: string, description?: string): PromptTemplate {
   return description === undefined
-    ? { name, content: `${name} 的正文` }
-    : { name, description, content: `${name} 的正文` };
+    ? { name, content: `${name} 的正文`, filePath: `${name}.md` }
+    : { name, description, content: `${name} 的正文`, filePath: `${name}.md` };
 }
 
 /** 取回注册好的 prompts:list handler（去掉 IPC event 参数） */
@@ -59,7 +59,7 @@ beforeEach(() => {
   registered.handlers.clear();
   templatesByDir.clear();
   vi.mocked(loadPromptTemplates).mockImplementation(async (_env, paths) => {
-    const dir = Array.isArray(paths) ? paths.join(",") : paths;
+    const dir = typeof paths === "string" ? paths : paths.join(",");
     return { promptTemplates: templatesByDir.get(dir) ?? [], diagnostics: [] };
   });
   vi.mocked(createExecEnv).mockResolvedValue({} as ExecutionEnv);

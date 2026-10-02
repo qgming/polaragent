@@ -1,10 +1,12 @@
 import { create } from "zustand";
+import { attachmentsFromParts, attachmentsToParts } from "@/renderer/runtime/attachment-payload";
 import type {
   AgentMode,
   ApprovalDecision,
   ApprovalRequest,
   AskReply,
   AskRequest,
+  ChatAttachment,
   ChatEvent,
   ChatMessage,
   ChatPart,
@@ -451,9 +453,17 @@ interface ChatState {
    * 运行中会被拒绝（reason: "running"），界面据此说明。
    */
   setSessionMode(id: string, mode: AgentMode | null): Promise<SetSessionModeResult>;
+  /**
+   * 把会话改绑到某个项目目录（新会话页的「选择项目」）。
+   *
+   * 失败时抛错，调用方负责说明原因 —— 与 setSessionModel / setSessionMode 那两条
+   * 「返回 {ok, reason}」的通道不同：这条通道的失败是**异常**（目录不存在、会话已有消息），
+   * 不是可预期的业务分支，主进程没有把它做成结果类型。
+   */
+  setSessionCwd(id: string, cwd: string): Promise<void>;
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
-  send(text: string, images?: { data: string; mimeType: string }[]): Promise<void>;
+  send(text: string, attachments?: ChatAttachment[]): Promise<void>;
   /** 编辑用户消息：替换为新文本并从该处重跑（回退到父条目） */
   editUserMessage(messageId: string, text: string): Promise<void>;
   stop(): Promise<void>;
@@ -594,12 +604,6 @@ export function planRewrite(
 /** store 自己的 `set`；只用到「返回部分状态」这一种形式 */
 type StoreSet = (updater: (state: ChatState) => Partial<ChatState>) => void;
 
-/** 重发用户消息时附带的图片 */
-export interface RewriteImages {
-  data: string;
-  mimeType: string;
-}
-
 /**
  * 按计划替换用户消息：先截断界面列表，再回退到父条目重发。
  *
@@ -611,6 +615,10 @@ export interface RewriteImages {
  *
  * keepCount 含这条用户消息本身：新用户消息复用同一个 UI id，到达时原地替换，
  * 界面上不会闪一下「消失又出现」。
+ *
+ * 附件从这条消息的 part 里重建（见 attachmentsFromParts）：字节不在内存里，
+ * 主进程按 part 上的 `path` 读回原文件；视频帧则从 part 里带回去 ——
+ * 主进程没有解码器，抽不出帧。
  */
 async function rewriteUserMessage(
   set: StoreSet,
@@ -619,7 +627,7 @@ async function rewriteUserMessage(
   plan: { keepCount: number; rewindTo: string | null; reuseId: string | null },
   list: ChatMessage[],
   text: string,
-  images: RewriteImages[] | undefined,
+  attachments: ChatAttachment[],
 ): Promise<void> {
   const kept = list.slice(0, plan.keepCount);
 
@@ -631,7 +639,7 @@ async function rewriteUserMessage(
   }));
 
   try {
-    await window.oint.chat.send(sessionId, text, images, plan.reuseId ?? undefined, {
+    await window.oint.chat.send(sessionId, text, attachments, plan.reuseId ?? undefined, {
       rewindToEntryId: plan.rewindTo,
     });
   } catch (error) {
@@ -797,6 +805,22 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     return result;
   },
 
+  async setSessionCwd(id, cwd) {
+    await window.oint.sessions.setCwd(id, cwd);
+    /**
+     * 就地改这一个会话的 cwd，不重拉整表。
+     *
+     * 与 setSessionModel 同一个手法，但**影响面更大**：cwd 决定侧栏分组（项目 / 最近）、
+     * 斜杠命令的取数目录、以及模型能访问的文件根。就地改之后这三处都会因为订阅了
+     * `sessions` 而重算，不必等下一次 list。
+     */
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, cwd } : session,
+      ),
+    }));
+  },
+
   async removeSession(id) {
     await window.oint.sessions.remove(id);
     await get().loadSessions();
@@ -831,25 +855,28 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     await get().setActiveSession(forked.id);
   },
 
-  async send(text, images) {
+  async send(text, attachments) {
     let sessionId = get().activeSessionId;
     if (!sessionId) {
       await get().createSession();
       sessionId = get().activeSessionId;
     }
     if (!sessionId) return;
-    // 乐观追加用户消息，不等主进程 message-added，避免输入框闪烁
+    /**
+     * 乐观追加用户消息，不等主进程 message-added，避免输入框闪烁。
+     *
+     * 附件用 part 的形态画出来（`attachmentsToParts`）：缩略图取自探测时留下的帧，
+     * 所以**点发送的一瞬间**就能看到自己贴的图与文件卡片，而不是等一轮 IPC 往返。
+     * 这里不再把裸 base64 塞进 `dataUrl` —— 那是个真发生过的 bug：附件提取剥掉了
+     * `data:` 前缀，塞进 `dataUrl` 的其实是裸 base64，`<img src>` 因此一直是坏图。
+     */
     const optimistic: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       createdAt: Date.now(),
       parts: [
         ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
-        ...(images?.map((image) => ({
-          type: "image" as const,
-          mimeType: image.mimeType,
-          dataUrl: image.data,
-        })) ?? []),
+        ...attachmentsToParts(attachments ?? []),
       ],
       status: "complete",
     };
@@ -860,7 +887,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       };
     });
     // 带上乐观消息 id：主进程回显该用户消息时复用同 id，避免 UI 出现两条
-    await window.oint.chat.send(sessionId, text, images, optimistic.id);
+    await window.oint.chat.send(sessionId, text, attachments, optimistic.id);
   },
 
   async stop() {
@@ -983,18 +1010,26 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       .filter((p) => p.type === "text")
       .map((p) => p.text)
       .join("");
-    const images = lastUser.parts
-      .filter((p) => p.type === "image")
-      .map((p) => ({ data: p.dataUrl, mimeType: p.mimeType }));
 
-    await rewriteUserMessage(set, get, sessionId, plan, list, text, images);
+    await rewriteUserMessage(
+      set,
+      get,
+      sessionId,
+      plan,
+      list,
+      text,
+      attachmentsFromParts(lastUser.parts),
+    );
   },
 
   /**
    * 编辑用户消息：把这条替换成新文本并重跑。
    *
-   * 与重新生成走同一条路径（见 planRewrite），区别只是文本来源与是否带图片：
+   * 与重新生成走同一条路径（见 planRewrite），区别只是文本来源：
    * 都是「回退到该消息的父条目 + 把用户消息重新发出」，旧回复因此不在 tip 路径上。
+   *
+   * **附件跟着一起重发**：编辑改的是那句话，不是「我贴给你的东西」。早先这里传的是
+   * 空附件，等于用户改一个错别字就把自己附的图丢了。
    */
   async editUserMessage(messageId, text) {
     const sessionId = get().activeSessionId;
@@ -1007,8 +1042,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       console.warn("该消息不能编辑（不是用户消息，或尚未落盘）");
       return;
     }
+    const target = list[index];
+    const attachments = target === undefined ? [] : attachmentsFromParts(target.parts);
 
-    await rewriteUserMessage(set, get, sessionId, plan, list, text, undefined);
+    await rewriteUserMessage(set, get, sessionId, plan, list, text, attachments);
   },
 
   applyEvent(sessionId, event) {

@@ -1,5 +1,5 @@
 // 端到端：走**真实的工具对象**（buildTools 装配出来的那两个），
-// 用内核的 AgentHarnessTool 契约调用它们 —— 这条链路是模型实际走的那条。
+// 用原生 durable ToolRegistration 契约调用它们。
 //
 // 用法：npx tsx scripts/probe-web-tools.mts
 //
@@ -13,7 +13,9 @@
 // 为什么需要它：单测里的工具层用的是假 WebService（见 tools/web.test.ts），
 // 假实现永远返回"形状正确"的数据；而真实 provider 的返回是否恰好能过
 // details 的字段校验、格式化后的文本是否可读，只有把两边接起来才知道。
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { buildTools } from "../src/main/pisdk/tools";
+import { createToolTestApi } from "../src/main/pisdk/tools/tool-test-api";
 import { createProductionWebService } from "../src/main/web";
 import { DEFAULT_SETTINGS } from "../src/main/settings/store";
 import type { Settings } from "../src/shared/contracts/settings";
@@ -34,8 +36,8 @@ console.log("== 装配 ==");
 const tools = buildTools([], undefined, [], undefined, [], web);
 const searchTool = tools.find((tool) => tool.name === WEB_TOOL_NAMES.search);
 const fetchTool = tools.find((tool) => tool.name === WEB_TOOL_NAMES.fetch);
-report(Boolean(searchTool), "web_search 已装配", searchTool?.label ?? "缺失");
-report(Boolean(fetchTool), "web_fetch 已装配", fetchTool?.label ?? "缺失");
+report(Boolean(searchTool), "web_search 已装配", searchTool?.name ?? "缺失");
+report(Boolean(fetchTool), "web_fetch 已装配", fetchTool?.name ?? "缺失");
 report(
   searchTool?.parameters !== undefined && fetchTool?.parameters !== undefined,
   "两个工具都有 parameters",
@@ -48,14 +50,11 @@ async function call(
   params: Record<string, unknown>,
 ): Promise<{ text: string; details: unknown }> {
   const result = await tool.execute(
-    "probe-call",
-    params as never,
-    () => {},
-    { env: {} } as never,
-    {} as never,
-    {} as never,
+    params,
+    createToolTestApi({ callId: "probe-call" }),
+    BACKGROUND_CONTEXT,
   );
-  const first = result.content[0];
+  const first = result.content?.[0];
   return {
     text: first !== undefined && first.type === "text" ? first.text : "",
     details: result.details,

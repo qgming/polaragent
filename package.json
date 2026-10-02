@@ -16,7 +16,7 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "engines": {
-    "node": ">=20",
+    "node": ">=22.19.0",
     "npm": ">=10"
   },
   "scripts": {
@@ -31,7 +31,7 @@
     "probe:dev": "node scripts/probe-dev-render.mjs",
     "probe:guest": "node scripts/probe-browser-guest.mjs",
     "probe:viewport": "node scripts/probe-browser-viewport.mjs",
-    "probe:kernel": "node scripts/probe-upgrade-087.mjs",
+    "probe:kernel": "node scripts/probe-kernel.mjs",
     "probe:packaged": "node scripts/probe-packaged-kernel.mjs",
     "probe:plugin-modal": "node scripts/probe-plugin-modal.mjs",
     "probe:system": "node scripts/probe-system-resources.mjs",
@@ -41,14 +41,16 @@
     "format": "biome format --write .",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
-    "preview": "vite preview --config vite.renderer.config.ts"
+    "preview": "vite preview --config vite.renderer.config.ts",
+    "probe:welcome": "node scripts/probe-welcome.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.18",
     "@assistant-ui/react-markdown": "^0.14.14",
-    "@earendil-works/pi-agent-core": "^0.87.0",
-    "@earendil-works/pi-ai": "^0.87.0",
-    "@earendil-works/pi-session-backend-sqlite-node": "^0.87.0",
+    "@earendil-works/chord": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-durable": "1.0.0",
+    "@earendil-works/pi-mcp": "1.0.0",
     "@lydell/node-pty": "^1.2.0-beta.15",
     "@tailwindcss/vite": "^4.3.3",
     "@xterm/addon-fit": "^0.11.0",

@@ -1,15 +1,13 @@
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 // grep / glob 的行为测试：全部在真实临时目录上跑（node:fs/promises 造夹具），
 // 因为这两个工具的价值就在「遍历 + 跳过规则 + 路径守卫」这些只有真实文件系统才能验的地方。
 
 import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {
-  type AgentHarnessToolInvocation,
-  BACKGROUND_CONTEXT,
-  type ExecutionEnv,
-  type ExecutionToolContext,
-} from "@earendil-works/pi-agent-core";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGlobTool, createGrepTool } from "./search";
 
@@ -20,22 +18,15 @@ let root: string;
 let outsideFile: string;
 
 /** search 工具只读 env.cwd，这里给最小替身，不为测试构造完整 ExecutionEnv */
-function toolContext(cwd: string): ExecutionToolContext {
-  return { env: { cwd } as ExecutionEnv };
+function toolContext(cwd: string): Partial<ToolExecutionApi> {
+  return { env: new NodeExecutionEnv({ cwd }) };
 }
 
 /** 工具调用里用不到 invocation，但签名要求给一个 */
-const INVOCATION: AgentHarnessToolInvocation = {
-  invocationId: "call-1",
-  operationId: "op-1",
-  turnId: "turn-1",
-  getMemo: async () => undefined,
-  setMemo: async () => {},
-};
 
-type GrepParams = Parameters<ReturnType<typeof createGrepTool>["execute"]>[1];
+type GrepParams = Parameters<ReturnType<typeof createGrepTool>["execute"]>[0];
 type GrepOutcome = Awaited<ReturnType<ReturnType<typeof createGrepTool>["execute"]>>;
-type GlobParams = Parameters<ReturnType<typeof createGlobTool>["execute"]>[1];
+type GlobParams = Parameters<ReturnType<typeof createGlobTool>["execute"]>[0];
 type GlobOutcome = Awaited<ReturnType<ReturnType<typeof createGlobTool>["execute"]>>;
 
 /*
@@ -49,11 +40,8 @@ function runGrep(
   allowedRoots?: readonly string[],
 ): Promise<GrepOutcome> {
   return createGrepTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
-    "call-grep",
     params,
-    () => {},
-    toolContext(cwd),
-    INVOCATION,
+    createToolTestApi({ ...toolContext(cwd), callId: "call-grep" }),
     BACKGROUND_CONTEXT,
   );
 }
@@ -64,18 +52,17 @@ function runGlob(
   allowedRoots?: readonly string[],
 ): Promise<GlobOutcome> {
   return createGlobTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
-    "call-glob",
     params,
-    () => {},
-    toolContext(cwd),
-    INVOCATION,
+    createToolTestApi({ ...toolContext(cwd), callId: "call-glob" }),
     BACKGROUND_CONTEXT,
   );
 }
 
 /** content 里的文本（两个工具都只回文本） */
 function textOf(outcome: GrepOutcome | GlobOutcome): string {
-  return outcome.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+  return (outcome.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("\n");
 }
 
 /** 有命中时末行是汇总行，前几行才是数据行 */
@@ -166,8 +153,8 @@ describe("grep", () => {
 
     expect(text).toContain("No matches for");
     expect(text).toContain("searched");
-    expect(outcome.details.matches).toBe(0);
-    expect(outcome.details.truncated).toBe(false);
+    expect(outcome.details?.matches).toBe(0);
+    expect(outcome.details?.truncated).toBe(false);
   });
 
   it("include 只作用于文件名：*.md 命中 markdown，*.ts 不命中它", async () => {
@@ -197,8 +184,8 @@ describe("grep", () => {
   it("limit 超过硬上限 500 时按上限截断", async () => {
     const outcome = await runGrep(root, { pattern: "needle", limit: 9999 });
 
-    expect(outcome.details.matches).toBe(500);
-    expect(outcome.details.truncated).toBe(true);
+    expect(outcome.details?.matches).toBe(500);
+    expect(outcome.details?.truncated).toBe(true);
     expect(textOf(outcome)).toContain("many.txt:1:needle line 1");
   });
 
@@ -214,7 +201,7 @@ describe("grep", () => {
     const outcome = await runGrep(root, { pattern: "oversized" });
 
     expect(textOf(outcome)).toContain("No matches for");
-    expect(outcome.details.matches).toBe(0);
+    expect(outcome.details?.matches).toBe(0);
   });
 
   it("path 指向单个文件时只扫该文件", async () => {
@@ -228,9 +215,9 @@ describe("grep", () => {
     const text = textOf(outcome);
 
     expect(dataLines(text)).toEqual(["outside.ts:1:outside alpha"]);
-    expect(outcome.details.matches).toBe(1);
+    expect(outcome.details?.matches).toBe(1);
     // root 报告的是 realpath 归一后的检索根：指向被搜的那个文件，而不是会话工作目录
-    expect(outcome.details.root).toBe(await realpath(outsideFile));
+    expect(outcome.details?.root).toBe(await realpath(outsideFile));
   });
 
   it('path: ".." 可检索上级目录，命中路径相对检索根而不是工作目录', async () => {
@@ -268,7 +255,7 @@ describe("glob", () => {
         "src/deep/nested/d.ts",
       ].sort(),
     );
-    expect(outcome.details.truncated).toBe(false);
+    expect(outcome.details?.truncated).toBe(false);
   });
 
   it("*.ts 只匹配单层，?.ts 只匹配单字符文件名", async () => {
@@ -292,8 +279,8 @@ describe("glob", () => {
     expect(truncated.details).toEqual({ root: expect.any(String), matches: 2, truncated: true });
 
     const zeroLimit = await runGlob(root, { pattern: "**/*.ts", limit: 0 });
-    expect(zeroLimit.details.matches).toBe(1);
-    expect(zeroLimit.details.truncated).toBe(true);
+    expect(zeroLimit.details?.matches).toBe(1);
+    expect(zeroLimit.details?.truncated).toBe(true);
   });
 
   it("无匹配时给出明确文案", async () => {
@@ -301,7 +288,7 @@ describe("glob", () => {
     const text = textOf(outcome);
 
     expect(text).toContain("No files match");
-    expect(outcome.details.matches).toBe(0);
+    expect(outcome.details?.matches).toBe(0);
   });
 
   it("path 可以用工作目录之外的绝对路径", async () => {
@@ -324,7 +311,7 @@ describe("glob", () => {
     const text = textOf(outcome);
 
     expect(text).toContain("Path outside the allowed workspace");
-    expect(outcome.details.matches).toBe(0);
+    expect(outcome.details?.matches).toBe(0);
   });
 
   it("allowedRoots 内的路径照常检索", async () => {
