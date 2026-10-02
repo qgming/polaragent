@@ -116,6 +116,7 @@ import {
   type SubagentRunner,
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
+import { allowedInPlan, RunModeDoc } from "./plan-mode";
 import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
@@ -283,6 +284,8 @@ interface SessionRuntime {
   subagentTools: ToolRegistration[];
   isSubagent: boolean;
   titleAttempted?: boolean;
+  titlePending?: boolean;
+  activeMode: AgentMode;
   mcpToolsStale?: boolean;
   stats: SessionStatsState;
   contextBreakdown: Omit<ContextBreakdown, "messageTokens">;
@@ -749,41 +752,34 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
-  /**
-   * 自动命名：仅在会话还没有名字（索引 title 为空）时做一次。
-   *
-   * 触发点是「首轮问答结束」，素材取会话里第一条用户消息与它之后的助手回复；
-   * 标题本身即「已命名」的标记 —— 所以用户手动改过名、或分支会话带着来源标题时，
-   * 这里都不会覆盖。命名失败（无模型 / 超时 / 输出为空）保持默认名，且本次进程内不再重试；
-   * 只有「素材不足」不记账，留给下一轮（见 title-generator 的 onAttempt）。
-   */
-  async function maybeTitleSession(
-    runtime: SessionRuntime,
-    status: "completed" | "failed",
-  ): Promise<void> {
+  /** 输入受理后后台命名，最多三次尝试；失败用用户需求摘要兜底，原子保存避免覆盖人工标题。 */
+  async function maybeTitleSession(runtime: SessionRuntime, admittedText?: string): Promise<void> {
     const generate = deps.sessionTitles;
-    if (!generate || runtime.titleAttempted) return;
-    if (status !== "completed") return;
+    if (!generate || runtime.titleAttempted || runtime.titlePending || runtime.isSubagent) return;
+    runtime.titlePending = true;
 
     try {
       const title = await autoTitleSession(runtime.sessionId, {
         generate,
+        ...(admittedText?.trim() ? { source: { userText: admittedText.trim(), assistantText: "" } } : {}),
         readTitle: (id) => deps.sessionStore.readTitle(id),
-        // 从会话开头取：命名素材必须是「首轮问答」，尾部窗口在大会话里会拿到后面几轮
+        // 从会话开头取用户需求；助手尚未回复或首轮失败也能命名。
         loadMessages: async (id) =>
           (await deps.sessionStore.loadMessages(id, { limit: 20, order: "oldestFirst" })).messages,
         rename: (id, next) => deps.sessionStore.rename(id, next),
-        onAttempt: () => {
-          runtime.titleAttempted = true;
-        },
-        // 命名用的是这个会话的对话，就该用这个会话的模型
+        renameIfUntitled: deps.sessionStore.renameIfUntitled?.bind(deps.sessionStore),
+        maxAttempts: 3,
+        fallback: true,
         // 命名用的是这个会话的对话，就该用这个会话的模型（null = 没配模型，交给生成器回落）
         ...(runtime.modelRef === null ? {} : { modelRef: runtime.modelRef }),
       });
       if (title === null) return;
+      runtime.titleAttempted = true;
       emitSafe(runtime.sessionId, { type: "session-titled", sessionId: runtime.sessionId, title });
     } catch (error) {
       console.warn(`会话自动命名失败，保留默认名称：${errorText(error)}`);
+    } finally {
+      runtime.titlePending = false;
     }
   }
 
@@ -799,8 +795,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return work;
   }
 
-  async function refreshExtraTools(runtime: SessionRuntime): Promise<void> {
-    if (runtime.running || runtime.stopping !== undefined || (await hasActiveOperation(runtime))) {
+  async function refreshExtraTools(runtime: SessionRuntime, forNewTurn = false): Promise<void> {
+    if (!forNewTurn && (runtime.running || runtime.stopping !== undefined || (await hasActiveOperation(runtime)))) {
       runtime.mcpToolsStale = true;
       return;
     }
@@ -822,13 +818,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
       );
       const whitelist = runtime.spec?.definition.tools;
-      const plugins = pluginExtensions(runtime.env.cwd);
+      const plugins = runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd);
       for (const plugin of plugins) runtime.registry.install(plugin.extension);
       const available = [
         ...nextTools,
         ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
       ];
-      const selected = whitelist === undefined ? available : restrictTools(available, whitelist);
+      const selected = (whitelist === undefined ? available : restrictTools(available, whitelist))
+        .filter((tool) => runtime.activeMode !== "plan" || allowedInPlan(tool.name));
       runtime.extension = defineExtension({
         ...runtime.extension,
         tools: nextTools.filter((tool) => selected.some((chosen) => chosen.name === tool.name)),
@@ -855,6 +852,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         toolsTokens: estimateToolsTokens(nextTools),
       };
     } catch (error) {
+      if (forNewTurn) throw error;
       console.warn(`刷新工具表失败：${errorText(error)}`);
     }
   }
@@ -869,6 +867,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     api: HookApi,
   ): Promise<ToolPermissionResult | undefined> {
     signal?.throwIfAborted();
+    if (runtime.activeMode === "plan" && !allowedInPlan(toolName)) {
+      return { block: { reason: "计划模式只允许阅读、检索和提问。请通过‘开始执行’切换模式后再操作。" } };
+    }
     const settings = await deps.getSettings();
     // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
     if (settings.permissionMode === "full") return undefined;
@@ -983,12 +984,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             await runtime.metrics?.flush();
             await touchSession(runtime);
             await persistUsage(runtime);
-            await maybeTitleSession(
-              runtime,
-              runtime.view?.snapshot.state.messages.at(-1)?.status === "error"
-                ? "failed"
-                : "completed",
-            );
+            scheduleEffect(runtime, maybeTitleSession(runtime));
             if (runtime.mcpToolsStale) await applyExtraTools(runtime);
           })(),
         ),
@@ -1004,6 +1000,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     const spec = opened.subagent;
     const family = spec ? await ensureRuntime(opened.familyId, false) : undefined;
+    const savedMode = await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId);
+    const preference = (await deps.sessionStore.readAgentMode(sessionId)) ?? settings.agentMode;
+    const activeMode: AgentMode = savedMode?.mode === "plan" || family?.activeMode === "plan"
+      ? "plan"
+      : savedMode?.mode === "standard" || savedMode?.mode === "orchestrate"
+        ? savedMode.mode : preference;
     await ensurePluginWorkspace(cwd);
     // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录、
     // appPath 兜住随包分发的内置技能，tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
@@ -1080,7 +1082,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const composeMainPrompt = async (): Promise<string> => {
       const current = await deps.getSettings();
       // 会话级绑定优先，未绑定时跟随设置里的默认模式
-      const mode = (await deps.sessionStore.readAgentMode(sessionId)) ?? current.agentMode;
+      const mode = runtimeRef?.activeMode ?? activeMode;
       const parts = [await buildSystemPrompt(current, cwd, loaded.skillsSection, mode)];
       const index = formatSubagentsForSystemPrompt(availableSubagents);
       if (index !== "") parts.push(index);
@@ -1129,7 +1131,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     );
     // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
     const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
-    const plugins = pluginExtensions(cwd);
+    const plugins = activeMode === "plan" ? [] : pluginExtensions(cwd);
     const availableTools = [
       ...builtTools,
       ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
@@ -1138,10 +1140,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       .filter((tool) => !undelegatable.has(tool.name))
       .map((tool) => tool.name);
     const subagentWhitelist = spec?.definition.tools;
-    const tools =
+    const tools = (
       subagentWhitelist === undefined
         ? availableTools
-        : restrictTools(availableTools, subagentWhitelist);
+        : restrictTools(availableTools, subagentWhitelist))
+      .filter((tool) => activeMode !== "plan" || allowedInPlan(tool.name));
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
     const toolsTokens = estimateToolsTokens(tools);
@@ -1212,6 +1215,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const currentModel = model;
       const savedUsage = await deps.sessionStore.readUsage(sessionId);
       const runtime: SessionRuntime = {
+        activeMode,
         sessionId,
         familyId: opened.familyId,
         spec,
@@ -1358,6 +1362,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
       runtime.unsubscribers.push(
         subscribePluginExtensions(() => {
+          if (runtime.activeMode === "plan") return;
           for (const plugin of pluginExtensions(runtime.env.cwd))
             runtime.registry.install(plugin.extension);
           scheduleEffect(runtime, applyExtraTools(runtime));
@@ -1554,6 +1559,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
     const settings = await deps.getSettings();
     signal.throwIfAborted();
+    runtime.activeMode = (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
+    await runtime.harness.commit(async (tx) => {
+      (await tx.doc(RunModeDoc, runtime.conversation.id)).mode = runtime.activeMode;
+    }, BACKGROUND_CONTEXT);
+    await refreshExtraTools(runtime, true);
+    signal.throwIfAborted();
     await applyModel(runtime, settings);
     signal.throwIfAborted();
     await applyThinkingLevel(runtime, settings);
@@ -1579,13 +1590,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
               thinkingLevel: await effectiveThinkingLevel(runtime, settings),
               tools: [
                 ...(runtime.extension.tools ?? []),
-                ...pluginExtensions(runtime.env.cwd).flatMap(
+                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).flatMap(
                   (plugin) => plugin.extension.tools ?? [],
                 ),
               ].filter(
                 (tool) =>
-                  !runtime.spec?.definition.tools ||
-                  runtime.spec.definition.tools.includes(tool.name),
+                  (runtime.activeMode !== "plan" || allowedInPlan(tool.name)) &&
+                  (!runtime.spec?.definition.tools || runtime.spec.definition.tools.includes(tool.name)),
               ),
               extensions: [runtime.extension],
               cwd: runtime.env.cwd,
@@ -1600,7 +1611,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           await selected.configure(
             {
               extensions: [
-                ...pluginExtensions(runtime.env.cwd).map((plugin) => plugin.extension),
+                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).map((plugin) => plugin.extension),
                 runtime.extension,
               ],
             },
@@ -1608,6 +1619,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           );
           await attachState(runtime);
           await attachView(runtime);
+          await runtime.harness.commit(async (tx) => {
+            (await tx.doc(RunModeDoc, runtime.conversation.id)).mode = runtime.activeMode;
+          }, BACKGROUND_CONTEXT);
         }
       }
       // 原样提交交错的附件信封与图片块；附件落盘完成且本次发送未取消后才受理输入。
@@ -1635,6 +1649,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           ...(admitted.entry === undefined ? {} : { entryId: `entry:${admitted.entry}` }),
         });
       }
+      scheduleEffect(runtime, maybeTitleSession(runtime, text));
       await submission.wait(BACKGROUND_CONTEXT);
       await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
       await runtime.view?.flush();
@@ -1752,6 +1767,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (runtime.stopping !== undefined) await runtime.stopping;
     await runtime.toolRefresh;
     if (cancelled()) return;
+    const settings = await deps.getSettings();
+    const nextMode = (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
+    if (nextMode !== runtime.activeMode) {
+      throw new Error("模式已保存，将在当前运行结束后的下一条消息生效。请等待当前运行结束后再发送。");
+    }
     const content = attachments?.length
       ? await buildUserContent(runtime.sessionId, text, attachments)
       : text;

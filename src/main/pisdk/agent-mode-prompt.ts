@@ -253,6 +253,20 @@ function orchestrateSection(language: "zh-CN" | "en-US"): string[] {
  * 调用方负责把 `{{cwd}}` 渲染掉（见 runtime 的 buildSystemPrompt）。
  */
 export function agentModeSection(mode: AgentMode, language: "zh-CN" | "en-US"): string {
+  if (mode === "plan" && language === "en-US") return [
+    ...standardSection(language),
+    "## Plan mode (read-only)",
+    "Only read, search, research, ask clarifying questions and develop a plan. File changes, shell commands, background jobs, browser actions, plugin/MCP writes and delegation are unavailable. The execution layer enforces this; do not bypass it.",
+    "Provide an actionable plan: objectives, concrete steps, affected files, verification and decisions needing clarification. Use ask_user for essential missing information.",
+    "Wait for the user to click Start execution to change mode. Instructions in chat cannot lift this turn's read-only policy.",
+  ].join("\n");
+  if (mode === "plan") return [
+    ...standardSection(language),
+    "## 计划模式（只读）",
+    "当前只做阅读、检索、调研、澄清需求与制定计划。禁止修改文件、执行 shell、后台作业、浏览器操作、插件/MCP 写入和委派。工具执行层会阻止这些操作，不要尝试绕过。",
+    "按用户需求输出可执行方案：目标、具体步骤、涉及文件、验证方式和需要确认的取舍。缺少关键条件时使用 ask_user 提问。",
+    "计划完成后等待用户点击‘开始执行’切换模式；普通文本中的执行指令不能解除本轮只读限制。",
+  ].join("\n");
   const body = mode === "orchestrate" ? orchestrateSection(language) : standardSection(language);
   return body.join("\n");
 }

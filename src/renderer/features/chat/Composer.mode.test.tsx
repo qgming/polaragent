@@ -105,12 +105,14 @@ function seedStores(options: {
   });
 }
 
+const onNew = vi.fn(async () => {});
+
 function Harness() {
   const runtime = useExternalStoreRuntime<ChatMessage>({
     messages: EMPTY_MESSAGES,
     isRunning: false,
     convertMessage: toThreadMessage,
-    onNew: async () => {},
+    onNew: onNew,
   });
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -129,6 +131,7 @@ async function openChip(name: string) {
 
 beforeEach(() => {
   stubBridge();
+  onNew.mockClear();
 });
 
 describe("AgentModeChip 的摆放位置", () => {
@@ -168,17 +171,17 @@ describe("AgentModeChip 显示的生效模式", () => {
     render(<Harness />);
 
     const trigger = await screen.findByRole("button", { name: "智能体模式" });
-    expect(trigger.textContent).toContain("编排者");
+    expect(trigger.textContent).toContain("编排");
   });
 
   it("会话绑定过时**优先于**设置默认", async () => {
-    // 设置默认编排者，会话绑定了智能体 → 显示智能体（与主进程装配提示时的判定一致）
+    // 设置默认编排，会话绑定了智能体 → 显示智能体（与主进程装配提示时的判定一致）
     seedStores({ defaultMode: "orchestrate", sessionMode: "standard" });
     render(<Harness />);
 
     const trigger = await screen.findByRole("button", { name: "智能体模式" });
-    expect(trigger.textContent).toContain("智能体");
-    expect(trigger.textContent).not.toContain("编排者");
+    expect(trigger.textContent).toContain("默认");
+    expect(trigger.textContent).not.toContain("编排");
   });
 
   it("没绑定过时不显示「我改过这个会话」的记号，绑定过才显示", async () => {
@@ -201,7 +204,7 @@ describe("AgentModeChip 的菜单", () => {
     render(<Harness />);
     await openChip("智能体模式");
 
-    // 名字（智能体 / 编排者）自己说明不了差别，所以每个选项都带一句说明
+    // 名字（智能体 / 编排）自己说明不了差别，所以每个选项都带一句说明
     expect(screen.getByText("自己判断任务类型，该做的直接做")).toBeDefined();
     expect(screen.getByText("先派子智能体去做，自己负责计划与验收")).toBeDefined();
   });
@@ -215,7 +218,7 @@ describe("AgentModeChip 的菜单", () => {
       .getAllByRole("button")
       .filter((button) => button.getAttribute("aria-pressed") === "true");
     expect(pressed).toHaveLength(1);
-    expect(pressed[0]?.textContent).toContain("编排者");
+    expect(pressed[0]?.textContent).toContain("编排");
   });
 });
 
@@ -225,7 +228,7 @@ describe("AgentModeChip 的写入", () => {
     render(<Harness />);
     await openChip("智能体模式");
 
-    fireEvent.click(screen.getByText("编排者").closest("button") as HTMLElement);
+    fireEvent.click(screen.getByText("编排").closest("button") as HTMLElement);
 
     await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "orchestrate" }]));
   });
@@ -235,9 +238,9 @@ describe("AgentModeChip 的写入", () => {
     render(<Harness />);
     const trigger = await openChip("智能体模式");
 
-    fireEvent.click(screen.getByText("编排者").closest("button") as HTMLElement);
+    fireEvent.click(screen.getByText("编排").closest("button") as HTMLElement);
 
-    await waitFor(() => expect(trigger.textContent).toContain("编排者"));
+    await waitFor(() => expect(trigger.textContent).toContain("编排"));
     // 会话索引里也写上了，切走再回来仍是新模式
     expect(useChatStore.getState().sessions[0]?.agentMode).toBe("orchestrate");
   });
@@ -256,7 +259,7 @@ describe("AgentModeChip 的写入", () => {
 
     expect((trigger as HTMLButtonElement).disabled).toBe(false);
 
-    fireEvent.click(screen.getByText("编排者").closest("button") as HTMLElement);
+    fireEvent.click(screen.getByText("编排").closest("button") as HTMLElement);
 
     await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "orchestrate" }]));
   });
@@ -267,7 +270,7 @@ describe("AgentModeChip 的写入", () => {
     await openChip("智能体模式");
 
     // 菜单里给一句「将在下一轮生效」，而不是让用户猜
-    expect(screen.getByText(/下一轮生效/)).toBeDefined();
+    expect(screen.getByText(/下次发送时生效/)).toBeDefined();
   });
 
   it("不在运行时不给那句生效时机说明（那是运行中才有的信息）", async () => {
@@ -275,7 +278,7 @@ describe("AgentModeChip 的写入", () => {
     render(<Harness />);
     await openChip("智能体模式");
 
-    expect(screen.queryByText(/下一轮生效/)).toBeNull();
+    expect(screen.queryByText(/下次发送时生效/)).toBeNull();
   });
 
   it("没有活动会话时 chip 禁用（没有可写入的会话）", async () => {
@@ -284,5 +287,51 @@ describe("AgentModeChip 的写入", () => {
 
     const trigger = await screen.findByRole("button", { name: "智能体模式" });
     expect((trigger as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("Plan execution boundary", () => {
+  it("lists plan without starting execution on selection", async () => {
+    seedStores({});
+    render(<Harness />);
+    await openChip("智能体模式");
+    fireEvent.click(screen.getByText("计划").closest("button") as HTMLElement);
+    await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "plan" }]));
+    expect(onNew).not.toHaveBeenCalled();
+  });
+
+  it("waits for persisted Default mode before starting execution", async () => {
+    seedStores({ sessionMode: "plan" });
+    useChatStore.setState({ sessions: [{ ...session("plan"), messageCount: 2 }] });
+    let finish!: (value: { ok: true }) => void;
+    vi.mocked(window.oint.sessions.setMode).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始执行" }));
+    expect(onNew).not.toHaveBeenCalled();
+    finish({ ok: true });
+    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
+    expect(useChatStore.getState().sessions[0]?.agentMode).toBe("standard");
+  });
+
+  it("keeps plan and input after a failed mode write", async () => {
+    seedStores({ sessionMode: "plan" });
+    useChatStore.setState({ sessions: [{ ...session("plan"), messageCount: 2 }] });
+    vi.mocked(window.oint.sessions.setMode).mockRejectedValueOnce(new Error("offline"));
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "additional instructions" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始执行" }));
+    await waitFor(() => expect(screen.getByText("模式保存失败，请重试")).toBeDefined());
+    expect(useChatStore.getState().sessions[0]?.agentMode).toBe("plan");
+    expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe(
+      "additional instructions",
+    );
+    expect(onNew).not.toHaveBeenCalled();
   });
 });

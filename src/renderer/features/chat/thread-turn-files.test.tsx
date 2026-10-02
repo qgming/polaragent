@@ -113,7 +113,13 @@ function renderThread(messages: ChatMessage[], cwd: string, running = false) {
 }
 
 beforeEach(() => {
-  useChatStore.setState({ activeSessionId: null, sessions: [], messagesBySession: {} });
+  useChatStore.setState({
+    activeSessionId: null,
+    sessions: [],
+    messagesBySession: {},
+    sessionLoadErrors: {},
+    loadingFirstBySession: {},
+  });
   useUiStore.setState({ rightPanelTabs: [], activeTabId: null, filePanelTarget: null });
 });
 
@@ -244,5 +250,24 @@ describe("本轮文件改动在真实 Thread 里", () => {
 
     expect(screen.getByText("本轮文件改动")).toBeTruthy();
     expect(screen.getByLabelText("打开 guide.md")).toBeTruthy();
+  });
+});
+
+describe("conversation load feedback", () => {
+  it("shows loading instead of an empty conversation", () => {
+    useChatStore.setState({ loadingFirstBySession: { s1: true } });
+    renderThread([], CWD);
+    expect(screen.getByText("正在加载会话…")).toBeDefined();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+  it("shows an actionable load error instead of a new conversation", () => {
+    useChatStore.setState({ sessionLoadErrors: { s1: "offline" } });
+    const retry = vi.spyOn(useChatStore.getState(), "setActiveSession").mockResolvedValue();
+    renderThread([], CWD);
+    expect(screen.getByText("会话加载失败，请重试")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
+    expect(retry).toHaveBeenCalledWith("s1");
+    expect(screen.queryByRole("combobox")).toBeNull();
+    retry.mockRestore();
   });
 });

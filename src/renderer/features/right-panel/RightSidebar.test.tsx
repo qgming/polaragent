@@ -12,9 +12,11 @@
 //
 // 需要一个能在 jsdom 里当 webview 用的元素桩：面板挂载就会创建元素并调它的方法。
 
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { RightPanelToggle } from "@/renderer/features/right-panel/RightPanelToggle";
 import { RightSidebar } from "@/renderer/features/right-panel/RightSidebar";
+import { useGlobalShortcuts } from "@/renderer/hooks/useGlobalShortcuts";
 import i18n from "@/renderer/i18n";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { BrowserEvent } from "@/shared/contracts/browser";
@@ -143,7 +145,7 @@ describe("标签条", () => {
     expect(webviews).toHaveLength(2);
   });
 
-  it("× 关掉标签；最后一个也关掉后回到选择列表", async () => {
+  it("× 关掉最后一个标签立即收起面板", async () => {
     stubBridges();
     stubWebviewElement();
     useUiStore.setState({
@@ -156,8 +158,10 @@ describe("标签条", () => {
 
     expect(useUiStore.getState().rightPanelTabs).toHaveLength(0);
     expect(useUiStore.getState().activeTabId).toBeNull();
-    // 选择列表（「+」那一屏）出现：等 React 的这次重渲染落地再断言
-    expect(await screen.findByText("审查")).toBeDefined();
+    expect(useUiStore.getState().rightPanelOpen).toBe(false);
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { hidden: true }).hasAttribute("inert")).toBe(true),
+    );
   });
 
   it("「+」回到选择列表，而不是直接再开一个浏览器标签", async () => {
@@ -312,4 +316,31 @@ describe("模型的 open-request 落到哪个标签", () => {
     expect(state.rightPanelTabs).toHaveLength(1);
     expect(state.pendingBrowserRequest?.requestId).toBe("r4");
   });
+});
+
+it("restores focus to the toggle after keyboard closing the final tab", async () => {
+  stubBridges();
+  stubWebviewElement();
+  useUiStore.setState({
+    rightPanelOpen: true,
+    rightPanelTabs: [{ id: "focus", view: "browser", title: null }],
+    activeTabId: "focus",
+  });
+  function Workspace() {
+    useGlobalShortcuts();
+    return (
+      <>
+        <RightPanelToggle />
+        <RightSidebar />
+      </>
+    );
+  }
+  render(<Workspace />);
+  const close = screen.getByLabelText("关闭标签");
+  close.focus();
+  fireEvent.keyDown(close, { key: "w", ctrlKey: true });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(document.querySelector("[data-right-panel-toggle]")),
+  );
+  expect(useUiStore.getState().rightPanelOpen).toBe(false);
 });

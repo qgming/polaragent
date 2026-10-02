@@ -17,7 +17,7 @@
  */
 
 import { useAui } from "@assistant-ui/react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "@/renderer/i18n";
 import { OintRuntimeProvider } from "@/renderer/runtime/OintRuntimeProvider";
@@ -161,6 +161,147 @@ function lastMessage(): ChatMessage | undefined {
 describe("附件的端到端传递", () => {
   beforeEach(() => {
     seedStores();
+  });
+
+  it("keeps each session's text and attachments when switching", async () => {
+    const { send } = stubBridge();
+    useChatStore.setState({ sessions: [SESSION, { ...SESSION, id: "s2" }] });
+    render(
+      <OintRuntimeProvider>
+        <Composer />
+        <Adder file={new File(["draft body"], "draft.txt", { type: "text/plain" })} />
+      </OintRuntimeProvider>,
+    );
+    const input = screen.getByRole("combobox") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "session one draft" } });
+    fireEvent.click(screen.getByTestId("add"));
+    await waitFor(() => expect(screen.queryAllByText("移除附件")).toHaveLength(1));
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s2" });
+    });
+    expect(input.value).toBe("");
+    expect(screen.queryAllByText("移除附件")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "session two draft" } });
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s1" });
+    });
+    await waitFor(() => expect(input.value).toBe("session one draft"));
+    await waitFor(() => expect(screen.queryAllByText("移除附件")).toHaveLength(1));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect(sentAttachments(send)[0]?.name).toBe("draft.txt");
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s2" });
+    });
+    expect(input.value).toBe("session two draft");
+  });
+
+  it("restores rejected send text and attachment without leaving an optimistic duplicate", async () => {
+    const { send } = stubBridge();
+    send.mockRejectedValueOnce(new Error("offline"));
+    render(
+      <OintRuntimeProvider>
+        <Composer />
+        <Adder file={new File(["draft"], "retry.txt", { type: "text/plain" })} />
+      </OintRuntimeProvider>,
+    );
+    await attachAndSend("retry request");
+    await waitFor(() =>
+      expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe("retry request"),
+    );
+    expect(screen.queryAllByText("移除附件")).toHaveLength(1);
+    expect(useChatStore.getState().messagesBySession.s1).toEqual([]);
+    expect(screen.getByText("发送失败，草稿已保留，请重试")).toBeDefined();
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(sentAttachments(send)[0]?.name).toBe("retry.txt");
+  });
+
+  it("restores the first failed send into its newly created session", async () => {
+    const { send } = stubBridge();
+    useChatStore.setState({ activeSessionId: null, sessions: [] });
+    const create = vi
+      .spyOn(useChatStore.getState(), "createSession")
+      .mockImplementation(async () => {
+        useChatStore.setState({ sessions: [SESSION], activeSessionId: SESSION.id });
+      });
+    send.mockRejectedValueOnce(new Error("offline"));
+    render(
+      <OintRuntimeProvider>
+        <Composer />
+      </OintRuntimeProvider>,
+    );
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "first request" } });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe("first request"),
+    );
+    expect(useChatStore.getState().activeSessionId).toBe(SESSION.id);
+    create.mockRestore();
+  });
+
+  it("does not send a slash message into a session selected while resolution is pending", async () => {
+    const { send } = stubBridge();
+    let finish!: (value: []) => void;
+    vi.mocked(window.oint.skills.list).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    useChatStore.setState({ sessions: [SESSION, { ...SESSION, id: "s2" }] });
+    render(
+      <OintRuntimeProvider>
+        <Composer />
+      </OintRuntimeProvider>,
+    );
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "/unknown request" } });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s2" });
+    });
+    await act(async () => {
+      finish([]);
+    });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    expect((send.mock.calls[0] as unknown[])[0]).toBe(SESSION.id);
+  });
+
+  it("does not compact another session after a pending command resolves", async () => {
+    stubBridge();
+    let finish!: (value: []) => void;
+    vi.mocked(window.oint.skills.list).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const compact = vi.spyOn(useChatStore.getState(), "compact");
+    useChatStore.setState({ sessions: [SESSION, { ...SESSION, id: "s2" }] });
+    render(
+      <OintRuntimeProvider>
+        <Composer />
+      </OintRuntimeProvider>,
+    );
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "/compact keep details" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s2" });
+    });
+    await act(async () => {
+      finish([]);
+    });
+    expect(compact).not.toHaveBeenCalled();
+    await act(async () => {
+      useChatStore.setState({ activeSessionId: "s1" });
+    });
+    await waitFor(() =>
+      expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe(
+        "/compact keep details",
+      ),
+    );
+    compact.mockRestore();
   });
 
   it("文本文件：正文读出、附件真的进了 chat.send、乐观消息里有附件卡片", async () => {

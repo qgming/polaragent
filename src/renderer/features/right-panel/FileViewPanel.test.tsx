@@ -17,7 +17,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileViewPanel } from "@/renderer/features/right-panel/FileViewPanel";
-import { resetUnsavedEdits } from "@/renderer/features/right-panel/unsaved-edits";
+import {
+  resetUnsavedEdits,
+  unsavedBaseOf,
+  unsavedOf,
+} from "@/renderer/features/right-panel/unsaved-edits";
 import i18n from "@/renderer/i18n";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
@@ -181,9 +185,9 @@ describe("编辑与保存", () => {
       path: "D:/dev/project/src/a.ts",
       text: "const a = 2;",
     });
-    // 保存成功后不再是「未保存」，也不必重新读一次文件
+    // 保存前重新读取，避免覆盖外部修改；成功后清除未保存状态
     await waitFor(() => expect(screen.queryByText("未保存")).toBeNull());
-    expect(bridge.reads).toHaveLength(1);
+    expect(bridge.reads).toHaveLength(2);
     expect(screen.getByText("已保存")).toBeTruthy();
   });
 
@@ -339,4 +343,125 @@ describe("读取失败", () => {
       expect(screen.getByRole("alert").textContent).toContain("路径不在允许的工作目录内");
     });
   });
+});
+
+describe("saving races", () => {
+  it("keeps text typed while a save is pending", async () => {
+    stubFiles("original");
+    let resolveWrite!: (value: { path: string; bytes: number }) => void;
+    window.oint.files.writeFile = vi.fn(
+      () =>
+        new Promise<{ path: string; bytes: number }>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    await open("D:/pending.txt");
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "submitted" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(window.oint.files.writeFile).toHaveBeenCalled());
+    // Returning to the original text must remain dirty against the newly saved revision.
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "original" } });
+    resolveWrite({ path: "D:/pending.txt", bytes: 9 });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存" })).not.toHaveProperty("disabled", true),
+    );
+    expect(editor()?.value).toBe("original");
+    expect(screen.getByText("未保存")).toBeTruthy();
+  });
+
+  it("does not apply a late save to another file", async () => {
+    stubFiles("original");
+    let resolveWrite!: (value: { path: string; bytes: number }) => void;
+    window.oint.files.writeFile = vi.fn(
+      () =>
+        new Promise<{ path: string; bytes: number }>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    await open("D:/first.txt");
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "submitted" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(window.oint.files.writeFile).toHaveBeenCalled());
+    await reopen("D:/second.txt");
+    resolveWrite({ path: "D:/first.txt", bytes: 9 });
+    await waitFor(() => expect(editor()?.value).toBe("original"));
+    expect(screen.queryByText("已保存")).toBeNull();
+  });
+
+  it("preserves the draft when the disk changed externally", async () => {
+    stubFiles("original");
+    await open("D:/external.txt");
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "my draft" } });
+    window.oint.files.readFile = vi.fn(async () => ({
+      path: "D:/external.txt",
+      text: "external",
+      size: 8,
+      binary: false,
+      truncated: false,
+    }));
+    window.oint.files.writeFile = vi.fn();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await screen.findByRole("alert");
+    expect(window.oint.files.writeFile).not.toHaveBeenCalled();
+    expect(editor()?.value).toBe("my draft");
+  });
+});
+
+it.each(["navigate", "remount"])(
+  "keeps newer edits after a pending save and %s back to the same file",
+  async (route) => {
+    stubFiles("original");
+    let resolveWrite!: (value: { path: string; bytes: number }) => void;
+    window.oint.files.writeFile = vi.fn(
+      () =>
+        new Promise<{ path: string; bytes: number }>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    await open("D:/revisited.txt");
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "submitted" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(window.oint.files.writeFile).toHaveBeenCalled());
+    if (route === "navigate") {
+      await reopen("D:/other.txt");
+      await reopen("D:/revisited.txt");
+    } else {
+      cleanup();
+      await open("D:/revisited.txt");
+    }
+    fireEvent.change(screen.getByLabelText("编辑文件内容"), {
+      target: { value: "newer revision" },
+    });
+    resolveWrite({ path: "D:/revisited.txt", bytes: 9 });
+    await waitFor(() => expect(unsavedBaseOf("D:/revisited.txt")).toBe("submitted"));
+    expect(unsavedOf("D:/revisited.txt")).toBe("newer revision");
+    expect(editor()?.value).toBe("newer revision");
+    await reopen("D:/other.txt");
+    await reopen("D:/revisited.txt");
+    expect(editor()?.value).toBe("newer revision");
+  },
+);
+
+it("marks a remounted viewer dirty when an older write completes after reverting", async () => {
+  stubFiles("original");
+  let resolveWrite!: (value: { path: string; bytes: number }) => void;
+  window.oint.files.writeFile = vi.fn(
+    () =>
+      new Promise<{ path: string; bytes: number }>((resolve) => {
+        resolveWrite = resolve;
+      }),
+  );
+  await open("D:/revert-remount.txt");
+  fireEvent.change(screen.getByLabelText("编辑文件内容"), { target: { value: "submitted" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(window.oint.files.writeFile).toHaveBeenCalled());
+  cleanup();
+  await open("D:/revert-remount.txt");
+  fireEvent.click(screen.getByRole("button", { name: "撤销改动" }));
+  resolveWrite({ path: "D:/revert-remount.txt", bytes: 9 });
+  await screen.findByText("未保存");
+  expect(editor()?.value).toBe("original");
+  expect(screen.getByRole("button", { name: "保存" })).not.toHaveProperty("disabled", true);
+  expect(unsavedOf("D:/revert-remount.txt")).toBe("original");
+  expect(unsavedBaseOf("D:/revert-remount.txt")).toBe("submitted");
 });

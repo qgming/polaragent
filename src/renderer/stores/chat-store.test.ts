@@ -431,3 +431,38 @@ describe("压缩状态机", () => {
     });
   });
 });
+
+describe("session creation admission", () => {
+  it("coalesces repeated clicks while creation is pending", async () => {
+    const session = {
+      id: "created",
+      title: null,
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: "",
+      archived: false,
+      pinned: false,
+      messageCount: 0,
+      model: null,
+    };
+    let finish!: (value: typeof session) => void;
+    const create = vi.fn(
+      () =>
+        new Promise<typeof session>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.stubGlobal("window", { oint: { sessions: { create } } });
+    useChatStore.setState({ sessions: [], activeSessionId: null });
+    const activate = vi.spyOn(useChatStore.getState(), "setActiveSession").mockResolvedValue();
+    const first = useChatStore.getState().createSession();
+    const second = useChatStore.getState().createSession();
+    expect(create).toHaveBeenCalledTimes(1);
+    finish(session);
+    await Promise.all([first, second]);
+    expect(useChatStore.getState().sessions).toHaveLength(1);
+    expect(activate).toHaveBeenCalledTimes(1);
+    activate.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});

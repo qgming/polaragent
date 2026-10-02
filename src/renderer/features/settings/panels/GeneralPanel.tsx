@@ -16,7 +16,13 @@ import {
 /** 面板主体：settings 已就绪后由外层传入，避免内部到处判空 */
 function GeneralPanelBody({ settings }: { settings: Settings }) {
   const { t, i18n } = useTranslation();
-  const update = useSettingsStore((s) => s.update);
+  const save = useSettingsStore((s) => s.update);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const update = async (patch: Partial<Settings>) => {
+    const ok = await save(patch);
+    setSaveFailed(!ok);
+    return ok;
+  };
   // 滑块拖动过程只更新本地，松开指针或键盘释放时才落盘
   const [chatFontSize, setChatFontSize] = useState(settings.chatFontSize);
 
@@ -29,13 +35,18 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
   };
 
   const handlePickLanguage = (language: "zh-CN" | "en-US") => {
-    void update({ language });
-    // 界面语言立即切换，与设置落盘并行
-    void i18n.changeLanguage(language);
+    void update({ language }).then((ok) => {
+      if (ok) void i18n.changeLanguage(language);
+    });
   };
 
   return (
     <div className="space-y-6">
+      {saveFailed && (
+        <p role="alert" className="text-sm text-destructive">
+          {t("chat.settingsSaveFailed")}
+        </p>
+      )}
       <SettingsSection title={t("settings.appearanceSection")}>
         <SettingsField
           label={t("settings.theme")}
@@ -102,6 +113,7 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
               options={[
                 { value: "standard", label: t("settings.agentModeStandard") },
                 { value: "orchestrate", label: t("settings.agentModeOrchestrate") },
+                { value: "plan", label: t("settings.agentModePlan") },
               ]}
             />
           }

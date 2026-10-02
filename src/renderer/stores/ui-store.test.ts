@@ -152,7 +152,7 @@ describe("右侧面板的标签", () => {
     expect(useUiStore.getState().rightPanelTabs).toHaveLength(1);
   });
 
-  it("关掉最后一个标签回到选择列表那一屏（面板不收起）", () => {
+  it("关掉最后一个标签立即收起面板", () => {
     useUiStore.getState().openRightPanel("files");
     const only = useUiStore.getState().activeTabId;
 
@@ -161,7 +161,7 @@ describe("右侧面板的标签", () => {
     const state = useUiStore.getState();
     expect(state.rightPanelTabs).toHaveLength(0);
     expect(state.activeTabId).toBeNull();
-    expect(state.rightPanelOpen).toBe(true);
+    expect(state.rightPanelOpen).toBe(false);
   });
 
   it("showRightPanelChooser 只清焦点，标签都还留着", () => {
@@ -459,4 +459,13 @@ describe("数据统计模态窗（statsOpen）", () => {
     expect(useUiStore.getState().statsOpen).toBe(false);
     expect(useUiStore.getState().searchOpen).toBe(true);
   });
+});
+
+it("clears file navigation when its target browser tab closes", () => {
+  resetPanel();
+  useUiStore.getState().openInBrowser({ url: "file:///D:/a.html", title: "a.html" });
+  const request = useUiStore.getState().browserOpenRequest;
+  expect(request).not.toBeNull();
+  useUiStore.getState().closeRightPanelTab(request?.tabId ?? "");
+  expect(useUiStore.getState().browserOpenRequest).toBeNull();
 });

@@ -1,5 +1,5 @@
-// 会话自动命名：首轮问答结束后，用默认路由模型把对话内容概括成标题。
-// 与 ai-approver 同构：一次性纯文本补全 + 任何异常都返回 null（保留默认会话名，不影响主流程）。
+// 会话自动命名：首条需求受理后，用会话模型概括需求；回复不是必要素材。
+// 与 ai-approver 同构：一次性纯文本补全 + 生成异常返回 null，由后台调度有限重试并提供需求摘要兜底。
 
 import type { MutableModels } from "@earendil-works/pi-ai";
 import type { ChatMessage, Settings } from "@/shared/contracts";
@@ -23,7 +23,7 @@ export interface SessionTitleInput {
 
 /** 生成器可选的副作用钩子：真的要去调模型前通知调用方 */
 export interface SessionTitleHooks {
-  /** 模型可用、即将发起补全时调用；调用方据此记下「本次进程已试过」 */
+  /** 模型可用、即将发起补全时调用，便于统计尝试次数 */
   onAttempt?: () => void;
 }
 
@@ -81,7 +81,7 @@ function textOf(message: ChatMessage): string {
 }
 
 /**
- * 从消息列表里挑命名素材：第一条有文字的**用户**消息 + 其后第一条有文字的**助手**消息。
+ * 从消息列表里挑命名素材：第一条有文字的用户消息 + 可选的首条助手回复。
  * 一次运行会先落用户条目再落助手条目，只按顺序取会拿错角色，因此按角色各找第一条。
  */
 export function collectTitleSource(messages: readonly ChatMessage[]): SessionTitleInput | null {
@@ -92,10 +92,9 @@ export function collectTitleSource(messages: readonly ChatMessage[]): SessionTit
   const assistant = messages
     .slice(userIndex + 1)
     .find((message) => message.role === "assistant" && textOf(message) !== "");
-  if (assistant === undefined) return null;
   return {
     userText: textOf(messages[userIndex] as ChatMessage),
-    assistantText: textOf(assistant),
+    assistantText: assistant === undefined ? "" : textOf(assistant),
   };
 }
 
@@ -116,13 +115,23 @@ function stripWrappers(raw: string): string | null {
   let text = raw.trim();
   if (text === "") return null;
 
-  // 提示词要求只输出 JSON：优先解 JSON（能正确处理转义引号），失败才走下面的文本启发式
-  const fromJson = titleFromJson(text);
-  if (fromJson !== null) text = fromJson;
-
   // 代码块围栏：模型偶尔会照格式习惯包一层
   const fenced = FENCED_BLOCK.exec(text);
   if (fenced?.[1] !== undefined) text = fenced[1].trim();
+
+  // JSON 形状的坏输出不能作为普通标题保存；交给有限重试和用户需求摘要兜底。
+  if (/^[{[]/.test(text)) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+      const title = (parsed as { title?: unknown }).title;
+      if (typeof title !== "string" || title.trim() === "") return null;
+      text = title.trim();
+    } catch { return null; }
+  } else {
+    const fromJson = titleFromJson(text);
+    if (fromJson !== null) text = fromJson;
+  }
 
   if (text === "") return null;
   // 只要第一行：模型偶尔会附一行解释
@@ -175,9 +184,15 @@ function truncate(text: string, max: number): string {
 /** 自动命名所需的外部能力：抽出来便于直接单测「什么时候该命名」 */
 export interface AutoTitleDeps {
   generate: SessionTitleGenerator;
+  /** An admitted first input can be named before its transcript projection is ready. */
+  source?: SessionTitleInput;
   readTitle: (sessionId: string) => Promise<string | null>;
   loadMessages: (sessionId: string) => Promise<readonly ChatMessage[]>;
   rename: (sessionId: string, title: string) => Promise<void>;
+  /** Production store uses a single transaction to protect concurrent manual renames. */
+  renameIfUntitled?: (sessionId: string, title: string) => Promise<boolean>;
+  maxAttempts?: number;
+  fallback?: boolean;
   /** 真正要调模型前的记账回调（素材不足时不调用，留给下一轮） */
   onAttempt?: () => void;
   /** 会话实际使用的模型；透传给生成器，缺省时生成器回落默认模型 */
@@ -196,18 +211,34 @@ export async function autoTitleSession(
   deps: AutoTitleDeps,
 ): Promise<string | null> {
   if ((await deps.readTitle(sessionId)) !== null) return null;
-  const source = collectTitleSource(await deps.loadMessages(sessionId));
+  const source = collectTitleSource(await deps.loadMessages(sessionId)) ?? deps.source;
   if (!source) return null;
 
-  const title = await deps.generate(
-    { ...source, ...(deps.modelRef === undefined ? {} : { modelRef: deps.modelRef }) },
-    { onAttempt: deps.onAttempt },
-  );
+  let title: string | null = null;
+  const attempts = Math.max(1, Math.min(3, deps.maxAttempts ?? 1));
+  for (let attempt = 0; attempt < attempts && title === null; attempt++) {
+    if ((await deps.readTitle(sessionId)) !== null) return null;
+    try {
+      title = await deps.generate(
+        { ...source, ...(deps.modelRef === undefined ? {} : { modelRef: deps.modelRef }) },
+        { onAttempt: deps.onAttempt },
+      );
+    } catch {
+      // A custom provider may reject instead of returning null; retries stay bounded.
+    }
+  }
+  if (title === null && deps.fallback) {
+    // The user's text is trusted title material, not model JSON output. Preserve structured requests.
+    const summary = source.userText.replace(/\s+/gu, " ").trim();
+    title = summary ? Array.from(summary).slice(0, MAX_TITLE_CHARS).join("") : null;
+  }
   if (title === null) return null;
   // 生成期间（最长 15s）用户可能手动改了名：这时不该覆盖
   if ((await deps.readTitle(sessionId)) !== null) return null;
 
-  await deps.rename(sessionId, title);
+  if (deps.renameIfUntitled) {
+    if (!(await deps.renameIfUntitled(sessionId, title))) return null;
+  } else await deps.rename(sessionId, title);
   return (await deps.readTitle(sessionId)) === title ? title : null;
 }
 

@@ -213,3 +213,19 @@ describe("没有绑定工作目录的会话", () => {
     expect(screen.queryByText(/临时目录/)).toBeNull();
   });
 });
+
+it("shows a failed initial listing without a permanent loading message and can retry", async () => {
+  stubFiles("text");
+  const list = vi.fn(window.oint.files.listDirectory);
+  list.mockRejectedValueOnce(new Error("session missing"));
+  window.oint.files.listDirectory = list;
+  render(<FilesPanel />);
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "读取失败：session missing",
+  );
+  expect(screen.queryByText("加载中…")).toBeNull();
+  fireEvent.click(screen.getByLabelText("刷新"));
+  await screen.findByText("a.md");
+  expect(screen.queryByRole("alert")).toBeNull();
+});

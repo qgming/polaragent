@@ -27,6 +27,7 @@ export function RightPanelToggle(): React.JSX.Element {
       type="button"
       variant="ghost"
       size="icon-sm"
+      data-right-panel-toggle
       aria-label={label}
       aria-expanded={open}
       title={label}

@@ -331,6 +331,12 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
   useStickToBottom(viewportRef);
 
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const loadError = useChatStore((s) =>
+    s.activeSessionId === null ? undefined : s.sessionLoadErrors[s.activeSessionId],
+  );
+  const loadingFirst = useChatStore(
+    (s) => s.activeSessionId !== null && s.loadingFirstBySession[s.activeSessionId] === true,
+  );
   /** 会话统计与 Token 用量：状态条的两个胶囊各取一份（缺失时不渲染对应胶囊） */
   const sessionStats = useChatStore((s) =>
     s.activeSessionId === null ? undefined : s.statsBySession[s.activeSessionId],
@@ -528,7 +534,32 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
         data-slot="aui_thread-viewport"
         className="app-scrollbar relative min-h-0 flex-1 overflow-y-auto"
       >
-        {isEmpty ? (
+        {loadError && (
+          <div
+            role="alert"
+            className="mx-auto flex max-w-(--thread-max-width) items-center justify-between gap-3 px-4 py-3 text-sm text-destructive"
+          >
+            <span>{t("search.openFailed")}</span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              onClick={() => {
+                if (activeSessionId)
+                  void useChatStore
+                    .getState()
+                    .setActiveSession(activeSessionId)
+                    .catch(() => {});
+              }}
+            >
+              {t("chat.retryLoad")}
+            </button>
+          </div>
+        )}
+        {isEmpty && loadingFirst ? (
+          <p role="status" className="p-6 text-center text-sm text-ink-3">
+            {t("chat.loadingConversation")}
+          </p>
+        ) : isEmpty && loadError ? null : isEmpty ? (
           /*
             新会话页：整屏换一棵树，不把输入框留在底部的脚注里。
             这一屏没有消息，滚动 / 贴底 / 消息地图那一整套前提都不成立；

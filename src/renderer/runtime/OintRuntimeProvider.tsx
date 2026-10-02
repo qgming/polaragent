@@ -1,15 +1,20 @@
 import {
   type AppendMessage,
+  type AssistantRuntime,
   AssistantRuntimeProvider,
+  type Attachment,
   type ExternalStoreThreadListAdapter,
+  MessageNotSentError,
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { commandSpec, runCommand, unavailableReason } from "@/renderer/features/chat/commands";
 import { dispatchSlashInput } from "@/renderer/features/chat/slash-commands";
 import { JobToolUIs, SubagentToolUIs } from "@/renderer/features/chat/ToolParts";
 import { loadSlashCommands, resolveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
+import { selectSessionTitles } from "@/renderer/lib/session-title";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { SUBAGENT_TOOL_NAMES, useSubagentStore } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
@@ -66,6 +71,10 @@ export function OintRuntimeProvider({
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
+  const runtimeRef = useRef<AssistantRuntime | null>(null);
+  const composerDrafts = useRef(
+    new Map<string, { text: string; attachments: readonly Attachment[] }>(),
+  ).current;
   const messages = useChatStore((state) =>
     state.activeSessionId
       ? (state.messagesBySession[state.activeSessionId] ?? EMPTY_MESSAGES)
@@ -74,6 +83,7 @@ export function OintRuntimeProvider({
   const isRunning = useChatStore((state) =>
     state.activeSessionId ? state.runningBySession[state.activeSessionId] === true : false,
   );
+  const sessionTitles = useChatStore(useShallow(selectSessionTitles));
   const sessions = useChatStore((state) => state.sessions);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   /**
@@ -94,6 +104,7 @@ export function OintRuntimeProvider({
   }, []);
   const onNew = useCallback(
     async (message: AppendMessage) => {
+      let targetSessionId = activeSessionId;
       const resolved = await resolveSlashMessage(appendMessageToText(message), workingDir);
       /**
        * 指令**不产生模型消息**：整条命令在这里被消费掉。
@@ -104,6 +115,15 @@ export function OintRuntimeProvider({
       if (resolved.kind === "command") {
         const spec = commandSpec(resolved.name);
         if (spec !== undefined) {
+          if (useChatStore.getState().activeSessionId !== targetSessionId) {
+            const key = targetSessionId ?? "__new__";
+            if (!composerDrafts.has(key))
+              composerDrafts.set(key, {
+                text: appendMessageToText(message),
+                attachments: message.attachments ?? [],
+              });
+            throw new MessageNotSentError("The conversation changed before the command could run.");
+          }
           const state = useChatStore.getState();
           const sessionId = state.activeSessionId;
           const reason = unavailableReason(spec, {
@@ -113,7 +133,7 @@ export function OintRuntimeProvider({
           const notify = useUiStore.getState().notifyComposer;
           if (reason !== null) {
             notify(reason);
-            return;
+            throw new MessageNotSentError("The command is not available right now.");
           }
           const feedback = await runCommand(spec, resolved.rest, {
             compact: (instructions) => useChatStore.getState().compact(instructions),
@@ -131,9 +151,34 @@ export function OintRuntimeProvider({
        * 模型也收不到。测试直接钉在这个函数上。
        */
       const attachments = appendMessageToAttachments(message);
-      await useChatStore.getState().send(text, attachments);
+      try {
+        if (targetSessionId === null) {
+          await useChatStore.getState().createSession();
+          targetSessionId = useChatStore.getState().activeSessionId;
+        }
+        await useChatStore.getState().send(text, attachments, targetSessionId);
+      } catch (error) {
+        const draft = {
+          text: appendMessageToText(message),
+          attachments: message.attachments ?? [],
+        };
+        const key = targetSessionId ?? "__new__";
+        if (!composerDrafts.has(key)) composerDrafts.set(key, draft);
+        if (useChatStore.getState().activeSessionId === targetSessionId) {
+          const composer = runtimeRef.current?.thread.composer;
+          if (composer && !composer.getState().text && !composer.getState().attachments.length) {
+            composer.setText(draft.text);
+            for (const attachment of draft.attachments) {
+              void composer.addAttachment({ ...attachment, content: attachment.content ?? [] });
+            }
+          }
+          useUiStore.getState().notifyComposer({ messageKey: "chat.sendFailed", level: "error" });
+        }
+        // assistant-ui restores rejected sends, including attachment payloads.
+        throw new MessageNotSentError(error instanceof Error ? error.message : String(error));
+      }
     },
-    [workingDir],
+    [workingDir, composerDrafts, activeSessionId],
   );
 
   const onCancel = useCallback(async () => {
@@ -168,7 +213,7 @@ export function OintRuntimeProvider({
       threads: sessions.map((session) => ({
         id: session.id,
         status: "regular",
-        title: session.title ?? undefined,
+        title: sessionTitles[session.id] || undefined,
         custom: { archived: session.archived, updatedAt: session.updatedAt },
       })),
       onSwitchToNewThread: () => useChatStore.getState().createSession(),
@@ -184,7 +229,7 @@ export function OintRuntimeProvider({
         if (confirmed) await useChatStore.getState().removeSession(threadId);
       },
     }),
-    [sessions, activeSessionId],
+    [sessions, activeSessionId, sessionTitles],
   );
 
   const adapters = useMemo(() => ({ attachments, threadList }), [attachments, threadList]);
@@ -263,6 +308,49 @@ export function OintRuntimeProvider({
     convertMessage,
     adapters,
   });
+
+  runtimeRef.current = runtime;
+
+  useEffect(() => {
+    const key = activeSessionId ?? "__new__";
+    const composer = runtime.thread.composer;
+    const draft = composerDrafts.get(key);
+    if (draft) {
+      composer.setText(draft.text);
+      for (const attachment of draft.attachments) {
+        const input = attachment.content?.length
+          ? {
+              ...attachment,
+              id: attachment.id,
+              type: attachment.type,
+              name: attachment.name,
+              contentType: attachment.contentType,
+              content: attachment.content,
+            }
+          : attachment.file;
+        if (input)
+          void composer.addAttachment(input).catch(() => {
+            if ((useChatStore.getState().activeSessionId ?? "__new__") === key)
+              useUiStore
+                .getState()
+                .notifyComposer({ messageKey: "chat.sendFailed", level: "error" });
+          });
+      }
+    }
+    return composer.subscribe(() => {
+      if ((useChatStore.getState().activeSessionId ?? "__new__") !== key) return;
+      const state = composer.getState();
+      if (!state.text && state.attachments.length === 0) composerDrafts.delete(key);
+      else composerDrafts.set(key, { text: state.text, attachments: state.attachments });
+    });
+  }, [activeSessionId, runtime, composerDrafts]);
+
+  useEffect(() => {
+    for (const key of composerDrafts.keys()) {
+      if (key !== "__new__" && !sessions.some((session) => session.id === key))
+        composerDrafts.delete(key);
+    }
+  }, [sessions, composerDrafts]);
 
   /**
    * Task 系列注册成独立显示的工具 UI（见 ToolParts 的说明）。

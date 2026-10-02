@@ -186,6 +186,12 @@ describe("BrowserPanel 的 webview 引导", () => {
  * 注意不能断言「某个元素拿到过」：第一次挂载那个也确实拿到过，只是马上被摘掉了。
  */
 describe("用浏览器打开本地文件（HTML 卡片）", () => {
+  beforeEach(() => {
+    useUiStore.setState({
+      rightPanelTabs: [{ id: "t1", view: "browser", title: null }],
+      activeTabId: "t1",
+    });
+  });
   /**
    * **核心回归**：请求不能是「谁先读到谁清掉」的一次性事件。
    *
@@ -208,7 +214,12 @@ describe("用浏览器打开本地文件（HTML 卡片）", () => {
       rightPanelOpen: true,
       rightPanelTabs: [{ id: "t1", view: "browser", title: "page.html" }],
       activeTabId: "t1",
-      browserOpenRequest: { url: "file:///D:/p/page.html", title: "page.html", token: 1 },
+      browserOpenRequest: {
+        tabId: "t1",
+        url: "file:///D:/p/page.html",
+        title: "page.html",
+        token: 1,
+      },
     });
 
     const first = render(<BrowserPanel tabId="t1" active />);
@@ -491,4 +502,19 @@ describe("BrowserPanel 的页面标题与模型提示", () => {
     bridge.emit({ type: "agent", active: false, note: "" } as BrowserEvent);
     await waitFor(() => expect(screen.queryByText("Oint 正在操作这个页面…")).toBeNull());
   });
+});
+
+it("does not navigate another tab when activating it after opening a file URL", () => {
+  stubBrowserBridge();
+  const { webviews } = stubWebviewElement();
+  useUiStore.setState({
+    browserOpenRequest: {
+      tabId: "first",
+      url: "file:///D:/private.html",
+      title: "private",
+      token: 80,
+    },
+  });
+  render(<BrowserPanel tabId="second" active />);
+  expect(webviews[0]?.getAttribute("src")).toBe("about:blank");
 });

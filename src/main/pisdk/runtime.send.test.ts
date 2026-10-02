@@ -1,5 +1,5 @@
 // Product behavior through the official durable scheduler, events and SQLite storage.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -28,6 +28,8 @@ import { type ChatRuntime, createChatRuntime } from "./runtime";
 import { createSessionStore, type SessionStore } from "./session-store";
 import { createSubagentExtension, createSubagentRunner } from "./subagent-runner";
 import { createToolTestApi } from "./tools/tool-test-api";
+import { readDocument } from "./durable-session";
+import { RunModeDoc } from "./plan-mode";
 
 const providerState = vi.hoisted(() => ({ current: undefined as FauxProviderHandle | undefined }));
 const preprocessing = vi.hoisted(() => ({
@@ -261,6 +263,101 @@ async function seedPendingChild(modelId?: string) {
 }
 
 describe("native durable chat runtime", () => {
+  it("background naming starts from the user request without delaying chat or overriding manual names", async () => {
+    await runtime.dispose();
+    let resolveTitle: (title: string) => void = () => {};
+    const pendingTitle = new Promise<string>((resolve) => { resolveTitle = resolve; });
+    const generate = vi.fn(async () => pendingTitle);
+    runtime = createChatRuntime({
+      getSettings: async () => settings,
+      sessionStore: store,
+      approvals,
+      resolveWorkingDir: async () => directory,
+      emit: (event) => events.push(event),
+      sessionTitles: generate,
+    });
+    faux.setResponses([fauxAssistantMessage("answer")]);
+    try {
+      await runtime.send(sessionId, "修复登录超时");
+      await vi.waitFor(() => expect(generate).toHaveBeenCalled());
+      expect(generate.mock.calls[0]?.length).toBeGreaterThan(0);
+      expect(await store.readTitle(sessionId)).toBeNull();
+      await store.rename(sessionId, "我的标题");
+    } finally {
+      resolveTitle("自动标题");
+    }
+    await runtime.closeSession(sessionId);
+    expect(await store.readTitle(sessionId)).toBe("我的标题");
+  });
+
+  it("plan blocks writes and unknown MCP tools even with full permission, and skips plugin hooks", async () => {
+    settings.permissionMode = "full";
+    await store.setAgentMode(sessionId, "plan");
+    const execute = vi.fn(async () => ({ content: [{ type: "text" as const, text: "unexpected" }] }));
+    mcpTools = [defineTool({ name: "mcp__test__write", description: "write", parameters: Type.Object({}), execute })];
+    const target = path.join(directory, "forbidden.txt");
+    faux.setResponses([
+      toolResponse(fauxToolCall("write", { path: target, content: "changed" })),
+      toolResponse(fauxToolCall("mcp__test__write", {})),
+      fauxAssistantMessage("只读方案"),
+    ]);
+    await runtime.send(sessionId, "规划变更");
+    await expect(readFile(target)).rejects.toThrow();
+    expect(execute).not.toHaveBeenCalled();
+    expect(pluginHost.dispatch).not.toHaveBeenCalled();
+    expect(approvals.request).not.toHaveBeenCalled();
+  });
+
+  it("mode changes cannot relax an active plan turn and execution resumes on a new turn", async () => {
+    settings.permissionMode = "full";
+    await store.setAgentMode(sessionId, "plan");
+    const target = path.join(directory, "next-turn.txt");
+    faux.setResponses([
+      async () => {
+        await store.setAgentMode(sessionId, "standard");
+        return toolResponse(fauxToolCall("write", { path: target, content: "wrong" }));
+      },
+      fauxAssistantMessage("plan finished"),
+    ]);
+    await runtime.send(sessionId, "plan");
+    await expect(readFile(target)).rejects.toThrow();
+    faux.setResponses([
+      toolResponse(fauxToolCall("write", { path: target, content: "approved" })),
+      fauxAssistantMessage("done"),
+    ]);
+    await runtime.send(sessionId, "execute");
+    expect(await readFile(target, "utf8")).toBe("approved");
+    expect(pluginHost.dispatch).toHaveBeenCalled();
+  });
+
+  it("restores the persisted plan policy before running or refreshing extensions", async () => {
+    await store.setAgentMode(sessionId, "plan");
+    faux.setResponses([fauxAssistantMessage("plan")]);
+    await runtime.send(sessionId, "plan");
+    await store.setAgentMode(sessionId, "standard");
+    await runtime.closeSession(sessionId);
+    await runtime.prepareSubagent(sessionId);
+    const opened = await store.open(sessionId);
+    if (!opened) throw new Error("Missing session");
+    expect(await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId))
+      .toEqual({ mode: "plan" });
+    mcpTools = [defineTool({ name: "mcp__late__write", description: "late", parameters: Type.Object({}), execute: async () => ({ content: [] }) })];
+    for (const notify of mcpListeners) notify();
+    await vi.waitFor(async () => {
+      const agent = await readDocument(opened.storage, "pi.agent", opened.conversationId);
+      expect(JSON.stringify(agent?.extensions)).not.toContain("test-plugin");
+      expect(JSON.stringify(agent?.tools)).not.toContain("mcp__late__write");
+      expect(JSON.stringify(agent?.tools)).not.toContain('"write"');
+    });
+    faux.setResponses([fauxAssistantMessage("execute")]);
+    await runtime.send(sessionId, "execute");
+    expect(await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId))
+      .toEqual({ mode: "standard" });
+    const agent = await readDocument(opened.storage, "pi.agent", opened.conversationId);
+    expect(JSON.stringify(agent?.extensions)).toContain("test-plugin");
+    expect(JSON.stringify(agent?.tools)).toContain("mcp__late__write");
+  });
+
   it("persists messages, authoritative entry links and system instructions", async () => {
     let request: TranscriptContext | undefined;
     faux.setResponses([

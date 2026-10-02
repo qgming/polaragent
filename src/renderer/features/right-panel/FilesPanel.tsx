@@ -180,7 +180,7 @@ export function FilesPanel(): React.JSX.Element {
       {error !== null && <PanelError message={`${t("rightPanel.filesLoadFailed")}：${error}`} />}
 
       {listing === null ? (
-        <div className={cn(mono, "p-4 text-ink-4")}>{t("common.loading")}</div>
+        loading && <div className={cn(mono, "p-4 text-ink-4")}>{t("common.loading")}</div>
       ) : listing.entries.length === 0 ? (
         /* 临时目录的空态多说一句（只在根上）：用户看不到「工作目录」这个概念，
            而「会话删掉时这里的文件会一起清掉」是他该知道的事（保存到别处则不会） */

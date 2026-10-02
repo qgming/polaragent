@@ -34,6 +34,10 @@ export const enUS = {
     The five view names are the five entries of the panel's first screen.
   */
   rightPanel: {
+    fileDraftStorageFailed: "Draft recovery is unavailable. Save your file before quitting.",
+    fileChangedOnDisk: "This file changed on disk. Refresh and review it before saving.",
+    terminalBackgroundHint:
+      "Closing this panel keeps terminals running. Close a terminal tab to stop its process.",
     open: "Open right panel",
     close: "Collapse right panel",
     title: "Right panel",
@@ -185,6 +189,7 @@ export const enUS = {
     inputPlaceholder: "Type a message. Enter to send, Shift+Enter for a new line",
     newChat: "New chat",
     welcome: "What would you like to do today?",
+    welcomePlanSubtitle: "Read, research, and make a plan. Changes begin only after you start execution.",
     welcomeSubtitle: "Hand the task to Oint — it can read and write code and run commands.",
     // New-chat page: the "which project does this run in" row and the starter prompts below it
     welcomeProject: "Project this chat runs in",
@@ -249,13 +254,25 @@ export const enUS = {
     // Both names are **nouns** (Agent / Orchestrator) — they answer "who am I talking to",
     // not "how strong is it" (that's the permission chip's axis).
     agentMode: "Agent mode",
-    agentModeStandard: "Agent",
+    agentModeStandard: "Default",
+    agentModePlanDesc: "Research and plan in read-only mode; changes require starting execution",
+    planStartExecution: "Start execution",
+    planExecuteMessage: "Please start executing the plan above.",
+    planNotice:
+      "Plan mode researches and plans without making changes. Starting execution switches to Default mode.",
+    settingsSaveFailed: "Could not save settings. Please try again.",
+    modelSaveFailed: "Could not save model. Please try again.",
+    retryLoad: "Retry loading",
+    loadingConversation: "Loading conversation…",
+    sendFailed: "Could not send. Your draft has been kept; please try again.",
     agentModeStandardDesc: "Works out the task type and does the work itself",
-    agentModeOrchestrate: "Orchestrator",
+    agentModeOrchestrate: "Orchestrate",
+    agentModePlan: "Plan",
     agentModeOrchestrateDesc: "Delegates to subagents first, keeps planning and verification",
-    agentModeRunning: "Can't switch modes while running — wait for this turn to finish",
+    agentModeRunning: "Could not save mode. Please try again.",
     // Switching mid-run is allowed and applies to the next turn — say so explicitly
-    agentModeNextTurn: "You can switch while running; it takes effect on the next turn",
+    agentModePendingTurn: "Next send",
+    agentModeNextTurn: "Applies to your next send after the current run finishes",
     model: "Model",
     thinkingLevel: "Thinking level",
     loadingOlder: "Loading…",
@@ -733,9 +750,10 @@ export const enUS = {
     agentSection: "Agent mode",
     agentMode: "Default mode",
     agentModeDesc:
-      "Which mode new sessions start in. Any session can pick its own from the mode button at the left of the composer. Both modes have identical tool access — only the system prompt differs",
-    agentModeStandard: "Agent",
-    agentModeOrchestrate: "Orchestrator",
+      "Mode for new conversations, overridable in each composer. Default handles tasks directly, Orchestrate delegates, and Plan researches without making changes.",
+    agentModeStandard: "Default",
+    agentModeOrchestrate: "Orchestrate",
+    agentModePlan: "Plan",
 
     // —— MCP: external tool sources (own settings section) ——
     mcp: "MCP",
@@ -1064,6 +1082,7 @@ export const enUS = {
     retry: "Retry",
   },
   search: {
+    openFailed: "Could not load the conversation. Please try again.",
     globalTitle: "Search",
     globalDesc: "Search sessions, messages, settings or commands",
     globalPlaceholder: "Search sessions, messages, settings or commands…",

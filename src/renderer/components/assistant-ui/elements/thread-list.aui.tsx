@@ -52,6 +52,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/renderer/components/ui/button";
 import {
   DropdownMenu,
@@ -63,6 +64,7 @@ import {
 import { Input } from "@/renderer/components/ui/input";
 import { Skeleton } from "@/renderer/components/ui/skeleton";
 import { buildSidebarSections, type ProjectSection } from "@/renderer/lib/projects";
+import { selectSessionTitles } from "@/renderer/lib/session-title";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useProjectsStore } from "@/renderer/stores/projects-store";
@@ -160,6 +162,7 @@ type SectionId = "pinned" | "projects" | "recent";
 export const ThreadListSections: FC<{ searchQuery?: string }> = ({ searchQuery = "" }) => {
   const { t } = useTranslation();
   const sessions = useChatStore((state) => state.sessions);
+  const sessionTitles = useChatStore(useShallow(selectSessionTitles));
   const projects = useProjectsStore((state) => state.projects);
   const threadIds = useAuiState((state) => state.threads.threadIds);
   const [collapsed, setCollapsed] = useState<Partial<Record<SectionId, boolean>>>({});
@@ -182,9 +185,9 @@ export const ThreadListSections: FC<{ searchQuery?: string }> = ({ searchQuery =
     if (query === "") return sessions;
     // 无标题的会话照它**显示出来的**兜底文字参与匹配，否则搜「新对话」搜不到
     return sessions.filter((session) =>
-      (session.title ?? t("sidebar.newChat")).toLowerCase().includes(query),
+      (sessionTitles[session.id] || t("sidebar.newChat")).toLowerCase().includes(query),
     );
-  }, [sessions, query, t]);
+  }, [sessions, sessionTitles, query, t]);
 
   const sections = useMemo(() => buildSidebarSections(filtered, projects), [filtered, projects]);
 
@@ -556,6 +559,7 @@ const ThreadListSkeleton: FC = () => {
 
 export const ThreadListItem: FC = () => {
   const { t } = useTranslation();
+  const displayTitle = useAuiState((state) => state.threadListItem.title) ?? t("sidebar.newChat");
   const auiRunning = useAuiState((s) => s.threadListItem.isRunning);
   const threadId = useAuiState((s) => s.threadListItem.id);
   // 置顶状态取 chat-store：它是唯一真源，置顶后菜单文案立刻变「取消置顶」
@@ -604,7 +608,11 @@ export const ThreadListItem: FC = () => {
               className="text-muted-foreground me-1.5 size-3.5 shrink-0 animate-spin"
             />
           )}
-          <span data-slot="aui_thread-list-item-title" className="min-w-0 flex-1 truncate">
+          <span
+            title={displayTitle}
+            data-slot="aui_thread-list-item-title"
+            className="min-w-0 flex-1 truncate"
+          >
             <ThreadListItemPrimitive.Title fallback={t("sidebar.newChat")} />
           </span>
           {isRunning && <span className="sr-only">{t("chat.running")}</span>}

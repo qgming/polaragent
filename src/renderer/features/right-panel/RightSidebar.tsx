@@ -1,5 +1,5 @@
 import { Plug, Plus, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { WindowControls } from "@/renderer/app/WindowControls";
 import { Button } from "@/renderer/components/ui/button";
@@ -14,8 +14,7 @@ import { RightPanelChooser } from "./RightPanelChooser";
  *
  * 两屏结构（都在这一块界面内，没有第二层浮层）：
  *   1. **某个标签的内容** —— 顶行是标签条，点标签即切换；
- *   2. **选择列表**（activeTabId === null）—— 展开面板后的第一屏，也是关掉最后一个
- *      标签后落到的那一屏：列出五个入口，点一项即开出一个（或复用）标签。
+ *   2. **选择列表**（activeTabId === null）—— 展开面板后的第一屏：列出五个入口，点一项即开出一个（或复用）标签。
  * 收起只由内容区顶栏那颗右侧栏开关负责（面板内刻意没有收起按钮，
  * 理由与左侧栏一致：开合只放在始终可见的那一处）。
  *
@@ -57,6 +56,15 @@ export function RightSidebar(): React.JSX.Element {
   const activateRightPanelTab = useUiStore((s) => s.activateRightPanelTab);
   const closeRightPanelTab = useUiStore((s) => s.closeRightPanelTab);
   const showRightPanelChooser = useUiStore((s) => s.showRightPanelChooser);
+
+  const panelRef = useRef<HTMLElement>(null);
+  const ownedFocus = useRef(false);
+  useEffect(() => {
+    if (!open && ownedFocus.current) {
+      ownedFocus.current = false;
+      document.querySelector<HTMLButtonElement>("[data-right-panel-toggle]")?.focus();
+    }
+  }, [open]);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
@@ -110,7 +118,18 @@ export function RightSidebar(): React.JSX.Element {
 
   return (
     <aside
+      ref={panelRef}
+      onFocusCapture={() => {
+        ownedFocus.current = true;
+      }}
+      onBlurCapture={(event) => {
+        // Removing the focused tab can yield a null relatedTarget. Preserve ownership
+        // until the collapse effect restores focus to the visible toggle.
+        if (event.relatedTarget !== null && !event.currentTarget.contains(event.relatedTarget))
+          ownedFocus.current = false;
+      }}
       inert={!open}
+      data-right-panel
       aria-label={t("rightPanel.title")}
       className="shrink-0 overflow-hidden bg-background transition-[width] duration-200 motion-reduce:transition-none"
       style={{ width: open ? "var(--layout-right-sidebar-width)" : "0px" }}
@@ -143,18 +162,18 @@ export function RightSidebar(): React.JSX.Element {
                 onClose={() => closeRightPanelTab(tab.id)}
               />
             ))}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("rightPanel.newTab")}
-              title={t("rightPanel.newTab")}
-              onClick={showRightPanelChooser}
-              className="shrink-0"
-            >
-              <Plus className="size-4" />
-            </Button>
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t("rightPanel.newTab")}
+            title={t("rightPanel.newTab")}
+            onClick={showRightPanelChooser}
+            className="shrink-0"
+          >
+            <Plus className="size-4" />
+          </Button>
           <div className="flex shrink-0 items-center gap-1">
             <WindowControls />
           </div>
@@ -240,6 +259,7 @@ function RightPanelTabButton({
       <button
         type="button"
         onClick={onSelect}
+        title={label}
         aria-current={active ? "true" : undefined}
         className="flex min-w-0 items-center gap-1.5"
       >

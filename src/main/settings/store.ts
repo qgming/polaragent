@@ -163,7 +163,7 @@ function normalizePermissionMode(raw: unknown): Settings["permissionMode"] {
  * 一个读坏了的值不该悄悄改变模型的工作方式；standard 是能力最完整的那个档。
  */
 function normalizeAgentMode(raw: unknown): Settings["agentMode"] {
-  return raw === "orchestrate" ? "orchestrate" : "standard";
+  return raw === "orchestrate" || raw === "plan" ? raw : "standard";
 }
 
 /** 语言容错：非法取值回落到默认语言（提示词、占位文案都按它索引） */

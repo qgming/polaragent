@@ -34,6 +34,9 @@ export const zhCN = {
     Ctrl 与 ⌘ 的前缀由 RightPanelChooser 按平台渲染。
   */
   rightPanel: {
+    fileDraftStorageFailed: "草稿暂时无法保存在本机；退出前请保存文件。",
+    fileChangedOnDisk: "文件已在外部修改，请刷新并核对后再保存。",
+    terminalBackgroundHint: "关闭面板不会停止终端；关闭终端标签才会结束进程。",
     open: "打开右侧面板",
     close: "收起右侧面板",
     title: "右侧面板",
@@ -182,6 +185,7 @@ export const zhCN = {
     inputPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行",
     newChat: "新建对话",
     welcome: "今天想做点什么？",
+    welcomePlanSubtitle: "先阅读资料、调研需求并制定方案，点击开始执行后再进行修改。",
     welcomeSubtitle: "把任务交给 Oint，它会读写代码、运行命令。",
     // 新会话页的输入框：顶部那一行「跑在哪个项目里」，以及下方的起手提示
     welcomeProject: "工作目录所属项目",
@@ -238,17 +242,28 @@ export const zhCN = {
     permissionDefault: "默认权限",
     permissionAiReview: "帮我审批",
     permissionFull: "完全访问",
-    // 智能体模式 chip：两个模式能力相同，所以每个选项都要说清「它到底改了什么」。
+    // 会话模式：说明执行方式与计划模式的只读边界。
     // 两个名字都是**名词**（智能体 / 编排者）—— 它们回答「你在跟谁说话」，
     // 而不是「强度多大」（那是权限按钮的维度）。
     agentMode: "智能体模式",
-    agentModeStandard: "智能体",
+    agentModeStandard: "默认",
+    agentModePlanDesc: "只读调研并制定方案，确认开始执行后才允许修改",
+    planStartExecution: "开始执行",
+    planExecuteMessage: "请按刚才的计划开始执行。",
+    planNotice: "计划模式只读调研与制定方案。开始执行将切换为默认模式。",
+    settingsSaveFailed: "设置保存失败，请重试",
+    modelSaveFailed: "模型保存失败，请重试",
+    retryLoad: "重试加载",
+    loadingConversation: "正在加载会话…",
+    sendFailed: "发送失败，草稿已保留，请重试",
     agentModeStandardDesc: "自己判断任务类型，该做的直接做",
-    agentModeOrchestrate: "编排者",
+    agentModeOrchestrate: "编排",
+    agentModePlan: "计划",
     agentModeOrchestrateDesc: "先派子智能体去做，自己负责计划与验收",
-    agentModeRunning: "运行中不能切换模式，等这一轮结束再试",
+    agentModeRunning: "模式保存失败，请重试",
     // 运行中允许切换，但生效在下一轮 —— 说明这一点，否则用户不知道「现在切了算不算」
-    agentModeNextTurn: "运行中也可以切换，将在下一轮生效",
+    agentModePendingTurn: "下次发送",
+    agentModeNextTurn: "当前运行结束后，下次发送时生效",
     model: "模型",
     thinkingLevel: "思考等级",
     loadingOlder: "加载中…",
@@ -729,9 +744,10 @@ export const zhCN = {
     agentSection: "智能体模式",
     agentMode: "默认模式",
     agentModeDesc:
-      "新会话默认用哪种模式；单个会话可以在输入框左侧的模式按钮上单独指定。两个模式的工具能力完全相同，区别只在于系统提示怎么写",
-    agentModeStandard: "智能体",
-    agentModeOrchestrate: "编排者",
+      "新会话使用的模式，可在会话输入框中单独指定。默认直接处理任务，编排委派子智能体，计划只读调研并制定方案",
+    agentModeStandard: "默认",
+    agentModeOrchestrate: "编排",
+    agentModePlan: "计划",
 
     // —— MCP：外部工具来源（独立分栏）——
     mcp: "MCP",
@@ -1057,6 +1073,7 @@ export const zhCN = {
     retry: "重试",
   },
   search: {
+    openFailed: "会话加载失败，请重试",
     globalTitle: "全局搜索",
     globalDesc: "搜索会话、消息、设置或命令",
     globalPlaceholder: "搜索会话、消息、设置或命令…",

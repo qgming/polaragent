@@ -33,9 +33,32 @@ function isBaseCombo(event: KeyboardEvent): boolean {
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!isBaseCombo(event)) return;
+      if (!isBaseCombo(event) || event.defaultPrevented || event.isComposing || event.repeat)
+        return;
+      // Shell control keys belong to the terminal, including Ctrl+B/K/N/P.
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".xterm")) return;
       const ui = useUiStore.getState();
       const key = event.key.toLowerCase();
+      if (
+        key === "w" &&
+        !event.shiftKey &&
+        target?.closest("[data-right-panel]") &&
+        ui.rightPanelOpen &&
+        ui.activeTabId !== null
+      ) {
+        event.preventDefault();
+        ui.closeRightPanelTab(ui.activeTabId);
+        return;
+      }
+      // Modal editing owns its focus; only modal navigation shortcuts remain global.
+      if (
+        (target?.closest('[role="dialog"]') ||
+          ui.pendingDeleteSessionId !== null ||
+          ui.editingMessageId !== null) &&
+        !["k", ",", "x"].includes(key)
+      )
+        return;
 
       /*
         带 Shift 的副表。
@@ -86,9 +109,8 @@ export function useGlobalShortcuts(): void {
         `("browser")`，于是"给面板加个快捷键"要改两处（描述子里写一遍、这里再写一遍），
         而漏改的症状是"提示里显示了键，按下去没反应"。
 
-        按键落到 `openRightPanel`：它展开面板并切到那个视图的标签，已有标签就复用 ——
-        所以 Ctrl+T 是「切到浏览器」（没有再建一个），多开走面板上的「+」，
-        不让同一个键在「切过去」和「再开一个」之间二选一。
+        按键落到 `openRightPanel`：单例面板复用已有标签，Ctrl+T 新建浏览器标签。
+        终端、输入法组合和已处理事件留给当前控件；Ctrl+W 只关闭有焦点的右栏标签。
 
         **顺序是刻意的：全局键在上面，面板键在这里。** 反过来的话，一个插件注册一个
         `Ctrl+K` 的面板就能顶掉全局搜索 —— 内置的六个全局键不该被任何扩展遮蔽。

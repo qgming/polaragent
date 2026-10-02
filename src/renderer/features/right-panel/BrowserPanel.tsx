@@ -738,7 +738,7 @@ export function BrowserPanel({
   });
 
   useEffect(() => {
-    if (!active || browserOpenRequest === null) return;
+    if (!active || browserOpenRequest === null || browserOpenRequest.tabId !== tabId) return;
     const element = webviewRef.current;
     if (element === null) return;
     // 已经在这个元素上应用过这一条请求：不重复导航（否则每次重渲染都刷新一遍）
@@ -752,7 +752,7 @@ export function BrowserPanel({
     setFailed(false);
     setLoading(true);
     element.setAttribute("src", browserOpenRequest.url);
-  }, [active, browserOpenRequest]);
+  }, [active, browserOpenRequest, tabId]);
 
   /**
    * 导航到用户输入的地址。

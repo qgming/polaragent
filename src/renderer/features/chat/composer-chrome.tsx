@@ -23,10 +23,12 @@ export const menuPanel = cn(floating, "rounded-2xl p-1.5");
 /** 单选行：形状取自 ComposerMenuItem，选中态用 fieldInteractive 底 + 墨色勾（取自 model-picker） */
 export function PickerItem({
   selected,
+  disabled = false,
   onSelect,
   children,
 }: {
   selected: boolean;
+  disabled?: boolean;
   onSelect: () => void;
   children: React.ReactNode;
 }) {
@@ -34,10 +36,11 @@ export function PickerItem({
     <button
       type="button"
       aria-pressed={selected}
+      disabled={disabled}
       onClick={onSelect}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-start text-[13.5px] outline-none transition-colors",
-        "focus-visible:ring-1 focus-visible:ring-foreground/20",
+        "focus-visible:ring-1 focus-visible:ring-foreground/20 disabled:opacity-50 disabled:cursor-wait",
         selected ? fieldInteractive : "hover:bg-foreground/[0.04]",
       )}
     >

@@ -65,6 +65,7 @@ interface ChatState {
   /** 会话列表（按 updatedAt 降序） */
   sessions: SessionSummary[];
   activeSessionId: string | null;
+  sessionLoadErrors: Record<string, string>;
   /** 各会话的消息列表（时间升序） */
   messagesBySession: Record<string, ChatMessage[]>;
   viewsBySession: Record<string, ChatLiveSnapshot>;
@@ -147,7 +148,11 @@ interface ChatState {
   setSessionCwd(id: string, cwd: string): Promise<void>;
   removeSession(id: string): Promise<void>;
   forkSession(id: string, entryId: string): Promise<void>;
-  send(text: string, attachments?: ChatAttachment[]): Promise<void>;
+  send(
+    text: string,
+    attachments?: ChatAttachment[],
+    targetSessionId?: string | null,
+  ): Promise<void>;
   /** 编辑用户消息：替换为新文本并从该处重跑（回退到父条目） */
   editUserMessage(messageId: string, text: string): Promise<void>;
   stop(): Promise<void>;
@@ -296,9 +301,12 @@ async function rewriteUserMessage(
   }
 }
 
+let creatingSession: Promise<void> | null = null;
+
 export const useChatStore = create<ChatState>()((set, get) => ({
   sessions: [],
   activeSessionId: null,
+  sessionLoadErrors: {},
   messagesBySession: {},
   viewsBySession: {},
   historyEpochBySession: {},
@@ -331,16 +339,27 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async setActiveSession(id) {
-    set({ activeSessionId: id });
-    // 首次激活的会话才需要拉消息；已经拉过的直接复用内存里的（含事件累积的流式内容）
-    if (id && get().loadedSessions[id] !== true) {
-      await get().loadMessages(id);
+    set((state) => ({
+      activeSessionId: id,
+      sessionLoadErrors: id ? omitSession(state.sessionLoadErrors, id) : state.sessionLoadErrors,
+    }));
+    try {
+      // 首次激活的会话才需要拉消息；已经拉过的直接复用内存里的（含事件累积的流式内容）
+      if (id && get().loadedSessions[id] !== true) {
+        await get().loadMessages(id);
+      }
+      if (id) await restoreNativeView(id);
+      // 未决提问跟着会话走：切回来（或重开窗口）时要能从主进程的未决表把卡片补回来
+      await get().loadPendingAsks(id);
+      // 后台作业同理：事件只在「作业变动时就开着这个会话」时到过，切回来要补拉一次
+      await get().loadJobs(id);
+    } catch (error) {
+      if (id)
+        set((state) => ({
+          sessionLoadErrors: { ...state.sessionLoadErrors, [id]: String(error) },
+        }));
+      throw error;
     }
-    if (id) await restoreNativeView(id);
-    // 未决提问跟着会话走：切回来（或重开窗口）时要能从主进程的未决表把卡片补回来
-    await get().loadPendingAsks(id);
-    // 后台作业同理：事件只在「作业变动时就开着这个会话」时到过，切回来要补拉一次
-    await get().loadJobs(id);
   },
 
   async loadMessages(id, opts) {
@@ -412,9 +431,20 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async createSession(options) {
-    const session = await window.oint.sessions.create(options);
-    set((state) => ({ sessions: [session, ...state.sessions] }));
-    await get().setActiveSession(session.id);
+    if (creatingSession !== null) return creatingSession;
+    const task = (async () => {
+      const session = await window.oint.sessions.create(options);
+      set((state) => ({
+        sessions: [session, ...state.sessions.filter((item) => item.id !== session.id)],
+      }));
+      await get().setActiveSession(session.id);
+    })();
+    creatingSession = task;
+    try {
+      await task;
+    } finally {
+      if (creatingSession === task) creatingSession = null;
+    }
   },
 
   async renameSession(id, title) {
@@ -458,7 +488,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
    *
    * 落盘后**只就地改这一个会话的字段**，不重拉整表：模式不影响排序与时间。
    * 主进程在**下一次请求装配时**读它（runtime 的 composeMainPrompt），
-   * 所以这里不需要通知运行中的会话 —— 事实上运行中会被主进程拒绝（reason: "running"）。
+   * 所以这里不需要中断运行中的会话，下一轮才使用新模式。
    */
   async setSessionMode(id, mode) {
     const result = await window.oint.sessions.setMode(id, mode);
@@ -496,6 +526,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     // 会话已从磁盘消失：把它留下的每会话缓存整批清掉（消息、翻页游标、队列、作业、未决卡片），
     // 否则这些记录会一直挂在内存里，还可能与将来复用的会话 id 串味
     set((state) => ({
+      sessionLoadErrors: omitSession(state.sessionLoadErrors, id),
       messagesBySession: omitSession(state.messagesBySession, id),
       viewsBySession: omitSession(state.viewsBySession, id),
       historyEpochBySession: omitSession(state.historyEpochBySession, id),
@@ -523,8 +554,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     await get().setActiveSession(forked.id);
   },
 
-  async send(text, attachments) {
-    let sessionId = get().activeSessionId;
+  async send(text, attachments, targetSessionId) {
+    let sessionId = targetSessionId === undefined ? get().activeSessionId : targetSessionId;
     if (!sessionId) {
       await get().createSession();
       sessionId = get().activeSessionId;
@@ -555,7 +586,19 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       };
     });
     // 带上乐观消息 id：主进程回显该用户消息时复用同 id，避免 UI 出现两条
-    await window.oint.chat.send(sessionId, text, attachments, optimistic.id);
+    try {
+      await window.oint.chat.send(sessionId, text, attachments, optimistic.id);
+    } catch (error) {
+      set((state) => ({
+        messagesBySession: {
+          ...state.messagesBySession,
+          [sessionId]: (state.messagesBySession[sessionId] ?? []).filter(
+            (message) => message !== optimistic,
+          ),
+        },
+      }));
+      throw error;
+    }
   },
 
   async stop() {

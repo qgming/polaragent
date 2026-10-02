@@ -9,20 +9,11 @@ export type DensityMode = "comfortable" | "compact";
 export type PermissionMode = "default" | "ai_review" | "full";
 
 /**
- * 智能体模式：决定**系统提示里怎么写**，不影响能力。
- *
- * - `standard`：通用助手。写作、调研、规划、文件处理、编程都是它的工作，
- *   所以身份句不能写成「编程助手」，并且要显式地「先判断这是什么任务」。
- * - `orchestrate`：编排者。只做计划、分派、综合与验收，把实现交给子智能体。
- *
- * **两个模式的工具与子智能体能力完全相同**（都能派内置/用户定义、都能用临时定义）——
- * 唯一的差别是系统提示里写不写「委派路由规则」那一段。
- *
- * 为什么不做成能力开关：能力层的差异（哪些工具可用）会牵动工具表，而工具表的
- * 整表替换在 `applyMcpTools` 那条路上有已知的坑（漏传一处就会在 MCP 刷新后消失）；
- * 而「用哪个提示」是每个请求现算的，零成本。
+ * 会话模式：standard（默认）直接处理任务；orchestrate（编排）侧重委派与验收。
+ * plan（计划）只允许经过核验的阅读、检索与提问工具；执行层同时禁用插件钩子。
+ * 模式在新一轮输入开始时固定并持久化，运行期间改变偏好不会放宽当前轮限制。
  */
-export const AGENT_MODES = ["standard", "orchestrate"] as const;
+export const AGENT_MODES = ["standard", "orchestrate", "plan"] as const;
 
 export type AgentMode = (typeof AGENT_MODES)[number];
 

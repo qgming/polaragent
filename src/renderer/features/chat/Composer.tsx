@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { KeyboardEvent } from "react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContextMeter } from "@/renderer/components/assistant-ui/elements/context-meter";
 import {
@@ -105,13 +105,11 @@ const PERMISSION_MODES = [
 ] as const;
 
 /**
- * 智能体两模式。
+ * 会话模式：默认、编排、只读计划。
  *
  * 顺序上标准在前：它是默认值，也是「不知道该选哪个」时的正确选择。
  *
- * `descKey` 只在这一个 chip 的菜单里用 —— 两个模式的名字（标准/编排）自己说明不了差别，
- * 而它们**能力完全相同**，差别只在系统提示怎么写。不写清楚，用户只会看到两个
- * 点起来没反应的选项。
+ * `descKey` 说明各模式的分工与计划模式的只读边界。
  */
 const AGENT_MODE_OPTIONS = [
   {
@@ -124,6 +122,7 @@ const AGENT_MODE_OPTIONS = [
     labelKey: "chat.agentModeOrchestrate",
     descKey: "chat.agentModeOrchestrateDesc",
   },
+  { value: "plan", labelKey: "chat.agentModePlan", descKey: "chat.agentModePlanDesc" },
 ] as const;
 
 /**
@@ -193,6 +192,8 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
   const { t } = useTranslation();
   const update = useSettingsStore((s) => s.update);
   const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
   const current = PERMISSION_MODES.find((item) => item.value === mode) ?? PERMISSION_MODES[0];
 
   return (
@@ -214,21 +215,33 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
           <PickerItem
             key={item.value}
             selected={item.value === mode}
+            disabled={pending}
             onSelect={() => {
-              setOpen(false);
-              void update({ permissionMode: item.value });
+              setPending(true);
+              setFailed(false);
+              void update({ permissionMode: item.value })
+                .then((ok) => {
+                  if (ok) setOpen(false);
+                  else setFailed(true);
+                })
+                .finally(() => setPending(false));
             }}
           >
             {t(item.labelKey)}
           </PickerItem>
         ))}
+        {failed && (
+          <p role="alert" className="px-2.5 text-xs text-destructive">
+            {t("chat.settingsSaveFailed")}
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   );
 }
 
 /**
- * 智能体模式 chip：两模式单选。
+ * 会话模式 chip：按会话保存，运行结束后下一次发送生效。
  *
  * 与权限 chip 的**关键差别：这个写的是会话，不是设置**。
  * - 权限模式是「我多信任它」的全局信任级别 → `settings.permissionMode`；
@@ -238,8 +251,8 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
  * `mode` 是**已经解析好的生效值**（会话绑定 ?? 设置默认），由调用方算出来 ——
  * chip 不自己回落，否则「会话没绑定」与「绑定了默认值」两种情况在界面上分不出来。
  *
- * **运行中也能切**（原先置灰并靠主进程拒绝）。模式只影响系统提示的组装，而那是每轮现算的，
- * 所以写入之后下一轮自然生效：正在生成的这一轮不受影响，用户的下一条消息用新模式。
+ * 运行中可以保存下次使用的模式；当前运行仍保留原模式及权限边界。
+ * 当前运行结束后，下一次发送使用新模式。
  * 运行中额外给一句说明（`running` 为 true 时显示），否则用户会疑惑「现在切了到底算不算」。
  */
 function AgentModeChip({
@@ -259,6 +272,8 @@ function AgentModeChip({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const current = AGENT_MODE_OPTIONS.find((item) => item.value === mode) ?? AGENT_MODE_OPTIONS[0];
 
   return (
@@ -278,6 +293,9 @@ function AgentModeChip({
           disabled={disabled}
         >
           <span>{t(current.labelKey)}</span>
+          {running && (
+            <span className="text-[10px] text-ink-4">{t("chat.agentModePendingTurn")}</span>
+          )}
           {/*
             会话自己指定过（不跟随默认）时留一个记号，与思考 chip 的 clamped 记号同一手法：
             让「我改过这个会话」这件事在收起状态也看得见。
@@ -292,19 +310,22 @@ function AgentModeChip({
           <PickerItem
             key={item.value}
             selected={item.value === mode}
+            disabled={pending}
             onSelect={() => {
-              /**
-               * **成功才关菜单**：失败时保持打开并把原因显示在菜单里。
-               * 先关再报错的写法会让原因连同弹层一起消失 —— 用户只看到「点了没反应」。
-               * （模式切换目前不会失败，但这条纪律对将来的失败分支仍然成立。）
-               */
-              void onSelect(item.value).then((result) => {
-                if (result.ok) {
-                  setOpen(false);
-                  return;
-                }
-                setFailed(true);
-              });
+              if (pendingRef.current) return;
+              pendingRef.current = true;
+              setPending(true);
+              setFailed(false);
+              void onSelect(item.value)
+                .then((result) => {
+                  if (result.ok) setOpen(false);
+                  else setFailed(true);
+                })
+                .catch(() => setFailed(true))
+                .finally(() => {
+                  pendingRef.current = false;
+                  setPending(false);
+                });
             }}
           >
             <span className="flex min-w-0 flex-col gap-0.5">
@@ -384,18 +405,27 @@ function ModelChip({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [failure, setFailure] = useState<SessionModelFailure | null>(null);
+  const [failure, setFailure] = useState<SessionModelFailure | "save-failed" | null>(null);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const label = current !== null ? (current.model.name ?? current.model.id) : t("common.empty");
 
   const choose = async (model: ModelRef) => {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    setFailure(null);
     let result: SetSessionModelResult;
     try {
       result = await onSelect(model);
     } catch {
       // IPC 本身失败（主进程异常 / 设置读不出来）时同样要给出说明：
       // 只 `void` 出去会变成 unhandled rejection，用户看到的是「点了没反应」
-      setFailure("no-model");
+      setFailure("save-failed");
       return;
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
     }
     if (result.ok) {
       setFailure(null);
@@ -422,7 +452,9 @@ function ModelChip({
           aria-label={t("chat.model")}
         >
           <Bot className="size-3.5 opacity-70" />
-          <span className={cn(typePackage, "max-w-32 truncate")}>{label}</span>
+          <span title={label} className={cn(typePackage, "max-w-32 truncate")}>
+            {label}
+          </span>
           {/* 本会话单独指定过模型时留个记号：此时它不再跟着设置里的默认模型走 */}
           {bound !== null && <span className="text-ink-4">·</span>}
           <ChevronDown className="size-3 opacity-60" />
@@ -445,6 +477,7 @@ function ModelChip({
                     <PickerItem
                       key={`${option.serviceId}/${option.model.id}`}
                       selected={selected}
+                      disabled={pending}
                       onSelect={() =>
                         void choose({
                           serviceId: option.serviceId,
@@ -470,7 +503,13 @@ function ModelChip({
         )}
         {failure !== null && (
           <p className="text-destructive px-2.5 pt-2 pb-1 text-[11px] leading-relaxed">
-            {t(failure === "running" ? "chat.modelSwitchRunning" : "chat.modelUnavailable")}
+            {t(
+              failure === "save-failed"
+                ? "chat.modelSaveFailed"
+                : failure === "running"
+                  ? "chat.modelSwitchRunning"
+                  : "chat.modelUnavailable",
+            )}
           </p>
         )}
       </PopoverContent>
@@ -651,6 +690,28 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
    */
   const boundAgentMode = activeSession?.agentMode ?? null;
   const effectiveAgentMode: AgentMode = boundAgentMode ?? settings?.agentMode ?? "standard";
+  const [startingExecution, setStartingExecution] = useState(false);
+  const executionPending = useRef(false);
+  const startExecution = async () => {
+    if (activeSessionId === null || executionPending.current || running || compacting) return;
+    executionPending.current = true;
+    setStartingExecution(true);
+    try {
+      const result = await useChatStore.getState().setSessionMode(activeSessionId, "standard");
+      if (!result.ok) throw new Error("Mode was not saved");
+      if (useChatStore.getState().activeSessionId !== activeSessionId) return;
+      // Preserve an existing draft; it may contain additional execution instructions.
+      if (!aui.composer().getState().text.trim()) {
+        aui.composer().setText(t("chat.planExecuteMessage"));
+      }
+      aui.composer().send();
+    } catch {
+      useUiStore.getState().notifyComposer({ messageKey: "chat.agentModeRunning", level: "error" });
+    } finally {
+      executionPending.current = false;
+      setStartingExecution(false);
+    }
+  };
   const currentModel =
     modelOptions.find(
       (option) =>
@@ -803,15 +864,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
     commandDraft.kind === "command" && commandBlockedReason(commandDraft.command) !== null;
 
   /**
-   * 用户一开始打字就收起提示：提示解释的是「刚才那次没发出去」，不是一条常驻状态。
-   * 依赖只有输入文本：提示写进来的那一刻文本没有变，所以它不会把自己立刻清掉。
-   */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: composerText 只是「又打字了」的触发器，不参与计算
-  useEffect(() => {
-    dismissComposerNotice();
-  }, [composerText, dismissComposerNotice]);
-
-  /**
    * 输入框按键：先归斜杠菜单（上下 / Enter / Esc），再归指令与运行中的排队。
    *
    * 三条都不靠 preventDefault 之外的机制：库只在「Enter 且非合成中」时发送，
@@ -822,7 +874,10 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
    */
   const handleInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // 输入法合成期间按键属于候选词，任何一条都不该接管
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      if (event.key === "Enter") event.preventDefault();
+      return;
+    }
     if (handleSlashKey(event)) return;
 
     const plainEnter = event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey;
@@ -987,6 +1042,27 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
               {t(composerNotice.messageKey, composerNotice.params)}
             </p>
           )}
+          {effectiveAgentMode === "plan" && (
+            <div className="flex items-center gap-2 px-2.5 text-xs text-ink-3">
+              <p className="min-w-0 flex-1">{t("chat.planNotice")}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  activeSessionId === null ||
+                  running ||
+                  compacting ||
+                  startingExecution ||
+                  activeSession?.messageCount === 0
+                }
+                onClick={() => void startExecution()}
+              >
+                {startingExecution && <Loader2 className="size-3 animate-spin" />}
+                {t("chat.planStartExecution")}
+              </Button>
+            </div>
+          )}
           <ComposerPrimitive.Input
             submitMode="enter"
             addAttachmentOnPaste
@@ -994,6 +1070,7 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
             maxRows={COMPOSER_MAX_ROWS}
             placeholder={t("chat.inputPlaceholder")}
             onKeyDown={handleInputKeyDown}
+            onChange={() => dismissComposerNotice()}
             role="combobox"
             aria-expanded={slashOpen}
             aria-controls={slashOpen ? slashListId : undefined}
@@ -1009,7 +1086,7 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
             )}
           />
           <div className="flex items-center justify-between gap-1.5">
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <ComposerPrimitive.AddAttachment
                 multiple
                 aria-label={t("chat.addAttachment")}
@@ -1029,7 +1106,7 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
                 mode={effectiveAgentMode}
                 bound={boundAgentMode}
                 // 只在没有活动会话时禁用；运行中**可以**切（生效于下一轮）
-                disabled={activeSessionId === null}
+                disabled={activeSessionId === null || startingExecution}
                 running={running}
                 onSelect={async (mode) => {
                   if (activeSessionId === null) return { ok: true as const };

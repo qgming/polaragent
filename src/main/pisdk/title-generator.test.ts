@@ -133,11 +133,16 @@ describe("collectTitleSource", () => {
   it("缺用户或助手文本时返回 null", () => {
     expect(collectTitleSource([])).toBeNull();
     expect(collectTitleSource([message("assistant", "你好")])).toBeNull();
-    expect(collectTitleSource([message("user", "帮我看下")])).toBeNull();
+    expect(collectTitleSource([message("user", "帮我看下")])).toEqual({ userText: "帮我看下", assistantText: "" });
   });
 });
 
 describe("normalizeSessionTitle", () => {
+  it("rejects invalid JSON-shaped output instead of storing it as a title", () => {
+    for (const raw of ['{"title":null}', '{"title":""}', '{"other":"value"}', '{"title":', '```json\n{"title":null}\n```', '[]'])
+      expect(normalizeSessionTitle(raw)).toBeNull();
+    expect(normalizeSessionTitle("Login timeout investigation")).toBe("Login timeout investigation");
+  });
   it("去掉换行、引号、Markdown 记号与「标题：」前缀", () => {
     expect(normalizeSessionTitle("标题：修复登录超时。")).toBe("修复登录超时");
     expect(normalizeSessionTitle('"Fix login timeout."')).toBe("Fix login timeout");
@@ -266,6 +271,38 @@ describe("autoTitleSession", () => {
     expect(fake.session.title).toBe("登录超时排查");
   });
 
+  it("用户消息即可命名，暂时失败最多重试三次并保留用户需求兜底", async () => {
+    const fake = fakeSession({ messages: [message("user", "修复登录超时")], generated: null });
+    await expect(autoTitleSession("s1", { ...fake.deps, maxAttempts: 3, fallback: true }))
+      .resolves.toBe("修复登录超时");
+    expect(fake.attempts).toHaveLength(3);
+    expect(fake.renamed).toEqual([["s1", "修复登录超时"]]);
+  });
+
+  it("structured user requests remain usable fallback titles", async () => {
+    for (const text of ['[Bug] 修复登录超时', '{"task":"修复登录"}']) {
+      const fake = fakeSession({ messages: [message("user", text)], generated: null });
+      await expect(autoTitleSession("s1", { ...fake.deps, maxAttempts: 3, fallback: true }))
+        .resolves.toBe(text);
+    }
+    const fake = fakeSession({ messages: [message("user", "🙂".repeat(45))], generated: null });
+    await expect(autoTitleSession("s1", { ...fake.deps, fallback: true })).resolves.toBe("🙂".repeat(40));
+  });
+
+  it("重试成功后立即停止，原子保存拒绝时不覆盖人工标题", async () => {
+    const fake = fakeSession({ messages: [message("user", "登录超时")] });
+    let calls = 0;
+    await expect(autoTitleSession("s1", {
+      ...fake.deps,
+      maxAttempts: 3,
+      generate: async () => ++calls === 1 ? null : "登录超时排查",
+      renameIfUntitled: async () => { fake.session.title = "人工标题"; return false; },
+    })).resolves.toBeNull();
+    expect(calls).toBe(2);
+    expect(fake.renamed).toEqual([]);
+    expect(fake.session.title).toBe("人工标题");
+  });
+
   it("已有标题（含用户手改 / 分支名）时不覆盖、也不再请求模型", async () => {
     let called = false;
     const title = await autoTitleSession("s1", {
@@ -319,7 +356,7 @@ describe("autoTitleSession", () => {
   });
 
   it("onAttempt 只在真要调模型时触发：素材不足不记账，下一轮可补上", async () => {
-    const empty = fakeSession({ messages: [message("user", "只有我问")] });
+    const empty = fakeSession({ messages: [] });
     await expect(autoTitleSession("s1", empty.deps)).resolves.toBeNull();
     expect(empty.attempts).toEqual([]);
 

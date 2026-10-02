@@ -5,6 +5,7 @@ import { live, ShimmerLabel } from "@/renderer/components/assistant-ui/elements/
 import { Button } from "@/renderer/components/ui/button";
 import { RightPanelToggle } from "@/renderer/features/right-panel/RightPanelToggle";
 import { SessionPanel } from "@/renderer/features/session/SessionPanel";
+import { sessionDisplayTitle } from "@/renderer/lib/session-title";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
@@ -26,7 +27,12 @@ export function TitleBar() {
   const { t } = useTranslation();
 
   const activeSessionId = useChatStore((s) => s.activeSessionId);
-  const sessions = useChatStore((s) => s.sessions);
+  const title = useChatStore((state) => {
+    const session = state.sessions.find((item) => item.id === activeSessionId);
+    return session === undefined
+      ? t("chat.newChat")
+      : sessionDisplayTitle(session, state.messagesBySession[session.id], t("chat.newChat"));
+  });
   // 该会话是否有一次运行在进行：live 蓝只用来表示这件事
   const running = useChatStore(
     (s) => s.activeSessionId !== null && s.runningBySession[s.activeSessionId] === true,
@@ -36,8 +42,6 @@ export function TitleBar() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   /** 右侧栏展开时，窗口控制由侧边栏接管（这里让位） */
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
-
-  const title = sessions.find((s) => s.id === activeSessionId)?.title ?? t("chat.newChat");
 
   return (
     <header
@@ -63,7 +67,9 @@ export function TitleBar() {
           <PanelLeft className="size-4" />
         </Button>
       )}
-      <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
+      <h2 title={title} className="min-w-0 truncate text-sm font-medium">
+        {title}
+      </h2>
       {running && (
         <span className={cn(live, "flex shrink-0 items-center gap-1.5 text-[11px]")} role="status">
           <ShimmerLabel>{t("chat.running")}</ShimmerLabel>

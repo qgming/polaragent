@@ -83,6 +83,7 @@ export interface PendingBrowserRequest {
  * 按值比较会让第二次点击被当成「没有变化」而静默失效。
  */
 export interface BrowserOpenRequest {
+  tabId: string;
   /** 要加载的 URL（本地 HTML 走 file://，见 turn-files 的 toFileUrl） */
   url: string;
   /** 面板标签上显示的名字（文件名）；缺省时浏览器自己按页面标题补 */
@@ -265,8 +266,7 @@ interface UiState {
   /**
    * 当前在看的标签；**null = 选择列表那一屏**（面板展开但还没选内容）。
    *
-   * 关掉最后一个标签也会落回这里（见 closeRightPanelTab）：面板没内容可看时，
-   * 与其把面板收起（用户还得再点开一次），不如直接给出五个入口。
+   * 关掉最后一个标签会同时收起面板；再次展开时显示选择列表。
    */
   activeTabId: string | null;
   /** 模型这次要的浏览器标签还没交回执；null = 没有待结算的请求 */
@@ -316,7 +316,7 @@ interface UiState {
   openBrowserTab(): string;
   /**
    * 关掉一个标签。关的是当前标签时接上邻居（右邻优先，其次左邻），
-   * 一个都不剩就回到选择列表那一屏。
+   * 一个都不剩就收起面板。
    */
   closeRightPanelTab(id: string): void;
   /** 切换到某个标签（用户点标签栏） */
@@ -454,8 +454,11 @@ export const useUiStore = create<UiState>()((set, get) => ({
       const tabs = state.rightPanelTabs.filter((tab) => tab.id !== id);
       return {
         rightPanelTabs: tabs,
+        rightPanelOpen: tabs.length > 0 && state.rightPanelOpen,
+        browserOpenRequest:
+          state.browserOpenRequest?.tabId === id ? null : state.browserOpenRequest,
         // 关掉当前标签时接上右邻（关掉后视线停在原位置附近），没有右邻就用左邻；
-        // 关的不是当前标签则不动焦点。一个都不剩 -> activeTabId = null（选择列表）。
+        // 关的不是当前标签则不动焦点。一个都不剩 -> activeTabId = null，收起面板。
         activeTabId:
           state.activeTabId === id
             ? (tabs[index]?.id ?? tabs[index - 1]?.id ?? null)
@@ -513,15 +516,19 @@ export const useUiStore = create<UiState>()((set, get) => ({
   // 否则「连点三张卡片」会开出三个标签。
   openFilePanel: (absolutePath) =>
     set((state) => {
+      const title = absolutePath.split(/[\\/]/).at(-1) || absolutePath;
       const existing = findReusableTab(state.rightPanelTabs, state.activeTabId, "file");
       if (existing !== undefined) {
         return {
           rightPanelOpen: true,
           activeTabId: existing.id,
           filePanelTarget: absolutePath,
+          rightPanelTabs: state.rightPanelTabs.map((tab) =>
+            tab.id === existing.id ? { ...tab, title } : tab,
+          ),
         };
       }
-      const tab: RightPanelTab = { id: nextRightPanelTabId(), view: "file", title: null };
+      const tab: RightPanelTab = { id: nextRightPanelTabId(), view: "file", title };
       return {
         rightPanelOpen: true,
         rightPanelTabs: [...state.rightPanelTabs, tab],
@@ -543,14 +550,13 @@ export const useUiStore = create<UiState>()((set, get) => ({
   openInBrowser: ({ url, title }) => {
     browserOpenSeq += 1;
     set((state) => {
-      const browserTabs = state.rightPanelTabs.filter((tab) => tab.view === "browser");
-      const target = browserTabs.at(-1);
-      const request: BrowserOpenRequest = { url, title, token: browserOpenSeq };
+      const target = findReusableTab(state.rightPanelTabs, state.activeTabId, "browser");
+      const request = { url, title, token: browserOpenSeq };
       if (target !== undefined) {
         return {
           rightPanelOpen: true,
           activeTabId: target.id,
-          browserOpenRequest: request,
+          browserOpenRequest: { ...request, tabId: target.id },
           rightPanelTabs: state.rightPanelTabs.map((tab) =>
             tab.id === target.id ? { ...tab, title } : tab,
           ),
@@ -561,7 +567,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
         rightPanelOpen: true,
         rightPanelTabs: [...state.rightPanelTabs, tab],
         activeTabId: tab.id,
-        browserOpenRequest: request,
+        browserOpenRequest: { ...request, tabId: tab.id },
       };
     });
   },

@@ -191,8 +191,8 @@
 
      右栏比左栏宽：它的内容是审查 diff、文件树、终端 —— 都是需要横向空间的东西，
      240px 会给到只能看半行 diff 的宽度。 */
-  --layout-sidebar-width: 240px;
-  --layout-right-sidebar-width: 380px;
+  --layout-sidebar-width: clamp(180px, 18.75vw, 240px);
+  --layout-right-sidebar-width: clamp(280px, 29.7vw, 380px);
   --layout-thread-max-width: 44rem;
 }
 

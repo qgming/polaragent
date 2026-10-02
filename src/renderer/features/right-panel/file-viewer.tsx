@@ -20,7 +20,17 @@ import { useChatStore } from "@/renderer/stores/chat-store";
 import type { FileContent } from "@/shared/contracts/files";
 import { languageOf, renderedKindOf } from "./file-language";
 import { PanelError, PanelSection } from "./panel-view";
-import { forgetUnsaved, rememberUnsaved, unsavedOf } from "./unsaved-edits";
+import {
+  beginFileSave,
+  endFileSave,
+  forgetUnsaved,
+  publishFileSaved,
+  rememberUnsaved,
+  subscribeFileSaves,
+  unsavedBaseOf,
+  unsavedOf,
+  useDraftPersistenceFailed,
+} from "./unsaved-edits";
 
 /**
  * 「读一个文件」的那一屏：右栏里两处看文件的地方共用它。
@@ -97,6 +107,18 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const persistenceFailed = useDraftPersistenceFailed();
+  const currentPath = useRef(path);
+  currentPath.current = path;
+  const savingRef = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestRef.current += 1;
+    };
+  }, []);
 
   /**
    * 读取序号：只认最后一次请求的结果。
@@ -105,25 +127,51 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
    * 序号一挡，晚到的旧结果直接丢掉。
    */
   const requestRef = useRef(0);
+  useEffect(
+    () =>
+      subscribeFileSaves(path, (text, bytes) => {
+        // Another viewer may own the write after this one was remounted. Its completion
+        // must update this viewer too, while retaining any intervening edit or revert.
+        requestRef.current += 1;
+        setLoading(false);
+        setContent({ path, text, size: bytes, binary: false, truncated: false });
+        setDraft(unsavedOf(path));
+        setError(null);
+        setSaveError(null);
+        setSaved(unsavedOf(path) === null);
+      }),
+    [path],
+  );
 
-  const load = useCallback(async () => {
-    if (sessionId === null) return;
-    requestRef.current += 1;
-    const token = requestRef.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await window.oint.files.readFile({ sessionId, path });
-      if (token !== requestRef.current) return;
-      setContent(next);
-    } catch (failure) {
-      if (token !== requestRef.current) return;
-      setContent(null);
-      setError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      if (token === requestRef.current) setLoading(false);
-    }
-  }, [sessionId, path]);
+  const load = useCallback(
+    async (reviewDisk = false) => {
+      if (sessionId === null) return;
+      requestRef.current += 1;
+      const token = requestRef.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const next = await window.oint.files.readFile({ sessionId, path });
+        if (token !== requestRef.current) return;
+        setContent(next);
+        const recovered = unsavedOf(path);
+        const base = unsavedBaseOf(path);
+        if (recovered !== null && base !== null && base !== next.text) {
+          if (reviewDisk) {
+            rememberUnsaved(path, recovered, next.text);
+            setSaveError(null);
+          } else setSaveError(t("rightPanel.fileChangedOnDisk"));
+        }
+      } catch (failure) {
+        if (token !== requestRef.current) return;
+        setContent(null);
+        setError(failure instanceof Error ? failure.message : String(failure));
+      } finally {
+        if (token === requestRef.current) setLoading(false);
+      }
+    },
+    [sessionId, path, t],
+  );
 
   useEffect(() => {
     void load();
@@ -174,35 +222,47 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
   const canSave = dirty && !saving;
 
   const save = useCallback(async () => {
-    if (sessionId === null || draft === null || content === null || saving) return;
+    if (sessionId === null || draft === null || content === null || savingRef.current) return;
+    const pending = beginFileSave(path, draft);
+    if (pending === null) return;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(null);
+    const stillCurrent = () => mounted.current && currentPath.current === path;
     try {
+      const disk = await window.oint.files.readFile({ sessionId, path });
+      if (disk.binary || disk.truncated || disk.text !== (unsavedBaseOf(path) ?? content.text)) {
+        throw new Error(t("rightPanel.fileChangedOnDisk"));
+      }
       const result = await window.oint.files.writeFile({ sessionId, path, text: draft });
-      // 保存成功不需要重新读取：提交的就是落盘的那一份，回执只补字节数
-      setContent({ ...content, text: draft, size: result.bytes, truncated: false });
-      setDraft(null);
-      forgetUnsaved(path);
-      setSaved(true);
+      // Typing may continue during the write. Only clear the submitted revision.
+      const latest = pending.revision === 0 ? draft : pending.text;
+      if (latest === draft) forgetUnsaved(path);
+      else rememberUnsaved(path, latest, draft);
+      publishFileSaved(path, draft, result.bytes);
     } catch (failure) {
-      setSaveError(failure instanceof Error ? failure.message : String(failure));
+      if (stillCurrent())
+        setSaveError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setSaving(false);
+      endFileSave(path);
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
     }
-  }, [content, draft, path, saving, sessionId]);
+  }, [content, draft, path, sessionId, t]);
 
   /** 编辑：草稿同时写进待保存表（离开这个文件时它还在，回来时接上） */
   const edit = (text: string) => {
     setDraft(text);
     setSaved(false);
-    if (content !== null) rememberUnsaved(path, text, content.text);
+    if (content !== null) rememberUnsaved(path, text, unsavedBaseOf(path) ?? content.text);
   };
 
   const revert = () => {
     setDraft(null);
     setSaveError(null);
     setSaved(false);
-    forgetUnsaved(path);
+    if (content !== null) rememberUnsaved(path, content.text, content.text);
+    else forgetUnsaved(path);
   };
 
   /**
@@ -213,7 +273,13 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
    * 不写正文时用脚注行里那颗「保存」。
    */
   const onEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+    if (
+      !(event.ctrlKey || event.metaKey) ||
+      event.altKey ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing
+    )
+      return;
     if (event.key.toLowerCase() !== "s" || !canSave) return;
     event.preventDefault();
     void save();
@@ -288,7 +354,7 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
               aria-label={t("rightPanel.filesRefresh")}
               title={t("rightPanel.filesRefresh")}
               disabled={loading}
-              onClick={() => void load()}
+              onClick={() => void load(true)}
             >
               <RefreshCw
                 className={cn("size-4", loading && "animate-spin motion-reduce:animate-none")}
@@ -314,6 +380,7 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
         </p>
       )}
 
+      {persistenceFailed && <PanelError message={t("rightPanel.fileDraftStorageFailed")} />}
       {error !== null && <PanelError message={`${t("rightPanel.filesLoadFailed")}：${error}`} />}
 
       {content === null ? (
@@ -381,7 +448,9 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
             )}
           >
             {saved && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
-            <span className="truncate">{status}</span>
+            <span className="truncate" title={status}>
+              {status}
+            </span>
           </span>
           <div className="flex shrink-0 items-center gap-1">
             {dirty && (

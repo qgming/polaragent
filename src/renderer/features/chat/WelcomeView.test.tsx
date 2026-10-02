@@ -259,3 +259,23 @@ describe("起手提示", () => {
     expect(screen.getByText("今天想做点什么？")).toBeTruthy();
   });
 });
+
+describe("plan welcome copy", () => {
+  it("describes read-only planning for a bound plan session", () => {
+    seedStores();
+    useChatStore.setState({ sessions: [{ ...session(""), agentMode: "plan" }] });
+    render(<Harness />);
+    expect(
+      screen.getByText("先阅读资料、调研需求并制定方案，点击开始执行后再进行修改。"),
+    ).toBeDefined();
+    expect(screen.queryByText("把任务交给 Oint，它会读写代码、运行命令。")).toBeNull();
+  });
+  it("uses the default plan mode before a session is created", () => {
+    seedStores({ noSession: true });
+    useSettingsStore.setState((state) => ({ settings: { ...state.settings!, agentMode: "plan" } }));
+    render(<Harness />);
+    expect(
+      screen.getByText("先阅读资料、调研需求并制定方案，点击开始执行后再进行修改。"),
+    ).toBeDefined();
+  });
+});

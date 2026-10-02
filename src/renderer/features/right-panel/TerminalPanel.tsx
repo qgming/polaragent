@@ -425,6 +425,7 @@ export function TerminalPanel(): React.JSX.Element {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <p className="px-3 py-1 text-[11px] text-ink-4">{t("rightPanel.terminalBackgroundHint")}</p>
       {/*
         标签栏（始终显示，即使只有一个终端）：标签在左，「新建」在右端。
 
@@ -555,7 +556,13 @@ function TerminalTab({
           : "text-ink-3 hover:bg-foreground/[0.05] hover:text-foreground",
       )}
     >
-      <button type="button" onClick={onSelect} className="flex min-w-0 items-center gap-1.5">
+      <button
+        type="button"
+        onClick={onSelect}
+        title={terminal.title}
+        aria-current={active ? "true" : undefined}
+        className="flex min-w-0 items-center gap-1.5"
+      >
         <span
           className={cn(
             "size-1.5 shrink-0 rounded-full",

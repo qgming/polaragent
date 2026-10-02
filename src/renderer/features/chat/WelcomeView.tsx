@@ -15,6 +15,8 @@ import {
   EmptyStateSuggestion,
   EmptyStateSuggestions,
 } from "@/renderer/components/assistant-ui/elements/empty-state";
+import { useChatStore } from "@/renderer/stores/chat-store";
+import { useSettingsStore } from "@/renderer/stores/settings-store";
 import { Composer } from "./Composer";
 import { insertSlashCommand } from "./slash-commands";
 import { pickStarterPrompts } from "./starter-prompts";
@@ -35,6 +37,11 @@ import { useActiveWorkingDir, useSlashCommands } from "./use-slash-commands";
  */
 export function WelcomeView(): React.JSX.Element {
   const { t } = useTranslation();
+  const boundMode = useChatStore(
+    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.agentMode,
+  );
+  const defaultMode = useSettingsStore((state) => state.settings?.agentMode ?? "standard");
+  const mode = boundMode ?? defaultMode;
 
   return (
     // min-h-full + 居中：撑满视口高度（Thread 里那条 min-h-full 的容器），内容在垂直方向居中
@@ -65,7 +72,7 @@ export function WelcomeView(): React.JSX.Element {
           <div className="flex flex-col items-center gap-2">
             <EmptyStateGreeting className="text-3xl">{t("chat.welcome")}</EmptyStateGreeting>
             <p className="text-center text-sm leading-relaxed text-ink-3">
-              {t("chat.welcomeSubtitle")}
+              {t(mode === "plan" ? "chat.welcomePlanSubtitle" : "chat.welcomeSubtitle")}
             </p>
           </div>
         </div>

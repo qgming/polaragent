@@ -1,5 +1,5 @@
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CommandPalette,
@@ -15,6 +15,7 @@ import {
 import { useActiveWorkingDir } from "@/renderer/features/chat/use-slash-commands";
 import { settingsSections } from "@/renderer/features/settings/sections";
 import { formatRelativeDay, formatTime } from "@/renderer/lib/format";
+import { sessionDisplayTitle } from "@/renderer/lib/session-title";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { usePluginsStore } from "@/renderer/stores/plugins-store";
@@ -87,6 +88,27 @@ export function SearchModal() {
   const workingDir = useActiveWorkingDir();
   const updateSettings = useSettingsStore((s) => s.update);
 
+  const [selectionError, setSelectionError] = useState(false);
+  const selecting = useRef(false);
+  const selectSession = useCallback(
+    async (id: string, messageId?: string) => {
+      if (selecting.current) return;
+      selecting.current = true;
+      setSelectionError(false);
+      try {
+        await setActiveSession(id);
+        if (useChatStore.getState().activeSessionId !== id) return;
+        if (messageId) jumpToMessage(id, messageId);
+        closeSearch();
+      } catch {
+        setSelectionError(true);
+      } finally {
+        selecting.current = false;
+      }
+    },
+    [setActiveSession, jumpToMessage, closeSearch],
+  );
+
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activeId, setActiveId] = useState("");
@@ -132,9 +154,14 @@ export function SearchModal() {
 
     // 会话：按标题匹配；输入为空时退化为最近会话
     let sessionCount = 0;
-    const titleById = new Map(sessions.map((s) => [s.id, s.title ?? t("chat.newChat")]));
+    const titleById = new Map(
+      sessions.map((s) => [
+        s.id,
+        sessionDisplayTitle(s, messagesBySession[s.id], t("chat.newChat")),
+      ]),
+    );
     for (const session of sessions) {
-      const title = session.title ?? t("chat.newChat");
+      const title = sessionDisplayTitle(session, messagesBySession[session.id], t("chat.newChat"));
       if (!title.toLocaleLowerCase().includes(lowered)) continue;
       const parent = session.parentSessionId
         ? sessions.find((s) => s.id === session.parentSessionId)
@@ -146,8 +173,7 @@ export function SearchModal() {
       if (runningBySession[session.id]) metaParts.push(t("chat.running"));
       const id = `session:${session.id}`;
       next.set(id, () => {
-        void setActiveSession(session.id);
-        closeSearch();
+        void selectSession(session.id);
       });
       out.push({
         id,
@@ -164,10 +190,7 @@ export function SearchModal() {
     // 消息：只遍历已加载的会话，每条命中消息一行；点开时切到该会话并请求定位到那条消息
     if (hasQuery) {
       const loadedIds = Object.keys(messagesBySession);
-      const orderedIds = [
-        ...sessions.map((s) => s.id).filter((id) => loadedIds.includes(id)),
-        ...loadedIds.filter((id) => !sessions.some((s) => s.id === id)),
-      ];
+      const orderedIds = [...sessions.map((s) => s.id).filter((id) => loadedIds.includes(id))];
       let messageCount = 0;
       for (const sessionId of orderedIds) {
         if (messageCount >= MESSAGE_LIMIT) break;
@@ -177,9 +200,7 @@ export function SearchModal() {
           if (messageCount >= MESSAGE_LIMIT) break;
           const id = `message:${sessionId}:${match.messageId}`;
           next.set(id, () => {
-            void setActiveSession(sessionId);
-            jumpToMessage(sessionId, match.messageId);
-            closeSearch();
+            void selectSession(sessionId, match.messageId);
           });
           out.push({
             id,
@@ -294,9 +315,8 @@ export function SearchModal() {
     runningBySession,
     theme,
     t,
-    setActiveSession,
+    selectSession,
     closeSearch,
-    jumpToMessage,
     openSettings,
     openStats,
     createSession,
@@ -339,6 +359,14 @@ export function SearchModal() {
         >
           <DialogTitle className="sr-only">{t("search.globalTitle")}</DialogTitle>
           <DialogDescription className="sr-only">{t("search.globalDesc")}</DialogDescription>
+          {selectionError && (
+            <p
+              role="alert"
+              className="rounded-t-xl bg-background px-4 py-2 text-sm text-destructive"
+            >
+              {t("search.openFailed")}
+            </p>
+          )}
           <CommandPalette
             commands={commands}
             query={query}
