@@ -80,7 +80,6 @@ export const SUBAGENT_TOOL_NAMES: readonly string[] = ["Task", "TaskWait", "Task
 const RUN_STATUSES: readonly SubagentRunStatus[] = [
   "running",
   "completed",
-  "truncated",
   "failed",
   "aborted",
   "denied",

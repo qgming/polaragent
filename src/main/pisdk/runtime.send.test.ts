@@ -11,7 +11,12 @@ import {
   fauxToolCall,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
+import {
+  createRegistry,
+  defineTool,
+  Harness,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatAttachment } from "@/shared/contracts/attachment";
@@ -21,6 +26,8 @@ import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import type { ApprovalService } from "./approvals";
 import { type ChatRuntime, createChatRuntime } from "./runtime";
 import { createSessionStore, type SessionStore } from "./session-store";
+import { createSubagentExtension, createSubagentRunner } from "./subagent-runner";
+import { createToolTestApi } from "./tools/tool-test-api";
 
 const providerState = vi.hoisted(() => ({ current: undefined as FauxProviderHandle | undefined }));
 const preprocessing = vi.hoisted(() => ({
@@ -56,10 +63,43 @@ const pluginHost = vi.hoisted(() => ({
     ): Promise<{ block?: string; additionalContext?: string; failures: [] }> => ({ failures: [] }),
   ),
 }));
-vi.mock("@/main/plugins/process-host", () => ({
-  pluginTools: () => [],
-  pluginToolsGeneration: () => 0,
-  dispatchPluginHooks: (name: string, payload: unknown) => pluginHost.dispatch(name, payload),
+vi.mock("@/main/plugins/process-host", async () => {
+  const { defineExtension, hook, ToolTask, GenerationTask } = await import(
+    "@earendil-works/pi-durable"
+  );
+  let pendingContext: string | undefined;
+  const extension = defineExtension({
+    name: "test-plugin",
+    hooks: [
+      hook(ToolTask, {
+        beforeTool: async (call) => {
+          const result = await pluginHost.dispatch("beforeTool", call);
+          return result.block ? { block: result.block } : undefined;
+        },
+        afterTool: async (call, result) => {
+          const response = await pluginHost.dispatch("afterTool", { call, result });
+          pendingContext = response.additionalContext;
+        },
+      }),
+      hook(GenerationTask, {
+        beforeRequest: ({ messages }) => {
+          const content = pendingContext;
+          pendingContext = undefined;
+          return content
+            ? { messages: [...messages, { role: "user", content, timestamp: Date.now() }] }
+            : undefined;
+        },
+      }),
+    ],
+  });
+  return {
+    pluginExtensions: () => [{ pluginId: "test-plugin", extension }],
+    subscribePluginExtensions: () => () => {},
+  };
+});
+vi.mock("@/main/plugins/contributions", () => ({
+  ensurePluginWorkspace: async () => {},
+  pluginContributionDirs: () => ({ skills: [], prompts: [], subagents: [] }),
 }));
 vi.mock("./resources", async (load) => ({
   ...(await load<Record<string, unknown>>()),
@@ -140,11 +180,13 @@ beforeEach(async () => {
   mcpTools = [];
   mcpListeners = new Set();
   approvals = {
+    attach: async () => () => {},
+    taskDefinitions: [],
     request: vi.fn(async () => "allow_once" as const),
     respond: vi.fn(),
-    pending: () => [],
+    pending: async () => [],
     cancelSession: vi.fn(),
-    history: () => [],
+    history: async () => [],
   };
   pluginHost.dispatch.mockReset();
   pluginHost.dispatch.mockResolvedValue({ failures: [] });
@@ -175,6 +217,49 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
+async function seedPendingChild(modelId?: string) {
+  const opened = await store.open(sessionId);
+  if (!opened) throw new Error("Missing fixture session");
+  const registry = createRegistry();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const tasks = createSubagentExtension(async () => {});
+  registry.install(tasks.extension);
+  const harness = await opened.session.bindHarness(() =>
+    Harness.open(opened.storage, { models, registry }, BACKGROUND_CONTEXT),
+  );
+  const root = await harness.conversation(opened.conversationId, BACKGROUND_CONTEXT);
+  if (!root) throw new Error("Missing fixture root");
+  await root.configure({ model: { provider: "svc", modelId: "test" } }, BACKGROUND_CONTEXT);
+  const runner = createSubagentRunner({
+    harness,
+    conversation: () => root,
+    familyId: sessionId,
+    tasks,
+    parent: async () => ({ sessionId, cwd: directory, parentModelId: "test" }),
+  });
+  const run = await runner.start(
+    {
+      toolCallId: "cold-child",
+      description: "recover child",
+      task: "recover-work",
+      definition: {
+        name: "reader",
+        description: "reader",
+        prompt: "Report findings",
+        source: "temp",
+        tools: ["read"],
+        ...(modelId ? { model: { serviceId: "svc", modelId } } : {}),
+      },
+    },
+    createToolTestApi({ conversationId: root.id, commit: root.commit.bind(root) }),
+    BACKGROUND_CONTEXT,
+  );
+  await harness.close(BACKGROUND_CONTEXT);
+  await opened.session.unbindHarness(harness);
+  return run;
+}
+
 describe("native durable chat runtime", () => {
   it("persists messages, authoritative entry links and system instructions", async () => {
     let request: TranscriptContext | undefined;
@@ -185,7 +270,7 @@ describe("native durable chat runtime", () => {
       },
     ]);
     await runtime.send(sessionId, "first question", [], "optimistic-user");
-    await expect.poll(() => events.some(({ event }) => event.type === "run-ended")).toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.running).toBe(false);
     const messages = (await store.loadMessages(sessionId)).messages;
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     const opened = await store.open(sessionId);
@@ -196,14 +281,11 @@ describe("native durable chat runtime", () => {
       record: { kind: "pi.system" },
     });
     expect(request?.messages.some((message) => message.role === "system")).toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.admittedRequestIds).toContain(
+      "optimistic-user",
+    );
     expect(
-      events.find(({ event }) => event.type === "message-added" && event.message.role === "user")
-        ?.event,
-    ).toMatchObject({ message: { id: "optimistic-user" } });
-    expect(
-      events.some(
-        ({ event }) => event.type === "message-updated" && event.patch.entryId !== undefined,
-      ),
+      (await runtime.liveSnapshot(sessionId))?.state.messages.every((message) => message.entryId),
     ).toBe(true);
     expect(runtime.isRunning(sessionId)).toBe(false);
   });
@@ -231,11 +313,7 @@ describe("native durable chat runtime", () => {
       .toBe(2);
     expect(requests[0]).toEqual(["first"]);
     expect(requests[1]).toEqual(["first", "second"]);
-    expect(
-      events
-        .filter(({ event }) => event.type === "run-ended")
-        .every(({ event }) => event.type === "run-ended" && event.reason === "completed"),
-    ).toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.running).toBe(false);
   });
 
   it("runs plugin then host permission hooks and preserves tool result details", async () => {
@@ -262,8 +340,8 @@ describe("native durable chat runtime", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(pluginHost.dispatch.mock.calls.map(([name]) => name)).toEqual([
-      "PreToolUse",
-      "PostToolUse",
+      "beforeTool",
+      "afterTool",
     ]);
     const parts = (await store.loadMessages(sessionId)).messages.flatMap(
       (message) => message.parts,
@@ -288,7 +366,7 @@ describe("native durable chat runtime", () => {
       }),
     ];
     pluginHost.dispatch.mockImplementation(async (name) =>
-      name === "PreToolUse" ? { block: "plugin denial", failures: [] } : { failures: [] },
+      name === "beforeTool" ? { block: "plugin denial", failures: [] } : { failures: [] },
     );
     faux.setResponses([
       toolResponse(fauxToolCall("mcp__test__call", {})),
@@ -313,7 +391,7 @@ describe("native durable chat runtime", () => {
       }),
     ];
     pluginHost.dispatch.mockImplementation(async (name) =>
-      name === "PostToolUse"
+      name === "afterTool"
         ? { additionalContext: "private follow-up", failures: [] }
         : { failures: [] },
     );
@@ -362,20 +440,14 @@ describe("native durable chat runtime", () => {
     await expect.poll(() => entered).toBe(true);
     await runtime.queue(sessionId, "remove me", "followUp");
     await expect
-      .poll(() =>
-        events.some(
-          ({ event }) =>
-            event.type === "queue-updated" && event.items.some((item) => /^\d+$/.test(item.id)),
-        ),
+      .poll(async () =>
+        (await runtime.liveSnapshot(sessionId))?.state.queue.some((item) => /^\d+$/.test(item.id)),
       )
       .toBe(true);
-    const queue = events
-      .map(({ event }) => event)
-      .filter((event) => event.type === "queue-updated")
-      .flatMap((event) => event.items)
-      .find((item) => /^\d+$/.test(item.id));
-    if (queue === undefined) throw new Error("Missing queued input");
-    await runtime.cancelQueued(sessionId, queue.id);
+    const queue = (await runtime.liveSnapshot(sessionId))?.state.queue;
+    const queuedId = queue?.[0]?.id;
+    if (!queuedId) throw new Error("Missing queued input");
+    await runtime.cancelQueued(sessionId, queuedId);
     await runtime.stop(sessionId);
     await sending;
     expect(aborted).toBe(true);
@@ -383,6 +455,66 @@ describe("native durable chat runtime", () => {
     expect(
       (await store.loadMessages(sessionId)).messages.filter((message) => message.role === "user"),
     ).toHaveLength(1);
+  });
+
+  it("stop during queued attachment preprocessing cannot admit another native run", async () => {
+    let entered = false;
+    mcpTools = [
+      defineTool({
+        name: "mcp__test__call",
+        description: "hold",
+        parameters: Type.Object({}),
+        execute: async (_args, _api, context) => {
+          entered = true;
+          await new Promise<void>((resolve) =>
+            context.abortSignal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+          return { content: [] };
+        },
+      }),
+    ];
+    faux.setResponses([
+      toolResponse(fauxToolCall("mcp__test__call", {})),
+      fauxAssistantMessage("must not start"),
+    ]);
+    const original = runtime.send(sessionId, "original");
+    await expect.poll(() => entered).toBe(true);
+    let release = () => {};
+    preprocessing.entered = false;
+    preprocessing.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = runtime.send(
+      sessionId,
+      "cancel this attachment",
+      [
+        {
+          kind: "text",
+          name: "note.txt",
+          mimeType: "text/plain",
+          size: 4,
+          data: Buffer.from("note").toString("base64"),
+        },
+      ],
+      "queued-optimistic",
+    );
+    try {
+      await expect.poll(() => preprocessing.entered).toBe(true);
+      await runtime.stop(sessionId);
+    } finally {
+      release();
+    }
+    await Promise.all([original, queued]);
+    expect(faux.state.callCount).toBe(1);
+    expect(
+      (await store.loadMessages(sessionId)).messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
+    expect((await runtime.liveSnapshot(sessionId))?.state.running).toBe(false);
+    expect(
+      events.some(
+        ({ event }) => event.type === "input-cancelled" && event.messageId === "queued-optimistic",
+      ),
+    ).toBe(true);
   });
 
   it("stop during preprocessing prevents any later native submission or model call", async () => {
@@ -402,7 +534,7 @@ describe("native durable chat runtime", () => {
     await sending;
     expect(faux.state.callCount).toBe(0);
     expect((await store.loadMessages(sessionId)).messages).toEqual([]);
-    expect(events.filter(({ event }) => event.type === "run-ended")).toHaveLength(1);
+    expect((await runtime.liveSnapshot(sessionId))?.state.running).toBe(false);
   });
 
   it("forks and selects the edited native conversation", async () => {
@@ -423,17 +555,11 @@ describe("native durable chat runtime", () => {
     await runtime.send(sessionId, "invalid", [], undefined, { rewindToEntryId: "entry:999999" });
     events = [];
     await runtime.send(sessionId, "valid after failure");
-    expect(
-      events.some(
-        ({ event }) =>
-          event.type === "part-upsert" &&
-          event.part.type === "text" &&
-          event.part.text === "still streaming",
-      ),
-    ).toBe(true);
-    expect(
-      events.some(({ event }) => event.type === "run-ended" && event.reason === "completed"),
-    ).toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.messages.at(-1)?.parts[0]).toEqual({
+      type: "text",
+      text: "still streaming",
+    });
+    expect((await runtime.liveSnapshot(sessionId))?.state.running).toBe(false);
   });
 
   it("reapplies current model, thinking and tools after native historical fork", async () => {
@@ -607,5 +733,88 @@ describe("native durable chat runtime", () => {
     expect(offered(requests[1])).toContain("mcp__added__call");
     expect(offered(requests[1])).toContain("ask_user");
     expect(offered(requests[1])).toContain("Task");
+  });
+  it("runs a child in the shared native family with the dispatch model and exact whitelist", async () => {
+    let childModel: string | undefined;
+    let childTools: string[] = [];
+    faux.setResponses(
+      Array.from({ length: 8 }, () => (context, _options, _state, model) => {
+        const last = context.messages.filter((message) => message.role !== "system").at(-1);
+        if (last?.role === "user" && textOf(context).at(-1) === "delegate")
+          return toolResponse(
+            fauxToolCall(
+              "Task",
+              {
+                definition: {
+                  name: "reader",
+                  description: "read",
+                  prompt: "Report your findings.",
+                  tools: ["read"],
+                },
+                description: "read one file",
+                task: "child-work",
+              },
+              { id: "native-child" },
+            ),
+          );
+        if (last?.role === "user" && textOf(context).at(-1) === "child-work") {
+          childModel = model.id;
+          childTools = context.messages.flatMap((message) =>
+            message.role === "system" ? (message.toolsAdded ?? []).map((tool) => tool.name) : [],
+          );
+          return fauxAssistantMessage("child-complete");
+        }
+        return fauxAssistantMessage("parent-complete");
+      }),
+    );
+    await runtime.send(sessionId, "delegate");
+    await vi.waitFor(async () =>
+      expect((await runtime.listSubagents(sessionId))[0]?.status).toBe("completed"),
+    );
+    const [run] = await runtime.listSubagents(sessionId);
+    expect(childModel).toBe("test");
+    expect(childTools).toEqual(["read"]);
+    if (!run) throw new Error("Missing child run");
+    const childSession = await store.open(run.childSessionId);
+    const rootSession = await store.open(sessionId);
+    expect(childSession?.storage).toBe(rootSession?.storage);
+    const messages = (await store.loadMessages(sessionId)).messages;
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(
+      messages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === "tool-call" && part.toolCallId === "native-child"),
+    ).toMatchObject({ status: "done", details: { status: "completed", report: "child-complete" } });
+  });
+
+  it("cold direct child opening restores its family without a creation-promise cycle", async () => {
+    const run = await seedPendingChild();
+    faux.setResponses([fauxAssistantMessage("recovered child")]);
+    await runtime.prepareSubagent(run.childSessionId);
+    await vi.waitFor(async () =>
+      expect((await runtime.listSubagents(sessionId))[0]?.status).toBe("completed"),
+    );
+    expect(
+      (await store.loadMessages(run.childSessionId)).messages.filter(
+        (message) => message.role === "user",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("a child preparation failure leaves the root usable and child preparation can be retried", async () => {
+    const run = await seedPendingChild("unavailable");
+    const service = settings.services[0];
+    if (!service) throw new Error("Missing fixture provider");
+    service.models.push({ id: "unavailable" });
+    await runtime.prepareSubagent(sessionId);
+    expect((await runtime.listSubagents(sessionId))[0]?.status).toBe("failed");
+    service.models = service.models.filter((model) => model.id !== "unavailable");
+    await runtime.prepareSubagent(run.childSessionId);
+    faux.setResponses([fauxAssistantMessage("root still usable")]);
+    await runtime.send(sessionId, "continue");
+    expect((await store.loadMessages(sessionId)).messages.at(-1)?.parts[0]).toEqual({
+      type: "text",
+      text: "root still usable",
+    });
   });
 });

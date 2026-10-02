@@ -1,18 +1,7 @@
 import type { JsonRepresentation } from "@earendil-works/chord";
-import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
-// 会话级待办清单工具（与 pi 原生四件套 bash/read/write/edit 并列）。
-//
-// 语义对齐 codex 的 update_plan / opencode 的 todowrite：**整表替换**，不是增量命令。
-// 为什么不做 add/complete/remove 这类增量接口：模型每轮都能看到自己上一次提交的整张表，
-// 重发全表天然幂等，也不会出现「漏了一步状态」的半截状态机；增量接口在模型漏传 id 时
-// 反而更脆。代价是每次都要重发一遍条目文本，但一张计划表本来就只有几行。
-//
-// 运行时按会话注入 todo 状态与持久化回调，工具通过构造参数持有它们。
-// 每次整表替换后通过 options.persistTodo 往会话里追加一条 custom entry，运行时在会话重建时
-// 读回最后一条来恢复内存状态 —— 所以应用重启后清单还在（换会话仍是一张新表）。
-
-import type { JsonValue } from "@earendil-works/chord";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { type Static, Type } from "typebox";
+import { detached, TodoCallDoc, TodoDoc } from "../native-state";
 
 export type TodoStatus = "pending" | "active" | "done" | "failed";
 
@@ -27,71 +16,6 @@ export interface TodoState {
   /** 本会话内的更新次数，从 1 开始；0 表示还没调用过 todo */
   revision: number;
   todos: TodoEntry[];
-}
-
-/** 每个会话一份，由工具构造参数传递（会话结束即释放） */
-export function createTodoState(): TodoState {
-  return { revision: 0, todos: [] };
-}
-
-const TODO_STATUSES: readonly TodoStatus[] = ["pending", "active", "done", "failed"];
-
-function isTodoStatus(value: unknown): value is TodoStatus {
-  return typeof value === "string" && (TODO_STATUSES as readonly string[]).includes(value);
-}
-
-/**
- * 校验并归一化一份待办清单（来自持久化 entry 的 data，或任何外部输入）。
- * 任一条目不合法就整体返回 undefined —— 与渲染层策略一致：丢掉单条会让数量与主进程对不上，
- * 不如整份放弃。
- */
-export function parseTodoEntries(value: unknown): TodoEntry[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const todos: TodoEntry[] = [];
-  for (const raw of value) {
-    if (typeof raw !== "object" || raw === null) return undefined;
-    const candidate = raw as Record<string, unknown>;
-    if (typeof candidate.id !== "string" || candidate.id === "") return undefined;
-    if (typeof candidate.text !== "string" || candidate.text.trim() === "") return undefined;
-    if (!isTodoStatus(candidate.status)) return undefined;
-    const reason = candidate.reason;
-    if (reason !== undefined && typeof reason !== "string") return undefined;
-    todos.push({
-      id: candidate.id,
-      text: candidate.text,
-      status: candidate.status,
-      ...(reason === undefined || reason === "" ? {} : { reason }),
-    });
-  }
-  return todos;
-}
-
-/**
- * 把内存状态序列化成持久化载荷。
- *
- * 单独写一个函数而不是直接传 state：`TodoEntry` 是 interface，没有索引签名，
- * **结构上不满足内核要求的 `JsonValue`**；写成对象字面量（并显式标注返回类型）才行。
- * 顺带把 `reason === undefined` 归一掉，保证落盘的数据形状稳定。
- */
-export function toTodoPayload(state: TodoState): JsonValue {
-  return {
-    revision: state.revision,
-    todos: state.todos.map((entry) => ({
-      id: entry.id,
-      text: entry.text,
-      status: entry.status,
-      ...(entry.reason === undefined ? {} : { reason: entry.reason }),
-    })),
-  };
-}
-
-export interface TodoToolOptions {
-  todo: TodoState;
-  /**
-   * 可选的持久化回调：每次整表替换后由运行时接到会话的 appendCustomEntry 上。
-   * 允许抛错 —— 工具侧会兜住并记 warning，不会让工具调用失败。
-   */
-  persistTodo?: (state: TodoState) => void | Promise<void>;
 }
 
 /** details 形状：渲染层的 TodoList 已按 { todos, revision } 对接，字段名不要改 */
@@ -199,7 +123,7 @@ function assignIds(inputs: readonly TodoInputEntry[], previous: readonly TodoEnt
     if (provided !== undefined && provided !== "" && !used.has(provided)) {
       id = provided;
     } else {
-      const candidate = reusable.get(input.text)?.shift();
+      const candidate = reusable.get(input.text.trim())?.shift();
       id = candidate !== undefined && !used.has(candidate) ? candidate : nextAutoId(used);
     }
     used.add(id);
@@ -233,49 +157,47 @@ function summarize(todos: readonly TodoEntry[]): string {
   return lines.join("\n");
 }
 
-/** 构造 todo 工具；状态来自 options.todo，工具本身无内部状态（同一实例可服务多个会话） */
-export function createTodoTool(
-  options: TodoToolOptions = { todo: createTodoState() },
-): ToolRegistration<typeof todoSchema, JsonRepresentation<TodoToolDetails>> {
+/** Rewindable conversation document; task-scoped result makes replay atomic and idempotent. */
+export function createTodoTool(): ToolRegistration<
+  typeof todoSchema,
+  JsonRepresentation<TodoToolDetails>
+> {
   return {
     name: "todo",
-
     description: TODO_DESCRIPTION,
     parameters: todoSchema,
-    async execute(params) {
-      const state = options.todo;
-      const result = (text: string): ToolExecutionResult<JsonRepresentation<TodoToolDetails>> => ({
-        content: [{ type: "text", text }],
-        details: { todos: state.todos, revision: state.revision },
-        isError: text.startsWith("Error:"),
-      });
-
-      const empty = params.todos.find((entry) => entry.text.trim() === "");
-      if (empty !== undefined) {
-        // 语义校验：schema 拦不住「空白字符串」，而空条目会让渲染层整份清单都放弃显示
-        return result(
-          `Error: every todo needs a non-empty "text" (one entry was blank). The list was not changed (revision stays ${state.revision}).`,
-        );
-      }
-
-      const todos = assignIds(params.todos, state.todos);
-      state.revision += 1;
-      state.todos = todos;
-      // 持久化到会话：失败只记 warning —— 待办是辅助信息，不能因此让工具调用失败
-      try {
-        await options.persistTodo?.(state);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.warn(`待办清单持久化失败（本次结果仍返回）：${detail}`);
-      }
-
+    replay: "safe",
+    async execute(params, api, context) {
+      const empty = params.todos.some((entry) => entry.text.trim() === "");
+      const state = await api.commit(async (tx) => {
+        const call = await tx.doc(TodoCallDoc, api.taskId);
+        if (call.result) return detached(call.result);
+        const state = await tx.doc(TodoDoc, api.conversationId);
+        if (!empty) {
+          state.todos = assignIds(params.todos, state.todos);
+          state.revision += 1;
+          call.result = { revision: state.revision, todos: state.todos };
+        }
+        return detached({ revision: state.revision, todos: state.todos });
+      }, context);
+      if (empty)
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: every todo needs a non-empty "text". The list was not changed (revision stays ${state.revision}).`,
+            },
+          ],
+          details: state,
+          isError: true,
+        };
       const header =
-        todos.length === 0
+        state.todos.length === 0
           ? `Todo list cleared (revision ${state.revision}).`
           : `Todo list updated (revision ${state.revision}):`;
       return {
-        content: [{ type: "text", text: `${header}\n${summarize(todos)}` }],
-        details: { todos, revision: state.revision },
+        content: [{ type: "text", text: `${header}\n${summarize(state.todos)}` }],
+        details: state,
       };
     },
   };

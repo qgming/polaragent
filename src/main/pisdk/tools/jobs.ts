@@ -196,6 +196,7 @@ export function createJobTools(deps: JobToolDeps): ToolRegistration[] {
     async execute(
       rawParams,
       api,
+      context,
     ): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
       const params = rawParams as BashBackgroundToolParams;
       const cwd = params.cwd ?? requireToolEnv(api).cwd;
@@ -204,7 +205,14 @@ export function createJobTools(deps: JobToolDeps): ToolRegistration[] {
       try {
         // 带上这次调用的 id：作业结束时 runtime 靠它把结论回填到**这次调用**上，
         // 而不是往对话里发一条新消息（见 job-delivery 的文件头）
-        job = await jobs.start({ sessionId, command: params.command, cwd, toolCallId });
+        job = await jobs.start({
+          sessionId,
+          command: params.command,
+          cwd,
+          toolCallId,
+          api,
+          context,
+        });
       } catch (error) {
         // 起不来是**可以继续的事实**：把原因写进内容让模型换个做法，而不是让整轮运行失败
         const detail = error instanceof Error ? error.message : String(error);
@@ -234,16 +242,20 @@ export function createJobTools(deps: JobToolDeps): ToolRegistration[] {
 
     description: OUTPUT_DESCRIPTION,
     parameters: outputSchema,
-    async execute(rawParams): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
+    async execute(
+      rawParams,
+      _api,
+      context,
+    ): Promise<ToolExecutionResult<JsonRepresentation<JobToolDetails>>> {
       const params = rawParams as JobOutputToolParams;
       let result: Awaited<ReturnType<JobService["read"]>>;
       try {
-        result = await jobs.read(
-          sessionId,
-          params.id,
-          params.waitMs === undefined ? undefined : { waitMs: params.waitMs },
-        );
+        result = await jobs.read(sessionId, params.id, {
+          context,
+          ...(params.waitMs === undefined ? {} : { waitMs: params.waitMs }),
+        });
       } catch (error) {
+        if (context.abortSignal?.aborted) throw error;
         const detail = error instanceof Error ? error.message : String(error);
         return {
           content: [{ type: "text", text: `Error: ${detail}` }],
@@ -273,7 +285,7 @@ export function createJobTools(deps: JobToolDeps): ToolRegistration[] {
     description: LIST_DESCRIPTION,
     parameters: listSchema,
     async execute(): Promise<ToolExecutionResult<JsonRepresentation<JobListToolDetails>>> {
-      const all = jobs.list(sessionId);
+      const all = await jobs.list(sessionId);
       const text =
         all.length === 0
           ? "No background jobs in this session."

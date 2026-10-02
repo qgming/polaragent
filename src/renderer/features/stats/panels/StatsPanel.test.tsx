@@ -221,6 +221,47 @@ describe("热力图", () => {
 });
 
 describe("趋势与模型用量", () => {
+  it("keeps 725 all-time tokens but limits dated chart legends and shares to 650", () => {
+    const today = localDay(new Date());
+    useStatsStore.setState({
+      report: reportFixture({
+        totalTokens: 725,
+        undatedTokens: 75,
+        days: [{ date: today, tokens: 650, models: { "svc|a": 325, "svc|b": 195, "svc|c": 130 } }],
+        models: [
+          { key: "svc|a", serviceId: "svc", modelId: "a", tokens: 325, share: 325 / 725 },
+          { key: "svc|b", serviceId: "svc", modelId: "b", tokens: 195, share: 195 / 725 },
+          { key: "svc|c", serviceId: "svc", modelId: "c", tokens: 130, share: 130 / 725 },
+          {
+            key: "svc|undated-only",
+            serviceId: "svc",
+            modelId: "undated-only",
+            tokens: 75,
+            share: 75 / 725,
+          },
+        ],
+      }),
+    });
+    const { container } = render(<StatsPanel />);
+    expect(container.querySelector('[data-slot="stats-summary"]')?.textContent).toContain("725");
+    expect(container.querySelector('[data-slot="stats-scope"]')?.textContent).toContain(
+      "75 token 日期未保留",
+    );
+    const rows = [...container.querySelectorAll('[data-slot="model-legend-row"]')];
+    expect(rows.map((row) => row.getAttribute("data-model"))).toEqual(["svc|a", "svc|b", "svc|c"]);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "a50%325 tokens",
+      "b30%195 tokens",
+      "c20%130 tokens",
+    ]);
+    expect(container.querySelector('[data-slot="model-donut"]')?.textContent).toContain("650");
+    expect(
+      [...container.querySelectorAll('[data-slot="trend-line"]')].map((row) =>
+        row.getAttribute("data-model"),
+      ),
+    ).toEqual(["svc|a", "svc|b", "svc|c"]);
+    expect(container.textContent).not.toContain("undated-only");
+  });
   it("图例用设置里的模型名，占比与环图同源", () => {
     useStatsStore.setState({ report: reportFixture() });
     render(<StatsPanel />);
@@ -241,6 +282,13 @@ describe("趋势与模型用量", () => {
     useStatsStore.setState({
       report: reportFixture({
         totalTokens: 166_543_000,
+        days: [
+          {
+            date: localDay(new Date()),
+            tokens: 166_543_000,
+            models: { "svc|deepseek-chat": 124_000_000, "svc|glm-4": 42_543_000 },
+          },
+        ],
         models: [
           {
             key: "svc|deepseek-chat",

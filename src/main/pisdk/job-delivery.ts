@@ -1,18 +1,5 @@
-// 后台作业结束时，把结果组装成**那次工具调用的结果**（纯函数，不碰 Electron / 进程 / 事件流）。
-//
-// 与 report-delivery 的分工：那边是子智能体，这边是后台作业。两者形状相同、判据不同，
-// 所以各自一份纯函数而不是硬塞进同一个模块 —— 作业的成败判据是「进程怎么退出的」
-//（退出码），子智能体是「这次运行怎么结束的」（状态枚举），混在一起只会让两边都难读。
-//
-// 形状的决定（用户明确要求，与子智能体一致）：作业的结论**仍然回填到那次**
-// `bash_background` 调用的结果里**（模型与界面都从那次调用读 —— 显示成同一个工具状态组件，
-// 里面的内容就是作业的输出）；此外运行时会把一条带结论尾巴的通知以 user 身份注入转录、
-// 以系统通知行呈现给用户（两通道：模型从 user 身份的 custom 消息读它、界面从
-// origin:"system" 读它并按系统通知行画，见 runtime 的 notifyJobExit / jobExitNotice）。
-//
-// 为什么这比子智能体更简单：作业状态本来就由主进程通过 `job-changed` 事件持续推进，
-// 渲染层 store 里那份 `jobsBySession` 始终是新的（重启后由 `jobs.list` 补拉）。
-// 也就是说界面这条路**不依赖回填** —— 回填只是为了让**模型**在下一轮上下文里看到结论。
+// Terminal job reports belong to the original bash_background card and native JobsDoc.
+// They never submit user messages or start a parent model turn.
 
 import type { JobInfo } from "@/shared/contracts/job";
 

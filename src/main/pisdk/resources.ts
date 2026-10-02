@@ -84,7 +84,7 @@ export function agentsSkillsDir(home: string = homedir()): string {
 export function resolveSkillDirs(
   workingDir?: string,
   appPath?: string,
-  pluginSkills: readonly string[] = pluginContributionDirs().skills,
+  pluginSkills: readonly string[] = pluginContributionDirs(workingDir).skills,
   sharedSkills: readonly string[] = [agentsSkillsDir()],
 ): string[] {
   const dirs = [`${dataDir()}/skills`];
@@ -151,7 +151,7 @@ export function resolveBuiltinSkillDir(appPath: string): string {
 export function resolvePromptTemplateDirs(
   workingDir?: string,
   appPath?: string,
-  pluginPrompts: readonly string[] = pluginContributionDirs().prompts,
+  pluginPrompts: readonly string[] = pluginContributionDirs(workingDir).prompts,
 ): string[] {
   const dirs = [`${dataDir()}/prompts`];
   if (workingDir !== undefined && workingDir !== "") {
@@ -191,7 +191,7 @@ export function resolveBuiltinPromptDir(appPath: string): string {
  */
 export function resolveSubagentDirs(
   workingDir?: string,
-  pluginSubagents: readonly string[] = pluginContributionDirs().subagents,
+  pluginSubagents: readonly string[] = pluginContributionDirs(workingDir).subagents,
 ): string[] {
   const dirs = [`${dataDir()}/subagents`];
   if (workingDir !== undefined && workingDir !== "") {

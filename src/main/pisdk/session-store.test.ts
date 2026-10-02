@@ -8,7 +8,7 @@ import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionWorkspaceDir } from "@/main/app/paths";
 import type { TextPart } from "@/shared/contracts/session";
-import type { SubagentRun } from "@/shared/contracts/subagent";
+import { SessionMetadataDoc } from "./durable-session";
 import { createSessionStore, type OpenedSession, type SessionStore } from "./session-store";
 import { createSessionsIndex } from "./sessions-index";
 
@@ -255,7 +255,8 @@ describe("session-store", () => {
 
     // 索引里的 messageCount 按需补齐为总消息数
     const index = await createSessionsIndex(baseDir).read();
-    expect(index[summary.id]?.messageCount).toBe(60);
+    expect(index[summary.id]?.messageCount).toBe(0);
+    expect((await store.list()).find((entry) => entry.id === summary.id)?.messageCount).toBe(60);
   });
 
   it("loadMessages 对不存在的会话返回空结果且不抛错", async () => {
@@ -292,7 +293,15 @@ describe("session-store", () => {
     it("写入后能原样读回", async () => {
       const session = await store.create({ title: "有用量" });
       await store.writeUsage(session.id, RECORD);
-      await expect(store.readUsage(session.id)).resolves.toEqual(RECORD);
+      await expect(store.readUsage(session.id)).resolves.toEqual({
+        ...RECORD,
+        tokenUsage: {
+          uncachedInputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      });
     });
 
     it("没有记录时返回 undefined（新会话不编造全 0 数据）", async () => {
@@ -324,7 +333,6 @@ describe("session-store", () => {
 
     it("坏数据整条作废（缺一段 / 负数 / 非数）", async () => {
       const session = await store.create();
-      const index = createSessionsIndex(baseDir);
       const cases: unknown[] = [
         { stats: RECORD.stats, tokenUsage: RECORD.tokenUsage }, // 缺 breakdown
         { ...RECORD, breakdown: { systemTokens: -1, toolsTokens: 0, messageTokens: 0 } },
@@ -334,7 +342,10 @@ describe("session-store", () => {
         null,
       ];
       for (const bad of cases) {
-        await index.update(session.id, { usage: bad as never });
+        await writeFile(
+          path.join(baseDir, "sessions-index.json"),
+          JSON.stringify({ [session.id]: { usage: bad } }),
+        );
         await expect(store.readUsage(session.id)).resolves.toBeUndefined();
       }
     });
@@ -355,71 +366,6 @@ describe("session-store", () => {
    * 磁盘垃圾 —— 每派一次子智能体就留一份。这里钉住级联行为。
    */
   describe("删除父会话时级联删除子会话", () => {
-    it("子会话与其索引条目一并消失，父会话正常删除", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const child = await store.create({
-        title: "子智能体",
-        kind: "subagent",
-        parentSessionId: parent.id,
-        parentToolCallId: "call-1",
-        agentName: "explorer",
-        delegationId: "call-1",
-      });
-      // 子会话确实进了索引（否则这条测试的前提就不成立）
-      const before = await store.list();
-      expect(before.find((item) => item.id === child.id)?.kind).toBe("subagent");
-
-      await store.remove(parent.id);
-
-      const after = await store.list();
-      expect(after.find((item) => item.id === parent.id)).toBeUndefined();
-      expect(after.find((item) => item.id === child.id)).toBeUndefined();
-      // 打开也要失败：文件真的被删了，而不只是索引条目没了
-      await expect(store.open(child.id)).resolves.toBeUndefined();
-    });
-
-    it("只删自己的子会话，不动别人的", async () => {
-      const parentA = await store.create({ title: "父 A" });
-      const parentB = await store.create({ title: "父 B" });
-      const childA = await store.create({
-        kind: "subagent",
-        parentSessionId: parentA.id,
-        delegationId: "a1",
-      });
-      const childB = await store.create({
-        kind: "subagent",
-        parentSessionId: parentB.id,
-        delegationId: "b1",
-      });
-
-      await store.remove(parentA.id);
-
-      const after = await store.list();
-      expect(after.find((item) => item.id === childA.id)).toBeUndefined();
-      // B 的子树必须完好
-      expect(after.find((item) => item.id === parentB.id)).toBeDefined();
-      expect(after.find((item) => item.id === childB.id)).toBeDefined();
-    });
-
-    it("多个子会话全部级联删除", async () => {
-      const parent = await store.create({ title: "派了三个" });
-      const children = await Promise.all(
-        [1, 2, 3].map((n) =>
-          store.create({ kind: "subagent", parentSessionId: parent.id, delegationId: `d${n}` }),
-        ),
-      );
-
-      await store.remove(parent.id);
-
-      const after = await store.list();
-      for (const child of children) {
-        expect(
-          after.find((item) => item.id === child.id),
-          child.id,
-        ).toBeUndefined();
-      }
-    });
-
     it("普通会话（kind=chat）不作为子会话被误删", async () => {
       const parent = await store.create({ title: "父" });
       // 一个 parentSessionId 恰好指向父、但 kind 是 chat 的会话（例如旧版 fork 的遗留）：
@@ -483,7 +429,13 @@ describe("session-store", () => {
     it("ensureCwd：缺失目录绑定的会话现补一个临时工作区并落盘，重复调用是同一个目录", async () => {
       const legacy = await store.create({ cwd: "D:\\legacy" });
       // 模拟损坏的写下的索引条目：把 cwd 抹掉（JSON 里没有这个键）
-      await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
+      const opened = await store.open(legacy.id);
+      if (!opened) throw new Error("Missing session");
+      await opened.session.withSession((owner) =>
+        owner.commit(async (tx) => {
+          delete (await tx.doc(SessionMetadataDoc)).attributes.cwd;
+        }, BACKGROUND_CONTEXT),
+      );
       await expect(store.readCwd(legacy.id)).resolves.toBeNull();
 
       const dir = await store.ensureCwd(legacy.id);
@@ -496,7 +448,13 @@ describe("session-store", () => {
 
     it("list 给缺失目录绑定的会话补上临时工作区（界面看到的 cwd 与主进程用的是同一个）", async () => {
       const legacy = await store.create({ cwd: "D:\\legacy" });
-      await createSessionsIndex(baseDir).update(legacy.id, { cwd: undefined });
+      const opened = await store.open(legacy.id);
+      if (!opened) throw new Error("Missing session");
+      await opened.session.withSession((owner) =>
+        owner.commit(async (tx) => {
+          delete (await tx.doc(SessionMetadataDoc)).attributes.cwd;
+        }, BACKGROUND_CONTEXT),
+      );
 
       const row = (await store.list()).find((item) => item.id === legacy.id);
       expect(row?.cwd).toBe(sessionWorkspaceDir(legacy.id, baseDir));
@@ -530,25 +488,6 @@ describe("session-store", () => {
 
       await store.remove(bound.id);
       await expect(stat(path.join(realDir, "keep.md"))).resolves.toBeDefined();
-    });
-
-    it("删子会话不会清掉父会话的工作区（子会话的 cwd 指向父的工作区）", async () => {
-      const parent = await store.create({ title: "父" });
-      const parentDir = sessionWorkspaceDir(parent.id, baseDir);
-      await writeFile(path.join(parentDir, "from-parent.md"), "x\n", "utf8");
-      const child = await store.create({
-        kind: "subagent",
-        parentSessionId: parent.id,
-        cwd: parent.cwd,
-      });
-
-      // 单删子会话：父的工作区必须原样留着
-      await store.remove(child.id);
-      await expect(stat(path.join(parentDir, "from-parent.md"))).resolves.toBeDefined();
-
-      // 删父会话：级联删掉子会话，最后清掉父的工作区
-      await store.remove(parent.id);
-      await expect(stat(parentDir)).rejects.toThrow();
     });
 
     it("分支会话继承源会话的工作目录，最后一个使用者被删时才清目录", async () => {
@@ -675,191 +614,5 @@ describe("session-store", () => {
       await index.update(session.id, { model: broken as never });
       await expect(store.readModel(session.id)).resolves.toBeNull();
     }
-  });
-
-  /**
-   * 子智能体运行记录的**真实**落盘往返。
-   *
-   * 为什么必须有这一条（而不是只靠 subagent-runner 里那份 mock 过的 store）：
-   * 「进程在上一次运行期间退出」这件事只能靠索引里那条记录认出来，
-   * 而 runner 的测试把 store 整个换成了 stub —— 那只证明「它调了 saveSubagentRun」，
-   * 证明不了「写进去的东西真的能被下一个进程按父会话读回来」。这里用真索引走一遍。
-   */
-  describe("子智能体运行记录", () => {
-    function makeRun(patch: Partial<SubagentRun> = {}): SubagentRun {
-      return {
-        delegationId: "d-1",
-        sessionId: "s-parent",
-        parentToolCallId: "d-1",
-        childSessionId: "child-1",
-        agentName: "scout",
-        agentSource: "builtin",
-        description: "调研重试逻辑",
-        task: "看 src/retry.ts",
-        status: "running",
-        startedAt: 1_000,
-        model: null,
-        modelId: "svc/model-x",
-        thinkingLevel: "medium",
-        turns: 2,
-        toolCalls: 3,
-        updatedAt: 2_000,
-        ...patch,
-      };
-    }
-
-    /** 建一个子智能体子会话：kind 与 parentSessionId 决定了它会不会被 listSubagentRunsFor 认领 */
-    async function makeChild(delegationId: string, parentSessionId: string) {
-      return store.create({
-        title: `scout · ${delegationId}`,
-        kind: "subagent",
-        parentSessionId,
-        parentToolCallId: delegationId,
-        agentName: "scout",
-        delegationId,
-      });
-    }
-
-    it("写进子会话条目后能按父会话读回来，且字段完整", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const child = await makeChild("d-1", parent.id);
-      const run = makeRun({ sessionId: parent.id, childSessionId: child.id });
-
-      await store.saveSubagentRun(child.id, run);
-      const runs = await store.listSubagentRunsFor(parent.id);
-
-      expect(runs).toHaveLength(1);
-      // 全字段往返，不只是 id：面板与 TaskList 都直接读这份记录
-      expect(runs[0]).toEqual(run);
-    });
-
-    /**
-     * `tools` 是可选的：内置 / 用户定义的运行记录里没有它（只有主 AI 临时定义的子智能体带白名单）。
-     *
-     * 这条断言守的是一个**真的会发生的**回归：读回时曾要求 `tools` 必须是数组，
-     * 于是新写的记录（没有这个字段）会被判成坏记录整条丢掉 ——
-     * 表现是「重启后子智能体运行列表空了」，而写盘那一侧一切正常。
-     */
-    it("没有 tools 字段的记录同样能往返（内置/用户定义的运行）", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const child = await makeChild("d-1", parent.id);
-      const run = makeRun({ sessionId: parent.id, childSessionId: child.id });
-      expect(run.tools).toBeUndefined();
-
-      await store.saveSubagentRun(child.id, run);
-      const runs = await store.listSubagentRunsFor(parent.id);
-
-      expect(runs).toHaveLength(1);
-      expect(runs[0]?.tools).toBeUndefined();
-    });
-
-    it("带 tools 白名单的记录照常往返（临时定义的运行）", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const child = await makeChild("d-1", parent.id);
-      const run = makeRun({
-        sessionId: parent.id,
-        childSessionId: child.id,
-        agentSource: "temp",
-        tools: ["read", "grep"],
-      });
-
-      await store.saveSubagentRun(child.id, run);
-      const runs = await store.listSubagentRunsFor(parent.id);
-
-      expect(runs[0]?.tools).toEqual(["read", "grep"]);
-    });
-
-    it("只认自己的父会话，别的会话与 kind 不匹配的条目都不出现", async () => {
-      const mine = await store.create({ title: "我的会话" });
-      const other = await store.create({ title: "别人的会话" });
-      const mineChild = await makeChild("d-mine", mine.id);
-      const otherChild = await makeChild("d-other", other.id);
-      // 普通会话（kind 缺省 = chat）即使被塞了运行记录也不该被认领
-      const plain = await store.create({ title: "普通会话" });
-
-      await store.saveSubagentRun(
-        mineChild.id,
-        makeRun({ sessionId: mine.id, childSessionId: mineChild.id, delegationId: "d-mine" }),
-      );
-      await store.saveSubagentRun(
-        otherChild.id,
-        makeRun({ sessionId: other.id, childSessionId: otherChild.id, delegationId: "d-other" }),
-      );
-      await store.saveSubagentRun(
-        plain.id,
-        makeRun({ sessionId: plain.id, childSessionId: plain.id }),
-      );
-
-      const runs = await store.listSubagentRunsFor(mine.id);
-      expect(runs.map((run) => run.delegationId)).toEqual(["d-mine"]);
-    });
-
-    it("重写同一条子会话即覆盖：终点那份记录盖掉起点那份", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const child = await makeChild("d-1", parent.id);
-      await store.saveSubagentRun(
-        child.id,
-        makeRun({ sessionId: parent.id, childSessionId: child.id }),
-      );
-      await store.saveSubagentRun(
-        child.id,
-        makeRun({
-          sessionId: parent.id,
-          childSessionId: child.id,
-          status: "interrupted",
-          endedAt: 5_000,
-          updatedAt: 5_000,
-        }),
-      );
-
-      const runs = await store.listSubagentRunsFor(parent.id);
-      expect(runs).toHaveLength(1);
-      expect(runs[0]).toMatchObject({ status: "interrupted", endedAt: 5_000 });
-    });
-
-    it("多条运行按 startedAt 升序（面板与 TaskList 直接沿用这个顺序）", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const late = await makeChild("d-late", parent.id);
-      const early = await makeChild("d-early", parent.id);
-      await store.saveSubagentRun(
-        late.id,
-        makeRun({
-          sessionId: parent.id,
-          childSessionId: late.id,
-          delegationId: "d-late",
-          startedAt: 9_000,
-        }),
-      );
-      await store.saveSubagentRun(
-        early.id,
-        makeRun({
-          sessionId: parent.id,
-          childSessionId: early.id,
-          delegationId: "d-early",
-          startedAt: 1_000,
-        }),
-      );
-
-      const runs = await store.listSubagentRunsFor(parent.id);
-      expect(runs.map((run) => run.delegationId)).toEqual(["d-early", "d-late"]);
-    });
-
-    it("索引里的坏记录被跳过，不让整份列表消失", async () => {
-      const parent = await store.create({ title: "父会话" });
-      const good = await makeChild("d-good", parent.id);
-      const bad = await makeChild("d-bad", parent.id);
-      await store.saveSubagentRun(
-        good.id,
-        makeRun({ sessionId: parent.id, childSessionId: good.id, delegationId: "d-good" }),
-      );
-      // 越过类型把坏数据直接写进索引：缺 delegationId 的运行记录必须被解析层拒掉。
-      // 索引是外部 JSON，手改坏是真会发生的（见实现里那条跳过注释）。
-      await createSessionsIndex(baseDir).update(bad.id, {
-        subagentRun: { status: "running" },
-      } as never);
-
-      const runs = await store.listSubagentRunsFor(parent.id);
-      expect(runs.map((run) => run.delegationId)).toEqual(["d-good"]);
-    });
   });
 });

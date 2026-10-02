@@ -596,7 +596,6 @@ describe("SUBAGENT_STATUS_LABEL_KEYS", () => {
   const STATUSES: readonly SubagentRunStatus[] = [
     "running",
     "completed",
-    "truncated",
     "failed",
     "aborted",
     "denied",

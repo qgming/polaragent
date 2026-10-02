@@ -26,6 +26,8 @@
 /** 一个界面的归属 */
 export interface SurfaceOwner {
   pluginId: string;
+  sourceDir?: string;
+  workspaceDir?: string;
   /** 清单里的界面 id（`surfaces[].id`） */
   surfaceId: string;
   /**

@@ -42,6 +42,7 @@ import {
   openPluginSurface,
   preparePluginPartitions,
   rememberSurfaceTheme,
+  revokeProjectSurfaces,
 } from "@/main/plugins/surfaces";
 import { IPC } from "@/shared/contracts/ipc";
 import type {
@@ -64,17 +65,17 @@ function canceled(): PluginMutationResult {
   return { canceled: true, views: [], diagnostics: [] };
 }
 
-/** 安装对话框：只认 .ointplug 与 .zip（后者是作者最常见的打包产物） */
+/** 安装对话框：只认 .zip 与 .zip（后者是作者最常见的打包产物） */
 const installDialogOptions = {
   title: "选择插件包",
   properties: ["openFile" as const],
   filters: [
-    { name: "Oint 插件包", extensions: ["ointplug"] },
+    { name: "Oint 插件包", extensions: ["zip"] },
     { name: "ZIP 压缩包", extensions: ["zip"] },
   ],
 };
 
-/** 开发插件选的是**目录**（里面要有 plugin.json），不是文件 */
+/** 开发插件选的是目录（包含 package.json 和可用的 Chord 构建产物）。 */
 const devDialogOptions = {
   title: "选择插件目录",
   properties: ["openDirectory" as const],
@@ -120,10 +121,10 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
   }
 
   async function list(): Promise<PluginView[]> {
-    const views = await registry.reload();
+    await registry.reload();
     // 列表变了，贡献面、插件进程与分区都要跟着重算 —— 否则"列表里有了但技能还没生效"
     await syncRuntime();
-    return views;
+    return registry.list();
   }
 
   /*
@@ -136,7 +137,10 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
     IPC.plugins.setWorkspace,
     "设置插件扫描的工作目录",
     async (dir: unknown): Promise<void> => {
-      registry.setWorkspaceDir(typeof dir === "string" && dir !== "" ? dir : undefined);
+      const next = typeof dir === "string" && dir !== "" ? path.resolve(dir) : undefined;
+      if (next === registry.getWorkspaceDir()) return;
+      revokeProjectSurfaces();
+      registry.setWorkspaceDir(next);
     },
   );
 
@@ -184,9 +188,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
    */
   async function setEnabled(request: { id: string }, enabled: boolean): Promise<PluginListResult> {
     if (!registry.loaded) await registry.reload();
-    const views = await registry.setEnabled(request.id, enabled);
+    await registry.setEnabled(request.id, enabled);
     await syncRuntime();
-    return { views, diagnostics: [] };
+    return { views: registry.list(), diagnostics: [] };
   }
 
   handle(
@@ -204,9 +208,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
   handle(IPC.plugins.reload, "重载插件列表", async (): Promise<PluginListResult> => {
     // 重载同样要重算贡献面：用户手改了磁盘上的插件目录之后点「重载」，
     // 期望的是"重新读一遍"，而不只是列表刷新
-    const views = await registry.reload();
+    await registry.reload();
     await refreshPluginContributions(options);
-    return { views, diagnostics: [] };
+    return { views: registry.list(), diagnostics: [] };
   });
 
   /*
@@ -227,8 +231,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
       : await dialog.showOpenDialog(installDialogOptions);
     if (picked.canceled || picked.filePaths.length === 0) return canceled();
     await installPluginFromZip(picked.filePaths[0] as string, resolveDataDir());
-    await refreshPluginContributions(options);
-    return { canceled: false, views: await registry.reload(), diagnostics: [] };
+    await registry.reload();
+    await syncRuntime();
+    return { canceled: false, views: registry.list(), diagnostics: [] };
   });
 
   handle(IPC.plugins.loadDev, "加载开发插件", async (): Promise<PluginMutationResult> => {
@@ -238,8 +243,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
       : await dialog.showOpenDialog(devDialogOptions);
     if (picked.canceled || picked.filePaths.length === 0) return canceled();
     await addDevPlugin(picked.filePaths[0] as string, resolveDataDir());
-    await refreshPluginContributions(options);
-    return { canceled: false, views: await registry.reload(), diagnostics: [] };
+    await registry.reload();
+    await syncRuntime();
+    return { canceled: false, views: registry.list(), diagnostics: [] };
   });
 
   handle(
@@ -260,6 +266,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
       }
 
       // **不看启停**：停用的插件同样要能卸载（见 registry.sourceOf 的说明）
+      if (!view.removable) throw new Error("项目插件不能删除源码，请解除项目引用");
+      await registry.setEnabled(request.id, false);
+      await syncRuntime();
       const source = registry.sourceOf(request.id);
       if (view.source === "dev") {
         // 开发插件是**解除挂载**，不删目录 —— 那是用户自己的代码
@@ -281,8 +290,9 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
         而它下一次工具调用会以 ENOENT 失败 —— 用户看到的是"卸载之后报了个错"。
       */
       closeAllSurfacesOfPlugin(request.id);
+      await registry.reload();
       await syncRuntime();
-      return { views: await registry.reload(), diagnostics: [] };
+      return { views: registry.list(), diagnostics: [] };
     },
   );
 
@@ -316,8 +326,8 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
       const parent = BrowserWindow.getFocusedWindow();
       const options = {
         title: "分享插件",
-        defaultPath: `${request.id}.ointplug`,
-        filters: [{ name: "Oint 插件包", extensions: ["ointplug"] }],
+        defaultPath: `${request.id}.zip`,
+        filters: [{ name: "Oint 插件包", extensions: ["zip"] }],
       };
       const picked = parent
         ? await dialog.showSaveDialog(parent, options)
@@ -379,7 +389,7 @@ export function registerPluginsIpc(options: PluginsIpcOptions = {}): void {
   handle(
     IPC.plugins.commands,
     "列出插件命令",
-    async (): Promise<PluginCommandView[]> => pluginCommands(),
+    async (): Promise<PluginCommandView[]> => pluginCommands(registry.getWorkspaceDir()),
   );
 
   handle(

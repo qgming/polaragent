@@ -139,7 +139,12 @@ export function createAskTool(
 
     description: buildAskDescription(Math.round(deps.interactions.timeoutMs() / 1000)),
     parameters: askSchema,
-    async execute(params, api): Promise<ToolExecutionResult<JsonRepresentation<AskToolDetails>>> {
+    replay: "safe",
+    async execute(
+      params,
+      api,
+      context,
+    ): Promise<ToolExecutionResult<JsonRepresentation<AskToolDetails>>> {
       const toolCallId = api.callId;
       const questions = params.questions as AskQuestion[];
       // schema 已限定 1~4 题，这里再兜一层：内核换了校验口径时也不能把空提问丢给用户
@@ -159,6 +164,8 @@ export function createAskTool(
         sessionId: deps.sessionId,
         toolCallId,
         questions,
+        api,
+        context,
       });
       const details: AskToolDetails = {
         outcome: response.outcome,

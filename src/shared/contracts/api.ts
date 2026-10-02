@@ -2,12 +2,7 @@ import type { AppInfo } from "./app";
 import type { ApprovalDecision } from "./approval";
 import type { ChatAttachment } from "./attachment";
 import type { BrowserEvent, BrowserStatus } from "./browser";
-import type {
-  ChatEventEnvelope,
-  ChatSendOptions,
-  ChatStreamSnapshot,
-  CompactOutcome,
-} from "./chat";
+import type { ChatEventEnvelope, ChatLiveSnapshot, ChatSendOptions, CompactOutcome } from "./chat";
 import type { AgentMode, ModelRef, WireFormat } from "./common";
 import type { DirectoryListing, FileContent, FileWriteResult, ImageContent } from "./files";
 import type { AskReply, AskRequest } from "./interaction";
@@ -138,17 +133,17 @@ export interface OintApi {
      * 对话还短得没什么可压），不是故障；把它们的 code 交给渲染层，界面才能用自己的语言
      * 给出稳定文案（主进程的中文 message 只作未知 code 的兜底）。
      *
-     * 压缩过程本身通过 `compaction-started` / `compaction-ended` 事件汇报，
-     * 所以这个调用只是「提交请求」，不等待整段压缩跑完的交互语义。
+     * 压缩过程与结果通过已提交的原生会话视图汇报，
+     * 此调用等待原生压缩 receipt，返回可展示的完成或失败结果。
      */
     compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
     /**
-     * 当前流式消息的完整快照（没有在流时为 null）。
+     * 当前会话的原生视图快照（运行时尚未挂载时为 null）。
      *
-     * 增量事件（part-delta）只带新增文本，渲染层一旦发现缺口（消息/part 不存在、
+     * 原生视图操作按 revision 应用，渲染层发现缺口（revision 不连续、
      * 下标对不上）就用它整条补齐。窗口重载、订阅晚于运行开始等场景靠这条兜底。
      */
-    snapshot(sessionId: string): Promise<ChatStreamSnapshot | null>;
+    snapshot(sessionId: string): Promise<ChatLiveSnapshot | null>;
     /** 订阅主进程推送的聊天事件（含所属会话 id），返回取消订阅函数 */
     onEvent(callback: (payload: ChatEventEnvelope) => void): () => void;
   };
@@ -386,7 +381,7 @@ export interface OintApi {
     disable(id: string): Promise<PluginListResult>;
     /** 重载：先卸载再加载，用于「改完包 / 崩过之后再来一次」 */
     reload(id: string): Promise<PluginListResult>;
-    /** 安装 .ointplug 包；取消时 canceled 为真 */
+    /** 安装原生插件 ZIP 包；取消时 canceled 为真 */
     install(): Promise<PluginMutationResult>;
     /** 卸载；keepData 为真时保留私有数据目录（默认由界面问用户） */
     uninstall(id: string, keepData: boolean): Promise<PluginListResult>;

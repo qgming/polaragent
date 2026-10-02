@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "@/shared/contracts/session";
 import { mergeLoadedPage, planRewrite, useChatStore } from "./chat-store";
+import { viewEvent } from "./chat-view-test";
 
 function msg(id: string, role: ChatMessage["role"], parentId?: string | null): ChatMessage {
   return {
@@ -153,14 +154,12 @@ describe("planRewrite", () => {
       });
 
       const store = useChatStore.getState();
-      store.applyEvent("s2", { type: "run-started", runId: "r2" });
+      store.applyEvent("s2", viewEvent({ running: true }));
       expect(useChatStore.getState().runningBySession.s2).toBe(true);
       expect(useChatStore.getState().runningBySession.s1).toBeUndefined();
 
       // 后台跑完：只清它自己；顺带触发的列表刷新在测试环境里没有 IPC，异常要被吞掉
-      expect(() =>
-        store.applyEvent("s2", { type: "run-ended", runId: "r2", reason: "completed" }),
-      ).not.toThrow();
+      expect(() => store.applyEvent("s2", viewEvent({ running: false }))).not.toThrow();
       expect(useChatStore.getState().runningBySession.s2).toBe(false);
       expect(useChatStore.getState().activeSessionId).toBe("s1");
     });
@@ -241,7 +240,10 @@ describe("压缩状态机", () => {
     seed();
     useChatStore
       .getState()
-      .applyEvent(SESSION_ID, { type: "compaction-started", reason: "threshold", startedAt: 100 });
+      .applyEvent(
+        SESSION_ID,
+        viewEvent({ compaction: { phase: "running", reason: "threshold", startedAt: 100 } }),
+      );
     expect(useChatStore.getState().compactions[SESSION_ID]).toEqual({
       phase: "running",
       reason: "threshold",
@@ -252,16 +254,24 @@ describe("压缩状态机", () => {
   it("completed：带上摘要、压缩前 tokens 与保留条数", () => {
     seed();
     const store = useChatStore.getState();
-    store.applyEvent(SESSION_ID, { type: "compaction-started", reason: "manual", startedAt: 100 });
-    store.applyEvent(SESSION_ID, {
-      type: "compaction-ended",
-      reason: "manual",
-      status: "completed",
-      endedAt: 200,
-      summaryPreview: "摘要预览",
-      tokensBefore: 123_456,
-      retainedCount: 7,
-    });
+    store.applyEvent(
+      SESSION_ID,
+      viewEvent({ compaction: { phase: "running", reason: "manual", startedAt: 100 } }),
+    );
+    store.applyEvent(
+      SESSION_ID,
+      viewEvent({
+        compaction: {
+          startedAt: 100,
+          reason: "manual",
+          phase: "completed",
+          endedAt: 200,
+          summaryPreview: "摘要预览",
+          tokensBefore: 123_456,
+          retainedCount: 7,
+        },
+      }),
+    );
     expect(useChatStore.getState().compactions[SESSION_ID]).toEqual({
       phase: "completed",
       reason: "manual",
@@ -277,43 +287,61 @@ describe("压缩状态机", () => {
   it("failed：落成失败并带原因，绝不停在「进行中」", () => {
     seed();
     const store = useChatStore.getState();
-    store.applyEvent(SESSION_ID, { type: "compaction-started", reason: "manual", startedAt: 100 });
-    store.applyEvent(SESSION_ID, {
-      type: "compaction-ended",
-      reason: "manual",
-      status: "failed",
-      endedAt: 200,
-      summaryPreview: "",
-      error: "模型超时",
-    });
+    store.applyEvent(
+      SESSION_ID,
+      viewEvent({ compaction: { phase: "running", reason: "manual", startedAt: 100 } }),
+    );
+    store.applyEvent(
+      SESSION_ID,
+      viewEvent({
+        compaction: {
+          startedAt: 100,
+          reason: "manual",
+          phase: "failed",
+          endedAt: 200,
+          summaryPreview: "",
+          error: "模型超时",
+        },
+      }),
+    );
     const state = useChatStore.getState().compactions[SESSION_ID];
     expect(state?.phase).toBe("failed");
     expect(state?.error).toBe("模型超时");
   });
 
   it("declined / aborted 都归到「已取消」", () => {
-    for (const status of ["declined", "aborted"] as const) {
+    for (const _status of ["declined", "aborted"] as const) {
       seed();
-      useChatStore.getState().applyEvent(SESSION_ID, {
-        type: "compaction-ended",
-        reason: "threshold",
-        status,
-        endedAt: 200,
-        summaryPreview: "",
-      });
+      useChatStore.getState().applyEvent(
+        SESSION_ID,
+        viewEvent({
+          compaction: {
+            startedAt: 200,
+            reason: "threshold",
+            phase: "cancelled",
+            endedAt: 200,
+            summaryPreview: "",
+          },
+        }),
+      );
       expect(useChatStore.getState().compactions[SESSION_ID]?.phase).toBe("cancelled");
     }
   });
 
   it("没有 started 事件时（例如刚订阅就收到结束）也能落一个完整状态", () => {
     seed();
-    useChatStore.getState().applyEvent(SESSION_ID, {
-      type: "compaction-ended",
-      reason: "threshold",
-      status: "completed",
-      endedAt: 200,
-      summaryPreview: "s",
-    });
+    useChatStore.getState().applyEvent(
+      SESSION_ID,
+      viewEvent({
+        compaction: {
+          startedAt: 200,
+          reason: "threshold",
+          phase: "completed",
+          endedAt: 200,
+          summaryPreview: "s",
+        },
+      }),
+    );
     expect(useChatStore.getState().compactions[SESSION_ID]).toMatchObject({
       phase: "completed",
       startedAt: 200,
@@ -379,13 +407,18 @@ describe("压缩状态机", () => {
       try {
         const call = useChatStore.getState().compact();
         // 事件先到：这一轮压缩已经完成
-        useChatStore.getState().applyEvent(SESSION_ID, {
-          type: "compaction-ended",
-          reason: "manual",
-          status: "completed",
-          endedAt: 200,
-          summaryPreview: "摘要",
-        });
+        useChatStore.getState().applyEvent(
+          SESSION_ID,
+          viewEvent({
+            compaction: {
+              startedAt: 100,
+              reason: "manual",
+              phase: "completed",
+              endedAt: 200,
+              summaryPreview: "摘要",
+            },
+          }),
+        );
         reject?.();
         await call;
         expect(useChatStore.getState().compactions[SESSION_ID]).toMatchObject({

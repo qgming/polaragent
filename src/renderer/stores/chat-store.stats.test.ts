@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ContextBreakdown, SessionStats, SessionTokenUsage } from "@/shared/contracts";
 import { useChatStore } from "./chat-store";
+import { viewEvent } from "./chat-view-test";
 
 function stats(overrides: Partial<SessionStats> = {}): SessionStats {
   return {
@@ -56,7 +57,7 @@ describe("会话统计事件接线", () => {
   });
 
   it("token-usage 落到事件所属会话的分片", () => {
-    useChatStore.getState().applyEvent("s2", { type: "token-usage", usage: usage() });
+    useChatStore.getState().applyEvent("s2", viewEvent({ usage: usage() }));
     expect(useChatStore.getState().tokenUsageBySession.s2?.cacheReadTokens).toBe(1_054_208);
     expect(useChatStore.getState().tokenUsageBySession.s1).toBeUndefined();
   });

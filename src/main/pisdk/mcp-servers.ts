@@ -20,7 +20,8 @@ import {
   type McpHandshake,
   type McpRemoteTool,
 } from "@/main/mcp/client";
-import { pluginMcpServerConfigs } from "@/main/plugins/contributions";
+import { allPluginMcpServerConfigs, pluginMcpServerConfigs } from "@/main/plugins/contributions";
+import { subscribePluginExtensions } from "@/main/plugins/process-host";
 import { loadSettings } from "@/main/settings/store";
 import {
   isValidMcpServerId,
@@ -64,7 +65,7 @@ export interface McpToolSource {
    * 同步返回是刻意的：建会话时要用它一次性装配工具数组，
    * 而连接状态由 reload() 维护，取快照不该再去等网络。
    */
-  tools(): ToolRegistration[];
+  tools(cwd?: string): ToolRegistration[];
   /** 工具集合变化时回调（连接/断开/工具列表变化），返回取消订阅函数 */
   subscribe(listener: () => void): () => void;
 }
@@ -126,7 +127,7 @@ function entriesForPanel(settings: Settings): ResolvedMcpServer[] {
 }
 
 function effectiveOf(settings: Settings): McpServerConfig[] {
-  return effectiveMcpServerConfigs(settings, pluginMcpServerConfigs());
+  return effectiveMcpServerConfigs(settings, allPluginMcpServerConfigs());
 }
 
 /** 连接相关的配置是否一致：只比会影响连接本身的字段，名字/启用状态不算 */
@@ -156,6 +157,8 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
   const makeClient =
     deps.createClient ?? ((config: McpServerConfig) => createMcpClient({ config, warn }));
   const entries = new Map<string, ServerEntry>();
+  // Retain ownership after removal until asynchronous connection teardown finishes.
+  const pluginEndpointIds = new Set<string>();
   const listeners = new Set<() => void>();
   let disposed = false;
   let disposal: Promise<void> | undefined;
@@ -388,18 +391,26 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
    * 每台就绪的 server 出一个聚合工具 `mcp__<id>__call`；只要有 server 就带上 `mcp_tools`
    *（内置详情工具，聚合形态下它是读工具清单与参数 schema 的唯一通道）。
    */
-  function collectTools(): ToolRegistration[] {
+  function collectTools(cwd?: string): ToolRegistration[] {
     const result: ToolRegistration[] = [];
     if (entries.size > 0) {
-      result.push(createMcpCatalogTool({ catalog }));
+      result.push(createMcpCatalogTool({ catalog: () => catalog(cwd) }));
     }
     for (const [id, entry] of entries) {
-      if (entry.status !== "ready") continue;
+      if (entry.status !== "ready" || !visible(id, cwd)) continue;
       if (result.length >= MAX_MCP_TOOLS) {
         warn(`MCP 工具超过 ${MAX_MCP_TOOLS} 个，已省略其余 server（${id}）`);
         return result;
       }
-      result.push(createMcpGatewayTool(gatewayServer(id, entry), { callTool }));
+      result.push(
+        createMcpGatewayTool(gatewayServer(id, entry), {
+          callTool: (serverId, toolName, args, signal) => {
+            if (!visible(serverId, cwd))
+              return Promise.reject(new Error("插件 MCP 不属于此工作区或已停用"));
+            return callTool(serverId, toolName, args, signal);
+          },
+        }),
+      );
     }
     return result;
   }
@@ -410,22 +421,31 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
    * 覆盖**所有**条目（含未连接与连接失败的），因为它们正是排查时最需要的信息：
    * 「这台 server 为什么没有工具」的答案通常就在 status/error 里。
    */
-  function catalog(): McpCatalogServer[] {
-    return [...entries].map(([id, entry]) => ({
-      serverId: id,
-      serverName: mcpServerLabel(entry.config),
-      source: findBuiltinMcpServer(id) === undefined ? "user" : "system",
-      status: entry.status,
-      ...(entry.error === undefined ? {} : { error: entry.error }),
-      tools: [...entry.tools]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          ...(tool.readOnly === undefined ? {} : { readOnly: tool.readOnly }),
-        })),
-    }));
+  function visible(id: string, cwd?: string): boolean {
+    for (const config of allPluginMcpServerConfigs()) pluginEndpointIds.add(config.id);
+    return (
+      !pluginEndpointIds.has(id) || pluginMcpServerConfigs(cwd).some((config) => config.id === id)
+    );
+  }
+
+  function catalog(cwd?: string): McpCatalogServer[] {
+    return [...entries]
+      .filter(([id]) => visible(id, cwd))
+      .map(([id, entry]) => ({
+        serverId: id,
+        serverName: mcpServerLabel(entry.config),
+        source: findBuiltinMcpServer(id) === undefined ? "user" : "system",
+        status: entry.status,
+        ...(entry.error === undefined ? {} : { error: entry.error }),
+        tools: [...entry.tools]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            ...(tool.readOnly === undefined ? {} : { readOnly: tool.readOnly }),
+          })),
+      }));
   }
 
   async function callTool(
@@ -461,6 +481,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
         const settings = await deps.getSettings();
         if (disposed) return [];
         // 连接只连**生效的**那些：同 id 用户配置胜出、停用的不连（合并口径见 builtin-servers.ts）
+        for (const config of allPluginMcpServerConfigs()) pluginEndpointIds.add(config.id);
         const active = effectiveOf(settings);
         const byId = new Map(active.map((config) => [config.id, config]));
 
@@ -535,6 +556,7 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
     dispose() {
       if (disposal !== undefined) return disposal;
       disposed = true;
+      stopPluginSubscription();
       listeners.clear();
       disposal = (async () => {
         await Promise.all([...entries.values()].map(closeEntry));
@@ -546,6 +568,9 @@ export function createMcpServers(deps: McpServersDeps): McpServers {
       return disposal;
     },
   };
+  const stopPluginSubscription = subscribePluginExtensions(() => {
+    void servers.reload().catch((error) => warn(String(error)));
+  });
   return servers;
 }
 

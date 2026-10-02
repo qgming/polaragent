@@ -51,7 +51,7 @@ function viewFixture(patch: Partial<PluginView> = {}): PluginView {
     newlyRequested: [],
     contributionNames: { skills: [], prompts: [], subagents: [], mcpServers: [] },
     hooks: [],
-    hasMain: false,
+    hasCode: false,
     surfaces: [],
     ...patch,
   };
@@ -66,7 +66,7 @@ describe("PluginDetailDialog", () => {
     render(
       <PluginDetailDialog
         view={viewFixture({
-          hasMain: true,
+          hasCode: true,
           permissions: [permission("agent.tool.register", "high")],
         })}
         onClose={() => {}}
@@ -79,7 +79,7 @@ describe("PluginDetailDialog", () => {
   it("声明式插件（没有 main）不显示那句 —— 它不跑代码", () => {
     render(
       <PluginDetailDialog
-        view={viewFixture({ hasMain: false, permissions: [permission("ui.panel", "low")] })}
+        view={viewFixture({ hasCode: false, permissions: [permission("ui.panel", "low")] })}
         onClose={() => {}}
       />,
     );
@@ -106,7 +106,7 @@ describe("PluginDetailDialog", () => {
     render(
       <PluginDetailDialog
         view={viewFixture({
-          hasMain: true,
+          hasCode: true,
           permissions: [permission("shell.exec", "high"), permission("ui.panel", "low")],
         })}
         onClose={() => {}}
@@ -169,18 +169,14 @@ describe("PluginDetailDialog", () => {
     const { unmount } = render(
       <PluginDetailDialog
         view={viewFixture({
-          hooks: [
-            { id: "no-bash-rm", event: "PreToolUse", matcher: "^bash$" },
-            { id: "note", event: "PostToolUse" },
-            { id: "logger", event: "PreToolUse", failure: "open" },
-          ],
+          hooks: ["beforeTool", "afterTool"],
         })}
         onClose={() => {}}
       />,
     );
 
     expect(screen.getByText("介入点")).toBeTruthy();
-    expect(screen.getByText("^bash$")).toBeTruthy();
+    expect(screen.getByText("beforeTool")).toBeTruthy();
     // 没有 matcher 的钩子管全部工具 —— 显示"全部工具"，不能留空让人猜（夹具里有两条）
     expect(screen.getAllByText("全部工具")).toHaveLength(2);
     // 三条里只有第一条是 fail-closed 的 PreToolUse；failure: open 那条不该被标

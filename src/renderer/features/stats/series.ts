@@ -183,6 +183,35 @@ export interface ModelLegendRow {
   colorIndex: number;
 }
 
+/** Calendar charts use only dated buckets; all-time report models can also contain undated spend. */
+export function datedModelUsage(days: readonly UsageDayPoint[]): {
+  totalTokens: number;
+  models: UsageModelPoint[];
+} {
+  const totals = new Map<string, number>();
+  let totalTokens = 0;
+  for (const day of days) {
+    totalTokens += day.tokens;
+    for (const [key, tokens] of Object.entries(day.models)) {
+      totals.set(key, (totals.get(key) ?? 0) + tokens);
+    }
+  }
+  const models = [...totals]
+    .filter(([, tokens]) => tokens > 0)
+    .map(([key, tokens]) => {
+      const separator = key.indexOf("|");
+      return {
+        key,
+        serviceId: separator < 0 ? "" : key.slice(0, separator),
+        modelId: separator < 0 ? key : key.slice(separator + 1),
+        tokens,
+        share: totalTokens > 0 ? tokens / totalTokens : 0,
+      };
+    })
+    .sort((left, right) => right.tokens - left.tokens);
+  return { totalTokens, models };
+}
+
 /**
  * 模型图例：按总量降序，超出 `limit` 的尾部合成一行「其他」。
  *

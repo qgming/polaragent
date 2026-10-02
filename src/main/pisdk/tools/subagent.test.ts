@@ -15,11 +15,7 @@ import { createToolTestApi } from "@/main/pisdk/tools/tool-test-api";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { describe, expect, it, vi } from "vitest";
-import {
-  MAX_CONCURRENT_SUBAGENT_RUNS,
-  type SubagentDefinition,
-  type SubagentRun,
-} from "@/shared/contracts/subagent";
+import type { SubagentDefinition, SubagentRun } from "@/shared/contracts/subagent";
 import { BUILTIN_SUBAGENTS } from "../subagent-catalog";
 import {
   createSubagentTools,
@@ -95,8 +91,6 @@ function interruptedRun(patch: Partial<SubagentRun> = {}): SubagentRun {
  * 用一个永远放行的假实现会把要验的东西验成空的。
  */
 function createDeps(overrides: Partial<SubagentToolDeps> = {}): SubagentToolDeps {
-  const held = new Map<string, string>();
-  const MAX = MAX_CONCURRENT_SUBAGENT_RUNS;
   return {
     sessionId: "s-parent",
     cwd: () => "C:/work",
@@ -111,16 +105,6 @@ function createDeps(overrides: Partial<SubagentToolDeps> = {}): SubagentToolDeps
         ...(request.resumedFrom === undefined ? {} : { resumedFrom: request.resumedFrom }),
       }),
     ),
-    reserveSlot: (delegationId, agentName) => {
-      if (held.size >= MAX) {
-        return {
-          ok: false,
-          holders: [...held].map(([id, name]) => ({ delegationId: id, agentName: name })),
-        };
-      }
-      held.set(delegationId, agentName);
-      return { ok: true };
-    },
     wait: vi.fn(async () => [] as SubagentRun[]),
     list: vi.fn(async () => [] as SubagentRun[]),
     stop: vi.fn(async () => [] as SubagentRun[]),
@@ -355,109 +339,6 @@ describe("Task", () => {
     expect(resultText(result)).toContain("read"); // 可用清单
   });
 
-  it("并发上限：名额已被占满时直接拒绝，不再启动", async () => {
-    // 占满名额的是**预约**（reserveSlot），不再是 list() 里的 running 行：
-    // 上限的判据必须是「谁占着名额」，而 list() 是一份可能过期的快照（见 execute 里的注释）
-    let reserved = 0;
-    const deps = createDeps({
-      reserveSlot: () => {
-        if (reserved >= MAX_CONCURRENT_SUBAGENT_RUNS) {
-          return {
-            ok: false,
-            holders: Array.from({ length: MAX_CONCURRENT_SUBAGENT_RUNS }, (_, index) => ({
-              delegationId: `d-${index}`,
-              agentName: `agent-${index}`,
-            })),
-          };
-        }
-        reserved += 1;
-        return { ok: true };
-      },
-    });
-    // 先占满：前 MAX 次派发各自拿走一个名额
-    for (let index = 0; index < MAX_CONCURRENT_SUBAGENT_RUNS; index += 1) {
-      const held = await invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-${index}`, {
-        agent: "scout",
-        description: "占位",
-        task: "做点事",
-      });
-      expect(held).not.toHaveProperty("isError");
-    }
-    vi.mocked(deps.start).mockClear();
-
-    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-9", {
-      agent: "scout",
-      description: "再派一个",
-      task: "做点事",
-    });
-
-    expect(result).toMatchObject({ isError: true });
-    const text = resultText(result);
-    expect(text).toContain(`${MAX_CONCURRENT_SUBAGENT_RUNS}`);
-    expect(text).toContain("上限");
-    expect(text).toContain(SUBAGENT_TOOL_NAMES.wait); // 文案要给出下一步：先收敛再派
-    // 拒绝文案要指名道姓：只说「超上限」模型不知道该等谁
-    expect(text).toContain("d-0");
-    expect(vi.mocked(deps.start)).not.toHaveBeenCalled();
-  });
-
-  it("同一批并发派发不会绕过上限：5 个同时发只有 4 个能出去", async () => {
-    /**
-     * 这条用例存在的唯一理由就是防 TOCTOU：真实故障是「同一条消息里发 4 个 sleeper +
-     * 第 5 个 explorer，5 个全部成功」，而顺序发第 5 个会被正确拒绝。
-     *
-     * 所以这里必须让 execute 真的并发跑起来（Promise.all），并且让 reserveSlot 的占位
-     * 在返回前就生效 —— 若有人把上限改回「先 await list() 再 await start()」，
-     * 5 个 execute 会各自读到同一个空列表，这条断言立刻失败。
-     */
-    const deps = createDeps();
-    const attempts = Array.from({ length: MAX_CONCURRENT_SUBAGENT_RUNS + 1 }, (_, index) =>
-      invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-${index}`, {
-        agent: "scout",
-        description: `第 ${index} 个`,
-        task: "做点事",
-      }),
-    );
-
-    const results = await Promise.all(attempts);
-    // isError 只在失败分支上：先按它筛出被拒的那一条，再收窄类型
-    const refused = results.filter((result) => "isError" in result && result.isError === true);
-
-    expect(refused).toHaveLength(1);
-    expect(vi.mocked(deps.start)).toHaveBeenCalledTimes(MAX_CONCURRENT_SUBAGENT_RUNS);
-    expect(resultText(refused[0] as SubagentToolResult)).toContain("上限");
-  });
-
-  it("上限是「≥」而不是「>」：还有一个空位时照常派发", async () => {
-    let reserved = 0;
-    const deps = createDeps({
-      reserveSlot: () => {
-        if (reserved >= MAX_CONCURRENT_SUBAGENT_RUNS - 1) {
-          return { ok: false, holders: [] };
-        }
-        reserved += 1;
-        return { ok: true };
-      },
-    });
-    for (let index = 0; index < MAX_CONCURRENT_SUBAGENT_RUNS - 2; index += 1) {
-      await invoke(deps, SUBAGENT_TOOL_NAMES.task, `call-fill-${index}`, {
-        agent: "scout",
-        description: "占位",
-        task: "做点事",
-      });
-    }
-    vi.mocked(deps.start).mockClear();
-
-    const result = await invoke(deps, SUBAGENT_TOOL_NAMES.task, "call-8", {
-      agent: "scout",
-      description: "最后一个空位",
-      task: "做点事",
-    });
-
-    expect(result).not.toHaveProperty("isError");
-    expect(vi.mocked(deps.start)).toHaveBeenCalledTimes(1);
-  });
-
   it("成功派发：details 就是运行记录，文本不带错误", async () => {
     const deps = createDeps();
 
@@ -647,7 +528,13 @@ describe("TaskWait", () => {
       timeoutSeconds: 123,
     });
 
-    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(["d-a", "d-b"], "any", 2, 123);
+    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(
+      ["d-a", "d-b"],
+      "any",
+      2,
+      123,
+      BACKGROUND_CONTEXT,
+    );
     expect(result.details).toEqual({ runs: [completed, stillRunning] });
     const text = resultText(result);
     expect(text).toContain("[scout]");
@@ -665,7 +552,7 @@ describe("TaskWait", () => {
 
     await invoke(deps, SUBAGENT_TOOL_NAMES.wait, "call-1", {});
 
-    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(undefined, "all", 1, 600);
+    expect(vi.mocked(deps.wait)).toHaveBeenCalledWith(undefined, "all", 1, 600, BACKGROUND_CONTEXT);
   });
 
   it("超时不是失败：还在跑的运行以 running + 无报告回来，回执不带错误", async () => {

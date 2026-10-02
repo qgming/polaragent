@@ -70,11 +70,16 @@ describe("native session metadata cache", () => {
       await opened.session.getEntry(recent.messages[0].entryId, context);
       expect(limits).toEqual([11, 2]);
       expect(rows).toBe(13);
-      const first = await store.scanUsageSamples(created.id, 0, 5);
-      expect(first.entries).toBe(5);
+      // Usage queries read the native ledger, never the transcript.
+      expect((await store.scanUsageSamples(created.id, 0, 5)).entries).toBe(0);
+      expect(rows).toBe(13);
+      const first = await opened.session.oldestPage(5, 0, context);
+      expect(first.entries).toHaveLength(5);
       expect(rows).toBe(153);
-      const second = await store.scanUsageSamples(created.id, first.nextSeq, 5);
-      expect(second.entries).toBe(5);
+      const cursor = first.entries.at(-1)?.sequence;
+      if (cursor === undefined) throw new Error("Expected a complete first history page");
+      const second = await opened.session.oldestPage(5, cursor, context);
+      expect(second.entries).toHaveLength(5);
       expect(rows).toBe(153);
       await store.loadMessages(created.id, { limit: 2, order: "oldestFirst" });
       expect(rows).toBe(153);

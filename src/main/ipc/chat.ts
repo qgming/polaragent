@@ -60,6 +60,6 @@ export function registerChatIpc(): void {
     },
   );
   handle(IPC.chat.snapshot, "读取流式快照", async (request: { sessionId: string }) => {
-    return getChatRuntime().streamSnapshot(request.sessionId);
+    return getChatRuntime().liveSnapshot(request.sessionId);
   });
 }

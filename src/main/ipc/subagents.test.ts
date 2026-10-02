@@ -50,9 +50,11 @@ vi.mock("electron", () => ({
 vi.mock("@/main/app/paths", () => ({ dataDir: () => paths.data }));
 vi.mock("@/main/settings/store", () => ({ loadSettings: vi.fn() }));
 // runner 内部维护真实运行注册表：本文件只验证转发，整体替身
-vi.mock("@/main/pisdk/subagent-runner", () => ({
-  reconcileSubagentRuns: runner.reconcileSubagentRuns,
-  stopSubagentRun: runner.stopSubagentRun,
+vi.mock("@/main/pisdk/runtime", () => ({
+  getChatRuntime: () => ({
+    listSubagents: runner.reconcileSubagentRuns,
+    stopSubagent: runner.stopSubagentRun,
+  }),
 }));
 
 const BASE_SETTINGS: Settings = {

@@ -32,6 +32,7 @@ import {
   localeOf,
 } from "../format";
 import {
+  datedModelUsage,
   type HeatMode,
   heatCells,
   modelLabel,
@@ -92,10 +93,8 @@ export function StatsPanel() {
     [report?.today, range],
   );
 
-  const legend = useMemo(
-    () => modelLegendRows(report?.models ?? [], TREND_SERIES_LIMIT),
-    [report?.models],
-  );
+  const dated = useMemo(() => datedModelUsage(report?.days ?? []), [report?.days]);
+  const legend = useMemo(() => modelLegendRows(dated.models, TREND_SERIES_LIMIT), [dated.models]);
 
   const trend = useMemo(
     () =>
@@ -138,7 +137,7 @@ export function StatsPanel() {
     );
   }
 
-  const hasAnyData = report.totalTokens > 0;
+  const hasDatedData = dated.totalTokens > 0;
   const hasTrendData = trend.some((entry) => entry.points.some((value) => value > 0));
 
   return (
@@ -194,7 +193,7 @@ export function StatsPanel() {
             today={report.today}
             summary={t("stats.heatSummary", {
               days: report.activeDays,
-              total: formatTokens(report.totalTokens, language),
+              total: formatTokens(dated.totalTokens, language),
             })}
             renderTooltip={(date, value) =>
               t("stats.heatCell", {
@@ -267,10 +266,10 @@ export function StatsPanel() {
       <section data-slot="stats-models" className={cn(card, "mt-4")}>
         <h3 className={cn(typeSection, "text-[15px] text-foreground")}>{t("stats.modelUsage")}</h3>
         <div className="mt-3">
-          {hasAnyData ? (
+          {hasDatedData ? (
             <ModelUsageDonut
               slices={donutSlices}
-              totalLabel={formatTokens(report.totalTokens, language)}
+              totalLabel={formatTokens(dated.totalTokens, language)}
               totalCaption={t("stats.tokensUnit")}
               /*
                 明细行也用概略量级（万 / 亿，英文那边 K / M / B）而不是逐位数字：
@@ -285,7 +284,9 @@ export function StatsPanel() {
               colorOf={seriesColorAt}
             />
           ) : (
-            <p className="py-10 text-center text-[13px] text-ink-4">{t("stats.empty")}</p>
+            <p className="py-10 text-center text-[13px] text-ink-4">
+              {t(report.totalTokens > 0 ? "stats.emptyTrend" : "stats.empty")}
+            </p>
           )}
         </div>
       </section>
@@ -308,6 +309,11 @@ export function StatsPanel() {
           </span>
         )}
         <span>{t("stats.scopeActiveDays", { count: report.activeDays })}</span>
+        {(report.undatedTokens ?? 0) > 0 && (
+          <span>
+            {t("stats.undatedUsage", { tokens: formatTokens(report.undatedTokens ?? 0, language) })}
+          </span>
+        )}
         {report.scanning.active && (
           <span className="text-ink-3">
             {t("stats.scanning", {

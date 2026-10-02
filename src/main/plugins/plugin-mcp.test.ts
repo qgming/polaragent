@@ -1,39 +1,34 @@
-/**
- * 插件 `mcp.json` → 宿主配置的适配器，以及三层合并。
- *
- * 两条最值得钉住的：
- *  1. **权限是硬门槛**：ship 了 stdio server 却没申请 `mcp.server.local` 的那一条
- *     不装载，并且要有可读的原因。这是不抄 PI-Desktop「声明了就自动授予」的地方。
- *  2. **server id 由宿主生成且必须唯一**：Agent Plugins 对 mcp.json 的成员名没有
- *     字符集约束，而 Oint 的 id 要求 `^[a-z0-9][a-z0-9_-]*$` 且不含 `__`。
- *     直接用成员名会造出非法 id；只用插件 id 的末段会让两个插件撞车。
- */
-
 import { describe, expect, it } from "vitest";
 import { isValidMcpServerId, MCP_NAME_SEPARATOR } from "@/shared/contracts/mcp";
-import { AGENT_PLUGINS_SCHEMA_1_0_0, OINT_EXTENSION_NAMESPACE } from "@/shared/contracts/plugin";
 import type { Settings } from "@/shared/contracts/settings";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { effectiveMcpServerConfigs, resolveMcpServerEntries } from "@/shared/mcp/builtin-servers";
 import { validatePluginManifest } from "./manifest";
 import { buildPluginMcpServers, pluginServerId } from "./plugin-mcp";
 
-/** 造一份已校验的清单；`permissions` 由各用例给 */
 function manifestOf(id: string, permissions: string[]) {
   const result = validatePluginManifest({
-    $schema: AGENT_PLUGINS_SCHEMA_1_0_0,
-    name: id.replace(/\./g, "-"),
+    name: id,
     version: "1.0.0",
     description: "",
-    extensions: { [OINT_EXTENSION_NAMESPACE]: { id, apiVersion: "1", permissions } },
+    oint: { permissions },
   });
   if (!result.ok) throw new Error(result.issues.map((issue) => issue.message).join("; "));
   return result.manifest;
 }
 
 describe("pluginServerId", () => {
+  it("hashes raw identity even when readable slugs collide", () => {
+    expect(pluginServerId("source", "a.b")).not.toBe(pluginServerId("source", "a/b"));
+    expect(pluginServerId("@scope/a.b", "same")).not.toBe(pluginServerId("@scope/a/b", "same"));
+    const result = buildPluginMcpServers(manifestOf("source", ["mcp.server.remote"]), {
+      "a.b": { url: "https://one.example/mcp" },
+      "a/b": { url: "https://two.example/mcp" },
+    });
+    expect(result.issues).toEqual([]);
+    expect(new Set(result.servers.map((server) => server.config.id)).size).toBe(2);
+  });
   it("生成的 id 一定合法（字符集 + 不含双下划线）", () => {
-    // 成员名里塞满非法字符：Agent Plugins 不管，Oint 必须管
     for (const member of ["My Server!", "a/b/c", "有中文", "UPPER", "__evil__", "a  b"]) {
       const id = pluginServerId("dev.example.git-lens", member);
       expect(isValidMcpServerId(id), `${member} → ${id}`).toBe(true);
@@ -42,9 +37,6 @@ describe("pluginServerId", () => {
   });
 
   it("**两个插件用同一个成员名不会撞车** —— 这是不用末段做前缀的理由", () => {
-    // `dev.acme.tools-a` 与 `dev.acme.tools-b` 的末段完全不同，但只用末段的话
-    // `a.git` 与 `b.git` 会撞 —— 而 server id 撞车的后果是
-    // 两台 server 的工具混在同一份权限规则 mcp__<id>__* 下
     const one = pluginServerId("a.git", "github");
     const two = pluginServerId("b.git", "github");
     expect(one).not.toBe(two);
@@ -122,8 +114,6 @@ describe("buildPluginMcpServers：形状判别", () => {
 
 describe("**权限是硬门槛，不是提示**", () => {
   it("stdio server 没申请 mcp.server.local → 不装载 + 可读原因", () => {
-    // 这正是「不抄 PI-Desktop 的自动授予」的落点：它的权限校验对未声明的能力是跳过，
-    // 于是"我没给这个权限"与"我给了但它没生效"在界面上长得一样
     const result = buildPluginMcpServers(manifestOf("dev.example.x", []), {
       github: { command: "npx" },
     });
@@ -154,7 +144,6 @@ describe("展示信息", () => {
   it("名字带上插件名 —— 面板里同时有系统预设、插件、用户配置", () => {
     const manifest = manifestOf("dev.example.git-lens", ["mcp.server.local"]);
     const result = buildPluginMcpServers(manifest, { github: { command: "npx" } });
-    // 一个光秃秃的 "github" 看不出是谁给的
     expect(result.servers[0]?.config.name).toContain("git-lens");
     expect(result.servers[0]?.config.name).toContain("github");
   });
@@ -163,13 +152,11 @@ describe("展示信息", () => {
     const result = buildPluginMcpServers(manifestOf("dev.example.x", ["mcp.server.local"]), {
       a: { command: "npx" },
     });
-    // 用 Date.now() 会让"这条是不是新装的"这类判断每次启动都变
     expect(result.servers[0]?.config.createdAt).toBe(0);
   });
 });
 
 describe("三层合并", () => {
-  /** 与 builtin-servers.test.ts 同款的 Settings 夹具（那里也是这么造的） */
   function settings(patch: Partial<Settings> = {}): Settings {
     return {
       theme: "system",
@@ -213,12 +200,9 @@ describe("三层合并", () => {
       }),
       plugin,
     );
-
-    // 插件那一条被标记为"被覆盖"
     expect(
       entries.find((item) => item.source === "plugin" && item.config.id === id)?.overridden,
     ).toBe(true);
-    // 运行时只留用户那一份
     const effective = effectiveMcpServerConfigs(
       settings({
         mcpServers: [{ ...(plugin[0] as NonNullable<(typeof plugin)[0]>), command: "user-wins" }],
@@ -230,7 +214,6 @@ describe("三层合并", () => {
   });
 
   it("插件可以盖住系统预设（overridden 标在预设那一条上）", () => {
-    // 造一个与某台预设同 id 的插件 server
     const presetId = resolveMcpServerEntries(settings()).find((entry) => entry.source === "system")
       ?.config.id;
     if (presetId === undefined) return; // 预设表为空时跳过（不该发生）

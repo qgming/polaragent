@@ -150,7 +150,6 @@ describe("子智能体 pill 的状态词", () => {
     { status: "failed", word: /失败/ },
     { status: "aborted", word: /已停止/ },
     { status: "denied", word: /未能启动/ },
-    { status: "truncated", word: /达到轮次上限/ },
     { status: "interrupted", word: /意外终止/ },
   ];
 

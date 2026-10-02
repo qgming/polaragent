@@ -4,39 +4,8 @@ import { dispatchEvent } from "./event-bridge";
 
 /** ChatEvent 全部 12 种事件各构造一个样本 */
 const sampleEvents: ChatEvent[] = [
-  { type: "run-started", runId: "r1" },
-  {
-    type: "message-added",
-    message: { id: "m1", role: "assistant", createdAt: 1, parts: [], status: "complete" },
-  },
-  { type: "part-upsert", messageId: "m1", partIndex: 0, part: { type: "text", text: "hi" } },
-  { type: "part-delta", messageId: "m1", partIndex: 0, kind: "text", delta: "!" },
-  { type: "message-updated", messageId: "m1", patch: { status: "complete" } },
-  { type: "queue-updated", items: [{ id: "q1", text: "t", mode: "steer" }] },
-  {
-    type: "approval-requested",
-    request: {
-      id: "a1",
-      sessionId: "s1",
-      toolName: "bash",
-      argsText: "{}",
-      risk: "low",
-      source: "user",
-    },
-  },
+  { type: "input-admitted", messageId: "request-1", entryId: "entry:1" },
   { type: "approval-resolved", id: "a1", decision: "allow_once" },
-  { type: "approval-reviewed", id: "a1", reason: "命中危险命令" },
-  { type: "compaction-started", reason: "manual", startedAt: 1 },
-  {
-    type: "compaction-ended",
-    reason: "threshold",
-    status: "completed",
-    endedAt: 2,
-    summaryPreview: "sum",
-    tokensBefore: 120_000,
-    retainedCount: 12,
-  },
-  { type: "run-ended", runId: "r1", reason: "stop" },
   { type: "session-titled", sessionId: "s1", title: "修复登录超时" },
 ];
 
@@ -57,7 +26,7 @@ describe("dispatchEvent", () => {
     const onEvent = vi.fn();
     const envelope: ChatEventEnvelope = {
       sessionId: "s-bg",
-      event: { type: "run-started", runId: "r1" },
+      event: { type: "input-admitted", messageId: "request-1" },
     };
     dispatchEvent(onEvent, envelope);
     expect(onEvent).toHaveBeenCalledWith("s-bg", envelope.event);

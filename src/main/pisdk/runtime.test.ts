@@ -5,22 +5,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validatePathAccess } from "@/main/security/path-guard";
-import type { ToolCallPart } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import { createApprovalService } from "./approvals";
 import { createExecEnv } from "./exec-env";
 import {
   agentMessageText,
-  applyToolEnd,
   buildSystemPrompt,
   createChatRuntime,
   deriveRulePattern,
   getChatRuntime,
-  keptToolCallIds,
   loadAgentResources,
-  type PendingEntry,
-  pairEntryWithMessage,
   sessionAllowedRoots,
 } from "./runtime";
 import type { SessionStore } from "./session-store";
@@ -262,55 +257,6 @@ describe("sessionAllowedRoots", () => {
   });
 });
 
-describe("keptToolCallIds（一轮结束时哪些 toolCall 必须保留）", () => {
-  it("仍在跑的作业必须保留：它的结论要等进程退出才回填", () => {
-    const keep = keptToolCallIds({
-      jobs: [{ status: "running", toolCallId: "call-a" }],
-      subagentRuns: [],
-    });
-    expect([...keep]).toEqual(["call-a"]);
-  });
-
-  it("已终态的作业可以回收（结论已经回写完了）", () => {
-    for (const status of ["exited", "failed", "killed"]) {
-      const keep = keptToolCallIds({
-        jobs: [{ status, toolCallId: "call-a" }],
-        subagentRuns: [],
-      });
-      expect(keep.size, `${status} 的作业不该占着 toolCall`).toBe(0);
-    }
-  });
-
-  it("未终结的子智能体委派必须保留，终态的可以回收", () => {
-    const keep = keptToolCallIds({
-      jobs: [],
-      subagentRuns: [
-        { status: "running", delegationId: "call-run" },
-        { status: "completed", delegationId: "call-done" },
-        { status: "interrupted", delegationId: "call-interrupted" },
-        { status: "aborted", delegationId: "call-aborted" },
-      ],
-    });
-    expect([...keep]).toEqual(["call-run"]);
-  });
-
-  it("没有 toolCallId 的作业（历史作业）不影响结果", () => {
-    const keep = keptToolCallIds({
-      jobs: [{ status: "running", toolCallId: undefined }],
-      subagentRuns: [],
-    });
-    expect(keep.size).toBe(0);
-  });
-
-  it("作业与委派同时存在时取并集", () => {
-    const keep = keptToolCallIds({
-      jobs: [{ status: "running", toolCallId: "call-job" }],
-      subagentRuns: [{ status: "running", delegationId: "call-task" }],
-    });
-    expect([...keep].sort()).toEqual(["call-job", "call-task"]);
-  });
-});
-
 describe("deriveRulePattern", () => {
   it("bash 取命令首词", () => {
     expect(deriveRulePattern("bash", { command: "  git   status  " })).toBe("git");
@@ -362,152 +308,6 @@ describe("deriveRulePattern", () => {
   });
 });
 
-describe("pairEntryWithMessage", () => {
-  const assistantEntry = (id: string, parentId: string | null = "u1") => ({
-    type: "message",
-    id,
-    parentId,
-    message: { role: "assistant" },
-  });
-  const userEntry = (id: string, parentId: string | null = null) => ({
-    type: "message",
-    id,
-    parentId,
-    message: { role: "user" },
-  });
-  const assistant = (messageId: string) => ({ messageId, role: "assistant" as const });
-  const user = (messageId: string) => ({ messageId, role: "user" as const });
-
-  it("同一角色内部按 FIFO 配对，多轮工具调用不会错配", () => {
-    const pending = [assistant("m1"), assistant("m2")];
-
-    expect(pairEntryWithMessage(pending, assistantEntry("e1"))).toEqual({
-      messageId: "m1",
-      patch: { entryId: "e1", parentId: "u1" },
-    });
-    expect(pairEntryWithMessage(pending, assistantEntry("e2"))).toEqual({
-      messageId: "m2",
-      patch: { entryId: "e2", parentId: "u1" },
-    });
-    expect(pending).toEqual([]);
-  });
-
-  // 回归：队列原来只存 id、弹队首，于是先落的用户条目把助手消息挤出去，
-  // 助手条目反认领了用户消息 —— 用户消息永远没 entryId（分支按钮不出现），
-  // 且重新生成拿到的是助手条目（= 当前 tip），报 "target must differ from the current tip"
-  it("按角色配对：助手条目不会认领用户消息", () => {
-    const pending = [user("u-msg"), assistant("a-msg")];
-
-    expect(pairEntryWithMessage(pending, userEntry("u-entry"))).toEqual({
-      messageId: "u-msg",
-      patch: { entryId: "u-entry", parentId: null },
-    });
-    expect(pairEntryWithMessage(pending, assistantEntry("a-entry", "u-entry"))).toEqual({
-      messageId: "a-msg",
-      patch: { entryId: "a-entry", parentId: "u-entry" },
-    });
-    expect(pending).toEqual([]);
-  });
-
-  it("toolResult / compaction 之类的条目不吃掉队列位置", () => {
-    const pending = [assistant("m1")];
-    const toolResult = {
-      type: "message",
-      id: "e0b",
-      parentId: "u1",
-      message: { role: "toolResult" },
-    };
-    const compaction = { type: "compaction", id: "c1", parentId: "u1" };
-
-    expect(pairEntryWithMessage(pending, toolResult)).toBeNull();
-    expect(pairEntryWithMessage(pending, compaction)).toBeNull();
-    // 队列原封不动，助手条目仍配到它身上
-    expect(pending).toEqual([assistant("m1")]);
-    expect(pairEntryWithMessage(pending, assistantEntry("e1"))?.messageId).toBe("m1");
-  });
-
-  it("没有同角色待配项时返回 null 且不动队列", () => {
-    const pending = [assistant("m1")];
-    expect(pairEntryWithMessage(pending, userEntry("u-entry"))).toBeNull();
-    expect(pending).toEqual([assistant("m1")]);
-
-    const empty: PendingEntry[] = [];
-    expect(pairEntryWithMessage(empty, assistantEntry("e1"))).toBeNull();
-  });
-
-  it("parentId 为 null（会话首条）也照常带出", () => {
-    const pending = [assistant("m1")];
-    expect(pairEntryWithMessage(pending, assistantEntry("e1", null))?.patch).toEqual({
-      entryId: "e1",
-      parentId: null,
-    });
-  });
-});
-
-describe("applyToolEnd", () => {
-  /** 流式路径上被写入的那份 part；只填 applyToolEnd 会碰的字段 */
-  function makePart(): ToolCallPart {
-    return {
-      type: "tool-call",
-      toolCallId: "call-1",
-      toolName: "edit",
-      argsText: "{}",
-      status: "running",
-    };
-  }
-
-  it("文本结果与结构化详情并存，状态随 isError", () => {
-    const details = { patch: "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-旧\n+新\n" };
-    const part = makePart();
-    applyToolEnd(
-      part,
-      { content: [{ type: "text", text: "Successfully replaced 1 block(s)" }], details },
-      false,
-    );
-
-    expect(part.result).toBe("Successfully replaced 1 block(s)");
-    // 关键：details 不因为文本存在而丢失（渲染层的 diff 面板全靠它）
-    expect(part.details).toEqual(details);
-    expect(part.isError).toBe(false);
-    expect(part.status).toBe("done");
-  });
-
-  it("工具无 details 时不写入该字段", () => {
-    const part = makePart();
-    // 真实工具可以不带 details（pi 的类型标为必填，运行时却常见缺省），显式给 undefined
-    applyToolEnd(part, { content: [{ type: "text", text: "内容" }], details: undefined }, false);
-
-    expect(part.result).toBe("内容");
-    expect(Object.hasOwn(part, "details")).toBe(false);
-  });
-
-  it("失败时状态为 error 并保留 isError", () => {
-    const part = makePart();
-    applyToolEnd(part, { content: [{ type: "text", text: "命令失败" }], details: undefined }, true);
-
-    expect(part.status).toBe("error");
-    expect(part.isError).toBe(true);
-  });
-
-  it("无文本时退回 details 作为结果（两者都不丢）", () => {
-    const details = { truncation: { truncated: true } };
-    const part = makePart();
-    applyToolEnd(part, { content: [], details }, false);
-
-    expect(part.result).toEqual(details);
-    expect(part.details).toEqual(details);
-  });
-});
-
-/**
- * 取文函数的回归测试。
- *
- * 为什么值得单独钉：它是报告链上**唯一**没人测的一环。harness 的 message_end 走到这里，
- * 结果再进 subagent-runner 记成 `run.report` —— 而 runner 的测试是手工把文本喂进
- * noteSubagentAssistantMessage 的，所以「喂进去的文本从哪来」这段一直没人管。
- * 历史上这里对助手消息常数式返回空串，于是所有子智能体的报告恒为空，
- * 而轮次、工具计数、状态全都正常：TaskWait 显示「已完成 · 4 轮」，报告栏却是空的。
- */
 describe("agentMessageText", () => {
   it("助手消息的文本块能取到（子智能体报告走的就是这条路）", () => {
     expect(

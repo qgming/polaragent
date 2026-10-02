@@ -35,7 +35,7 @@ export interface SubagentResult {
   isError: boolean;
 }
 
-/** 终态里哪些算「失败」：只有真正没跑成 / 跑挂了才算，truncated 与 aborted 是「有结果的未完成」 */
+/** 终态里哪些算「失败」：只有真正没跑成 / 跑挂了才算，aborted 是「有结果的未完成」 */
 const FAILED_STATUSES = new Set(["failed", "denied"]);
 
 /**
@@ -51,10 +51,7 @@ export function buildSubagentResult(run: SubagentRun): SubagentResult | null {
   const report = (run.report ?? "").trim();
   const headline = describeOutcome(run);
   // 没有报告时明确说「没有」，而不是留一个空块 —— 模型看到空的「报告：」会以为内容丢了
-  const body =
-    report === ""
-      ? "报告：（没有产出报告）"
-      : `报告：\n${capReport(report, run.status === "truncated")}`;
+  const body = report === "" ? "报告：（没有产出报告）" : `报告：\n${capReport(report)}`;
   const hint =
     report === ""
       ? ""
@@ -74,8 +71,6 @@ export function describeOutcome(run: SubagentRun): string {
   switch (run.status) {
     case "completed":
       return `${who}已完成${task}。`;
-    case "truncated":
-      return `${who}达到轮次上限被截断${task}：下面这份报告可能不完整。`;
     case "interrupted":
       return `${who}意外终止${task}：上个进程在它运行期间退出，结果未知。`;
     case "aborted":
@@ -90,11 +85,10 @@ export function describeOutcome(run: SubagentRun): string {
 }
 
 /** 截断长报告，并把「被截断了」写清楚 —— 模型据此知道下面这份不完整 */
-function capReport(report: string, incomplete: boolean): string {
-  const note = incomplete ? "\n（注意：这次运行被轮次上限截断，报告本身也可能不完整）" : "";
-  if (report.length <= MAX_RESULT_CHARS) return `${report}${note}`;
+function capReport(report: string): string {
+  if (report.length <= MAX_RESULT_CHARS) return report;
   return (
     `${report.slice(0, MAX_RESULT_CHARS)}\n\n` +
-    `［报告已截断：原文 ${report.length} 字符，这里只保留前 ${MAX_RESULT_CHARS} 字符］${note}`
+    `［报告已截断：原文 ${report.length} 字符，这里只保留前 ${MAX_RESULT_CHARS} 字符］`
   );
 }

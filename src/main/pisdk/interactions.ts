@@ -1,163 +1,195 @@
-// 提问服务：挂起 Promise + 事件桥；ask_user 工具经它向用户提问，渲染层回填答案。
-//
-// 骨架与 approvals.ts 同源（未决表 / 挂起 Promise / 事件桥 / 会话取消），但**刻意不合并**：
-// 审批的结论是「放行还是拒绝这次工具调用」，提问的结论是「用户选了什么」；
-// 两者的事件、UI、结算语义各不相同，抽一个共用的「未决请求」基类只会把两条业务耦在一起。
-// 宁可有两份相似代码，也不要为了去重引入一处谁都不敢改的抽象。
-//
-// 与审批唯一的实质差别是**超时**：审批卡弹出来用户总会看到，而提问可能被无视
-// （去开会、切走窗口），挂着的 Promise 不结算就会把整轮运行无限期卡住 ——
-// 所以到点按「用户没回应」收尾，让模型带着这个事实继续。
-
-import { randomUUID } from "node:crypto";
-import type { ChatEvent, ChatEventEnvelope } from "@/shared/contracts/chat";
+import { createHash, randomUUID } from "node:crypto";
+import type { Context } from "@earendil-works/chord";
+import type { TaskId, ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import type {
-  AskAnswerItem,
-  AskOutcome,
   AskQuestion,
   AskReply,
   AskRequest,
   AskResponse,
 } from "@/shared/contracts/interaction";
+import {
+  createAttachmentRegistry,
+  detached,
+  InteractionDoc,
+  InteractionTask,
+  type NativeStateAttachment,
+  stateContext,
+} from "./native-state";
 
-/**
- * 默认等待时长：5 分钟。
- *
- * 取这么长是因为提问本身就是「给用户时间想」的场景，短了会把用户还没看完的题判成没回应；
- * 而它终究只是个兜底 —— 用户随时可以点提交，或按停止结束这一轮。
- */
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-
 export interface InteractionServiceDeps {
-  /** 发往渲染进程的事件；带会话 id（后台会话的提问也要落到它自己头上） */
   emit: (payload: ChatEventEnvelope) => void;
-  /** 等待用户回应的上限（毫秒）；缺省 DEFAULT_TIMEOUT_MS */
   timeoutMs?: number;
 }
-
-/** 一次提问的输入：会话 + 工具调用 id + 题目 */
 export interface AskInput {
   sessionId: string;
   toolCallId: string;
   questions: AskQuestion[];
+  api: ToolExecutionApi;
+  context: Context;
 }
-
 export interface InteractionService {
-  /** 发起提问并等待用户回答（挂起 Promise，由 respond / 超时 / cancelSession 结算） */
+  readonly taskDefinitions: readonly (typeof InteractionTask)[];
+  attach(attachment: NativeStateAttachment): Promise<() => void>;
   request(input: AskInput): Promise<AskResponse>;
-  /** 渲染进程回填答案 */
-  respond(id: string, reply: AskReply): void;
-  /** 未决提问列表（会话切换时恢复 UI） */
-  pending(sessionId?: string): AskRequest[];
-  /** 停止运行 / 关闭会话时收尾该会话的全部未决提问（按 cancelled 处理） */
-  cancelSession(sessionId: string): void;
-  /** 当前等待上限（毫秒）：工具侧要把它写进给模型的提示文案里，不能各自写死一个数 */
+  respond(id: string, reply: AskReply): Promise<void>;
+  pending(sessionId?: string): Promise<AskRequest[]>;
+  cancelSession(sessionId: string): Promise<void>;
   timeoutMs(): number;
 }
-
-interface PendingAsk {
-  request: AskRequest;
-  toolCallId: string;
-  promise: Promise<AskResponse>;
-  resolve: (response: AskResponse) => void;
-  /** 超时兜底定时器：结算时必须清掉，否则它会一直挂到超时（测试里就是「进程不退出」） */
-  timer: NodeJS.Timeout;
-}
-
 export function createInteractionService(deps: InteractionServiceDeps): InteractionService {
   const waitMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const pendingById = new Map<string, PendingAsk>();
-  // toolCallId → 未决请求 id，保证同一次工具调用不重复弹卡
-  const pendingByToolCall = new Map<string, string>();
-
-  function emitSafe(sessionId: string, event: ChatEvent): void {
+  const attachments = createAttachmentRegistry();
+  function emit(payload: ChatEventEnvelope) {
     try {
-      deps.emit({ sessionId, event });
+      deps.emit(payload);
     } catch (error) {
       console.warn(`发送提问事件失败：${String(error)}`);
     }
   }
-
-  function findPending(toolCallId: string): PendingAsk | undefined {
-    const id = pendingByToolCall.get(toolCallId);
-    if (id === undefined) return undefined;
-    return pendingById.get(id);
-  }
-
-  /** 结算一条挂起提问：清定时器、通知渲染层、唤醒 Promise */
-  function settle(
-    id: string,
-    outcome: AskOutcome,
-    answers: AskAnswerItem[],
-    note?: string,
-  ): boolean {
-    const entry = pendingById.get(id);
-    if (!entry) return false;
-    pendingById.delete(id);
-    if (pendingByToolCall.get(entry.toolCallId) === id) pendingByToolCall.delete(entry.toolCallId);
-    clearTimeout(entry.timer);
-    emitSafe(entry.request.sessionId, { type: "ask-resolved", id, outcome });
-    entry.resolve({ id, outcome, answers, ...(note === undefined ? {} : { note }) });
-    return true;
-  }
-
-  function request(input: AskInput): Promise<AskResponse> {
-    const duplicate = findPending(input.toolCallId);
-    if (duplicate) return duplicate.promise;
-
-    let resolvePromise: (response: AskResponse) => void = () => undefined;
-    const promise = new Promise<AskResponse>((resolve) => {
-      resolvePromise = resolve;
-    });
-    const request: AskRequest = {
-      id: randomUUID(),
-      sessionId: input.sessionId,
-      toolCallId: input.toolCallId,
-      questions: input.questions,
-      createdAt: Date.now(),
+  async function attach(attachment: NativeStateAttachment) {
+    const detach = attachments.add(attachment);
+    await attachment.harness.commit(
+      (tx) => tx.doc(InteractionDoc, attachment.conversationId),
+      stateContext,
+    );
+    const watch = await attachment.harness.watchDoc(
+      InteractionDoc,
+      attachment.conversationId,
+      stateContext,
+    );
+    if (watch) {
+      const publish = (value: typeof watch.value) => {
+        for (const entry of Object.values(value?.entries ?? {})) {
+          if (entry.response)
+            emit({
+              sessionId: attachment.displaySessionId,
+              event: {
+                type: "ask-resolved",
+                id: entry.request.id,
+                outcome: entry.response.outcome,
+              },
+            });
+          else
+            emit({
+              sessionId: attachment.displaySessionId,
+              event: { type: "ask-requested", request: entry.request },
+            });
+        }
+      };
+      publish(watch.value);
+      watch.start(async (value) => publish(value));
+    }
+    return () => {
+      detach();
+      void watch?.stop();
     };
-    const timer = setTimeout(() => {
-      // 超时 = 「用户没回应」：挂起项上留一句说明，模型侧据此按保守假设收尾，
-      // 渲染层也能从 ask-resolved 的 outcome 看出这不是用户点出来的结果。
-      settle(request.id, "unanswered", [], `等待超时（${Math.round(waitMs / 1000)} 秒）未回应`);
-    }, waitMs);
-    // 兜底定时器不保活进程：等待用户回应这件事没必要时时刻刻吊着事件循环
-    timer.unref();
-
-    const entry: PendingAsk = {
-      request,
-      toolCallId: input.toolCallId,
-      promise,
-      resolve: resolvePromise,
-      timer,
-    };
-    pendingById.set(request.id, entry);
-    pendingByToolCall.set(input.toolCallId, request.id);
-    emitSafe(request.sessionId, { type: "ask-requested", request });
-    return promise;
   }
-
-  function respond(id: string, reply: AskReply): void {
-    // 重复点击、超时后补交、或已取消都视为已处理，避免 IPC 层抛错打断渲染进程
-    if (!pendingById.has(id)) {
-      console.warn(`提问请求不存在或已处理：${id}`);
+  async function entries() {
+    return Promise.all(
+      attachments.all().map(async (attachment) => ({
+        attachment,
+        values: Object.values(
+          (
+            await attachment.harness.snapshot(
+              InteractionDoc,
+              attachment.conversationId,
+              stateContext,
+            )
+          )?.entries ?? {},
+        ),
+      })),
+    );
+  }
+  async function request(input: AskInput): Promise<AskResponse> {
+    const attachment = attachments.require(input.sessionId);
+    if (attachment.conversationId !== input.api.conversationId)
+      throw new Error("Question conversation mismatch");
+    const signature = createHash("sha256")
+      .update(JSON.stringify([input.api.taskId, input.questions]))
+      .digest("hex");
+    const entry = await input.api.commit(async (tx) => {
+      const doc = await tx.doc(InteractionDoc, input.api.conversationId);
+      const previous = Object.values(doc.entries).find((entry) => entry.signature === signature);
+      if (previous) return detached(previous);
+      const id = randomUUID();
+      const createdAt = Date.now();
+      const taskId = await tx.createTask(
+        InteractionTask,
+        { id },
+        {
+          conversationId: input.api.conversationId,
+          ownership: { kind: "task", taskId: input.api.taskId },
+        },
+      );
+      const entry = {
+        request: {
+          id,
+          sessionId: attachment.displaySessionId,
+          toolCallId: input.toolCallId,
+          questions: input.questions,
+          createdAt,
+        },
+        taskId,
+        ownerTaskId: input.api.taskId,
+        signature,
+        deadline: createdAt + waitMs,
+      };
+      doc.entries[id] = entry;
+      return entry;
+    }, input.context);
+    const receipt = await input.api.waitForTask(entry.taskId as TaskId<AskResponse>, input.context);
+    return (
+      receipt.state.outcome.result ?? {
+        id: entry.request.id,
+        outcome: "cancelled",
+        answers: [],
+        note: "运行已停止",
+      }
+    );
+  }
+  async function respond(id: string, reply: AskReply) {
+    for (const { attachment, values } of await entries()) {
+      if (!values.some((entry) => entry.request.id === id && !entry.response)) continue;
+      await attachment.harness.commit(async (tx) => {
+        const doc = await tx.doc(InteractionDoc, attachment.conversationId);
+        const entry = doc.entries[id];
+        if (!entry || entry.response) return;
+        // The deadline is authoritative even if the task has not resumed yet.
+        entry.response =
+          Date.now() >= entry.deadline
+            ? { id, outcome: "unanswered", answers: [], note: "等待超时未回应" }
+            : { id, ...reply };
+      }, stateContext);
       return;
     }
-    settle(id, reply.outcome, reply.answers, reply.note);
   }
-
-  function pending(sessionId?: string): AskRequest[] {
-    const all = [...pendingById.values()].map((entry) => entry.request);
-    if (sessionId === undefined) return all;
-    return all.filter((item) => item.sessionId === sessionId);
+  async function pending(sessionId?: string) {
+    return (await entries()).flatMap(({ values }) =>
+      values
+        .filter(
+          (entry) =>
+            !entry.response && (sessionId === undefined || entry.request.sessionId === sessionId),
+        )
+        .map((entry) => entry.request),
+    );
   }
-
-  function cancelSession(sessionId: string): void {
-    for (const entry of [...pendingById.values()]) {
-      if (entry.request.sessionId !== sessionId) continue;
-      settle(entry.request.id, "cancelled", [], "运行已停止");
+  async function cancelSession(sessionId: string) {
+    for (const { attachment, values } of await entries()) {
+      if (attachment.sessionId !== sessionId) continue;
+      for (const entry of values)
+        if (!entry.response)
+          await attachment.harness.abortTask(entry.taskId as TaskId, stateContext);
     }
   }
-
-  return { request, respond, pending, cancelSession, timeoutMs: () => waitMs };
+  return {
+    attach,
+    taskDefinitions: [InteractionTask],
+    request,
+    respond,
+    pending,
+    cancelSession,
+    timeoutMs: () => waitMs,
+  };
 }

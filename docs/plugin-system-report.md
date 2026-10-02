@@ -1,3 +1,5 @@
+> 历史设计资料：当前插件实现与作者格式以 [Native plugin API](plugin-native-api.md) 为准。本文保留早期分析，不作为现行实现指南。
+
 # Oint 插件系统调研与改造报告
 
 > 调研对象：本仓库（Oint，Electron 44 + React 19 + `@earendil-works/pi-agent-core@0.85.1`）

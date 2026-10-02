@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UsageDayPoint, UsageModelPoint } from "@/shared/contracts/stats";
 import {
+  datedModelUsage,
   heatCells,
   heatLevel,
   modelLabel,
@@ -21,6 +22,21 @@ function model(key: string, tokens: number, share = 0): UsageModelPoint {
   const [serviceId, modelId] = key.split("|");
   return { key, serviceId: serviceId ?? "", modelId: modelId ?? "", tokens, share };
 }
+
+describe("datedModelUsage", () => {
+  it("derives model totals and shares from dated buckets only", () => {
+    const dated = datedModelUsage([
+      day("2026-10-01", 325, { "svc|a": 325 }),
+      day("2026-10-02", 325, { "svc|b": 195, "svc|c": 130 }),
+    ]);
+    expect(dated.totalTokens).toBe(650);
+    expect(dated.models.map(({ key, tokens, share }) => ({ key, tokens, share }))).toEqual([
+      { key: "svc|a", tokens: 325, share: 0.5 },
+      { key: "svc|b", tokens: 195, share: 0.3 },
+      { key: "svc|c", tokens: 130, share: 0.2 },
+    ]);
+  });
+});
 
 describe("heatLevel", () => {
   it("0 与负值是第 0 档（空槽）", () => {

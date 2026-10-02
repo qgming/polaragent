@@ -58,7 +58,24 @@ function requireOwner(event: IpcMainInvokeEvent): SurfaceOwner {
   if (owner === undefined) {
     throw new SurfaceBadRequestError("这个界面没有在宿主登记，不能调用宿主接口");
   }
+  assertCurrentOwner(owner);
   return owner;
+}
+
+function assertCurrentOwner(owner: SurfaceOwner): void {
+  const registry = getPluginRegistry();
+  const source = registry.sourceOf(owner.pluginId);
+  const registered = getSurfaceOwners()
+    .entries()
+    .some(([, current]) => current === owner);
+  if (
+    !registered ||
+    !owner.sourceDir ||
+    source?.dir !== owner.sourceDir ||
+    (owner.workspaceDir && owner.workspaceDir !== registry.getWorkspaceDir())
+  ) {
+    throw new SurfaceBadRequestError("这个插件界面的来源或工作目录已失效");
+  }
 }
 
 /**
@@ -72,6 +89,7 @@ async function requireEnabledOwner(event: IpcMainInvokeEvent): Promise<SurfaceOw
   const owner = requireOwner(event);
   const registry = getPluginRegistry();
   if (!registry.loaded) await registry.reload();
+  assertCurrentOwner(owner);
   const view = registry.find(owner.pluginId);
   if (view === undefined || !view.enabled) {
     throw new SurfaceBadRequestError("提供这个界面的插件已被停用");
@@ -83,8 +101,9 @@ async function requireEnabledOwner(event: IpcMainInvokeEvent): Promise<SurfaceOw
 async function requirePermission(owner: SurfaceOwner, permission: string): Promise<void> {
   const registry = getPluginRegistry();
   if (!registry.loaded) await registry.reload();
+  assertCurrentOwner(owner);
   const view = registry.find(owner.pluginId);
-  const granted = view?.permissions.some((item) => item.id === permission) ?? false;
+  const granted = view?.enabled === true && view.permissions.some((item) => item.id === permission);
   if (!granted) {
     throw new SurfaceBadRequestError(`插件 ${owner.pluginId} 没有申请 "${permission}" 权限`);
   }
@@ -248,6 +267,7 @@ export function registerSurfaceIpc(): void {
 
       const registry = getPluginRegistry();
       if (!registry.loaded) await registry.reload();
+      assertCurrentOwner(owner);
       const source = registry.sourceOf(owner.pluginId);
       const allowedCommands = source?.manifest.shell?.exec ?? [];
 

@@ -47,6 +47,7 @@ export function aggregateUsageReport(input: AggregateUsageInput): UsageStatsRepo
   const modelTotals = new Map<string, RollupBuckets>();
   const kindTokens: Record<SessionKind, number> = { chat: 0, subagent: 0 };
   let longest: { sessionId: string; ms: number } | null = null;
+  let undatedTokens = 0;
 
   for (const [sessionId, session] of Object.entries(rollup.sessions)) {
     const meta = sessions.get(sessionId);
@@ -55,6 +56,16 @@ export function aggregateUsageReport(input: AggregateUsageInput): UsageStatsRepo
     if (meta === undefined) continue;
 
     const sessionBuckets = emptyBuckets();
+    if (session.undated) {
+      addInto(sessionBuckets, session.undated);
+      addInto(totals, session.undated);
+      undatedTokens += bucketTotal(session.undated);
+      for (const [key, value] of Object.entries(session.undated.m)) {
+        const target = modelTotals.get(key) ?? emptyBuckets();
+        addInto(target, value);
+        modelTotals.set(key, target);
+      }
+    }
     for (const [date, day] of Object.entries(session.days)) {
       addInto(sessionBuckets, day);
       addInto(totals, day);
@@ -120,6 +131,7 @@ export function aggregateUsageReport(input: AggregateUsageInput): UsageStatsRepo
     today,
     totals: pickBuckets(totals),
     totalTokens,
+    ...(undatedTokens > 0 ? { undatedTokens } : {}),
     sessions: sessionBreakdown(sessions, kindTokens),
     activeDays: activeDates.length,
     peak: { date: peak?.date ?? null, tokens: peak?.tokens ?? 0 },

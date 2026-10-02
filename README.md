@@ -18,7 +18,7 @@
   </p>
 </div>
 
-当前使用精确固定的 pi 1.0.0 生态与原生 durable 会话格式。版本调研、API 变化及验证方法见 [pi 1.0.0 重构说明](docs/pi-1.0.md)。
+当前使用精确固定的 Pi 1.0.0 原生生态，不包含 coding-agent/TUI。参见 [实施记录](docs/pi-native-implementation.md)、[插件作者 API](docs/plugin-native-api.md) 和 [手动验收提示词](docs/manual-acceptance-prompt.md)。
 
 ---
 
@@ -96,7 +96,7 @@ src/
 | 指令 | **内置**的斜杠命令，与魔法提示分开：它由**应用**执行，整条命令不会变成模型消息（也不会进上下文与 KV cache）。`/` 菜单里是指令 → 技能 → 魔法提示三栏，指令排在第一位。首批一条：**`/compact`** —— 压缩较早的对话历史，可带说明（`/compact 保留数据库相关的讨论` → 内核的 `customInstructions`）。运行中或正在压缩时菜单置灰并说明原因、回车不发消息也不吃草稿。**压缩过程全程有提示**（对话区顶部）：`压缩中 · 自动/手动/溢出恢复 + 已用秒数` → `已压缩上下文 · 约 N tokens · 保留 M 条`（可展开看摘要）／`压缩失败：原因`（点掉即收起）／`压缩已取消`。三条触发路径都由 pi 内核负责：**阈值自动压缩**（`contextTokens > 窗口 − 20k`，见 `runtime.ts` 的 `compaction` 选项）、**溢出恢复**（供应商报超长后每代兜底一次）、**手动**（`/compact`）。归属：`shared/contracts/commands.ts` 是注册表，`features/chat/commands.ts` 是可用性判定与执行，发送收口在 `OintRuntimeProvider.onNew`（`/compact` 永远不会被当成消息发出去） |
 | 子智能体 | 主 AI 可把独立工作派给子智能体（`Task` / `TaskWait` / `TaskList` / `TaskStop`），一次委派 = 一个隐藏子会话：**内置预设七个** —— explorer / code-reviewer / fixer / test-runner / oracle / designer / verifier，外加 `${数据目录}/subagents/*.md` 与项目目录 `.oint/subagents/*.md` 里的自定义定义（定义住在自己那个文件夹里，和技能、MCP 一样，没有额外的目录配置）；主 AI 还能在 `Task` 里内联定义**临时子智能体**（不落盘）。**可用清单走系统提示里的 `<available_subagents>` 索引**（与技能的 `<available_skills>` 同构，两个模式都注入，超过 12 个截断并说明），`Task` 的描述只指向它、不再抄一份名录。子智能体拿到的是**与主代理同一批工具**（bash / read / write / edit / grep / glob / todo / read_image / 作业四件套 / web / browser / **MCP**），唯二例外是不能继续委派（Task 系列不注入子会话）与 `ask_user`（它跑在隐藏会话里，提问卡没有任何地方渲染得出来 —— 需要用户拍板的事写进报告由主代理问）；**工具不再可配**（旧定义里的 `tools:` / `disabled_tools:` 一概忽略）。想给一次性的帮手收窄工具时，主 AI 可以在 `Task` 的 `definition.tools` 里传一份**白名单**（名字必须真实存在，写错会带着可用清单被拒），例如只读地扫目录就传 `["read","grep","glob"]`，模型与思考档位可固定也可跟随主会话，并发上限（**同一条消息里并发派发也不会绕过**：名额是同步预约的）、可中途停止；审批回到父会话弹出。**没有轮次上限** —— 异常检测靠**重复调用守卫**（同名同参数的连续调用第 3 次注入纠正消息、第 5 次终止运行），因为轮次是资源消耗、不是行为特征。**报告靠投递机制交回**：子智能体一跑完，报告就自动作为一条消息送到主代理（正在跑就插进当前轮次，空闲就起一轮；连续自动唤醒有上限，避免「派发 → 报告 → 又派发」自激），所以不必靠模型记得调 `TaskWait`。**进度与终态逐轮落盘**：重启后历史委派仍然显示真实的轮次与结论，进程在运行期间退出则标为**意外终止**（结果未知、显示最后见到的时间），要不要重派由主 AI 决定（`Task {resumeOf}` 直接续跑原来的 agent / 任务）。主会话里的子智能体呼叫**不是普通工具折叠行**，而是 `elements/agent-status` 的胶囊行（状态 / 轮次 / 耗时，绿勾只留给真的跑完的），点它展开右侧栏「子智能体」视图：按会话列出全部委派，单条执行详情含任务、报告与子会话转录 ——**转录复用主会话的消息渲染器**，Markdown / 代码高亮 / 工具卡与主线程一致。设置里有独立「子智能体」分栏（系统 / 用户页签、逐条启用、编辑器、诊断；功能永久开启，没有总开关）。原「侧边聊天」入口已并入这里 |
 | 设置 | 通用（主题/语言/密度/字体）、模型服务（两种 OpenAI 格式 + 拉取模型）、**网络搜索**、**MCP（系统预设 / 用户配置）**、技能、**子智能体**、魔法提示（系统 / 用户）、个性化（AGENTS.md）、数据（数据目录位置）、关于（名称 / 版本 / pi 内核） |
-| 数据统计 | 侧栏底部「插件 / **数据统计** / 主题」中间那颗按钮打开模态窗（与设置、插件管理同一套骨架与互斥）：**累计/峰值 Token 数、最长聊天时长、当前与最长连续天数**五张读数卡，**Token 活动热力图**（53 周 × 7 天的年度日历，可切「每日 / 每周 / 累计」三种口径 —— 周与累计会把值延续到没有记录的日期上，所以累计曲线不会掉回零），**每日 Token 趋势图**（每个模型一条曲线，近 7 日 / 近 30 日，单调三次插值保证曲线不冲出负值，悬浮给当天读数），**模型用量环图 + 明细**（占比 + 万/亿量级的 token 读数，与卡片、环心、悬浮提示同一套口径）。数据不是另存一份事件流，而是把**会话日志**（每条助手消息自带 `timestamp`/`provider`/`model`/`usage`）增量折叠成「会话 × 本地日 × 模型」的卷账本（`usage-stats.json`）：每个会话记一个已折叠到的条目游标，**稳态下一次统计一个 SQLite 都不开**；首次打开按预算分几拍折完历史并在界面上给出进度；fork 复制过来的历史条目（时间戳早于会话创建）不计入，避免重复计数。口径写在界面上：总量 = 未缓存输入 + 缓存读取 + 缓存写入 + 输出，会话数与子智能体用量分开列出 |
+| 数据统计 | 概览、年度热力图、日期趋势与模型用量图。总量以原生 UsageDoc 为准，日期来自已提交账本的持久增量，包含压缩、失败和工具支出；不再维护 usage-stats.json。未保留日期的金额计入总量并单独标注，日期图表只展示有日期的记录。 |
 | 搜索 | Ctrl+K 全局搜索（会话/消息/设置/命令）、会话内查找（Ctrl+F） |
 
 ### 模型服务
@@ -119,12 +119,11 @@ Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（
 ```
 ~/.oint/                    # 应用数据（可用 OINT_HOME 覆盖）
 ├── settings.json           # 设置（API Key 经 safeStorage 加密）
-├── sessions-index.json     # 会话索引：标题 / 归档 / 置顶 / 消息计数 / 工作目录
-├── usage-stats.json        # 用量统计卷账本（按会话 × 日 × 模型折叠，可整份删掉重扫）
+├── sessions-index.json     # 可删除的列表缓存；元数据以原生 document 为准
 ├── projects.json           # 已绑定的项目文件夹（侧栏「项目」分组）
 ├── permission-rules.json   # 「始终允许」规则
 ├── AGENTS.md               # 个性化长期偏好（可手写，适合纳入版本管理）
-├── sessions/               # 会话库：每会话一个 SQLite
+├── sessions-v1/            # 每个主聊天家族一个原生 SQLite（含子会话、任务与文档）
 ├── skills/                 # 技能（SKILL.md，递归扫描）
 ├── prompts/                # 魔法提示（*.md，只读直接子级，供显式调用）
 ├── subagents/              # 子智能体定义（*.md）
@@ -139,9 +138,8 @@ Base URL 需自带 `/v1`。API Key 使用 Electron `safeStorage` 加密落盘（
 > 所以 `read` / `write` / `edit` 够不到凭据与审批规则（有测试钉住）。
 > 这也意味着**数据根不能整个交给模型** —— 加允许根时要按子目录逐项放行。
 >
-> **仍有未修的越界读写路径**（`grep`/`glob` 不经过路径守卫、路径守卫不做 realpath、
-> 「始终允许」按命令首词授权、`bash` 不受守卫且子进程继承全量环境）——
-> 详见 `docs/architecture-review-0.87.md` 第二节，那里有逐条的机制与影响。
+> 文件操作与检索按允许目录及真实路径校验；shell 由权限与审批控制，子进程使用环境变量白名单。
+> 这些是桌面宿主的执行边界，不将 Node 插件进程隔离称为操作系统沙箱。
 
 技能、魔法提示与子智能体定义除了数据目录里的固定文件夹，还会扫描**会话工作目录下的 `.oint/` 同名子目录**
 （项目级，跟随会话的 cwd，同样无需配置）。
@@ -172,7 +170,7 @@ Chromium 的 `Cache`、`Code Cache`、`GPUCache`、`IndexedDB` 等仍由 Electro
 $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 ```
 
-> 不要把数据目录放在 OneDrive / Dropbox 等云同步盘内：`sessions/` 是 SQLite + WAL，
+> 不要把数据目录放在 OneDrive / Dropbox 等云同步盘内：`sessions-v1/` 是 SQLite + WAL，
 > 同步客户端并发改写有损坏风险。
 
 开发阶段不考虑旧版本数据迁移，换目录即视为全新开始。
@@ -219,7 +217,7 @@ $env:OINT_HOME = "$PWD\.tmp-data"; npm run dev
 
 | 脚本 | 用途 |
 | --- | --- |
-| `npm run probe:kernel` | pi 1.0.0 原生探针（免凭据）：模型目录、文件系统、新版 SQLite 提交/分支/重开、MCP 握手/发现/调用 |
+| `npm run probe:kernel` | 免凭据原生探针：RPC/Chord、模型目录、文件系统、SQLite commit/fork/reopen、MCP |
 | `npm run probe:packaged` | 在 Electron Node 运行时对真实 `app.asar` 运行同一组探针，并核对四个核心包的 1.0.0 版本和导入位置；先执行 `npm run pack` |
 | `node scripts/e2e-smoke.mjs` | 端到端冒烟（CDP 驱动真实 Electron，覆盖流式对话、工具调用、审批、完全访问、重启恢复） |
 | `node scripts/probe-browser-guest.mjs` | 内置浏览器探针（CDP 驱动真实 Electron，验证 webview 的 guest 真的附着、导航可用且只加载一次） |

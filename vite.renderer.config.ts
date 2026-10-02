@@ -33,6 +33,7 @@ export default defineConfig(async () => ({
       main: {
         entry: {
           main: "src/main/index.ts",
+          "plugin-worker": "src/main/plugins/worker.ts",
         },
         vite: {
           resolve: { alias },

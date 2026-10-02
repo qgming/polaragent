@@ -1,0 +1,31 @@
+{
+  "name": "dev.oint.git-status",
+  "version": "1.0.0",
+  "description": "右侧面板里看当前仓库的分支、改动文件与领先/落后，不用切到终端",
+  "license": "MIT",
+  "oint": {
+    "permissions": [
+      "ui.panel",
+      "shell.exec",
+      "ui.theme"
+    ],
+    "shell": {
+      "exec": [
+        "git"
+      ]
+    },
+    "surfaces": [
+      {
+        "id": "git",
+        "kind": "panel",
+        "title": {
+          "en": "Git",
+          "zh-CN": "Git 状态"
+        },
+        "entry": "./ui/index.html",
+        "order": 10
+      }
+    ],
+    "displayName": "oint-git-status"
+  }
+}

@@ -102,7 +102,6 @@ export const enUS = {
       "When Oint splits work that can run in parallel, it delegates to subagents; every delegation's execution detail shows up here.",
     subagentRunning: "Running",
     subagentCompleted: "Completed",
-    subagentTruncated: "Turn limit reached",
     subagentFailed: "Failed",
     subagentAborted: "Stopped",
     subagentDenied: "Could not start",
@@ -408,6 +407,7 @@ export const enUS = {
     scopeSessions: "{{count}} chats",
     scopeSubagent: "{{count}} from subagents · {{tokens}}",
     scopeActiveDays: "{{count}} active days",
+    undatedUsage: "{{tokens}} tokens included in totals without a retained date",
     scanning: "Folding history… ({{done}}/{{total}} chats)",
     cacheRead: "cache read {{tokens}}",
     durationSeconds: "{{seconds}}s",
@@ -496,7 +496,7 @@ export const enUS = {
     hookAllTools: "all tools",
     hookFailsClosed: "blocks on failure",
     hooksDesc:
-      "Hooks can only add restrictions: PreToolUse may block a call but can never bypass permissions or approval; the other two events only observe, never change the result.",
+      "beforeTool can change arguments or block a call; the host checks permissions and approval for the final arguments. afterTool can process the result.",
 
     state: {
       disabled: "Disabled",
@@ -550,7 +550,7 @@ export const enUS = {
     levelError: "Error",
     levelWarn: "Warning",
     sourcesPendingHint:
-      "Until then you can install a local .ointplug package or load a development folder.",
+      "Install a local ZIP containing package.json and Chord build artifacts, or load a development folder.",
   },
   settings: {
     general: "General",

@@ -1,21 +1,10 @@
-// 数据统计的端到端验证：侧栏入口 → 模态窗 → IPC 折叠真实会话日志 → 图表读数一致。
-//
-// 为什么需要它（每一步都有单测覆盖不到的一段）：
-//  · 单测能验聚合口径、能验图表组件的结构，但验不了「IPC 通道真的注册上了、
-//    preload 真的暴露了」—— 那一段断了，界面只会永远停在加载态；
-//  · 验不了「折叠真的读到了 pi 会话日志里的 usage」（会话库 → 样本 → 卷账本那条链
-//    只有在真实 SQLite 上才跑得通，测试里的假 store 是照着我自己的假设写的）；
-//  · 也验不了读数与报告一致：图表用的是同一份报告，但**取值的地方**有一堆
-//    （日/周/累计三档、7/30 两档范围、环图、图例），而这正是最可能出现"数字对不上"的地方。
-//
-// 它用**隔离的数据目录**启动：把本机真实会话里最新的几个 sqlite 复制一份进去，
-// 于是在"有真实用量"的前提下验证，同时不碰用户自己的数据（卷账本也写在临时目录里）。
-// 机器上没有任何会话时，改为验证空态（那也是要能跑通的一条路）。
-//
-// 用法：先 `npm run build`（探针跑的是 dist 里的渲染层产物），然后 `npm run probe:stats`。
+// Deterministic native SQLite usage fixture → preload report → actual statistics UI and renderer reload.
+// Does not read/copy user data or call a model. Run after npm run build.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { build } from "vite";
 import os from "node:os";
 import path from "node:path";
 
@@ -24,12 +13,10 @@ const electronPath = require("electron");
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 const PORT = 19413;
-const TMP = path.join(os.tmpdir(), "oint-stats-probe");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "oint-stats-probe-"));
 const USER_DATA = path.join(TMP, "userdata");
 const DATA_DIR = path.join(TMP, "data");
-const SESSIONS = path.join(DATA_DIR, "sessions");
-/** 真机数据目录的候选位置：只读取、只挑几个会话文件复制 */
-const REAL_DIR = path.join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".oint");
+const SESSIONS = path.join(DATA_DIR, "sessions-v1");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,6 +32,10 @@ class Cdp {
     this.ws = ws;
     this.id = 1;
     this.pending = new Map();
+    ws.addEventListener("close", () => {
+      for (const { reject } of this.pending.values()) reject(new Error("CDP connection closed"));
+      this.pending.clear();
+    });
     this.consoleErrors = [];
     ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data);
@@ -111,47 +102,30 @@ function check(label, condition, detail) {
   }
 }
 
-/**
- * 准备隔离的数据目录：复制本机最新的几个会话文件（含 -wal / -shm）。
- *
- * 只复制**最近 3 个**：探针要验的是「真实 usage 能不能折出来」，
- * 不需要整份历史（几百 MB）；而最近几个会话刚好覆盖「今天有记录」这种情况。
- */
-function seedDataDir() {
-  fs.rmSync(TMP, { recursive: true, force: true });
-  fs.mkdirSync(SESSIONS, { recursive: true });
-  let copied = 0;
-  try {
-    const files = fs
-      .readdirSync(path.join(REAL_DIR, "sessions"))
-      .filter((name) => name.endsWith(".sqlite"))
-      .map((name) => ({
-        name,
-        at: fs.statSync(path.join(REAL_DIR, "sessions", name)).mtimeMs,
-      }))
-      .sort((left, right) => right.at - left.at)
-      .slice(0, 3);
-    for (const file of files) {
-      for (const suffix of ["", "-wal", "-shm"]) {
-        const from = path.join(REAL_DIR, "sessions", `${file.name}${suffix}`);
-        if (fs.existsSync(from)) fs.copyFileSync(from, path.join(SESSIONS, `${file.name}${suffix}`));
-      }
-      copied += 1;
-    }
-  } catch {
-    /* 没有真实数据：走空态那条路 */
-  }
-  return copied;
+async function seedDataDir() {
+  const dependencies = Object.keys(require("../package.json").dependencies);
+  await build({
+    configFile: false, logLevel: "warn", resolve: { alias: { "@": path.join(ROOT, "src") } },
+    build: { target: "node22", outDir: path.join(TMP, "compiled"), emptyOutDir: false,
+      lib: { entry: path.join(ROOT, "scripts/probe-usage-stats-fixture.ts"), formats: ["es"], fileName: () => "fixture.js" },
+      rolldownOptions: { external: (id) => id === "electron" || id.startsWith("node:") || builtinModules.includes(id) || dependencies.some((name) => id === name || id.startsWith(`${name}/`)) },
+    },
+  });
+  fs.writeFileSync(path.join(TMP, "package.json"), JSON.stringify({ type: "module" }));
+  fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(TMP, "node_modules"), "junction");
+  const fixture = await import(pathToFileURL(path.join(TMP, "compiled/fixture.js")).href);
+  return fixture.seedUsageStats(DATA_DIR);
 }
 
-const seeded = seedDataDir();
-console.log(`[probe] 隔离数据目录：${DATA_DIR}（复制了 ${seeded} 个真实会话文件）`);
+const seeded = await seedDataDir();
+console.log(`[probe] synthetic native SQLite fixture: ${JSON.stringify(seeded)} in ${DATA_DIR}`);
 
 const env = { ...process.env, OINT_HOME: DATA_DIR };
 delete env.ELECTRON_RUN_AS_NODE;
 
 const child = spawn(electronPath, [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${USER_DATA}`], {
   cwd: ROOT,
+  windowsHide: true,
   env,
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -235,6 +209,7 @@ const PANEL_SNAPSHOT = `(() => {
     trendSegments: lines.map((node) => ((node.getAttribute("d") ?? "").match(/C/g) ?? []).length),
     emptyTrend: (document.body.textContent ?? "").includes("这段时间还没有用量记录"),
     scanning: (document.body.textContent ?? "").includes("正在整理历史用量"),
+    scopeText: document.querySelector('[data-slot="stats-scope"]')?.textContent ?? "",
     firstLegendRow: legendRows[0]?.textContent ?? null,
   };
 })()`;
@@ -299,9 +274,9 @@ try {
 
   const daySum = (report?.days ?? []).reduce((sum, day) => sum + day.tokens, 0);
   check(
-    "每日之和等于累计总量（口径自洽）",
-    daySum === report?.totalTokens,
-    `${daySum} vs ${report?.totalTokens}`,
+    "dated + undated balances equal native total",
+    daySum + (report?.undatedTokens ?? 0) === report?.totalTokens && daySum === seeded.datedTokens,
+    `${daySum} + ${report?.undatedTokens} vs ${report?.totalTokens}`,
   );
   const shareSum = (report?.models ?? []).reduce((sum, model) => sum + model.share, 0);
   check(
@@ -310,9 +285,9 @@ try {
     `Σshare=${shareSum}`,
   );
   check(
-    "折叠读到了真实会话日志里的用量",
-    seeded === 0 || report?.totalTokens > 0,
-    seeded === 0 ? "本机没有会话（跳过）" : `totalTokens=${report?.totalTokens}`,
+    "native UsageDoc/journal balances match the synthetic fixture",
+    report?.totalTokens === seeded.totalTokens && report?.undatedTokens === seeded.undatedTokens,
+    `total=${report?.totalTokens}, undated=${report?.undatedTokens}`,
   );
 
   // 4) 走用户真实路径：点侧栏底部的「数据统计」
@@ -374,8 +349,8 @@ try {
     const cumulative = await evaluate(page, PANEL_SNAPSHOT);
     check(
       "累计口径：格子值单调不减（没有记录的日子延续前值，不回落到 0）",
-      cumulative.monotone && cumulative.maxCellValue === finalReport?.totalTokens,
-      `最大格 ${cumulative.maxCellValue} / 总量 ${finalReport?.totalTokens}`,
+      cumulative.monotone && cumulative.maxCellValue === seeded.datedTokens,
+      `最大格 ${cumulative.maxCellValue} / dated ${seeded.datedTokens}`,
     );
 
     // 9) 时间范围：范围里有没有数据由**报告**决定，界面必须与之一致（不能凭感觉断言）
@@ -420,17 +395,12 @@ try {
     );
   }
 
-  // 10) 卷账本落盘：派生数据要能在下次启动时直接用（不重扫）
-  const rollupPath = path.join(DATA_DIR, "usage-stats.json");
-  check("卷账本已落盘", fs.existsSync(rollupPath), rollupPath);
-  if (fs.existsSync(rollupPath)) {
-    const parsed = JSON.parse(fs.readFileSync(rollupPath, "utf8"));
-    check(
-      "卷账本形状正确（带版本号与会话分桶）",
-      typeof parsed?.version === "number" && typeof parsed?.sessions === "object",
-      `version=${parsed?.version} sessions=${Object.keys(parsed?.sessions ?? {}).length}`,
-    );
-  }
+  // Native SQLite and the journal are the sole persisted usage authority.
+  check("native sessions-v1 SQLite exists", fs.existsSync(path.join(SESSIONS, `${seeded.sessionId}.sqlite`)), seeded.sessionId);
+  check("no derived usage ledger file is created", !fs.existsSync(path.join(DATA_DIR, "usage-stats.json")), "report reads native documents");
+  check("undated balance is explicitly annotated", /75/.test(snapshot.scopeText) && /日期未保留|without a retained date/.test(snapshot.scopeText), snapshot.scopeText);
+  check("undated-only model stays in total model accounting", finalReport.models.some((model) => model.modelId === "undated-only" && model.tokens === 75), JSON.stringify(finalReport.models));
+  check("undated-only model is excluded from dated chart legend and donut", snapshot.legendRows === seeded.datedModelCount && snapshot.donutSegments === seeded.datedModelCount && !snapshot.legendText.includes("undated-only"), snapshot.legendText);
 
   // 11) 模态互斥：打开插件管理应当把统计收掉
   check("侧栏有插件入口", await evaluate(page, clickSidebarButton(PLUGINS_LABELS)), "已点击");
@@ -494,6 +464,14 @@ try {
     check("从搜索进入的也是同一个模态窗", viaSearch, viaSearch ? "已打开" : "没有打开");
   }
 
+  await page.send("Page.reload");
+  await until(async () => await evaluate(page, `typeof window.oint?.stats?.report === "function" && document.querySelector("aside") !== null`).catch(() => false), { timeoutMs: 15000 });
+  const afterReload = await evaluate(page, `window.oint.stats.report()`);
+  check("report → renderer reload preserves native totals and dated attribution", afterReload.totalTokens === seeded.totalTokens && afterReload.undatedTokens === seeded.undatedTokens && JSON.stringify(afterReload.days) === JSON.stringify(finalReport.days) && JSON.stringify(afterReload.models) === JSON.stringify(finalReport.models), `total=${afterReload.totalTokens}, undated=${afterReload.undatedTokens}`);
+  await evaluate(page, clickSidebarButton(STATS_LABELS));
+  const afterReloadUi = await until(async () => (await evaluate(page, PANEL_SNAPSHOT))?.hasSummary === true);
+  check("statistics UI reopens after reload with its undated annotation", afterReloadUi && /日期未保留|without a retained date/.test((await evaluate(page, PANEL_SNAPSHOT)).scopeText), "native report survives remount");
+
   check(
     "渲染层没有报错",
     page.consoleErrors.length === 0,
@@ -503,9 +481,15 @@ try {
   failed += 1;
   console.log(`FAIL | 探针异常 | ${error instanceof Error ? error.message : String(error)}`);
 } finally {
+  if (page) await evaluate(page, `window.oint.window.close()`).catch(() => undefined);
   page?.close();
-  child.kill();
-  await sleep(500);
+  if (!(await until(async () => child.exitCode !== null, { timeoutMs: 5000 }))) child.kill();
+  await sleep(300);
+  const temporaryRoot = fs.realpathSync(os.tmpdir());
+  const cleanupTarget = fs.realpathSync(TMP);
+  const relativeTarget = path.relative(temporaryRoot, cleanupTarget);
+  if (path.isAbsolute(relativeTarget) || path.dirname(relativeTarget) !== "." || !path.basename(cleanupTarget).startsWith("oint-stats-probe-")) throw new Error("Unsafe stats probe cleanup target");
+  fs.rmSync(cleanupTarget, { recursive: true, force: true });
 }
 
 console.log(failed === 0 ? "\n全部通过" : `\n${failed} 项失败`);

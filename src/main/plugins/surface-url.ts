@@ -75,7 +75,7 @@ export function parseSurfaceUrl(raw: string): ParsedSurfaceUrl | null {
   if (segments.length < 1) return null;
 
   const decoded: string[] = [];
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     let value: string;
     try {
       value = decodeURIComponent(segment);
@@ -84,7 +84,12 @@ export function parseSurfaceUrl(raw: string): ParsedSurfaceUrl | null {
       return null;
     }
     if (value === "" || value === "." || value === "..") return null;
-    if (value.includes("/") || value.includes("\\")) return null;
+    if (
+      value.includes("\\") ||
+      (value.includes("/") &&
+        !(index === 0 && /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(value)))
+    )
+      return null;
     // Windows 盘符与 UNC：`C:` 这种段不该出现在插件内的相对路径里
     if (/^[a-zA-Z]:$/.test(value)) return null;
     // NUL 与其它控制字符
@@ -124,8 +129,9 @@ export function parseSurfaceUrl(raw: string): ParsedSurfaceUrl | null {
  */
 export const PLUGIN_PARTITION_PREFIX = "persist:oint-plugin-";
 
-export function pluginPartition(pluginId: string): string {
-  return `${PLUGIN_PARTITION_PREFIX}${pluginId.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+export function pluginPartition(pluginId: string, workspaceDir?: string): string {
+  const scope = workspaceDir ? `-${encodeURIComponent(workspaceDir)}` : "";
+  return `${PLUGIN_PARTITION_PREFIX}${encodeURIComponent(pluginId)}${scope}`;
 }
 
 /**

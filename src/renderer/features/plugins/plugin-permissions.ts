@@ -16,10 +16,10 @@
 //    那时用户至少要看到「有个东西我不认识」，而不是一行凭空少了一项。
 
 import {
+  PLUGIN_PERMISSIONS,
   type PluginContributionNames,
   type PluginContributionSummary,
   type PluginPermissionView,
-  UNENFORCED_PLUGIN_PERMISSIONS,
 } from "@/shared/contracts/plugin";
 
 export type PluginRisk = PluginPermissionView["risk"];
@@ -80,7 +80,6 @@ export function sortPermissions(
  */
 const PERMISSION_META: Readonly<Record<string, { labelKey: string }>> = {
   "ui.panel": { labelKey: "plugins.perm.uiPanel" },
-  "ui.view": { labelKey: "plugins.perm.uiView" },
   "ui.window": { labelKey: "plugins.perm.uiWindow" },
   "ui.modal": { labelKey: "plugins.perm.uiModal" },
   "ui.theme": { labelKey: "plugins.perm.uiTheme" },
@@ -91,17 +90,12 @@ const PERMISSION_META: Readonly<Record<string, { labelKey: string }>> = {
   "subagents.contribute": { labelKey: "plugins.perm.subagentsContribute" },
   "commands.register": { labelKey: "plugins.perm.commandsRegister" },
   "agent.tool.register": { labelKey: "plugins.perm.agentToolRegister" },
-  "fs.read": { labelKey: "plugins.perm.fsRead" },
-  "fs.write": { labelKey: "plugins.perm.fsWrite" },
-  "fs.delete": { labelKey: "plugins.perm.fsDelete" },
   "shell.exec": { labelKey: "plugins.perm.shellExec" },
-  "shell.openExternal": { labelKey: "plugins.perm.shellOpenExternal" },
   "net.fetch": { labelKey: "plugins.perm.netFetch" },
   "mcp.server.local": { labelKey: "plugins.perm.mcpServerLocal" },
   "mcp.server.remote": { labelKey: "plugins.perm.mcpServerRemote" },
   "hostHooks.register": { labelKey: "plugins.perm.hostHooksRegister" },
   "clipboard.write": { labelKey: "plugins.perm.clipboardWrite" },
-  "session.read": { labelKey: "plugins.perm.sessionRead" },
 };
 
 /** 权限 id 的文案键；表外返回 undefined（界面据此显示 id 原文 + 「未知权限」） */
@@ -120,7 +114,7 @@ export function permissionLabelKey(id: string): string | undefined {
  * 而它今天既没有 API 也没有校验点（详见契约里那张表的注释）。
  */
 export function isPermissionEnforced(id: string): boolean {
-  return !UNENFORCED_PLUGIN_PERMISSIONS.has(id);
+  return (PLUGIN_PERMISSIONS as readonly string[]).includes(id);
 }
 
 /**

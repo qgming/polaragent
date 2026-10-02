@@ -23,9 +23,11 @@ function fakeInteractions(reply: (input: AskInput) => AskResponse): {
       requests.push(input);
       return Promise.resolve(reply(input));
     },
-    respond: () => {},
-    pending: () => [],
-    cancelSession: () => {},
+    taskDefinitions: [],
+    attach: async () => () => {},
+    respond: async () => {},
+    pending: async () => [],
+    cancelSession: async () => {},
     timeoutMs: () => TIMEOUT_MS,
   };
   return { service, requests };
@@ -132,7 +134,9 @@ describe("ask_user", () => {
     expect(text).toContain("- 文案：文档语气？ → 自由输入：简洁一点");
 
     // 请求原样落到服务上：会话、工具调用 id 与题目都不能丢
-    expect(requests).toEqual([{ sessionId: "s1", toolCallId: "call-1", questions: QUESTIONS }]);
+    expect(requests).toMatchObject([
+      { sessionId: "s1", toolCallId: "call-1", questions: QUESTIONS },
+    ]);
   });
 
   it("answered：没作答的题按题序记「未作答」，计数与 details 对得上", async () => {

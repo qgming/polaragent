@@ -19,6 +19,7 @@ import {
 } from "./attachments";
 import { emptyUsage } from "./durable-session";
 import { createExecEnv } from "./exec-env";
+import { TodoDoc } from "./native-state";
 import { createSessionStore, type SessionStore } from "./session-store";
 
 let directory: string;
@@ -236,10 +237,12 @@ describe("Pi 1.0 native storage", () => {
     await opened.conversation.configure({ instructions: "at cutoff" }, context);
     await opened.append(user("before"));
     const retained = await opened.append(user("retained"));
-    await opened.append({
-      kind: "todo",
-      data: { revision: 1, todos: [{ content: "keep", status: "pending" }] },
-    });
+    await opened.conversation.commit(async (tx) => {
+      Object.assign(await tx.doc(TodoDoc, opened.conversation.id), {
+        revision: 1,
+        todos: [{ id: "t1", text: "keep", status: "pending" }],
+      });
+    }, context);
     const compact = await opened.append({
       kind: "pi.compaction",
       head: retained.record.id,
@@ -253,9 +256,9 @@ describe("Pi 1.0 native storage", () => {
     expect(
       view.messages.map((message) => (message.role === "user" ? message.content : "")),
     ).toEqual(["summary", "retained"]);
-    expect(
-      (await copy.session.allEntries()).find((entry) => entry.record.kind === "todo")?.record.data,
-    ).toMatchObject({ revision: 1 });
+    expect(await copy.harness.snapshot(TodoDoc, copy.conversation.id, context)).toMatchObject({
+      revision: 1,
+    });
     expect((await copy.harness.inspect(context)).tasks).toEqual([]);
     expect(await copy.harness.usage(context)).toEqual({ models: {}, tools: {} });
     expect(
@@ -297,5 +300,33 @@ describe("Pi 1.0 native storage", () => {
     await store.remove(created.id);
     expect(await store.list()).toEqual([]);
     expect(await readFile(old, "utf8")).toBe("untouched");
+  });
+  it("independent forks preserve todo document boundaries for subsequent native retry", async () => {
+    const source = await store.create();
+    const opened = await open(source.id);
+    await opened.conversation.commit(async (tx) => {
+      Object.assign(await tx.doc(TodoDoc, opened.conversation.id), {
+        revision: 1,
+        todos: [{ id: "t1", text: "first", status: "pending" }],
+      });
+    }, context);
+    await opened.append(user("first"));
+    await opened.conversation.commit(async (tx) => {
+      Object.assign(await tx.doc(TodoDoc, opened.conversation.id), {
+        revision: 2,
+        todos: [{ id: "t1", text: "first", status: "done" }],
+      });
+    }, context);
+    const last = await opened.append(user("second"));
+    const fork = await store.fork(source.id, last.entryId);
+    await store.remove(source.id);
+    const copied = await open(fork.id);
+    expect(
+      (await copied.harness.snapshot(TodoDoc, copied.conversation.id, context))?.revision,
+    ).toBe(2);
+    const first = (await copied.session.allEntries())[0];
+    if (!first) throw new Error("Expected the copied history to contain an entry");
+    const retried = await copied.session.forkAndSelect(first.entryId, context);
+    expect((await copied.harness.snapshot(TodoDoc, retried.id, context))?.revision).toBe(1);
   });
 });

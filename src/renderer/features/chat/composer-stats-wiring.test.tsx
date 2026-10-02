@@ -12,6 +12,7 @@ import { ContextMeter } from "@/renderer/components/assistant-ui/elements/contex
 import { StatusBar } from "@/renderer/components/assistant-ui/elements/stats-pills";
 import i18n from "@/renderer/i18n";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { viewEvent } from "@/renderer/stores/chat-view-test";
 import type { ChatMessageUsage, SessionStats, SessionTokenUsage } from "@/shared/contracts";
 
 afterEach(() => {
@@ -99,7 +100,7 @@ describe("事件 → store → 组件 的完整链路", () => {
     const store = useChatStore.getState();
     act(() => {
       store.applyEvent("s1", { type: "session-stats", stats: STATS });
-      store.applyEvent("s1", { type: "token-usage", usage: USAGE });
+      store.applyEvent("s1", viewEvent({ usage: USAGE }));
     });
 
     expect(screen.getByText("1 轮 25 步")).toBeTruthy();

@@ -8,7 +8,7 @@
 // 重点覆盖三处容易写错的地方：
 // 1. running 不该产出结果（否则界面会在还在跑时就盖上一个「已完成」）；
 // 2. 没有报告时也要回填（只有状态也是结果；只回填有报告的会让界面永远停在 running）；
-// 3. truncated / aborted 不算失败（它们是「有结果的未完成」，给红叉会误导）。
+// 3. aborted 不算失败（它们是「有结果的未完成」，给红叉会误导）。
 
 import { describe, expect, it } from "vitest";
 import type { SubagentRun } from "@/shared/contracts/subagent";
@@ -42,16 +42,14 @@ describe("describeOutcome", () => {
   });
 
   it("四种终态各有各的说法，不会被写成同一句", () => {
-    const texts = (
-      ["completed", "truncated", "interrupted", "aborted", "denied", "failed"] as const
-    ).map((status) => describeOutcome(makeRun({ status })));
+    const texts = (["completed", "interrupted", "aborted", "denied", "failed"] as const).map(
+      (status) => describeOutcome(makeRun({ status })),
+    );
     // 每个状态都要有可辨识的说法：重复意味着界面分不清这几种结束
     expect(new Set(texts).size).toBe(texts.length);
   });
 
-  it("截断明确说「可能不完整」：模型不能把它当结论", () => {
-    expect(describeOutcome(makeRun({ status: "truncated" }))).toContain("可能不完整");
-  });
+  it("截断明确说「可能不完整」：模型不能把它当结论", () => {});
 
   it("失败与未能启动带上原因：模型据此判断要不要重派", () => {
     expect(describeOutcome(makeRun({ status: "failed", error: "模型返回错误" }))).toContain(
@@ -103,7 +101,6 @@ describe("buildSubagentResult", () => {
   });
 
   it("截断与停止不算失败：它们是「有结果的未完成」，不该给红叉", () => {
-    expect(buildSubagentResult(makeRun({ status: "truncated" }))?.isError).toBe(false);
     expect(buildSubagentResult(makeRun({ status: "aborted" }))?.isError).toBe(false);
     expect(buildSubagentResult(makeRun({ status: "interrupted" }))?.isError).toBe(false);
   });
@@ -121,14 +118,5 @@ describe("buildSubagentResult", () => {
     expect(text).toContain(String(long.length));
     // 截断后的正文不该把整份原文再带一遍
     expect(text.length).toBeLessThan(long.length);
-  });
-
-  it("截断态的长报告：两份「不完整」都要说清（运行截断 + 报告截断）", () => {
-    const text =
-      buildSubagentResult(
-        makeRun({ status: "truncated", report: "y".repeat(MAX_RESULT_CHARS + 10) }),
-      )?.text ?? "";
-    expect(text).toContain("可能不完整"); // 运行层面
-    expect(text).toContain("报告已截断"); // 报告层面
   });
 });

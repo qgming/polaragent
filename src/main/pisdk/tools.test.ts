@@ -240,28 +240,8 @@ describe("网络工具", () => {
     expect(webArgs.length).toBeGreaterThanOrEqual(calls.length);
   });
 
-  /**
-   * 子智能体的工具口径：**与主会话同一批**，只摘掉 Task 系列（不能嵌套委派）与 ask_user
-   *（隐藏会话里没人看得到提问卡），再按主 AI 临时定义的白名单收窄。
-   *
-   * 同样用读源码的方式钉住，理由与上一条相同：「给子智能体少一半工具」在运行期**没有任何症状** ——
-   * 模型只是变得笨一点，没有地方会报错。而它正是这次改动要根除的行为，值得一条反向断言。
-   */
-  it("runtime.ts 不再按定义过滤子智能体的工具（只摘 Task 系列与 ask_user，白名单另算）", async () => {
-    const { readFile } = await import("node:fs/promises");
-    const source = await readFile(new URL("./runtime.ts", import.meta.url), "utf8");
-
-    // ask_user 与 Task 系列只在主会话注入
-    expect(source).toContain(
-      "spec === undefined ? createAskTool({ sessionId, interactions }) : undefined",
-    );
-    expect(source).toContain("spec === undefined ? subagentTools : []");
-    // 唯一的过滤来自主 AI 临时定义的白名单
-    expect(source).toContain("restrictTools(builtTools, subagentWhitelist)");
-    // 旧的「按定义里的清单过滤」不该留下任何痕迹
-    expect(source).not.toContain("resolveSubagentTools");
-    expect(source).not.toContain("disabledTools");
-  });
+  // Runtime child selection is verified against actual model requests in runtime.send.test.ts,
+  // including the native family child's exact whitelist; source spelling is not an API contract.
 });
 
 /**

@@ -100,7 +100,6 @@ export const zhCN = {
       "让 Oint 处理可分头进行的任务时，它会派出子智能体；每一次委派的执行详情都会出现在这里。",
     subagentRunning: "运行中",
     subagentCompleted: "已完成",
-    subagentTruncated: "达到轮次上限",
     subagentFailed: "失败",
     subagentAborted: "已停止",
     subagentDenied: "未能启动",
@@ -403,6 +402,7 @@ export const zhCN = {
     /** 子智能体的用量也是真花掉的 token，单独给一行让人对得上帐 */
     scopeSubagent: "其中子智能体 {{count}} 个 · {{tokens}}",
     scopeActiveDays: "{{count}} 天有记录",
+    undatedUsage: "{{tokens}} token 日期未保留，已计入总量",
     scanning: "正在整理历史用量…（{{done}}/{{total}} 个会话）",
     cacheRead: "缓存读取 {{tokens}}",
     durationSeconds: "{{seconds}} 秒",
@@ -490,13 +490,13 @@ export const zhCN = {
     contributionCount: "贡献 {{n}} 项",
     /**
      * 钩子那一栏。逐条列出"这个插件会在哪些时机介入工具调用" ——
-     * `PreToolUse` 能拦住调用，用户做装不装的判断时必须看得见。
+     * `beforeTool` 能拦住调用，用户做装不装的判断时必须看得见。
      */
     hooks: "介入点",
     hookAllTools: "全部工具",
     hookFailsClosed: "出错时拒绝",
     hooksDesc:
-      "钩子只能给工具调用**加限制**：PreToolUse 可以拦下调用，但永远不能绕过权限与审批；另外两个事件只观察、不改结果。",
+      "beforeTool 可以修改参数或阻止调用，宿主会对最终参数执行权限与审批；afterTool 可以处理工具结果。",
 
     state: {
       disabled: "已停用",
@@ -555,7 +555,8 @@ export const zhCN = {
     diagnosticsEmpty: "没有任何加载错误或崩溃记录",
     levelError: "错误",
     levelWarn: "警告",
-    sourcesPendingHint: "在此之前，可以先安装本地的 .ointplug 包，或直接加载开发目录。",
+    sourcesPendingHint:
+      "可以安装包含 package.json 和 Chord 构建产物的本地 ZIP 包，或加载开发目录。",
   },
   settings: {
     general: "通用",

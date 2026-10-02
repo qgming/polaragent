@@ -11,7 +11,7 @@ export function registerInteractionsIpc(): void {
       const interactions = getInteractionService();
       if (!interactions) throw new Error("提问服务尚未就绪，请稍后重试");
       try {
-        interactions.respond(request.id, request.reply);
+        await interactions.respond(request.id, request.reply);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         console.warn(`提交回答失败：${String(error)}`);

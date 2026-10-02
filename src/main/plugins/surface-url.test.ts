@@ -10,11 +10,19 @@ import {
   isPluginSurfaceUrl,
   PLUGIN_SCHEME,
   parseSurfaceUrl,
+  pluginPartition,
   SURFACE_HOST,
   surfaceUrl,
 } from "./surface-url";
 
 describe("surfaceUrl", () => {
+  it("roundtrips scoped package identity without merging independent partitions", () => {
+    expect(parseSurfaceUrl(surfaceUrl("@scope/tools", "./ui/index.html"))).toEqual({
+      pluginId: "@scope/tools",
+      relativePath: "ui/index.html",
+    });
+    expect(pluginPartition("@scope/a.b")).not.toBe(pluginPartition("@scope/a-b"));
+  });
   it("拼出可解析的 URL", () => {
     const url = surfaceUrl("dev.example.git-lens", "./ui/git.html");
     expect(url).toBe(`${PLUGIN_SCHEME}://${SURFACE_HOST}/dev.example.git-lens/ui/git.html`);

@@ -4,24 +4,22 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { Message as AgentMessage } from "@earendil-works/pi-ai";
 import {
   type Api,
   clampThinkingLevel,
   type Model,
   type MutableModels,
-  type Usage,
 } from "@earendil-works/pi-ai";
 import {
-  CompactionTask,
   type Conversation,
-  type Cursor,
   createRegistry,
   defineExtension,
   type Extension,
   GenerationTask,
   Harness,
+  type HookApi,
   hook,
   type Registry,
   type SubmissionId,
@@ -31,41 +29,25 @@ import {
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { dataDir } from "@/main/app/paths";
-import { pluginContributionDirs } from "@/main/plugins/contributions";
-import { previewToolText } from "@/main/plugins/hooks";
-import {
-  dispatchPluginHooks,
-  pluginTools,
-  pluginToolsGeneration,
-} from "@/main/plugins/process-host";
+import { ensurePluginWorkspace, pluginContributionDirs } from "@/main/plugins/contributions";
+import { pluginExtensions, subscribePluginExtensions } from "@/main/plugins/process-host";
 import type { ChatAttachment } from "@/shared/contracts/attachment";
 import type {
   ChatEvent,
   ChatEventEnvelope,
+  ChatLiveSnapshot,
   ChatSendOptions,
-  ChatStreamSnapshot,
   CompactOutcome,
-  QueuedMessage,
 } from "@/shared/contracts/chat";
 import { type AgentMode, DEFAULT_AGENT_MODE, type ModelRef } from "@/shared/contracts/common";
 import type { JobInfo } from "@/shared/contracts/job";
 import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
-import type {
-  ChatMessageUsage,
-  ChatPart,
-  ContextBreakdown,
-  ReasoningPart,
-  SessionTokenUsage,
-  SetSessionModelResult,
-  TextPart,
-  ToolCallPart,
-} from "@/shared/contracts/session";
+import type { ContextBreakdown, SetSessionModelResult } from "@/shared/contracts/session";
 import type { Settings } from "@/shared/contracts/settings";
-import type { SubagentEventEnvelope } from "@/shared/contracts/subagent";
-import {
-  isSubagentRunFinished,
-  type SubagentDefinition,
-  type SubagentRun,
+import type {
+  SubagentDefinition,
+  SubagentEventEnvelope,
+  SubagentRun,
 } from "@/shared/contracts/subagent";
 import { isPreTrustedMcpTool } from "@/shared/mcp/builtin-servers";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
@@ -75,13 +57,18 @@ import type { WebService } from "../web/types";
 import { agentModeSection, shouldIncludeDelegationRules } from "./agent-mode-prompt";
 import type { ApprovalService } from "./approvals";
 import { buildUserContent, sessionAttachmentsDir } from "./attachments";
+import { readDocument, SessionHandleReleased } from "./durable-session";
 import { errorText } from "./error-text";
 import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
-import { buildJobResult } from "./job-delivery";
-import { createJobService, type JobService } from "./jobs";
+import { createJobService, type JobService, JobsDoc } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
-import { mapEntriesToMessages, mapUserParts } from "./message-mapper";
+import { createNativeMetrics, type NativeMetrics } from "./native-metrics";
+import { compactionReceipt } from "./native-operations";
+import { nativeReports, projectReportContext } from "./native-reports";
+import { nativeRequestTasks } from "./native-state";
+import { type NativeSubagent, SubagentsDoc } from "./native-subagents";
+import { createNativeView, type NativeView, usageTotals } from "./native-view";
 import {
   assessToolRisk,
   commandWarning,
@@ -96,7 +83,6 @@ import {
   type RepeatChain,
   softRepeatNotice,
 } from "./repeat-guard";
-import { buildSubagentResult } from "./report-delivery";
 import {
   agentsSkillsDir,
   formatSkillsForSystemPrompt,
@@ -110,25 +96,10 @@ import {
   type Skill,
 } from "./resources";
 import {
-  compactionReceipt,
-  createRuntimeEventBridge,
-  type RuntimeEvent as HarnessEvent,
-  type RuntimeEventType as HarnessEventType,
-  type RuntimeEventBridge,
-  type RuntimeToolResult,
-} from "./runtime-events";
-import {
   deriveContextBreakdown,
   estimateTokens,
   estimateToolsTokens,
   initSessionStatsState,
-  onFirstToken,
-  onMessageEnd,
-  onMessageStart,
-  onRunEnd,
-  onToolEnd,
-  onToolStart,
-  onTurnStart,
   type SessionStatsState,
   sessionStatsView,
 } from "./session-stats";
@@ -139,29 +110,16 @@ import {
   buildSubagentSystemPrompt,
   formatSubagentsForSystemPrompt,
 } from "./subagent-prompt";
-// 循环依赖是刻意的：runner 需要 runtime 的 registerSubagentSession / getChatRuntime，
-// runtime 需要 runner 的运行管理。两边都只在函数体内互相调用，模块初始化期不取值，安全。
 import {
-  abortSubagentRunsForParent,
-  forgetSubagentRuns,
-  listSubagentRuns,
-  noteSubagentAssistantMessage,
-  noteSubagentRunEnd,
-  noteSubagentToolCall,
-  reconcileSubagentRuns,
-  reserveSubagentSlot,
-  setSubagentEmitter,
-  startSubagentRun,
-  stopSubagentRun,
-  waitSubagentRuns,
+  createSubagentExtension,
+  createSubagentRunner,
+  type SubagentRunner,
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
-import { toolPartImages } from "./tool-images";
 import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
 import { createSubagentTools, SUBAGENT_TOOL_NAMES } from "./tools/subagent";
-import { createTodoState, parseTodoEntries, type TodoState, toTodoPayload } from "./tools/todo";
 
 export interface ChatRuntimeDeps {
   getSettings: () => Promise<Settings>;
@@ -213,7 +171,7 @@ export interface ChatRuntimeDeps {
   web?: WebService;
   /** 首轮问答结束后自动命名会话；未注入时（测试等场景）不做命名 */
   sessionTitles?: SessionTitleGenerator;
-  /** 会话工作目录解析：取索引里绑定的 cwd，未绑定时由实现方回退进程当前目录 */
+  /** 会话工作目录解析：读取 AgentDoc 绑定的 cwd，未绑定时由实现方回退进程当前目录 */
   resolveWorkingDir: (sessionId: string) => Promise<string>;
   /**
    * 应用根目录（`app.getAppPath()`），用来定位**随包分发的内置技能**
@@ -262,13 +220,8 @@ export interface ChatRuntime {
   cancelQueued(sessionId: string, entryId: string): Promise<void>;
 
   compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
-  /**
-   * 该会话当前流式消息的完整快照；没有在流的消息时为 null。
-   *
-   * 增量事件（part-delta）不带「从哪里开始」的信息，渲染层一旦发现缺口就必须整条补齐，
-   * 否则拼出来的文本是错的。这里返回的就是主进程累积中的那份原文（权威来源）。
-   */
-  streamSnapshot(sessionId: string): ChatStreamSnapshot | null;
+  /** 已提交的原生会话视图，用于首次挂载与断线恢复。 */
+  liveSnapshot(sessionId: string): Promise<ChatLiveSnapshot | null>;
   isRunning(sessionId: string): boolean;
   /**
    * 列出该会话的后台作业。
@@ -276,22 +229,16 @@ export interface ChatRuntime {
    * 渲染层切会话就要刷新一次作业面板，所以这里**不创建会话运行时**：只是看一眼列表面孔，
    * 不该顺带打开存储、附着 harness。作业表由作业服务独立持有，没有作业时就是空数组。
    */
-  listJobs(sessionId: string): JobInfo[];
+  listJobs(sessionId: string): Promise<JobInfo[]>;
+  listSubagents(sessionId: string): Promise<SubagentRun[]>;
+  stopSubagent(sessionId: string, delegationId: string): Promise<SubagentRun | undefined>;
+  prepareSubagent(sessionId: string): Promise<void>;
   /**
    * 杀掉某个后台作业（界面上「停止」按钮用）；返回杀后快照。
    *
    * 会话 fence 由作业服务校验：作业不存在、或不属于该会话，一律抛错（中文文案，可直接展示）。
    */
   killJob(sessionId: string, id: string): Promise<JobInfo>;
-  /**
-   * 子智能体交回报告时的投递入口（由 subagent-runner 在终态调用）。
-   *
-   * 为什么放在这里而不是让 runner 自己 send：唤醒预算与「父会话在不在跑」只有本闭包拿得到，
-   * 而这两样正是投递决策的输入（规则见 report-delivery.ts）。放在这里也让子智能体复用
-   * 与作业退出唤醒**同一格预算** —— 两套预算各算各的，等于把自激的上限翻倍。
-   */
-  deliverSubagentReport(run: SubagentRun): void;
-
   setModel(sessionId: string, model: ModelRef | null): Promise<SetSessionModelResult>;
   closeSession(sessionId: string): Promise<void>;
   dispose(): Promise<void>;
@@ -303,168 +250,45 @@ export interface ToolPermissionResult {
 
 type SessionHandle = NonNullable<Awaited<ReturnType<SessionStore["open"]>>>["session"];
 
-/** 流式 assistant 消息的累积状态 */
-interface AssistantStream {
-  messageId: string;
-  /** 这条流式消息的创建时刻（快照补齐时渲染层要用，与 message-added 一致） */
-  createdAt: number;
-  parts: ChatPart[];
-  /** contentIndex → parts 下标，保证同一内容块增量合并 */
-  partIndexByContent: Map<number, number>;
-}
-
-/** toolCallId → 消息中的 part 引用，供 tool_end / 权限门回填状态 */
-interface ToolCallPartRef {
-  messageId: string;
-  partIndex: number;
-  part: ToolCallPart;
-}
-
 interface SessionRuntime {
   sessionId: string;
-  /**
-   * 这个会话实际在用的模型引用（会话绑定优先，否则默认模型）。
-   *
-   * 与 `model` 一起维护：`model` 是给内核/思考档位 clamp 用的 pi-ai 对象，`modelRef` 是它的
-   * 来源坐标 —— 切模型时两者一起换，`applyModel` 也据此判断「是否真的变了」。
-   * null = 当前设置里一个可用模型都没有（此时发送会报「请先配置模型服务」）。
-   */
-  modelRef: ModelRef | null;
-
-  models: MutableModels;
+  familyId: string;
   session: SessionHandle;
   harness: Harness;
   conversation: Conversation;
   registry: Registry;
   extension: Extension;
-  events: RuntimeEventBridge;
-  todo: TodoState;
-  persistTodo: (state: TodoState) => Promise<void>;
+  view?: NativeView;
+  metrics?: NativeMetrics;
+  spec?: NativeSubagent;
+  subagents?: SubagentRunner;
+  stateUnsubscribers: (() => void)[];
+  unsubscribers: (() => void)[];
+  modelRef: ModelRef | null;
+  models: MutableModels;
+  model: Model<Api>;
+  env: ExecutionEnv;
+  rules: PermissionRuleStore;
+  readonly running: boolean;
+  sending: boolean;
+  inputEpoch: number;
   stopping?: Promise<void>;
   compacting?: boolean;
   admission?: Promise<void>;
   admitted?: () => void;
   sendController?: AbortController;
   sendSettled?: Promise<void>;
-  compactionTokens: Map<number, number>;
-  effects: Set<Promise<unknown>>;
   toolRefresh?: Promise<void>;
-  env: ExecutionEnv;
-  /**
-   * 本会话真正在用的模型（会话绑定优先，之后随 `setModel` 热切换）。
-   *
-   * 留一份在这里是为了定思考档位时按**这个模型**的支持范围降级 —— 若改用「当前设置里的
-   * 默认模型」，用户切了模型就会出现「档位按 A 算、请求其实发给 B」。
-   */
-  model: Model<Api>;
-  rules: PermissionRuleStore;
-  running: boolean;
-
-  sending: boolean;
-  /** 本次运行的本地 runId，保证 run-started 与 run-ended 对应 */
-  runId?: string;
-  /**
-   * **内核**为当前这一轮生成的 runId（由 run_start 事件捕获）。
-   *
-   * 为什么单独存一份：run_end 事件带的是内核的 id，而 `runId` 是 send 自己生成的 ——
-   * 两套 id 没有关系。只有记下内核这个值，才能判断一条 run_end 是不是**上一轮的尾巴**
-   *（见 handleRunEnd）。用本地 runId 去比会导致每一条 run_end 都被误丢。
-   */
-  kernelRunId?: string;
-  /** run_end 事件是否已处理，避免 prompt 异常时重复发 run-ended */
-  runEnded: boolean;
-  stream?: AssistantStream;
-  lastAssistantMessageId?: string;
-  /**
-   * **本轮运行**产出的最后一条助手消息 id；本轮还没产出消息时为 undefined。
-   *
-   * 与 `lastAssistantMessageId` 的区别是作用域：那个是「这个会话最后一次见到的助手消息」，
-   * 会跨轮保留；这个是「本次 run 的」。run_end 失败时要区分两种情形：
-   * - 本轮**产出过**消息（例如最后一步报错）→ 把错误盖在那条消息上是准确的；
-   * - 本轮**一条都没产出**（最典型的是 `configured_tools_unavailable` / `model_unavailable`
-   *   这类配置失败 —— 请求根本没发出去，不会有 message_start）→ 此时
-   *   `lastAssistantMessageId` 指的是**上一轮**那条成功的回复，
-   *   盖上去会让用户看到「我发的消息没回应，而上一条正常回复突然变红」。
-   *   这种情形必须新发一条错误消息，而不是改写历史。
-   */
-  runAssistantMessageId?: string;
-
-  pendingEntries: PendingEntry[];
-  /** 渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条 */
-  pendingUserMessageId?: string;
-  toolParts: Map<string, ToolCallPartRef>;
-  /**
-   * 每个工具调用**上次发**流式输出的时刻（toolCallId → ms），用于节流。
-   *
-   * 内核的 `tool_update` 跟随进程输出频率（编译日志一秒几百条），逐条投 IPC 会把通道打满。
-   * 窗口内的更新**直接丢弃**而不是攒起来 —— 每份快照本来就是「到目前为止的累计输出」，
-   * 丢掉中间态不丢信息，下一份会把内容补齐。
-   */
-  toolOutputAt: Map<string, number>;
-
+  effects: Set<Promise<unknown>>;
   subagentTools: ToolRegistration[];
-  /**
-   * 这个 runtime 属于一个**子智能体子会话**（`kind === "subagent"` 的隐藏会话）。
-   *
-   * 为什么要在 runtime 上留一个快照：`SessionRuntime` 里没有 kind 字段，而权限档映射
-   * （approvals.ts 的 effectivePermissionMode）在权限门里需要一个稳定的「我是不是子会话」判据。
-   * 不直接用模块级的 `subagentSessions` 去查，是因为那张登记表**会被注销**
-   *（`closeSession` 里调 unregisterSubagentSession），而会话身份是创建时就定下的、
-   * 不该随登记表的生命周期变化。值就是 `createRuntime` 里那个 `spec`（登记表读得到即子会话）。
-   */
   isSubagent: boolean;
-  queue: QueuedMessage[];
-  unsubscribers: Array<() => void>;
-  /** 本次会话是否已经试过自动命名（失败也在内存里记下，避免每轮重复请求） */
   titleAttempted?: boolean;
-
   mcpToolsStale?: boolean;
-  /**
-   * 建这张工具表时，插件工具集合的代号。
-   *
-   * 与 `mcpToolsStale` 并列而不是合成一个：MCP 那边是**事件驱动**的
-   *（reload 时置位），插件这边是**状态比对**（启停会改工具集合，但没人"通知"会话）。
-   * 合成一个的话，插件启停就没有置位的机会，工具表会一直停在旧的那份。
-   */
-  pluginToolsGeneration?: number;
-  /**
-   * 会话级统计折叠状态：turn/step 计数与 LLM/工具/TTFT/解码耗时。
-   * 由 session-stats.ts 的纯函数增量维护，变化时经 emitSessionStats 推送渲染层。
-   */
   stats: SessionStatsState;
-  /**
-   * 会话级 Token 用量合计：未缓存输入 / 缓存读取 / 缓存写入 / 输出。
-   * 每次 assistant message_end 携带 usage 时累加，变化时经 emitTokenUsage 推送。
-   */
-  tokenUsage: SessionTokenUsage;
-  /**
-   * 上下文占用分解的固定项（系统提示词 / 工具定义，按请求装配时的估算值）。
-   * messageTokens 由每次 usage 样本经 deriveContextBreakdown 倒推。
-   */
   contextBreakdown: Omit<ContextBreakdown, "messageTokens">;
-  /**
-   * 最近一次的 usage 样本（未缓存输入 / 缓存读取 / 缓存写入）。
-   *
-   * 留着它是为了落盘：run_end 时索引里要存**已用**上下文（含对话消息段），
-   * 而那个数只有从最近一次请求的 usage 才推得出来（见 persistUsage）。
-   */
   lastUsage?: { input: number; cacheRead?: number; cacheWrite?: number };
-  /**
-   * 重复调用守卫的**链状态**（同名同参数的连续调用计数）。
-   *
-   * 每个会话一条链（一个 session = 一个 agent），用户新消息时清空 —— 见 repeat-guard.ts。
-   * 放在会话上而不是进程级：两条会话的重复绝不该互相触发提醒。
-   */
   repeatChain: RepeatChain;
-
   pendingRepeatNotice?: string;
-
-  pendingPluginContext?: string;
-}
-
-export interface PendingEntry {
-  messageId: string;
-  role: "user" | "assistant";
 }
 
 let defaultRuntime: ChatRuntime | null = null;
@@ -479,15 +303,6 @@ export function getChatRuntime(): ChatRuntime {
 function getRuleStore(): PermissionRuleStore {
   return getSharedPermissionRuleStore(dataDir());
 }
-
-/**
- * 工具流式输出的节流窗口（毫秒）。
- *
- * 取 200ms：比渲染层那个 32ms 的合帧窗口宽得多，因为这里省的是**跨进程**的往返 ——
- * 每次都要结构化克隆一份可能上万字符的输出。200ms 的刷新节奏对「看构建进展」这类
- * 用途足够（人眼读日志本来就跟不上更快），而 IPC 量降到每秒 5 次封顶。
- */
-const TOOL_OUTPUT_INTERVAL_MS = 200;
 
 export async function readConversationModelRef(
   conversation: Conversation,
@@ -512,45 +327,6 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function mapUsage(usage: Usage): ChatMessageUsage {
-  return {
-    inputTokens: usage.input,
-    outputTokens: usage.output,
-    ...(usage.reasoning === undefined ? {} : { reasoningTokens: usage.reasoning }),
-    totalTokens: usage.totalTokens,
-    uncachedInputTokens: usage.input,
-    cacheReadTokens: usage.cacheRead,
-    cacheWriteTokens: usage.cacheWrite,
-  };
-}
-
-/**
- * 用户消息内容块 → ChatPart。
- *
- * 实现放在 message-mapper，与**历史回读共用同一份** —— 实时回显与刷新后的显示
- * 必须逐字一致，两条路各写一份解析的话，附件卡片会在刷新前后长得不一样。
- */
-export { mapUserParts } from "./message-mapper";
-
-/**
- * 取一条消息的可见文本。**助手与用户都要能取**。
- *
- * 提到模块级并导出是为了可测：这条链（harness message_end → agentMessageText → 报告）
- * 原先没有任何测试，而两个消费端（排队中的用户消息、子智能体的报告）各错一次都很难看出来
- * —— 见下面那段历史。
- *
- * 曾经这里第一行是 `if (message.role !== "user") return "";` —— 那时它只被用来取排队中的用户消息。
- * 后来子智能体用它取**助手消息**当报告（见 noteSubagentAssistantMessage 的调用点），
- * 于是常数式返回空串：报告永远为空、而轮次照常 +1，坏得极隐蔽
- * （TaskWait 一律「（没有产出报告）」，但状态、轮次、工具计数全都正常）。
- *
- * 角色判断留给调用方：这里只回答「这条消息的正文是什么」，
- * 一个会把助手消息取成空串的取文函数，本身就是个陷阱。
- *
- * 类型上要显式收窄 content：`AgentMessage` 是联合类型，原来那句 `role !== "user"` 的早退
- * 恰好充当了收窄条件 —— 去掉它之后必须自己判「content 是不是数组」，
- * 否则助手消息那条分支根本编译不过（TypeScript 帮我们记住了这个改动的影响面）。
- */
 export function agentMessageText(message: AgentMessage): string {
   const content = "content" in message ? message.content : undefined;
   if (typeof content === "string") return content;
@@ -562,81 +338,6 @@ export function agentMessageText(message: AgentMessage): string {
 }
 
 /** 工具结果里的文本块拼起来；没有文本块时是空串 */
-function toolResultText(result: RuntimeToolResult): string {
-  return result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
-}
-
-/** 工具结果 → UI 值：优先文本，其次 details，最后原样返回 */
-function toolResultValue(result: RuntimeToolResult): unknown {
-  const text = toolResultText(result);
-  if (text !== "") return text;
-  if (result.details !== undefined) return result.details;
-  return "";
-}
-
-/**
- * 条目落盘 → 配给哪条待配的消息，并把该消息移出队列。
- *
- * 按**角色**配对，而不是弹队首：运行会先落用户条目、后落助手条目，
- * 弹队首会让助手条目认领用户消息的 id（用户消息拿不到 entryId，助手拿到错的）。
- * 同一角色内部仍按 FIFO —— 一次运行的多轮工具调用会连续产生多条助手消息与多个条目。
- * 提到模块级是为了可测：这段判定在 createChatRuntime 的闭包里够不到。
- */
-export function pairEntryWithMessage(
-  pending: PendingEntry[],
-  entry: { type: string; id: string; parentId: string | null; message?: { role?: string } },
-): { messageId: string; patch: { entryId: string; parentId: string | null } } | null {
-  if (entry.type !== "message") return null;
-  const role = entry.message?.role;
-  if (role !== "user" && role !== "assistant") return null;
-
-  const index = pending.findIndex((item) => item.role === role);
-  if (index < 0) return null;
-  const [matched] = pending.splice(index, 1);
-  if (matched === undefined) return null;
-  return { messageId: matched.messageId, patch: { entryId: entry.id, parentId: entry.parentId } };
-}
-
-/**
- * tool_end 事件 → 该 part 的字段补丁（流式路径）。
- *
- * 文本结果会盖住 details，两者都留：工具的结构化详情（edit 的 patch 等）只有 details 里有，
- * 渲染层靠它决定展开面板用 diff 还是纯文本。
- * 提到模块级是为了可测：这段写入在 createChatRuntime 的闭包里够不到，
- * 与 message-mapper 的 applyToolResult（历史回读路径）对称，两条路径各有一个可测入口。
- */
-export function applyToolEnd(
-  part: ToolCallPart,
-  result: RuntimeToolResult,
-  isError: boolean,
-): void {
-  part.result = toolResultValue(result);
-  if (result.details !== undefined) part.details = result.details;
-  /**
-   * 图片本体（目前只有 browser_screenshot）：**只写进内存里的 part**，
-   * 落盘的那份在 pi 的 toolResult 条目里（历史回读时由 message-mapper 重新取出）。
-   * 该不该带、带多大的判断都在 toolPartImages 里，两条路径共用同一个函数。
-   */
-  const images = toolPartImages(part.toolName, result.content);
-  if (images !== undefined) part.images = images;
-  part.isError = isError;
-  if (part.status !== "denied") part.status = isError ? "error" : "done";
-}
-
-/**
- * 能执行任意代码的「解释器 / 包管理器」首词。
- *
- * 对它们**不派生规则**：批准一次 `npm run build` 若记成「允许 npm」，
- * 等于连带放行 `npm install evil-pkg`、`npm publish`、`npm config set ...:_authToken`；
- * `node` / `python` 同理（`node -e "..."` 就是任意执行）。
- * 这类命令每次都该问一次 —— 「始终允许」的便利性不值得把 shell 交出去。
- *
- * 注意这是一份**保守名单**，不是完备的「什么能执行代码」清单：
- * 漏掉某个二进制时的后果是「多问一次」，而不是「少问一次」，方向是安全的。
- */
 const INTERPRETER_FIRST_WORDS = new Set([
   "node",
   "npm",
@@ -677,19 +378,6 @@ const INTERPRETER_FIRST_WORDS = new Set([
   "source",
 ]);
 
-/**
- * always_allow 的规则模式：bash 取命令首词，write/edit 取路径首段。
- *
- * **派生不出「有意义且足够窄」的模式时返回 undefined**，调用方据此**不写规则**
- *（见 gateTool 的 always_allow 分支）—— 后果是下次还得点一次卡，
- * 而不是把门永久打开。两个刻意的收窄：
- *
- * 1. **解释器/包管理器不派生**（见 INTERPRETER_FIRST_WORDS）：
- *    `npm run build` → 不写规则。否则一条「允许 npm」放行的东西远超用户批准的那一次。
- * 2. **绝对路径不派生**：`C:\Users\me\.ssh\authorized_keys` 的首段是 `Users`，
- *    `/home/u/...` 是 `home` —— 这种「作用域」宽到毫无意义（等于放行整个用户目录）。
- *    只有**相对路径**（项目内，如 `src/foo.ts` → `src`）才是有意义的授权范围。
- */
 export function deriveRulePattern(
   toolName: string,
   args: Record<string, unknown>,
@@ -869,24 +557,6 @@ export async function loadAgentResources(
   return { skills, promptTemplates, skillsSection: formatSkillsForSystemPrompt(skills) };
 }
 
-const subagentSessions = new Map<string, SubagentSessionSpec>();
-
-/** 子智能体子会话的装配依据：定义 + 它归属的父会话 */
-export interface SubagentSessionSpec {
-  definition: SubagentDefinition;
-  parentSessionId: string;
-}
-
-/** 登记一个子智能体子会话（由 subagent-runner 在启动运行前调用） */
-export function registerSubagentSession(childSessionId: string, spec: SubagentSessionSpec): void {
-  subagentSessions.set(childSessionId, spec);
-}
-
-/** 注销子智能体子会话：会话关闭时调用，避免登记表随运行次数无界增长 */
-export function unregisterSubagentSession(childSessionId: string): void {
-  subagentSessions.delete(childSessionId);
-}
-
 /**
  * 当前真正可派的子智能体：被禁用的名字剔掉，其余照常装配。
  *
@@ -917,50 +587,8 @@ async function effectiveThinkingLevel(
   runtime: SessionRuntime,
   settings: Settings,
 ): Promise<Settings["thinkingLevel"]> {
-  const spec = subagentSessions.get(runtime.sessionId);
-  return spec?.definition.thinkingLevel ?? settings.thinkingLevel;
-}
-
-/** 会话内待办清单在 session 里的 custom entry 类型 */
-const TODO_ENTRY_TYPE = "todo";
-
-/**
- * 从会话里恢复待办清单。
- *
- * 为什么必须做：todo 工具是**整表替换**语义 —— 不恢复的话，应用重启后的第一次 todo 调用
- * 会以空表为基准覆盖，用户之前那张清单就没了。状态本体存在会话的 custom entry 里
- * （每次调用追加一条），这里读最后一条即可。
- *
- * 读不到、或数据不合法，都只是「当作空表」并记 warning：待办是辅助信息，不能阻断会话创建。
- */
-async function restoreTodoState(conversation: Conversation, todo: TodoState): Promise<void> {
-  try {
-    let cursor: Cursor | undefined;
-    do {
-      const page = await conversation.entries({}, 100, cursor, BACKGROUND_CONTEXT);
-      for (const entry of page.items) {
-        const data = entry.data;
-        if (typeof data !== "object" || data === null || Array.isArray(data)) continue;
-        const record = data as Record<string, unknown>;
-        const payload =
-          record.customType === TODO_ENTRY_TYPE
-            ? record.data
-            : entry.kind === TODO_ENTRY_TYPE
-              ? data
-              : undefined;
-        if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
-        const value = payload as Record<string, unknown>;
-        const todos = parseTodoEntries(value.todos);
-        if (todos === undefined) continue;
-        todo.todos = todos;
-        if (typeof value.revision === "number") todo.revision = value.revision;
-        return;
-      }
-      cursor = page.next;
-    } while (cursor !== undefined);
-  } catch (error) {
-    console.warn(`恢复待办失败：${errorText(error)}`);
-  }
+  const spec = runtime.spec;
+  return spec?.run.thinkingLevel ?? settings.thinkingLevel;
 }
 
 /**
@@ -1039,47 +667,18 @@ function allPluginContributionDirs(): string[] {
   return [...dirs.skills, ...dirs.prompts, ...dirs.subagents];
 }
 
-/**
- * 一轮结束时哪些 toolCallId 必须留在 `toolParts` 里。
- *
- * 唯一的判据是「结论还可能回填到这里吗」：
- * - 作业（`bash_background`）**跨轮**：起完进程这一轮就结束了，结论要等进程退出才有，
- *   那时才回写到启动它的那次调用上 —— 所以只要作业还在跑，它的 toolCallId 就得留；
- * - 子智能体委派同理，且它的终态由子会话的 run_end 决定，可能晚于父会话这一轮很久。
- *
- * 其余条目（read / write / edit / bash / grep 这些当轮就出结论的）一律可以回收：
- * 它们的结果在 emit 出去那一刻就已经写好，事件也发完了。
- *
- * 抽成纯函数是为了能直接单测这条判定 —— 它是「回收」与「回填」之间唯一的耦合点，
- * 判错任何一侧都会静默出错（漏回收 = 内存泄漏；多回收 = 结论丢失）。
- */
-export function keptToolCallIds(input: {
-  jobs: readonly { status: string; toolCallId: string | undefined }[];
-  subagentRuns: readonly { status: SubagentRun["status"]; delegationId: string }[];
-}): Set<string> {
-  const keep = new Set<string>();
-  for (const job of input.jobs) {
-    if (job.status !== "running") continue;
-    if (job.toolCallId !== undefined) keep.add(job.toolCallId);
-  }
-  for (const run of input.subagentRuns) {
-    if (!isSubagentRunFinished(run.status)) keep.add(run.delegationId);
-  }
-  return keep;
-}
-
 export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   const runtimes = new Map<string, SessionRuntime>();
   const creations = new Map<string, Promise<SessionRuntime>>();
-  // 子智能体运行事件的出口：模块级登记表，运行管理器 publish 时用它。
-  // 在这里设而不是在 bootstrap：运行记录的生命周期与这个运行时实例一致，
-  // 换一个实例（单测）就该换一个出口，留着上一条窗口的引用会往已销毁的窗口发消息。
-  setSubagentEmitter(deps.emitSubagent ?? null);
+  const familyReadiness = new Map<string, Promise<void>>();
+  const subagentTasks = createSubagentExtension(async (id) => {
+    await ensureRuntime(id);
+  });
   // 提问服务：与 approvals 一样是「跨会话共用、按会话结算」的服务；bootstrap 注入的那份
   // 同时被 IPC 层持有（渲染层回填答案走它），未注入时就地建一份给单测用
   const interactions = deps.interactions ?? createInteractionService({ emit: deps.emit });
-  // 作业服务与提问服务一样跨会话共用一份：作业退出时交给 notifyJobExit 决定「注入还是唤醒」
-  const jobs = deps.jobs ?? createJobService({ emit: deps.emit, onExited: notifyJobExit });
+  // 会话共享进程适配服务，生命周期和结果以原生 tasks/documents 为准。
+  const jobs = deps.jobs ?? createJobService({ emit: deps.emit });
 
   function emitSafe(sessionId: string, event: ChatEvent): void {
     try {
@@ -1105,13 +704,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     });
   }
 
-  function emitTokenUsage(runtime: SessionRuntime): void {
-    emitSafe(runtime.sessionId, {
-      type: "token-usage",
-      usage: runtime.tokenUsage,
-    });
-  }
-
   /** 按最近一次 usage 样本推导三段分解并推送（无 usage 时只推固定项） */
   function emitContextBreakdown(
     runtime: SessionRuntime,
@@ -1128,595 +720,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     emitSafe(runtime.sessionId, { type: "context-breakdown", breakdown });
   }
 
-  function subscribe<T extends HarnessEventType>(
-    runtime: SessionRuntime,
-    type: T,
-    handler: (event: Extract<HarnessEvent, { type: T }>) => void | Promise<void>,
-  ): void {
-    runtime.unsubscribers.push(
-      runtime.events.on(type, (event) => {
-        return Promise.resolve()
-          .then(() => handler(event))
-          .catch((error: unknown) => {
-            console.warn(`处理会话事件失败（${type}）：${errorText(error)}`);
-          });
-      }),
-    );
-  }
-
-  function upsertPart(
-    runtime: SessionRuntime,
-    stream: AssistantStream,
-    partIndex: number,
-    part: ChatPart,
-  ): void {
-    emitSafe(runtime.sessionId, {
-      type: "part-upsert",
-      messageId: stream.messageId,
-      partIndex,
-      part,
-    });
-  }
-
-  /**
-   * 流式增量：只发新增的那一小段，而不是整段累积文本。
-   *
-   * 逐 token 的全量下发在长回复上是 O(n²) 的 IPC 负载（序列化 + 结构化克隆），
-   * 渲染层还会被每条事件推着整篇重渲染。增量把两样都降成 O(n)：
-   * 权威校正由 part 的 start/end（走 part-upsert 全量）与渲染层的快照补齐负责。
-   */
-  function emitDelta(
-    runtime: SessionRuntime,
-    stream: AssistantStream,
-    partIndex: number,
-    kind: "text" | "reasoning" | "args",
-    delta: string,
-  ): void {
-    if (delta === "") return;
-    emitSafe(runtime.sessionId, {
-      type: "part-delta",
-      messageId: stream.messageId,
-      partIndex,
-      kind,
-      delta,
-    });
-  }
-
-  /** 取或创建文本 / 推理 part，保证 contentIndex 与 parts 下标一一对应 */
-  function partFor(
-    stream: AssistantStream,
-    contentIndex: number,
-    kind: "text" | "reasoning",
-  ): { part: TextPart | ReasoningPart; index: number; created: boolean } {
-    const existingIndex = stream.partIndexByContent.get(contentIndex);
-    if (existingIndex !== undefined) {
-      const existing = stream.parts[existingIndex];
-      if (existing?.type === kind) {
-        return { part: existing as TextPart | ReasoningPart, index: existingIndex, created: false };
-      }
-    }
-    const created: TextPart | ReasoningPart =
-      kind === "text" ? { type: "text", text: "" } : { type: "reasoning", text: "" };
-    stream.parts.push(created);
-    const index = stream.parts.length - 1;
-    stream.partIndexByContent.set(contentIndex, index);
-    return { part: created, index, created: true };
-  }
-
-  /** 取或创建工具调用 part；工具流式期间允许参数文本增量追加 */
-  function toolPartFor(
-    stream: AssistantStream,
-    contentIndex: number,
-    toolCall: { id: string; name: string; arguments: Record<string, unknown> },
-  ): { part: ToolCallPart; index: number; created: boolean } {
-    const existingIndex = stream.partIndexByContent.get(contentIndex);
-    if (existingIndex !== undefined) {
-      const existing = stream.parts[existingIndex];
-      if (existing?.type === "tool-call") {
-        if (toolCall.name !== "") existing.toolName = toolCall.name;
-        if (toolCall.id !== "") existing.toolCallId = toolCall.id;
-        return { part: existing, index: existingIndex, created: false };
-      }
-    }
-    const created: ToolCallPart = {
-      type: "tool-call",
-      toolCallId: toolCall.id,
-      toolName: toolCall.name,
-      argsText: "",
-      status: "running",
-    };
-    stream.parts.push(created);
-    const index = stream.parts.length - 1;
-    stream.partIndexByContent.set(contentIndex, index);
-    return { part: created, index, created: true };
-  }
-
-  function handleMessageStart(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "message_start" }>,
-  ): void {
-    const message = event.message;
-    // custom 消息（如作业结束通知）待链路层支持后再启用
-    if (message.role === "assistant") {
-      const messageId = randomUUID();
-      const createdAt = Date.now();
-      runtime.stream = { messageId, createdAt, parts: [], partIndexByContent: new Map() };
-      runtime.lastAssistantMessageId = messageId;
-      // 会话统计：assistant 消息开始计时（message_start → message_end 为一步）
-      runtime.stats = onMessageStart(runtime.stats, messageId, createdAt);
-      runtime.pendingEntries.push({ messageId, role: "assistant" });
-      emitSafe(runtime.sessionId, {
-        type: "message-added",
-        message: {
-          id: messageId,
-          role: "assistant",
-          createdAt,
-          parts: [],
-          status: "streaming",
-        },
-      });
-      handleMessageUpdate(runtime, {
-        type: "message_update",
-        usage: message.usage,
-        changes: [{ type: "message", message }],
-      });
-      return;
-    }
-    if (message.role === "user") {
-      // 复用渲染层乐观消息 id：upsertMessage 按 id 覆盖，避免同一条用户消息显示两次
-      const reuseId = runtime.pendingUserMessageId;
-      runtime.pendingUserMessageId = undefined;
-      const messageId = reuseId ?? randomUUID();
-      runtime.pendingEntries.push({ messageId, role: "user" });
-      emitSafe(runtime.sessionId, {
-        type: "message-added",
-        message: {
-          id: messageId,
-          role: "user",
-          createdAt: Date.now(),
-          parts: mapUserParts(message),
-          status: "complete",
-        },
-      });
-    }
-  }
-
-  function handleMessageUpdate(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "message_update" }>,
-  ): void {
-    const stream = runtime.stream;
-    if (!stream) return;
-    const applyBlock = (
-      contentIndex: number,
-      block: Extract<AgentMessage, { role: "assistant" }>["content"][number],
-    ): void => {
-      if (block.type === "text" || block.type === "thinking") {
-        const { part, index } = partFor(
-          stream,
-          contentIndex,
-          block.type === "text" ? "text" : "reasoning",
-        );
-        part.text = block.type === "text" ? block.text : block.thinking;
-        if (part.text.length > 0)
-          runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
-        upsertPart(runtime, stream, index, part);
-      } else if (block.type === "toolCall") {
-        const { part, index } = toolPartFor(stream, contentIndex, block);
-        part.args = structuredClone(block.arguments);
-        part.argsText = safeStringify(block.arguments);
-        runtime.toolParts.set(part.toolCallId, {
-          messageId: stream.messageId,
-          partIndex: index,
-          part,
-        });
-        upsertPart(runtime, stream, index, part);
-      }
-    };
-    for (const change of event.changes) {
-      if (change.type === "message") {
-        change.message.content.forEach((block, index) => {
-          applyBlock(index, block);
-        });
-      } else if ("block" in change) {
-        applyBlock(change.contentIndex, change.block);
-      } else if (change.type === "toolcall_delta") {
-        const index = stream.partIndexByContent.get(change.contentIndex);
-        const part = index === undefined ? undefined : stream.parts[index];
-        if (index === undefined || part?.type !== "tool-call" || !part.args) continue;
-        // Native deltas append to a string within the arguments object, including array elements.
-        let target: unknown = part.args;
-        const route = change.path;
-        for (const key of route.slice(0, -1)) {
-          if (
-            typeof target !== "object" ||
-            target === null ||
-            key === "__proto__" ||
-            key === "constructor" ||
-            key === "prototype"
-          ) {
-            target = undefined;
-            break;
-          }
-          target = (target as Record<string | number, unknown>)[key];
-        }
-        const key = route.at(-1);
-        if (
-          typeof target !== "object" ||
-          target === null ||
-          key === undefined ||
-          key === "__proto__" ||
-          key === "constructor" ||
-          key === "prototype"
-        )
-          continue;
-        const record = target as Record<string | number, unknown>;
-        record[key] = String(record[key] ?? "") + change.delta;
-        part.argsText = safeStringify(part.args);
-        upsertPart(runtime, stream, index, part);
-      } else {
-        const { part, index, created } = partFor(
-          stream,
-          change.contentIndex,
-          change.type === "text_delta" ? "text" : "reasoning",
-        );
-        runtime.stats = onFirstToken(runtime.stats, stream.messageId, Date.now());
-        part.text += change.delta;
-        if (created) upsertPart(runtime, stream, index, part);
-        else
-          emitDelta(
-            runtime,
-            stream,
-            index,
-            change.type === "text_delta" ? "text" : "reasoning",
-            change.delta,
-          );
-      }
-    }
-  }
-
-  function handleMessageEnd(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "message_end" }>,
-  ): void {
-    const message = event.message;
-    const stream = runtime.stream;
-    if (message.role !== "assistant" || !stream) return;
-    handleMessageUpdate(runtime, {
-      type: "message_update",
-      usage: message.usage,
-      changes: [{ type: "message", message }],
-    });
-    const failed = message.stopReason === "error";
-    emitSafe(runtime.sessionId, {
-      type: "message-updated",
-      messageId: stream.messageId,
-      patch: {
-        status: failed ? "error" : "complete",
-        usage: mapUsage(message.usage),
-        ...(failed ? { error: message.errorMessage ?? "模型返回错误" } : {}),
-      },
-    });
-    // 会话统计：折叠这一步的 LLM 耗时 / TTFT / 解码速度与 step 计数
-    const now = Date.now();
-    runtime.stats = onMessageEnd(runtime.stats, stream.messageId, now, message.usage?.output ?? 0);
-    emitSessionStats(runtime);
-    // 会话 Token 总量：累加本条消息的四个计费桶（usage 缺失时跳过）
-    if (message.usage !== undefined) {
-      const usage = message.usage;
-      // 留一份样本给 run_end 落盘用（已用上下文要含对话消息段）
-      runtime.lastUsage = usage;
-      runtime.tokenUsage = {
-        uncachedInputTokens: runtime.tokenUsage.uncachedInputTokens + usage.input,
-        outputTokens: runtime.tokenUsage.outputTokens + usage.output,
-        cacheReadTokens: runtime.tokenUsage.cacheReadTokens + usage.cacheRead,
-        cacheWriteTokens: runtime.tokenUsage.cacheWriteTokens + usage.cacheWrite,
-      };
-      emitTokenUsage(runtime);
-      emitContextBreakdown(runtime, usage);
-    }
-    /**
-     * 子智能体进度的唯一计数点：轮次按「一条助手消息」算，报告取最后一条非空文本。
-     *
-     * 放在 message_end 而不是 message_update：流式期间每条消息会被更新很多次，
-     * 在那里计数会把一次回复算成几十轮。非子智能体会话调用这里是空操作（runner 按子会话 id 查表）。
-     */
-    noteSubagentAssistantMessage(runtime.sessionId, {
-      text: agentMessageText(message),
-      failed,
-    });
-    runtime.lastAssistantMessageId = stream.messageId;
-    runtime.runAssistantMessageId = stream.messageId;
-    runtime.stream = undefined;
-  }
-
-  /**
-   * 工具流式输出（内核 `tool_update`）→ `part-output` 事件。
-   *
-   * 三件事必须做对：
-   *
-   * 1. **整份下发、不是增量**。内核给的 `partialResult` 是**累计快照**，而且 shell 捕获
-   *    用 `retain: "tail"` —— 超过上限后头部会被丢掉。所以「这次文本」与「上次文本」
-   *    既非前缀也非追加，按「取新增部分」算增量必然错位。渲染层按覆盖处理。
-   *
-   * 2. **节流**。内核的推送跟随进程输出（编译日志一秒可以几百条），逐条投 IPC 会把
-   *    通道打满、并让渲染层每个 chunk 重渲一次。按 toolCallId 记上次发送时间，
-   *    窗口内的更新直接丢弃（下一份快照本来就是累计的，丢中间态不丢信息）。
-   *
-   * 3. **没有 part 就丢弃**。工具调用 part 由 `message_update` 的 toolcall_* 增量创建；
-   *    若那条链断了（窗口重载、事件丢失），这里找不到落点。渲染层的快照重同步会补齐。
-   */
-  function handleToolUpdate(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "tool_update" }>,
-  ): void {
-    const ref = runtime.toolParts.get(event.toolCallId);
-    if (ref === undefined) return;
-
-    const text = toolResultText(event.partialResult);
-    if (text === "") return;
-
-    const now = Date.now();
-    const last = runtime.toolOutputAt.get(event.toolCallId);
-    if (last !== undefined && now - last < TOOL_OUTPUT_INTERVAL_MS) return;
-    runtime.toolOutputAt.set(event.toolCallId, now);
-
-    ref.part.partialOutput = text;
-    emitSafe(runtime.sessionId, {
-      type: "part-output",
-      messageId: ref.messageId,
-      partIndex: ref.partIndex,
-      text,
-    });
-  }
-
-  function handleToolStart(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "tool_start" }>,
-  ): void {
-    // 会话统计：工具调用开始计时
-    runtime.stats = onToolStart(runtime.stats, event.toolCallId, Date.now());
-    const ref = runtime.toolParts.get(event.toolCallId);
-    if (ref) {
-      ref.part.toolName = event.toolName;
-      ref.part.args = event.args;
-      ref.part.argsText = safeStringify(event.args);
-      emitSafe(runtime.sessionId, {
-        type: "part-upsert",
-        messageId: ref.messageId,
-        partIndex: ref.partIndex,
-        part: ref.part,
-      });
-      return;
-    }
-    // 防御：toolcall_end 缺失时补建 part，保证工具状态可见
-    const stream = runtime.stream;
-    if (!stream) return;
-    const part: ToolCallPart = {
-      type: "tool-call",
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      argsText: safeStringify(event.args),
-      args: event.args,
-      status: "running",
-    };
-    stream.parts.push(part);
-    const index = stream.parts.length - 1;
-    runtime.toolParts.set(event.toolCallId, {
-      messageId: stream.messageId,
-      partIndex: index,
-      part,
-    });
-    emitSafe(runtime.sessionId, {
-      type: "part-upsert",
-      messageId: stream.messageId,
-      partIndex: index,
-      part,
-    });
-  }
-
-  function handleToolEnd(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "tool_end" }>,
-  ): void {
-    // 计数要在早退之前：part 缺失只是渲染层的防御分支，这次工具调用确实发生过
-    noteSubagentToolCall(runtime.sessionId);
-    // 会话统计：工具调用结束，累加 toolMs
-    runtime.stats = onToolEnd(runtime.stats, event.toolCallId, Date.now());
-    emitSessionStats(runtime);
-    const ref = runtime.toolParts.get(event.toolCallId);
-    if (!ref) return;
-    applyToolEnd(ref.part, event.result, event.isError);
-    emitSafe(runtime.sessionId, {
-      type: "part-upsert",
-      messageId: ref.messageId,
-      partIndex: ref.partIndex,
-      part: ref.part,
-    });
-  }
-
-  function handleRunEnd(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "run_end" }>,
-  ): void {
-    const alreadyEnded = runtime.runEnded;
-
-    if (runtime.kernelRunId !== undefined && event.runId !== runtime.kernelRunId) {
-      return;
-    }
-    runtime.kernelRunId = undefined;
-    const stream = runtime.stream;
-    if (stream) {
-      const failed = event.status === "failed";
-      emitSafe(runtime.sessionId, {
-        type: "message-updated",
-        messageId: stream.messageId,
-        patch: {
-          status: failed ? "error" : "complete",
-          ...(failed ? { error: event.error.message } : {}),
-        },
-      });
-      runtime.lastAssistantMessageId = stream.messageId;
-      runtime.runAssistantMessageId = stream.messageId;
-      runtime.stream = undefined;
-    } else if (event.status === "failed") {
-      /**
-       * 没有在流的消息、运行又失败了。两种情形必须分开处置（见 runAssistantMessageId 注释）：
-       *
-       * - 本轮产出过助手消息（如最后一步报错）→ 把错误盖在那条消息上，这是准确的；
-       * - 本轮**一条都没产出**（配置失败：请求根本没发出去）→ `lastAssistantMessageId`
-       *   还指着**上一轮**那条成功的回复，盖上去就是「新消息没回应、旧回复莫名变红」。
-       *   这种情形新发一条错误消息，让错误出现在它该出现的位置。
-       */
-      if (runtime.runAssistantMessageId !== undefined) {
-        emitSafe(runtime.sessionId, {
-          type: "message-updated",
-          messageId: runtime.runAssistantMessageId,
-          patch: { status: "error", error: event.error.message },
-        });
-      } else {
-        emitSafe(runtime.sessionId, {
-          type: "message-added",
-          message: {
-            id: randomUUID(),
-            role: "assistant",
-            createdAt: Date.now(),
-            parts: [],
-            status: "error",
-            error: event.error.message,
-          },
-        });
-      }
-    }
-    runtime.running = false;
-    // 会话统计：run 结束，清理 pending calls
-    runtime.stats = onRunEnd(runtime.stats);
-    emitSessionStats(runtime);
-    // 用量快照随会话落盘：下一轮或重启后打开这个会话时，底栏不必重算就有数
-    scheduleEffect(runtime, persistUsage(runtime));
-    // 收尾一次子智能体运行：completed / aborted / failed 三态由内核给出。
-    // 子智能体被**重复调用守卫**硬档终止时，runner 已经先落过 failed 终态（带原因），
-    // noteSubagentRunEnd 是先到者为准的幂等操作，所以这里不会把它覆盖成 aborted。
-    noteSubagentRunEnd(runtime.sessionId, {
-      status:
-        event.status === "failed" ? "failed" : event.status === "aborted" ? "aborted" : "completed",
-      ...(event.status === "failed" ? { error: event.error.message } : {}),
-    });
-    runtime.runEnded = true;
-    runtime.queue = [];
-    pruneToolParts(runtime);
-    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
-    if (!alreadyEnded)
-      emitSafe(runtime.sessionId, {
-        type: "run-ended",
-        runId: runtime.runId ?? event.runId,
-        reason: event.status,
-      });
-    scheduleEffect(runtime, touchSession(runtime));
-    // 一轮问答结束：会话还没名字时，用这轮内容生成标题
-    scheduleEffect(runtime, maybeTitleSession(runtime, event.status));
-    // 本轮跑动期间 MCP 工具集合变过：现在这一轮结束了，可以安全换工具（下一轮生效）
-    if (
-      runtime.mcpToolsStale === true ||
-      runtime.pluginToolsGeneration !== pluginToolsGeneration()
-    ) {
-      scheduleEffect(runtime, applyExtraTools(runtime));
-    }
-  }
-
-  /**
-   * 一轮结束时回收 `toolParts` 里已经用不上的条目。
-   *
-   * 这张表按全局唯一的 toolCallId 累积，每个 part 带着 result / details / diff 全文；
-   * 不回收的话，长会话每轮几十次工具调用会一直挂在内存里直到进程退出。
-   *
-   * **不能无条件清空**：作业（`bash_background`）与子智能体委派都是**跨轮**的 ——
-   * 它们在这一轮结束后才到终态，而结论要回填到启动它的那次调用上
-   * （见 deliverJobResult / deliverSubagentReport）。清空等于让那些回填永远找不到落点。
-   * 保留集合由 `keptToolCallIds` 算出（纯函数，单测直接盖）。
-   *
-   * 历史消息的 part 由 `loadMessages` 从存储重建，不依赖这张内存表，
-   * 因此这里的回收不影响回读。
-   */
-  function pruneToolParts(runtime: SessionRuntime): void {
-    const keep = keptToolCallIds({
-      jobs: jobs.list(runtime.sessionId).map((job) => ({
-        status: job.status,
-        toolCallId: jobs.toolCallIdOf(job.id),
-      })),
-      subagentRuns: listSubagentRuns(runtime.sessionId).map((run) => ({
-        status: run.status,
-        delegationId: run.delegationId,
-      })),
-    });
-    for (const toolCallId of [...runtime.toolParts.keys()]) {
-      if (!keep.has(toolCallId)) {
-        runtime.toolParts.delete(toolCallId);
-        // 节流表与 part 表同生命周期：留着已回收调用的时间戳只是慢性泄漏
-        runtime.toolOutputAt.delete(toolCallId);
-      }
-    }
-  }
-
-  function handleUsage(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "usage" }>,
-  ): void {
-    const messageId = runtime.stream?.messageId ?? runtime.lastAssistantMessageId;
-    if (!messageId) return;
-    emitSafe(runtime.sessionId, {
-      type: "message-updated",
-      messageId,
-      patch: { usage: mapUsage(event.row.usage) },
-    });
-    // 流式尾部的 usage 样本同样可用于上下文分解（message_end 会再推一次，幂等覆盖）
-    runtime.lastUsage = event.row.usage;
-    emitContextBreakdown(runtime, event.row.usage);
-  }
-
-  function handleQueueUpdate(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "queue_update" }>,
-  ): void {
-    const items = event.queues.flatMap((item): QueuedMessage[] => {
-      if (item.type !== "message" || (item.kind !== "steer" && item.kind !== "followUp")) {
-        return [];
-      }
-      return [{ id: item.entryId, text: agentMessageText(item.message), mode: item.kind }];
-    });
-    runtime.queue = items;
-    emitSafe(runtime.sessionId, { type: "queue-updated", items });
-  }
-
-  /**
-   * 压缩条目的展示信息：摘要预览 + 压缩前的估算 tokens + 保留的近期消息条数。
-   *
-   * 读不到就返回 undefined（不阻塞事件流）：压缩本身已经成功落盘，展示信息只是锦上添花，
-   * 为它抛错会把一次成功的压缩变成界面上的失败。
-   */
-  async function compactionDetails(
-    runtime: SessionRuntime,
-    entryId: string | undefined,
-  ): Promise<{ summaryPreview: string; tokensBefore?: number; retainedCount: number } | undefined> {
-    if (entryId === undefined) return undefined;
-    try {
-      const entry = await runtime.session.getEntry(entryId, BACKGROUND_CONTEXT);
-      if (entry?.record.kind !== "pi.compaction") return undefined;
-      const summary = entry.record.model?.map(agentMessageText).join("\n") ?? "";
-      const context = await runtime.conversation.context(BACKGROUND_CONTEXT);
-      return {
-        summaryPreview: summary.slice(0, 200),
-        ...(entry.record.byTaskId === undefined
-          ? {}
-          : { tokensBefore: runtime.compactionTokens.get(entry.record.byTaskId) }),
-        retainedCount: context.entries.filter((item) => item.id !== entry.record.id).length,
-      };
-    } catch {
-      // 摘要读取失败不影响压缩结果展示
-      return undefined;
-    }
-  }
-
   async function touchSession(runtime: SessionRuntime): Promise<void> {
     try {
       const stats = await runtime.session.getStats(BACKGROUND_CONTEXT);
@@ -1726,19 +729,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
-  /**
-   * 把用量快照写回会话索引。
-   *
-   * 触发点是 run_end（一轮结束时落一次）：流式期间每个 step 都写盘会把索引打成一堆
-   * 无谓的原子写，而这一轮结束时的值已经是完整的。
-   * 写失败只告警：它是展示派生数据，坏了不该影响正在进行的对话。
-   */
   async function persistUsage(runtime: SessionRuntime): Promise<void> {
     try {
       const sample = runtime.lastUsage;
       await deps.sessionStore.writeUsage(runtime.sessionId, {
         stats: sessionStatsView(runtime.stats),
-        tokenUsage: runtime.tokenUsage,
+        tokenUsage: runtime.view?.snapshot.state.usage ?? usageTotals(undefined),
         breakdown:
           sample === undefined
             ? { ...runtime.contextBreakdown, messageTokens: 0 }
@@ -1763,7 +759,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    */
   async function maybeTitleSession(
     runtime: SessionRuntime,
-    status: Extract<HarnessEvent, { type: "run_end" }>["status"],
+    status: "completed" | "failed",
   ): Promise<void> {
     const generate = deps.sessionTitles;
     if (!generate || runtime.titleAttempted) return;
@@ -1791,163 +787,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
   }
 
-  /**
-   * 条目落盘：把 pi 的 entryId / parentId 配回对应的那条助手消息。
-   *
-   * 渲染层的「分支」入口要求消息带 entryId（主进程按条目 id 复制会话），
-   * 而流式产生的消息一出生是没有的 —— 只有历史回读的消息才自带。
-   * 按 FIFO 配对：一次运行里的多轮工具调用会交替产生多条助手消息与多个条目。
-   */
-  function handleEntryAdded(
-    runtime: SessionRuntime,
-    event: Extract<HarnessEvent, { type: "entry_added" }>,
-  ): void {
-    const paired = pairEntryWithMessage(runtime.pendingEntries, event.entry);
-    if (paired === null) return;
-    emitSafe(runtime.sessionId, {
-      type: "message-updated",
-      messageId: paired.messageId,
-      patch: paired.patch,
-    });
-  }
-
-  function registerEvents(runtime: SessionRuntime): void {
-    const updateUsage = (usage: Extract<HarnessEvent, { type: "native_usage" }>["usage"]): void => {
-      runtime.tokenUsage = Object.values(usage.models).reduce(
-        (total, sample) => ({
-          uncachedInputTokens: total.uncachedInputTokens + sample.input,
-          outputTokens: total.outputTokens + sample.output,
-          cacheReadTokens: total.cacheReadTokens + sample.cacheRead,
-          cacheWriteTokens: total.cacheWriteTokens + sample.cacheWrite,
-        }),
-        { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      );
-      emitTokenUsage(runtime);
-    };
-    subscribe(runtime, "native_usage", ({ usage }) => updateUsage(usage));
-    subscribe(runtime, "snapshot", ({ snapshot }) => {
-      updateUsage(snapshot.usage);
-      if (snapshot.run !== undefined) {
-        runtime.kernelRunId = String(snapshot.run.inputs[0]);
-        if (!runtime.running) {
-          runtime.running = true;
-          runtime.runEnded = false;
-          runtime.runId = randomUUID();
-          emitSafe(runtime.sessionId, { type: "run-started", runId: runtime.runId });
-        }
-      }
-      const message = snapshot.generation?.message;
-      if (message !== undefined) {
-        if (runtime.stream === undefined)
-          handleMessageStart(runtime, { type: "message_start", message });
-        else
-          handleMessageUpdate(runtime, {
-            type: "message_update",
-            usage: message.usage,
-            changes: [{ type: "message", message }],
-          });
-      }
-      const missingTools = new Set(
-        snapshot.tools
-          .filter((tool) => !runtime.toolParts.has(tool.callId))
-          .map((tool) => tool.callId),
-      );
-      if (missingTools.size > 0) {
-        const history = mapEntriesToMessages(
-          snapshot.entries.map((entry) => runtime.session.projectEntry(entry)),
-        ).messages;
-        for (const message of history) {
-          if (
-            !message.parts.some(
-              (part) => part.type === "tool-call" && missingTools.has(part.toolCallId),
-            )
-          )
-            continue;
-          emitSafe(runtime.sessionId, { type: "message-added", message });
-          message.parts.forEach((part, partIndex) => {
-            if (part.type === "tool-call")
-              runtime.toolParts.set(part.toolCallId, { messageId: message.id, partIndex, part });
-          });
-        }
-      }
-      for (const tool of snapshot.tools) {
-        const ref = runtime.toolParts.get(tool.callId);
-        if (ref !== undefined && tool.output !== undefined) {
-          ref.part.partialOutput = tool.output;
-          emitSafe(runtime.sessionId, {
-            type: "part-output",
-            messageId: ref.messageId,
-            partIndex: ref.partIndex,
-            text: tool.output,
-          });
-        }
-      }
-      for (const compaction of snapshot.compactions) {
-        emitSafe(runtime.sessionId, {
-          type: "compaction-started",
-          reason: compaction.reason,
-          startedAt: Date.now(),
-        });
-      }
-    });
-    subscribe(runtime, "message_start", (event) => handleMessageStart(runtime, event));
-    subscribe(runtime, "message_update", (event) => handleMessageUpdate(runtime, event));
-    subscribe(runtime, "message_end", (event) => handleMessageEnd(runtime, event));
-    subscribe(runtime, "entry_added", (event) => handleEntryAdded(runtime, event));
-    subscribe(runtime, "tool_start", (event) => handleToolStart(runtime, event));
-    subscribe(runtime, "tool_update", (event) => handleToolUpdate(runtime, event));
-    subscribe(runtime, "tool_end", (event) => handleToolEnd(runtime, event));
-    subscribe(runtime, "run_start", (event) => {
-      // 记下内核这一轮的 id：run_end 判「是不是上一轮的尾巴」全靠它（见 handleRunEnd）
-      runtime.kernelRunId = event.runId;
-      if (runtime.runEnded || runtime.runId === undefined) {
-        runtime.runId = randomUUID();
-        emitSafe(runtime.sessionId, { type: "run-started", runId: runtime.runId });
-      }
-      runtime.running = true;
-      runtime.runEnded = false;
-      // 本轮助手消息记录也要清空：run_end 靠它区分「本轮失败」与「上一轮的尾巴」（见该字段注释）
-      runtime.runAssistantMessageId = undefined;
-    });
-    subscribe(runtime, "turn_start", (event) => {
-      // 会话统计：轮次计数（同 turnId 只计一次，见 session-stats 的 onTurnStart）
-      runtime.stats = onTurnStart(runtime.stats, event.turnId);
-      emitSessionStats(runtime);
-    });
-    subscribe(runtime, "run_end", (event) => handleRunEnd(runtime, event));
-    subscribe(runtime, "usage", (event) => handleUsage(runtime, event));
-    subscribe(runtime, "queue_update", (event) => handleQueueUpdate(runtime, event));
-    subscribe(runtime, "compaction_start", (event) =>
-      emitSafe(runtime.sessionId, {
-        type: "compaction-started",
-        reason: event.reason,
-        startedAt: event.startedAt,
-      }),
-    );
-    subscribe(runtime, "compaction_end", async (event) => {
-      /**
-       * 只有 `completed` 才有条目可读；失败/放弃/中止都要如实汇报。
-       *
-       * 早先这里把所有非 completed 的结局都写成空预览，而渲染层把「空预览」当成
-       * 「压缩还在进行」—— 一次失败的压缩会让界面永久停在「运行中」。
-       */
-      const details =
-        event.status === "completed" ? await compactionDetails(runtime, event.entryId) : undefined;
-      emitSafe(runtime.sessionId, {
-        type: "compaction-ended",
-        reason: event.reason,
-        status: event.status,
-        endedAt: event.endedAt,
-        summaryPreview: details?.summaryPreview ?? "",
-        ...(details === undefined
-          ? {}
-          : { tokensBefore: details.tokensBefore, retainedCount: details.retainedCount }),
-        ...(event.status === "failed" ? { error: errorText(event.error) } : {}),
-      });
-      scheduleEffect(runtime, persistUsage(runtime));
-    });
-  }
-
   function applyExtraTools(runtime: SessionRuntime): Promise<void> {
     if (runtime.toolRefresh !== undefined) return runtime.toolRefresh;
     const work = refreshExtraTools(runtime);
@@ -1966,15 +805,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       return;
     }
     runtime.mcpToolsStale = false;
-    runtime.pluginToolsGeneration = pluginToolsGeneration();
     try {
       const nextTools = buildTools(
-        /*
-          MCP 工具与插件工具走**同一个 extraTools 槽**。
-          插件的代码进不了内核，它只能通过这条路径把自己的工具交给模型 ——
-          而"谁是插件工具"由 process-host 的前缀（plugin__）区分。
-        */
-        [...(deps.mcp?.tools() ?? []), ...pluginTools()],
+        [...(deps.mcp?.tools(runtime.env.cwd) ?? [])],
         runtime.isSubagent
           ? undefined
           : createAskTool({ sessionId: runtime.sessionId, interactions }),
@@ -1986,15 +819,28 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
         {
           searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath),
-          todo: runtime.todo,
-          persistTodo: runtime.persistTodo,
         },
       );
-      const whitelist = subagentSessions.get(runtime.sessionId)?.definition.tools;
-      const selected = whitelist === undefined ? nextTools : restrictTools(nextTools, whitelist);
-      runtime.extension = defineExtension({ ...runtime.extension, tools: selected });
+      const whitelist = runtime.spec?.definition.tools;
+      const plugins = pluginExtensions(runtime.env.cwd);
+      for (const plugin of plugins) runtime.registry.install(plugin.extension);
+      const available = [
+        ...nextTools,
+        ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
+      ];
+      const selected = whitelist === undefined ? available : restrictTools(available, whitelist);
+      runtime.extension = defineExtension({
+        ...runtime.extension,
+        tools: nextTools.filter((tool) => selected.some((chosen) => chosen.name === tool.name)),
+      });
       runtime.registry.install(runtime.extension);
-      await runtime.conversation.configure({ tools: selected }, BACKGROUND_CONTEXT);
+      await runtime.conversation.configure(
+        {
+          tools: selected,
+          extensions: [...plugins.map((plugin) => plugin.extension), runtime.extension],
+        },
+        BACKGROUND_CONTEXT,
+      );
       /**
        * 工具表变了，「工具定义」那一段的估算必须跟着变。
        *
@@ -2019,7 +865,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     toolName: string,
     toolCallId: string,
     args: Record<string, unknown>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    api: HookApi,
   ): Promise<ToolPermissionResult | undefined> {
     signal?.throwIfAborted();
     const settings = await deps.getSettings();
@@ -2041,20 +888,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 「始终允许」规则优先于审批；三种模式均生效
     const argsText = safeStringify(args);
     if (await runtime.rules.matches(toolName, argsText)) return undefined;
-    const ref = runtime.toolParts.get(toolCallId);
-    if (ref) {
-      ref.part.status = "pending-approval";
-      emitSafe(runtime.sessionId, {
-        type: "part-upsert",
-        messageId: ref.messageId,
-        partIndex: ref.partIndex,
-        part: ref.part,
-      });
-    }
-
     // 黑名单命中时给审批卡带一行警示（它不再决定弹不弹卡，只是上下文）
     const warning = commandWarning(args);
     const decision = await deps.approvals.request({
+      api,
+      context: signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT,
       sessionId: runtime.sessionId,
       toolCallId,
       toolName,
@@ -2069,18 +907,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       // 子智能体子会话：审批服务据此把「默认权限」抬高到「帮我审批」（见 effectivePermissionMode）
       ...(runtime.isSubagent ? { isSubagent: true } : {}),
     });
-    if (decision === "deny") {
-      if (ref) {
-        ref.part.status = "denied";
-        emitSafe(runtime.sessionId, {
-          type: "part-upsert",
-          messageId: ref.messageId,
-          partIndex: ref.partIndex,
-          part: ref.part,
-        });
-      }
-      return { block: { reason: "用户拒绝了该操作" } };
-    }
+    if (decision === "deny") return { block: { reason: "用户拒绝了该操作" } };
     if (decision === "always_allow") {
       /**
        * MCP 工具名由 server 决定、数量不可预知：逐工具放行等于每次调用都弹卡，
@@ -2111,18 +938,73 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return undefined;
   }
 
+  async function attachState(runtime: SessionRuntime): Promise<void> {
+    for (const detach of runtime.stateUnsubscribers) detach();
+    runtime.stateUnsubscribers = [];
+    const attachment = {
+      harness: runtime.harness,
+      conversationId: runtime.conversation.id,
+      sessionId: runtime.sessionId,
+      displaySessionId: runtime.spec?.run.sessionId ?? runtime.sessionId,
+    };
+    runtime.stateUnsubscribers.push(
+      await deps.approvals.attach(attachment),
+      await interactions.attach(attachment),
+      await jobs.attach(attachment),
+    );
+    if (runtime.subagents) runtime.stateUnsubscribers.push(await runtime.subagents.attach());
+  }
+
+  async function attachView(runtime: SessionRuntime): Promise<void> {
+    await runtime.view?.stop();
+    await runtime.metrics?.stop();
+    runtime.metrics = await createNativeMetrics({
+      harness: runtime.harness,
+      conversationId: runtime.conversation.id,
+      initial: runtime.stats,
+      changed: (state) => {
+        runtime.stats = state;
+        emitSessionStats(runtime);
+      },
+      sample: (usage) => {
+        runtime.lastUsage = usage;
+        emitContextBreakdown(runtime, usage);
+      },
+    });
+    runtime.view = await createNativeView({
+      harness: runtime.harness,
+      conversation: runtime.conversation,
+      session: runtime.session,
+      emit: (event) => emitSafe(runtime.sessionId, event),
+      onIdle: () =>
+        scheduleEffect(
+          runtime,
+          (async () => {
+            await runtime.metrics?.flush();
+            await touchSession(runtime);
+            await persistUsage(runtime);
+            await maybeTitleSession(
+              runtime,
+              runtime.view?.snapshot.state.messages.at(-1)?.status === "error"
+                ? "failed"
+                : "completed",
+            );
+            if (runtime.mcpToolsStale) await applyExtraTools(runtime);
+          })(),
+        ),
+    });
+  }
+
   async function createRuntime(sessionId: string): Promise<SessionRuntime> {
     const opened = await deps.sessionStore.open(sessionId);
     if (!opened) throw new Error(`无法打开会话：${sessionId}`);
 
     const settings = await deps.getSettings();
     const cwd = await deps.resolveWorkingDir(sessionId);
-    /**
-     * 子智能体子会话：登记表里有 spec 就按定义装配（工具子集、系统提示、模型与档位都随定义走）。
-     * spec 由 subagent-runner 在「建好子会话、发出第一条消息之前」登记，所以这里一定读得到 ——
-     * 读不到就说明这不是子智能体会话，按主会话那一套来。
-     */
-    const spec = subagentSessions.get(sessionId);
+
+    const spec = opened.subagent;
+    const family = spec ? await ensureRuntime(opened.familyId, false) : undefined;
+    await ensurePluginWorkspace(cwd);
     // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录、
     // appPath 兜住随包分发的内置技能，tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
     //
@@ -2136,20 +1018,23 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     const loaded = await loadAgentResources(env, settings, cwd, deps.appPath);
 
-    const todo = createTodoState();
-    let conversationRef: Conversation | undefined;
-
-    const { models } = buildProviders(settings);
+    const models = family?.models ?? buildProviders(settings).models;
     /**
      * 模型：子智能体定义固定了模型就按定义（pin），否则继承**父会话实际在用的那个** ——
      * 读父会话的绑定而不是「设置里的默认」，否则主会话绑定过具体模型时，子智能体会悄悄跑在另一个模型上。
      * 会话自己绑定的优先，否则用设置里的默认模型；绑定失效（服务/模型被删）时
      * resolveEffectiveModelRef 会自动回落默认，不至于让一个旧会话打不开。
      */
+    const childAgent = spec
+      ? await readDocument(opened.storage, "pi.agent", opened.conversationId)
+      : undefined;
+    const childModel = childAgent?.model as { provider: string; modelId: string } | undefined;
     const boundModel =
       spec === undefined
         ? await deps.sessionStore.readModel(sessionId)
-        : (spec.definition.model ?? (await deps.sessionStore.readModel(spec.parentSessionId)));
+        : childModel
+          ? { serviceId: childModel.provider, modelId: childModel.modelId }
+          : (spec.definition.model ?? null);
     const modelRef = resolveEffectiveModelRef(settings, boundModel);
     const model = resolveModel(settings, modelRef);
     if (!model || modelRef === null || models.getProviders().length === 0) {
@@ -2157,13 +1042,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
 
     let runtimeRef: SessionRuntime | undefined;
-    const persistTodo = async (state: TodoState): Promise<void> => {
-      const active = runtimeRef?.conversation ?? conversationRef;
-      if (active === undefined) throw new Error("待办会话尚未就绪");
-      await active.commit(async (tx) => {
-        await tx.appendEntry(active.id, { kind: TODO_ENTRY_TYPE, data: toTodoPayload(state) });
-      }, BACKGROUND_CONTEXT);
-    };
     /**
      * 父会话真实拥有的工具名，供 Task 的临时定义校验白名单。
      *
@@ -2172,6 +1050,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 这个闭包只在 **Task 调用时**求值，那时下面的 `tools` 早已赋值。
      */
     let parentToolNames: string[] = [];
+    const subagentRunner = () => {
+      const runner = runtimeRef?.subagents;
+      if (!runner) throw new Error("子智能体运行时尚未就绪");
+      return runner;
+    };
     const subagentTools =
       spec === undefined
         ? createSubagentTools({
@@ -2180,36 +1063,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             availableToolNames: () => parentToolNames,
             // 定义每次现读：中途新增 / 启用了定义，下一次 Task 就能派它，不用重建会话
             definitions: async () => loadEnabledSubagents(await deps.getSettings(), env.cwd),
-            /**
-             * 名额预约：同步占位，因此同一条消息里并发发出的多个 Task 不会各看各的快照
-             * （见 tools/subagent.ts 里那段为什么必须同步的说明）。失败时的占位者名单
-             * 就是拒绝文案里要指名道姓的那批人。
-             */
-            reserveSlot: (delegationId, agentName) =>
-              reserveSubagentSlot(sessionId, delegationId, agentName),
-            start: async (request) =>
-              startSubagentRun(request, {
-                sessionId,
-                cwd: env.cwd,
-                parentModelId: runtimeRef?.model.id ?? model.id,
-                parentThinkingLevel:
-                  runtimeRef === undefined
-                    ? settings.thinkingLevel
-                    : await effectiveThinkingLevel(runtimeRef, settings),
-              }),
-            wait: (delegationIds, mode, minCompleted, timeoutSeconds) =>
-              waitSubagentRuns(sessionId, delegationIds, mode, minCompleted, timeoutSeconds),
-            // 对账后的列表（盘上 + 本进程）：TaskList 与并发上限都要看见重启前派出去、没跑完的那些
-            list: () => reconcileSubagentRuns(sessionId),
-            // 未知 id 直接跳过：由工具在文案里说明「没找到」（见 subagent-runner 的 stopSubagentRun）
-            stop: async (delegationIds) => {
-              const stopped: SubagentRun[] = [];
-              for (const delegationId of delegationIds) {
-                const run = await stopSubagentRun(sessionId, delegationId);
-                if (run !== undefined) stopped.push(run);
-              }
-              return stopped;
-            },
+            start: (request, api, context) => subagentRunner().start(request, api, context),
+            wait: (ids, mode, min, timeout, context) =>
+              subagentRunner().wait(ids, mode, min, timeout, context),
+            list: () => subagentRunner().list(),
+            stop: async (ids) =>
+              (await Promise.all(ids.map((id) => subagentRunner().stop(id)))).filter(
+                (run): run is SubagentRun => run !== undefined,
+              ),
             parentModelId: () => runtimeRef?.model.id ?? model.id,
           })
         : [];
@@ -2251,14 +1112,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
      * 权限面没有因此变大：子智能体用的仍是同一套审批门与路径守卫。
      */
     const builtTools = buildTools(
-      /*
-        **插件工具必须在这里就带上**，不能只在 `applyExtraTools` 里加。
-
-        踩过：早先只改了刷新那条路，于是**新会话的第一条消息里模型看不到任何插件工具** ——
-        它们要到第一轮结束（`pluginToolsGeneration` 对不上，触发刷新）之后才出现。
-        而用户的第一句往往正是"用那个插件的工具帮我做 X"。
-      */
-      [...(deps.mcp?.tools() ?? []), ...pluginTools()],
+      [...(deps.mcp?.tools(cwd) ?? [])],
       spec === undefined ? createAskTool({ sessionId, interactions }) : undefined,
       jobToolsFor(sessionId),
       deps.browser,
@@ -2271,25 +1125,39 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       */
       {
         searchRoots: sessionAllowedRoots(env.cwd, deps.appPath),
-        todo,
-        persistTodo,
       },
     );
     // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
     const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
-    parentToolNames = builtTools
+    const plugins = pluginExtensions(cwd);
+    const availableTools = [
+      ...builtTools,
+      ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
+    ];
+    parentToolNames = availableTools
       .filter((tool) => !undelegatable.has(tool.name))
       .map((tool) => tool.name);
     const subagentWhitelist = spec?.definition.tools;
     const tools =
-      subagentWhitelist === undefined ? builtTools : restrictTools(builtTools, subagentWhitelist);
+      subagentWhitelist === undefined
+        ? availableTools
+        : restrictTools(availableTools, subagentWhitelist);
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
     const toolsTokens = estimateToolsTokens(tools);
-    const registry = createRegistry();
+    const registry = family?.registry ?? createRegistry();
+    registry.install(subagentTasks.extension);
+    if (!family)
+      registry.install(
+        defineExtension({
+          name: "oint.state-tasks",
+          tasks: [...nativeRequestTasks, ...jobs.taskDefinitions],
+        }),
+      );
+    for (const plugin of plugins) registry.install(plugin.extension);
     const extension = defineExtension({
-      name: "oint",
-      tools,
+      name: `oint:${opened.conversationId}`,
+      tools: builtTools.filter((tool) => tools.some((selected) => selected.name === tool.name)),
       sections: [
         section(
           "oint",
@@ -2310,7 +1178,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         {
           models,
           registry,
-          env: () => env,
+          env: (target) =>
+            [...runtimes.values()].find(
+              (runtime) =>
+                runtime.familyId === opened.familyId &&
+                runtime.conversation.id === target.conversationId,
+            )?.env ?? env,
           settings: {
             compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
           },
@@ -2322,53 +1195,43 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const conversation =
         (await harness.conversation(opened.conversationId, BACKGROUND_CONTEXT)) ??
         (await harness.root(BACKGROUND_CONTEXT));
-      conversationRef = conversation;
       await conversation.configure(
         {
           tools,
+          extensions: [...plugins.map((plugin) => plugin.extension), extension],
           cwd,
           model: { provider: modelRef.serviceId, modelId: modelRef.modelId },
           thinkingLevel: clampThinkingLevel(
             model,
-            spec?.definition.thinkingLevel ?? settings.thinkingLevel,
+            spec?.run.thinkingLevel ?? settings.thinkingLevel,
           ),
         },
         BACKGROUND_CONTEXT,
       );
-      await restoreTodoState(conversation, todo);
       const currentRef = await readConversationModelRef(conversation);
       const currentModel = model;
-      const events = await createRuntimeEventBridge({
-        harness,
-        conversationId: conversation.id,
-        projectEntry: (entry) => opened.session.projectEntry(entry),
-        externalEntryId: (id) => opened.session.externalEntryId(id),
-      });
       const savedUsage = await deps.sessionStore.readUsage(sessionId);
       const runtime: SessionRuntime = {
         sessionId,
+        familyId: opened.familyId,
+        spec,
+        stateUnsubscribers: [],
         session: opened.session,
         harness,
         conversation,
         registry,
         extension,
-        events,
-        todo,
-        persistTodo,
-        compactionTokens: new Map(),
         effects: new Set(),
         model: currentModel,
         modelRef: currentRef,
         models,
         env,
         rules: getRuleStore(),
-        running: false,
+        get running() {
+          return this.view?.snapshot.state.running ?? false;
+        },
         sending: false,
-        runEnded: false,
-        pendingEntries: [],
-        toolParts: new Map(),
-        toolOutputAt: new Map(),
-        queue: [],
+        inputEpoch: 0,
         unsubscribers: [],
         // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
         subagentTools,
@@ -2376,34 +1239,33 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         isSubagent: spec !== undefined,
         repeatChain: createRepeatChain(),
         stats: { ...initSessionStatsState(), ...savedUsage?.stats },
-        tokenUsage: {
-          uncachedInputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
         contextBreakdown: { systemTokens, toolsTokens },
       };
       // 供子智能体工具的依赖读取「本会话现在用哪个模型 / 哪一档」（装配时 runtime 还不存在）
       runtimeRef = runtime;
+      if (!spec) {
+        runtime.subagents = createSubagentRunner({
+          harness,
+          conversation: () => runtime.conversation,
+          familyId: opened.familyId,
+          tasks: subagentTasks,
+          parent: async () => ({
+            sessionId,
+            cwd: env.cwd,
+            parentModelId: runtime.model.id,
+            parentThinkingLevel: await effectiveThinkingLevel(runtime, await deps.getSettings()),
+          }),
+          emit: deps.emitSubagent,
+        });
+      }
+      await attachState(runtime);
       const terminateCalls = new Set<string>();
       runtime.extension = defineExtension({
         ...extension,
         hooks: [
           hook(ToolTask, {
-            beforeTool: async (call, _api, context) => {
+            beforeTool: async (call, api, context) => {
               try {
-                context.abortSignal?.throwIfAborted();
-                const verdict = await dispatchPluginHooks("PreToolUse", {
-                  toolName: call.name,
-                  args: call.arguments,
-                  workspaceDir: runtime.env.cwd,
-                });
-                for (const failure of verdict.failures)
-                  console.warn(
-                    `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
-                  );
-                if (verdict.block !== undefined) return { block: verdict.block };
                 context.abortSignal?.throwIfAborted();
                 const permission = await gateTool(
                   runtime,
@@ -2411,6 +1273,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
                   call.id,
                   call.arguments,
                   context.abortSignal,
+                  api,
                 );
                 if (permission?.block.terminate === true) terminateCalls.add(call.id);
                 return permission === undefined ? undefined : { block: permission.block.reason };
@@ -2421,28 +1284,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             },
             afterTool: async (call, result) => {
               try {
-                const verdict = await dispatchPluginHooks(
-                  result.isError ? "PostToolUseFailure" : "PostToolUse",
-                  {
-                    toolName: call.name,
-                    args: call.arguments,
-                    workspaceDir: runtime.env.cwd,
-                    isError: result.isError ?? false,
-                    ...(previewToolText(result.content ?? []) === undefined
-                      ? {}
-                      : { text: previewToolText(result.content ?? []) }),
-                  },
-                );
-                for (const failure of verdict.failures)
-                  console.warn(
-                    `插件钩子失败（${failure.pluginId}/${failure.hookId}）：${failure.message}`,
-                  );
-                if (verdict.additionalContext !== undefined)
-                  runtime.pendingPluginContext = verdict.additionalContext;
-              } catch (error) {
-                console.warn(`插件钩子分发失败（${call.name}）：${errorText(error)}`);
-              }
-              try {
                 const verdict = inspectRepeat(runtime.repeatChain, call.name, call.arguments);
                 if (verdict?.level === "soft")
                   runtime.pendingRepeatNotice = softRepeatNotice(
@@ -2451,11 +1292,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
                     verdict.argsText,
                   );
                 if (verdict?.level === "hard") {
-                  if (runtime.isSubagent)
-                    noteSubagentRunEnd(runtime.sessionId, {
-                      status: "failed",
-                      error: hardRepeatReason(verdict.toolName, verdict.count),
-                    });
+                  if (runtime.spec)
+                    void runtimes
+                      .get(runtime.spec.run.sessionId)
+                      ?.subagents?.stop(
+                        runtime.spec.run.delegationId,
+                        hardRepeatReason(verdict.toolName, verdict.count),
+                        "failed",
+                      );
                   void stop(runtime.sessionId);
                 }
               } catch (error) {
@@ -2467,16 +1311,23 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             },
           }),
           hook(GenerationTask, {
-            beforeRequest: ({ messages }) => {
-              const notices = [runtime.pendingRepeatNotice, runtime.pendingPluginContext].filter(
+            beforeRequest: async ({ messages }, api, context) => {
+              const [agents, backgroundJobs] = await Promise.all([
+                api.snapshot(SubagentsDoc, api.conversationId, context),
+                api.snapshot(JobsDoc, api.conversationId, context),
+              ]);
+              const reports = nativeReports(
+                Object.values(agents?.runs ?? {}).map((record) => record.run),
+                Object.values(backgroundJobs?.entries ?? {}),
+              );
+              const notices = [runtime.pendingRepeatNotice].filter(
                 (text): text is string => text !== undefined,
               );
               runtime.pendingRepeatNotice = undefined;
-              runtime.pendingPluginContext = undefined;
-              if (notices.length === 0) return undefined;
+              if (notices.length === 0 && reports.size === 0) return undefined;
               return {
                 messages: [
-                  ...messages,
+                  ...projectReportContext(messages, reports),
                   ...notices.map((content) => ({
                     role: "user" as const,
                     content,
@@ -2484,12 +1335,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
                   })),
                 ],
               };
-            },
-          }),
-          hook(CompactionTask, {
-            beforeCompact: ({ messages }, api) => {
-              runtime.compactionTokens.set(api.taskId, estimateTokens(safeStringify(messages)));
-              return undefined;
             },
           }),
         ],
@@ -2511,77 +1356,95 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         );
       }
 
+      runtime.unsubscribers.push(
+        subscribePluginExtensions(() => {
+          for (const plugin of pluginExtensions(runtime.env.cwd))
+            runtime.registry.install(plugin.extension);
+          scheduleEffect(runtime, applyExtraTools(runtime));
+        }),
+      );
       await applyModel(runtime, settings);
-      registerEvents(runtime);
-      await runtime.events.start();
+      await attachView(runtime);
       // Recovered durable tasks keep their native interruption/replay semantics. No blanket abort-on-open.
-      harness.resume();
       return runtime;
     } catch (error) {
-      await harness.close(BACKGROUND_CONTEXT);
+      if (!family) {
+        try {
+          await opened.session.flushUsage();
+        } finally {
+          await harness.close(BACKGROUND_CONTEXT);
+        }
+      }
       await opened.session.unbindHarness(harness);
       throw error;
     }
   }
 
-  function ensureRuntime(sessionId: string): Promise<SessionRuntime> {
-    const cached = runtimes.get(sessionId);
-    if (cached) return Promise.resolve(cached);
-    const creating = creations.get(sessionId);
-    if (creating) return creating;
-    const promise = (async () => {
-      try {
-        const runtime = await createRuntime(sessionId);
-        runtimes.set(sessionId, runtime);
-        return runtime;
-      } finally {
-        creations.delete(sessionId);
+  async function prepareFamily(root: SessionRuntime): Promise<void> {
+    const existing = familyReadiness.get(root.familyId);
+    if (existing) return existing;
+    const pending = (async () => {
+      const failures: { id: string; error: unknown }[] = [];
+      for (const run of (await root.subagents?.list()) ?? []) {
+        if (run.status !== "running") continue;
+        try {
+          await ensureRuntime(run.childSessionId, false);
+        } catch (error) {
+          failures.push({ id: run.delegationId, error });
+        }
       }
+      root.harness.resume();
+      for (const failure of failures)
+        await root.subagents?.stop(failure.id, errorText(failure.error), "failed");
     })();
-    creations.set(sessionId, promise);
-    return promise;
+    familyReadiness.set(root.familyId, pending);
+    try {
+      await pending;
+    } catch (error) {
+      familyReadiness.delete(root.familyId);
+      throw error;
+    }
   }
 
-  /** prompt 异常/失败时收尾：错误消息 + run-ended，保证 UI 不会一直转圈 */
-  function emitRunFailure(runtime: SessionRuntime, runId: string, cause: unknown): void {
-    if (runtime.runEnded) return;
-    runtime.runEnded = true;
-    const text = errorText(cause);
-    const stream = runtime.stream;
-    if (stream) {
-      emitSafe(runtime.sessionId, {
-        type: "message-updated",
-        messageId: stream.messageId,
-        patch: { status: "error", error: text },
-      });
-      runtime.lastAssistantMessageId = stream.messageId;
-      runtime.stream = undefined;
-    } else {
-      emitSafe(runtime.sessionId, {
-        type: "message-added",
-        message: {
-          id: randomUUID(),
-          role: "assistant",
-          createdAt: Date.now(),
-          parts: [],
-          status: "error",
-          error: text,
-        },
-      });
+  async function ensureRuntime(sessionId: string, restoreFamily = true): Promise<SessionRuntime> {
+    let runtime = runtimes.get(sessionId);
+    if (!runtime) {
+      let pending = creations.get(sessionId);
+      if (!pending) {
+        pending = (async () => {
+          for (;;) {
+            try {
+              return await createRuntime(sessionId);
+            } catch (error) {
+              if (!(error instanceof SessionHandleReleased)) throw error;
+            }
+          }
+        })()
+          .then((created) => {
+            runtimes.set(sessionId, created);
+            return created;
+          })
+          .finally(() => {
+            creations.delete(sessionId);
+          });
+        creations.set(sessionId, pending);
+      }
+      runtime = await pending;
     }
-    emitSafe(runtime.sessionId, { type: "run-ended", runId, reason: "failed" });
+    if (restoreFamily) {
+      const root = runtime.spec ? runtimes.get(runtime.familyId) : runtime;
+      if (root) await prepareFamily(root);
+    }
+    return runtime;
   }
 
   async function applyModel(runtime: SessionRuntime, settings: Settings): Promise<void> {
+    if (runtime.spec) return;
     /**
      * 子智能体的模型：定义里固定了就按定义（pin），否则**继承父会话实际在用的那个** ——
      * 读父会话的绑定而不是「设置里的默认」，否则主会话绑定过具体模型时，子智能体会悄悄跑在另一个模型上。
      */
-    const spec = subagentSessions.get(runtime.sessionId);
-    const bound =
-      spec === undefined
-        ? await deps.sessionStore.readModel(runtime.sessionId)
-        : (spec.definition.model ?? (await deps.sessionStore.readModel(spec.parentSessionId)));
+    const bound = await deps.sessionStore.readModel(runtime.sessionId);
     const ref = resolveEffectiveModelRef(settings, bound);
     // 一个可用模型都没有：保持现状，让发送阶段照常报错（这里不该吞掉「请先配置模型服务」）
     if (ref === null) return;
@@ -2620,7 +1483,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       // 按回去，定义形同虚设
       const desired = clampThinkingLevel(
         runtime.model,
-        subagentSessions.get(runtime.sessionId)?.definition.thinkingLevel ?? settings.thinkingLevel,
+        runtime.spec?.run.thinkingLevel ?? settings.thinkingLevel,
       );
       const current = (await runtime.conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
       if (current === desired) return;
@@ -2642,6 +1505,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const runtime = await ensureRuntime(sessionId);
     if (runtime.stopping !== undefined) await runtime.stopping;
     if (runtime.sendController?.signal.aborted) await runtime.sendSettled;
+    await runtime.subagents?.abortAll("父会话开始了新一轮指令");
 
     if (runtime.running || runtime.sending) {
       await enqueueInput(runtime, text, "followUp", attachments, messageId);
@@ -2683,7 +1547,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): Promise<void> {
     await runtime.toolRefresh;
     signal.throwIfAborted();
-    if (runtime.mcpToolsStale || runtime.pluginToolsGeneration !== pluginToolsGeneration()) {
+    if (runtime.mcpToolsStale) {
       await applyExtraTools(runtime);
     }
     // 模型与思考档位都按**当前设置**对齐（设置每次现读，改完下一条消息就生效）：
@@ -2695,22 +1559,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     await applyThinkingLevel(runtime, settings);
     signal.throwIfAborted();
 
-    runtime.running = true;
-    runtime.runEnded = false;
-
     runtime.repeatChain = createRepeatChain();
-    runtime.pendingEntries = [];
-    // 记录渲染层乐观用户消息 id：主进程回显同一条用户消息时复用，避免 UI 出现两条
-    runtime.pendingUserMessageId = messageId;
-    const runId = randomUUID();
-    runtime.runId = runId;
-    /**
-     * 新一轮指令：上一轮派出去的委派不该继续跑 —— 新指令很可能已经改了前提（用户换了方向、
-     * 原问题不再成立），让它们跑完只是白烧 token，还会在用户看得见的列表里留下过时的运行。
-     * 只对**主会话**做：子智能体自己不会有委派（契约不允许嵌套）。
-     */
-    if (!subagentSessions.has(runtime.sessionId)) abortSubagentRunsForParent(runtime.sessionId);
-    emitSafe(runtime.sessionId, { type: "run-started", runId });
+    const requestId = messageId ?? randomUUID();
     try {
       signal.throwIfAborted();
       const rewound = options?.rewindToEntryId;
@@ -2719,30 +1569,45 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         const tip = await currentTip(runtime);
         if (!tip.known || tip.tipId !== rewound) {
           const selected = await runtime.session.forkAndSelect(rewound, BACKGROUND_CONTEXT);
-          const selectedEvents = await createRuntimeEventBridge({
-            harness: runtime.harness,
-            conversationId: selected.id,
-            projectEntry: (entry) => runtime.session.projectEntry(entry),
-            externalEntryId: (id) => runtime.session.externalEntryId(id),
-          });
-          await runtime.events.stop();
+          await runtime.view?.stop();
+          await runtime.metrics?.stop();
           runtime.conversation = selected;
-          runtime.events = selectedEvents;
-          registerEvents(runtime);
-          await runtime.events.start();
           // Native forks restore historical AgentDoc. Reapply the user's current choices for this new run.
           await selected.configure(
             {
               model: { provider: runtime.model.provider, modelId: runtime.model.id },
               thinkingLevel: await effectiveThinkingLevel(runtime, settings),
-              tools: runtime.extension.tools ?? [],
+              tools: [
+                ...(runtime.extension.tools ?? []),
+                ...pluginExtensions(runtime.env.cwd).flatMap(
+                  (plugin) => plugin.extension.tools ?? [],
+                ),
+              ].filter(
+                (tool) =>
+                  !runtime.spec?.definition.tools ||
+                  runtime.spec.definition.tools.includes(tool.name),
+              ),
               extensions: [runtime.extension],
               cwd: runtime.env.cwd,
             },
             BACKGROUND_CONTEXT,
           );
-          Object.assign(runtime.todo, createTodoState());
-          await restoreTodoState(selected, runtime.todo);
+          runtime.extension = defineExtension({
+            ...runtime.extension,
+            name: `oint:${selected.id}`,
+          });
+          runtime.registry.install(runtime.extension);
+          await selected.configure(
+            {
+              extensions: [
+                ...pluginExtensions(runtime.env.cwd).map((plugin) => plugin.extension),
+                runtime.extension,
+              ],
+            },
+            BACKGROUND_CONTEXT,
+          );
+          await attachState(runtime);
+          await attachView(runtime);
         }
       }
       // 原样提交交错的附件信封与图片块；附件落盘完成且本次发送未取消后才受理输入。
@@ -2756,145 +1621,29 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         {
           type: "input",
           content: userMessage.content,
-          requestId: messageId ?? runId,
+          requestId,
           whenBusy: "followUp",
         },
         BACKGROUND_CONTEXT,
       );
       runtime.admitted?.();
-      const receipt = await submission.wait(BACKGROUND_CONTEXT);
-      await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
-      await runtime.events.flush();
-      if (
-        receipt.status === "unanswered" &&
-        receipt.reason !== "aborted" &&
-        receipt.reason !== "reset" &&
-        !runtime.runEnded
-      ) {
-        emitRunFailure(
-          runtime,
-          runId,
-          typeof receipt.detail === "string" ? receipt.detail : receipt.reason,
-        );
+      if (messageId) {
+        const admitted = await submission.status(BACKGROUND_CONTEXT);
+        emitSafe(runtime.sessionId, {
+          type: "input-admitted",
+          messageId,
+          ...(admitted.entry === undefined ? {} : { entryId: `entry:${admitted.entry}` }),
+        });
       }
+      await submission.wait(BACKGROUND_CONTEXT);
+      await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
+      await runtime.view?.flush();
+      await runtime.metrics?.flush();
     } catch (error) {
-      if (!signal.aborted) emitRunFailure(runtime, runId, error);
-    } finally {
-      // 无论正常结束还是异常退出，都回收运行态并清空排队展示
-      runtime.running = false;
-      runtime.runId = undefined;
-      runtime.queue = [];
-      runtime.pendingUserMessageId = undefined;
-      emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
+      if (!signal.aborted)
+        emitSafe(runtime.sessionId, { type: "input-failed", messageId, error: errorText(error) });
     }
   }
-  /** 启动这次作业的那次工具调用 id：结论要回填到它上面（见 job-delivery 的文件头） */
-  function jobToolCallId(jobId: string): string | undefined {
-    return jobs.toolCallIdOf(jobId);
-  }
-
-  /**
-   * 作业到达终态：把结论**回填到启动它的那次 `bash_background` 调用上**。
-   *
-   * 与子智能体的 deliverSubagentReport 同一个形状与同一个理由：结论属于「这次调用」，
-   * 写进它的 part（result / details / isError / status）就等于「这一步的结果回来了」，
-   * 界面据此渲染成工具状态组件，模型下一轮也能在上下文里读到 ——
-   * 而不是往对话里发一条用户消息。
-   *
-   * 找不到那次调用（part 已不在内存、或这是一次重启后的历史作业）时静默跳过：
-   * 作业的输出仍可由 job_output 读到，界面那份 `job-changed` 事件也已经把状态更新了。
-   */
-  function deliverJobResult(job: JobInfo): void {
-    const runtime = runtimes.get(job.sessionId);
-    if (!runtime) return;
-    const toolCallId = jobToolCallId(job.id);
-    if (toolCallId === undefined) return;
-    const ref = runtime.toolParts.get(toolCallId);
-    if (!ref) return;
-    const result = buildJobResult(job, jobs.peekTail(job.id).replace(/\s+$/, ""));
-    // running 不写回：还没结束就没有结论（与子智能体同一个约定）
-    if (result === null) return;
-    ref.part.result = result.text;
-    ref.part.details = { job };
-    ref.part.isError = result.isError;
-    ref.part.status = result.isError ? "error" : "done";
-    emitSafe(runtime.sessionId, {
-      type: "part-upsert",
-      messageId: ref.messageId,
-      partIndex: ref.partIndex,
-      part: ref.part,
-    });
-  }
-
-  /**
-   * 作业退出后的投递：**只回填结论，不再推一条用户消息**（与子智能体一致）。
-   *
-   * 早先这里在回填之外还会往对话里发一条「作业已结束」的通知，并配套一整套唤醒机制
-   *（空闲就 send 起一轮、运行中就 steer 插进去、外加一个每会话 3 次的唤醒预算，
-   * 以及把那条消息标成系统来源的标记）。那套东西**整体删掉了**，理由有三条：
-   *
-   * 1. **用户明确要求**：结论不该以用户消息的形态出现在对话里 —— 那看起来像用户自己
-   *    说了一句话，而实际上它只是「那次调用的结果」。子智能体早先也踩过同一个坑，
-   *    改法就是现在这个：把结果写回**启动它的那次调用**（见 deliverSubagentReport）。
-   * 2. **模型本来就看得到**：deliverJobResult 把结论写进那条 part 的 result / details，
-   *    而 part 是会话转录的一部分 —— 模型下一次发言时它就在上下文里。
-   * 3. **自激问题随之消失**：唤醒预算本来是为了抑制「作业结束 → 唤醒 → 模型又起作业」
-   *    的循环。不再主动开口就不需要这个计数器，也顺带消掉了「预算用完后连结论都不写」
-   *    那个隐患（现在结论是必写的）。
-   *
-   * 作业与子智能体的差别只剩一处：作业状态由主进程持续推 `job-changed`，
-   * 渲染层那份 `jobsBySession` 始终是最新的，所以**界面这条路根本不依赖回填** ——
-   * 回填只服务模型（让它在下一轮上下文里读到结论）。
-   */
-  function notifyJobExit(job: JobInfo): void {
-    const runtime = runtimes.get(job.sessionId);
-    // 会话已经关掉（或还没建起来）时没有可回填的对象
-    if (!runtime || jobs.isSuppressed(job.sessionId)) return;
-    deliverJobResult(job);
-  }
-  /**
-   * 子智能体到达终态：把结果**回填到那次 Task 调用的 part 上**（本次修复的核心形状）。
-   *
-   * 用户的要求是：报告不作为用户消息出现，而是作为「调用子智能体」这一步的结果，
-   * 显示在「xxx 已完成」这个状态里。所以这里不做「推一条消息」，而是改写那次调用的 part：
-   * 它已经在转录里、已经在界面上，补上终态与报告就等于「这次调用的结果回来了」。
-   *
-   * 为什么要写进 part 而不是只在 store 里留一份：
-   * - 界面：渲染层从 part.artifact（= details）解析出 SubagentDetailData，pill 因此从
-   *   「已完成」直接取到报告；
-   * - 模型：这条 part 的 details/result 是**会话转录的一部分**，模型下一次发言时它就在
-   *   上下文里 —— 这就是「主会话可以来读取这个内容」，不需要系统替模型开口，
-   *   也就不再有自激唤醒的问题（原先那套唤醒预算因此删掉）。
-   *
-   * 找不到那次调用的 part 时静默跳过：可能已经滚出内存、或这是一次重启后的历史运行。
-   * 那种情况下报告仍在运行记录与右侧栏面板里，界面不会因此显示错状态。
-   */
-  function deliverSubagentReport(run: SubagentRun): void {
-    const runtime = runtimes.get(run.sessionId);
-    if (!runtime) return;
-    const ref = runtime.toolParts.get(run.delegationId);
-    if (!ref) return;
-    const result = buildSubagentResult(run);
-    // running 不写回：正在跑的运行不该有「结果」，那一步由进度事件负责
-    if (result === null) return;
-    ref.part.result = result.text;
-    ref.part.details = run;
-    ref.part.isError = result.isError;
-    ref.part.status = result.isError ? "error" : "done";
-    emitSafe(runtime.sessionId, {
-      type: "part-upsert",
-      messageId: ref.messageId,
-      partIndex: ref.partIndex,
-      part: ref.part,
-    });
-  }
-
-  /**
-   * 组装该会话的四个作业工具。
-   *
-   * **两处 buildTools 调用都必须带上**（会话创建 + MCP 热替换）：工具表是整表替换，
-   * 漏一处就会出现「MCP 一刷新，作业工具凭空消失」。
-   */
   function jobToolsFor(sessionId: string): ToolRegistration[] {
     return createJobTools({ sessionId, jobs }) as ToolRegistration[];
   }
@@ -2954,28 +1703,17 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const runtime = runtimes.get(sessionId) ?? (await creations.get(sessionId));
     if (!runtime) return;
     if (runtime.stopping !== undefined) return runtime.stopping;
+    runtime.inputEpoch++;
     runtime.sendController?.abort();
     runtime.admitted?.();
-    deps.approvals.cancelSession(sessionId);
-    interactions.cancelSession(sessionId);
-    runtime.queue = [];
-    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
-
-    runtime.running = false;
-    runtime.runEnded = true;
-    runtime.queue = [];
-    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
-    emitSafe(runtime.sessionId, {
-      type: "run-ended",
-      runId: runtime.runId ?? randomUUID(),
-      reason: "aborted",
-    });
+    await deps.approvals.cancelSession(sessionId);
+    await interactions.cancelSession(sessionId);
     try {
       const stopping = runtime.conversation.abort(BACKGROUND_CONTEXT);
       runtime.stopping = stopping;
       try {
         await stopping;
-        await runtime.events.flush();
+        await runtime.view?.flush();
       } finally {
         if (runtime.stopping === stopping) runtime.stopping = undefined;
       }
@@ -2986,13 +1724,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
   async function queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
-    /**
-     * 重复调用守卫：排队 / 插话也是**用户的新指令**，同样清空链。
-     *
-     * 注意这里也会覆盖「作业结束唤醒」那条内部路径（notifyJobExit 经 queue 发 steer）——
-     * 那是可接受的：作业结束是一条**新信息**，前提确实变了，此时重置链是对的
-     *（模型接下来重复调用可能是合理的反应）。
-     */
+
     runtime.repeatChain = createRepeatChain();
 
     if (!runtime.running && !runtime.sending) {
@@ -3010,28 +1742,33 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     messageId?: string,
   ): Promise<void> {
     const admissionSignal = runtime.sendController?.signal;
+    const inputEpoch = runtime.inputEpoch;
+    const cancelled = () => {
+      if (!admissionSignal?.aborted && inputEpoch === runtime.inputEpoch) return false;
+      if (messageId) emitSafe(runtime.sessionId, { type: "input-cancelled", messageId });
+      return true;
+    };
     await runtime.admission;
     if (runtime.stopping !== undefined) await runtime.stopping;
     await runtime.toolRefresh;
-    if (admissionSignal?.aborted) return;
-    const item: QueuedMessage = { id: randomUUID(), text, mode };
-    runtime.queue = [...runtime.queue, item];
-    emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
-    try {
-      const content = attachments?.length
-        ? await buildUserContent(runtime.sessionId, text, attachments)
-        : text;
-      await runtime.conversation.submit(
-        { type: "input", content, whenBusy: mode, requestId: messageId ?? item.id },
-        BACKGROUND_CONTEXT,
-      );
-      runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
-      emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
-    } catch (error) {
-      runtime.queue = runtime.queue.filter((queued) => queued.id !== item.id);
-      emitSafe(runtime.sessionId, { type: "queue-updated", items: [...runtime.queue] });
-      throw error;
+    if (cancelled()) return;
+    const content = attachments?.length
+      ? await buildUserContent(runtime.sessionId, text, attachments)
+      : text;
+    if (cancelled()) return;
+    const submission = await runtime.conversation.submit(
+      { type: "input", content, whenBusy: mode, requestId: messageId ?? randomUUID() },
+      BACKGROUND_CONTEXT,
+    );
+    if (messageId) {
+      const admitted = await submission.status(BACKGROUND_CONTEXT);
+      emitSafe(runtime.sessionId, {
+        type: "input-admitted",
+        messageId,
+        ...(admitted.entry === undefined ? {} : { entryId: `entry:${admitted.entry}` }),
+      });
     }
+    await runtime.view?.flush();
   }
 
   async function cancelQueued(sessionId: string, entryId: string): Promise<void> {
@@ -3082,15 +1819,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return runtimes.get(sessionId)?.running ?? false;
   }
 
-  /** 当前流式消息的快照；parts 复制一层数组，避免调用方拿到会被后续增量改写的引用 */
-  function streamSnapshot(sessionId: string): ChatStreamSnapshot | null {
-    const stream = runtimes.get(sessionId)?.stream;
-    if (!stream) return null;
-    return {
-      messageId: stream.messageId,
-      parts: [...stream.parts],
-      createdAt: stream.createdAt,
-    };
+  async function liveSnapshot(sessionId: string): Promise<ChatLiveSnapshot | null> {
+    const runtime = runtimes.get(sessionId);
+    await runtime?.view?.flush();
+    return runtime?.view?.snapshot ?? null;
   }
 
   /**
@@ -3100,34 +1832,45 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
    * （打开存储、附着 harness、注册事件）代价太大，也带来「只是看了一眼就有了运行时」的副作用。
    * 作业表由 JobService 独立持有，因此这里不需要会话运行时也能给出正确结果（没有就是空数组）。
    */
-  function listJobs(sessionId: string): JobInfo[] {
-    return jobs.list(sessionId);
+  async function listJobs(sessionId: string): Promise<JobInfo[]> {
+    if (runtimes.has(sessionId)) return jobs.list(sessionId);
+    const opened = await deps.sessionStore.open(sessionId);
+    if (!opened) return [];
+    const state = await readDocument(
+      opened.storage,
+      JobsDoc.definition.kind,
+      opened.session.activeConversationId,
+    );
+    return Object.values((state?.entries ?? {}) as unknown as Record<string, { job: JobInfo }>).map(
+      (record) => record.job,
+    );
   }
 
   /** 杀掉一个后台作业；存在性与会话归属由作业服务校验，找不到时它抛的就是中文错误 */
   async function killJob(sessionId: string, id: string): Promise<JobInfo> {
+    if (!(await listJobs(sessionId)).some((job) => job.id === id))
+      throw new Error(`找不到后台作业 ${id}（会话 ${sessionId}）`);
+    await ensureRuntime(sessionId);
     return jobs.kill(sessionId, id);
   }
 
   async function closeSession(sessionId: string): Promise<void> {
     await creations.get(sessionId);
-    // 子智能体子会话（或它的父会话）：注销定义登记 —— 放在「有没有 runtime」之前，
-    // 因为登记表是模块级的，即便这个会话已经没有运行时也不该在里面留下条目。
-    unregisterSubagentSession(sessionId);
     const runtime = runtimes.get(sessionId);
-    if (!runtime) {
-      // 没有运行时的会话（没被打开过）也要清运行记录：登记表同样是模块级的
-      forgetSubagentRuns(sessionId);
-      return;
+    if (!runtime) return;
+    if (!runtime.spec) {
+      familyReadiness.delete(runtime.familyId);
+      await runtime.subagents?.abortAll("父会话已关闭");
+      for (const child of [...runtimes.values()])
+        if (child.spec && child.familyId === runtime.familyId) await closeSession(child.sessionId);
     }
     runtimes.delete(sessionId);
+    runtime.inputEpoch++;
     runtime.sendController?.abort();
     runtime.admitted?.();
-    deps.approvals.cancelSession(sessionId);
-    interactions.cancelSession(sessionId);
-    jobs.cancelSession(sessionId);
-    runtime.queue = [];
-    emitSafe(runtime.sessionId, { type: "queue-updated", items: [] });
+    await deps.approvals.cancelSession(sessionId);
+    await interactions.cancelSession(sessionId);
+    await jobs.cancelSession(sessionId);
     for (const unsubscribe of runtime.unsubscribers) {
       try {
         unsubscribe();
@@ -3136,7 +1879,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       }
     }
 
-    // 关闭前取消本次任务和尚在准备的发送，再等待后台索引写入完成。
+    // 先停止会话工作，再排空投影和用量持久化，最后关闭唯一 owner。
     try {
       await runtime.stopping;
       await runtime.conversation.abort(BACKGROUND_CONTEXT);
@@ -3144,19 +1887,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       console.warn(`关闭前中止会话失败 ${sessionId}：${errorText(error)}`);
     }
     await runtime.sendSettled;
-    /**
-     * `forgetSubagentRuns` 必须在 abort **之后**。
-     *
-     * 它会把这次运行从 `liveByChild` 里摘掉，而 `noteSubagentRunEnd` 正是靠那张表
-     * 找到条目并写下终态 —— 早先放在 abort 之前，于是 aborted 的 run_end 到达时
-     * 查不到条目、直接 return，运行就**永远停在盘上的 running**，
-     * 只能等下次启动由 reconcile 纠正成 interrupted（用户看到一次假的「运行中」）。
-     */
-    forgetSubagentRuns(sessionId);
     try {
-      await runtime.events.stop();
+      await runtime.view?.stop();
+      await runtime.metrics?.stop();
       await Promise.allSettled([...runtime.effects]);
-      await runtime.harness.close(BACKGROUND_CONTEXT);
+      for (const detach of runtime.stateUnsubscribers) detach();
+      if (!runtime.spec) {
+        try {
+          await runtime.session.flushUsage();
+        } finally {
+          await runtime.harness.close(BACKGROUND_CONTEXT);
+        }
+      }
     } catch (error) {
       console.warn(`关闭 Agent 运行时失败 ${sessionId}：${errorText(error)}`);
     }
@@ -3178,27 +1920,28 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     }
     // 兜底：作业是系统资源，会话循环覆盖不到的（理论上不该有）也在这里一并收掉
     await jobs.dispose();
-    /**
-     * 拆掉子智能体事件出口：它是模块级登记表，闭包里握着窗口广播函数。
-     * 不置空的话，退出后（或单测换一个 runtime 实例后）仍会往已销毁的窗口发消息。
-     * API 本身就提供了「传 null 取消」这条语义（见 subagent-runner 的说明）。
-     */
-    setSubagentEmitter(null);
+
     if (defaultRuntime === api) defaultRuntime = null;
   }
   const api: ChatRuntime = {
+    listSubagents: async (id) =>
+      runtimes.get(id)?.subagents?.list() ?? deps.sessionStore.listSubagentRunsFor(id),
+    stopSubagent: async (id, delegationId) =>
+      (await ensureRuntime(id)).subagents?.stop(delegationId),
+    prepareSubagent: async (id) => {
+      await ensureRuntime(id);
+    },
     send,
     stop,
     queue,
     cancelQueued,
     compact,
-    streamSnapshot,
+    liveSnapshot,
     isRunning,
     listJobs,
     killJob,
     setModel,
     closeSession,
-    deliverSubagentReport,
     dispose,
   };
   defaultRuntime = api;

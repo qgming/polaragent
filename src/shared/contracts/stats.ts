@@ -1,26 +1,5 @@
-/**
- * 用量统计（数据统计模态窗）的对外契约。
- *
- * ## 数据从哪来
- *
- * **不是**新建一份「用量账本」另起炉灶，而是把**已有的会话日志**（pi 的 SQLite 条目）
- * 增量折叠成一份按「本地日 × 模型」分桶的卷账本（rollup，见 main/stats/usage-rollup.ts）。
- * 理由：助手消息条目里本来就带着 `timestamp` / `provider` / `model` / `usage` 四样东西，
- * 它们才是这台机器上真实发生过的用量；而按会话聚合的 `SessionUsageRecord` 只有总量、
- * 没有时间与模型维度，也没有「跨重启仍然完整」的保证（见 runtime 的 persistUsage）。
- *
- * 折叠是**增量**的：每个会话记一个「已扫到的条目 seq」，重启后只扫新增的那一段。
- *
- * ## 口径
- *
- * `tokens` 一律 = 未缓存输入 + 缓存读取 + 缓存写入 + 输出（与底栏用量胶囊、
- * DSH 的 billedInputTokens 同口径），也就是**模型实际处理的全部 token**，
- * 而不是「只算新内容」的那种压缩口径。
- *
- * ## 为什么整份报告一次返回
- *
- * 时间范围（近 7 日 / 近 30 日）是**渲染层的视图状态**：报告里带着全部有记录的日子，
- * 切换范围只是换个切片，不必再走一次 IPC、也不会在切换时闪一下。
+/** Native UsageDoc totals with bounded day/model journal projections.
+ * Unretained dates remain in totals and model/kind breakdowns, outside calendar/streak metrics.
  */
 import type { SessionKind } from "./session";
 
@@ -83,6 +62,8 @@ export interface UsageStatsReport {
   totals: UsageTokenBuckets;
   /** 全部计费桶之和 */
   totalTokens: number;
+  /** Included in totals, excluded from the calendar because the date was not retained. */
+  undatedTokens?: number;
   sessions: UsageSessionBreakdown;
   /** 有用量记录的天数 */
   activeDays: number;

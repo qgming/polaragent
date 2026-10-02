@@ -24,7 +24,7 @@ const electronPath = require("electron");
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 const PORT = 19411;
-const TMP = path.join(os.tmpdir(), "oint-plugin-modal-probe");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "oint-plugin-modal-probe-"));
 const USER_DATA = path.join(TMP, "userdata");
 const DATA_DIR = path.join(TMP, "data");
 const PLUGIN_ID = "dev.oint.scratchpad";
@@ -105,16 +105,13 @@ function check(label, condition, detail) {
   }
 }
 
-fs.rmSync(TMP, { recursive: true, force: true });
-fs.mkdirSync(TMP, { recursive: true });
-
 const env = { ...process.env, OINT_HOME: DATA_DIR };
 delete env.ELECTRON_RUN_AS_NODE;
 
 const child = spawn(
   electronPath,
   [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${USER_DATA}`],
-  { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] },
+  { cwd: ROOT, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
 );
 child.stdout.on("data", (d) => process.stdout.write(`[app] ${d}`));
 child.stderr.on("data", (d) => process.stderr.write(`[app] ${d}`));

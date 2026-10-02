@@ -1083,7 +1083,6 @@ function delegationLabel(
 const SUBAGENT_AGENT_STATES: Record<SubagentRunStatus, AgentState> = {
   running: "working",
   completed: "done",
-  truncated: "waiting",
   failed: "waiting",
   aborted: "waiting",
   denied: "waiting",

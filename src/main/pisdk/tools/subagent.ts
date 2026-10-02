@@ -1,5 +1,5 @@
-import type { JsonRepresentation } from "@earendil-works/chord";
-import type { ToolRegistration } from "@earendil-works/pi-durable";
+import type { Context, JsonRepresentation } from "@earendil-works/chord";
+import type { ToolExecutionApi, ToolRegistration } from "@earendil-works/pi-durable";
 // 子智能体工具（Task / TaskWait / TaskList / TaskStop）：把「一件独立的工作交给另一条会话去跑」做成工具。
 //
 // 装配方式与 ask_user、作业四件套相同（见 tools/ask.ts 的 createAskTool 与 tools/jobs.ts 的 createJobTools）：
@@ -40,18 +40,6 @@ const MAX_REPORT_CHARS = 8_000;
 const DEFAULT_WAIT_SECONDS = 600;
 const MAX_WAIT_SECONDS = 900;
 
-/** 占着并发名额的身份：delegationId 就是派发那次调用的 toolCallId，agentName 用于拒绝文案 */
-export interface SubagentSlotHolder {
-  delegationId: string;
-  agentName: string;
-}
-
-/**
- * 名额预约结果。失败时把占位者一起带回来（已经跑起来的 + 同一批里还在启动中的）：
- * 只说一句「超上限」模型不知道该等谁，拒绝文案要能指名道姓。
- */
-export type SubagentSlotReservation = { ok: true } | { ok: false; holders: SubagentSlotHolder[] };
-
 export interface SubagentToolDeps {
   /** 父（主）会话 id：所有运行都挂在它下面 */
   sessionId: string;
@@ -60,19 +48,17 @@ export interface SubagentToolDeps {
   /** 当前可用的子智能体定义（已按 disabledSubagentNames 过滤） */
   definitions: () => Promise<SubagentDefinition[]>;
   /** 启动一次运行；返回启动后的运行记录。实现见 subagent-runner.ts */
-  start: (request: SubagentStartRequest) => Promise<SubagentRun>;
-  /**
-   * 同步占一个并发名额；失败时带回占位者（已经在跑的 + 同一批里正在启动的）。
-   *
-   * **必须是同步的**：`await` 就是竞态窗口本身（见 execute 里那段注释）。
-   * 实现见 subagent-runner 的 reserveSubagentSlot —— 名额的真相只有那一份。
-   */
-  reserveSlot: (delegationId: string, agentName: string) => SubagentSlotReservation;
+  start: (
+    request: SubagentStartRequest,
+    api: ToolExecutionApi,
+    context: Context,
+  ) => Promise<SubagentRun>;
   wait: (
     delegationIds: string[] | undefined,
     mode: "all" | "any",
     minCompleted: number,
     timeoutSeconds: number,
+    context: Context,
   ) => Promise<SubagentRun[]>;
   /**
    * 本会话的运行列表。实现必须给出「盘上 + 本进程」对账后的结果（runtime 注入 reconcileSubagentRuns）：
@@ -411,16 +397,6 @@ function statusText(run: SubagentRun, now: number): string {
     case "completed":
       text = `已完成（用时 ${elapsed}，${progress}）`;
       break;
-    case "truncated":
-      /**
-       * **只可能出现在历史记录里**：轮次上限字段已整体删除，新运行不会再进入这个状态
-       *（见 shared/contracts/subagent.ts 里关于「为什么没有轮次上限」的说明）。
-       *
-       * 分支必须留着 —— 磁盘上的旧运行记录里有这个值，删掉它会让那些记录
-       * 在这一句上变成空白或漏掉状态（`switch` 没有 default，漏了就是 `undefined`）。
-       */
-      text = `已到 maxTurns 上限被截断（用时 ${elapsed}，${progress}）：下面这份报告可能不完整`;
-      break;
     case "aborted":
       text = `已停止（用时 ${elapsed}，${progress}）${run.error === undefined ? "" : `：${run.error}`}`;
       break;
@@ -476,7 +452,8 @@ export function createSubagentTools(deps: SubagentToolDeps): ToolRegistration[] 
 
     description: TASK_DESCRIPTION,
     parameters: taskSchema,
-    async execute(params, api) {
+    replay: "safe",
+    async execute(params, api, context) {
       const toolCallId = api.callId;
       // 重派：先按 id 找出要接续的那次运行（用对账后的列表 —— 索引里的历史运行也在里面）。
       // 未知 id 与「还在跑」都当场拒绝：前者会让模型以为重来过了，后者会真的把同一件事跑两遍
@@ -590,40 +567,19 @@ export function createSubagentTools(deps: SubagentToolDeps): ToolRegistration[] 
         definition = found;
       }
 
-      /**
-       * 并发上限：超出直接拒绝而不是排队 —— 排队会让模型以为「已经派出去了」，
-       * 而用户看到的进度与模型的预期会不一致（见 MAX_CONCURRENT_SUBAGENT_RUNS 的契约注释）。
-       *
-       * **必须是同步的预约，不能只「数一遍在跑的」**：同一条消息里的多个 Task 是并发执行的，
-       * 而 `await deps.list()` 与 `await deps.start()` 之间是一段没人守护的窗口 ——
-       * 同批发 5 个时每个 execute 都只看到「自己开始时」的运行数，于是 5 个全部通过
-       * （实测如此，而顺序发第 5 个会被正确拒绝）。预约在 runner 那边同步登记一个占位，
-       * 所以这一段不再有窗口：谁先占到名额谁就派得出去。
-       *
-       * resumeOf 那次查找已经拿过列表，但这里仍然走预约 —— 名额的真相只在 runner 那边有一份，
-       * 拿一份可能过期的列表去比，就是竞态本身。
-       */
-      const reservation = deps.reserveSlot(toolCallId, definition.name);
-      if (!reservation.ok) {
-        const ids = reservation.holders
-          .map((holder) => `${holder.agentName}(${holder.delegationId})`)
-          .join("、");
-        return errorResult<SubagentToolErrorDetails>(
-          { error: "并发上限" },
-          `已经有 ${reservation.holders.length} 个子智能体在跑（上限 ${MAX_CONCURRENT_SUBAGENT_RUNS}），` +
-            `本次没有派发：${ids}。先用 ${SUBAGENT_TOOL_NAMES.wait} 收敛其中一些，再派新的。`,
-        );
-      }
-
       let run: SubagentRun;
       try {
-        run = await deps.start({
-          toolCallId,
-          definition,
-          description,
-          task: taskText,
-          ...(resumed === undefined ? {} : { resumedFrom: resumed.delegationId }),
-        });
+        run = await deps.start(
+          {
+            toolCallId,
+            definition,
+            description,
+            task: taskText,
+            ...(resumed === undefined ? {} : { resumedFrom: resumed.delegationId }),
+          },
+          api,
+          context,
+        );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         return errorResult<SubagentToolErrorDetails>(
@@ -657,14 +613,21 @@ export function createSubagentTools(deps: SubagentToolDeps): ToolRegistration[] 
 
     description: WAIT_DESCRIPTION,
     parameters: waitSchema,
-    async execute(params) {
+    replay: "safe",
+    async execute(params, _api, context) {
       const mode = params.mode ?? "all";
       const minCompleted = params.minCompleted ?? 1;
       const timeoutSeconds = Math.min(
         Math.max(params.timeoutSeconds ?? DEFAULT_WAIT_SECONDS, 1),
         MAX_WAIT_SECONDS,
       );
-      const runs = await deps.wait(params.delegationIds, mode, minCompleted, timeoutSeconds);
+      const runs = await deps.wait(
+        params.delegationIds,
+        mode,
+        minCompleted,
+        timeoutSeconds,
+        context,
+      );
       if (runs.length === 0) {
         return {
           content: [
@@ -693,6 +656,7 @@ export function createSubagentTools(deps: SubagentToolDeps): ToolRegistration[] 
 
     description: LIST_DESCRIPTION,
     parameters: listSchema,
+    replay: "safe",
     async execute() {
       // 对账后的列表（盘上 + 本进程）：重启后也要能一眼看到上次那些没跑完的运行
       const runs = await deps.list();

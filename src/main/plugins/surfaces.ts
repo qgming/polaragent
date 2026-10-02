@@ -21,7 +21,7 @@ import type {
   PluginSurfaceDecl,
   PluginSurfaceOpenResult,
 } from "@/shared/contracts/plugin";
-import { installPluginProtocolOn } from "./protocol";
+import { installPluginProtocolOn, type SurfaceProtocolSource } from "./protocol";
 import { getPluginRegistry } from "./registry";
 import { rendererSurfaces, surfaceByUrl } from "./surface-decls";
 import { getSurfaceOwners, type SurfaceOwner } from "./surface-owners";
@@ -95,6 +95,7 @@ export function surfaceArgumentsForUrl(src: string): string[] | undefined {
   const registry = getPluginRegistry();
   const source = registry.enabledSources().find((candidate) => candidate.id === parsed.pluginId);
   if (source === undefined) return undefined;
+  if (source.workspaceDir && source.workspaceDir !== registry.getWorkspaceDir()) return undefined;
 
   /*
     界面声明按 URL 精确匹配；匹配不到就退回"渲染层宿主的第一个" ——
@@ -139,10 +140,16 @@ export function surfaceArgumentsForUrl(src: string): string[] | undefined {
  * 而不是挂在界面创建上：用户能点到那个面板时，分区一定已经就绪。
  */
 export function preparePluginPartitions(pluginIds: readonly string[]): void {
-  for (const id of pluginIds) hardenPluginPartition(session.fromPartition(pluginPartition(id)));
+  const registry = getPluginRegistry();
+  for (const id of pluginIds) {
+    const source = registry.sourceOf(id);
+    if (!source || (source.workspaceDir && source.workspaceDir !== registry.getWorkspaceDir()))
+      continue;
+    hardenPluginPartition(session.fromPartition(pluginPartition(id, source.workspaceDir)), source);
+  }
 }
 
-export function hardenPluginPartition(target: Session): void {
+export function hardenPluginPartition(target: Session, source?: SurfaceProtocolSource): void {
   target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   target.setPermissionCheckHandler(() => false);
   /*
@@ -155,7 +162,7 @@ export function hardenPluginPartition(target: Session): void {
     放在这个函数里而不是各个调用点：这个函数**本来就是"把一个分区按插件界面的
     规矩准备好"的唯一入口**，协议与权限是同一件事的两半。
   */
-  installPluginProtocolOn(target);
+  installPluginProtocolOn(target, source);
 }
 
 /** 打开的结果（形状定义在共享契约里 —— 两边都要用同一份） */
@@ -172,7 +179,9 @@ function keyOf(pluginId: string, surfaceId: string): string {
 async function resolveSurface(
   pluginId: string,
   surfaceId: string,
-): Promise<{ decl: PluginSurfaceDecl; pluginName: string } | undefined> {
+): Promise<
+  { decl: PluginSurfaceDecl; pluginName: string; source: SurfaceProtocolSource } | undefined
+> {
   const registry = getPluginRegistry();
   if (!registry.loaded) await registry.reload();
   const view = registry.find(pluginId);
@@ -180,9 +189,10 @@ async function resolveSurface(
   if (view === undefined || !view.enabled) return undefined;
   const source = registry.enabledSources().find((candidate) => candidate.id === pluginId);
   if (source === undefined) return undefined;
+  if (source.workspaceDir && source.workspaceDir !== registry.getWorkspaceDir()) return undefined;
   const decl = source.manifest.surfaces.find((surface) => surface.id === surfaceId);
   if (decl === undefined) return undefined;
-  return { decl, pluginName: view.name };
+  return { decl, pluginName: view.name, source };
 }
 
 /**
@@ -205,7 +215,7 @@ export async function openPluginSurface(
   // 开界面的那一刻渲染层知道主题（它给的），记下来供后开的 webview 用
   if (theme === "light" || theme === "dark") rememberSurfaceTheme(theme);
 
-  const { decl, pluginName } = resolved;
+  const { decl, pluginName, source } = resolved;
   // 非窗口形态：宿主在渲染层，主进程只回答"开在哪里"
   if (decl.kind !== "window") return { kind: decl.kind };
 
@@ -222,10 +232,19 @@ export async function openPluginSurface(
     return { kind: "window" };
   }
 
-  const owner: SurfaceOwner = { pluginId, surfaceId, kind: "window" };
+  const owner: SurfaceOwner = {
+    pluginId,
+    surfaceId,
+    kind: "window",
+    sourceDir: source.dir,
+    workspaceDir: source.workspaceDir,
+  };
   // 窗口类与渲染层宿主**共用同一个分区**（同名），所以权限门只需装一次；
   // 面板 / 模态窗那条路在 claimRendererSurface 里也会调它（幂等）
-  hardenPluginPartition(session.fromPartition(pluginPartition(pluginId)));
+  hardenPluginPartition(
+    session.fromPartition(pluginPartition(pluginId, source.workspaceDir)),
+    source,
+  );
   const widget = decl.shape === "widget";
   const fallback = widget ? WIDGET_DEFAULT : WINDOW_DEFAULT;
 
@@ -245,6 +264,7 @@ export async function openPluginSurface(
     show: false,
     webPreferences: {
       preload: pluginSurfacePreload(),
+      partition: pluginPartition(pluginId, source.workspaceDir),
       /*
         与主窗口同一套硬约束。**sandbox 保持 true** —— 沙箱化的 preload 仍然能拿到
         `ipcRenderer` 与 `contextBridge`，所以"给插件界面装 preload"并不需要放弃沙箱。
@@ -374,6 +394,7 @@ export async function closePluginSurface(
  */
 export function closeAllSurfacesOfPlugin(pluginId: string): number[] {
   const owners = getSurfaceOwners();
+  const previous = owners.entries().filter(([, owner]) => owner.pluginId === pluginId);
   const ids = owners.releasePlugin(pluginId);
   const closed: number[] = [];
   for (const [key, win] of [...windows]) {
@@ -382,7 +403,26 @@ export function closeAllSurfacesOfPlugin(pluginId: string): number[] {
     windows.delete(key);
     closed.push(win.webContents.id);
   }
+  for (const [id, owner] of previous) {
+    const contents = webContents.fromId(id);
+    if (contents && !contents.isDestroyed()) contents.close({ waitForBeforeUnload: false });
+    if (owner.kind !== "window") {
+      for (const target of BrowserWindow.getAllWindows())
+        if (!target.isDestroyed())
+          target.webContents.send(IPC.plugins.surfaceClosed, {
+            pluginId,
+            surfaceId: owner.surfaceId,
+            kind: owner.kind,
+          });
+    }
+  }
   return [...new Set([...ids, ...closed])];
+}
+
+/** Revocation is synchronous and must run before changing the active workspace. */
+export function revokeProjectSurfaces(): void {
+  for (const source of getPluginRegistry().enabledSources())
+    if (source.workspaceDir) closeAllSurfacesOfPlugin(source.id);
 }
 
 /** 当前开着的插件窗口（诊断用） */
@@ -403,8 +443,16 @@ export function claimRendererSurface(contents: WebContents, owner: SurfaceOwner)
     权限门装在这里，与窗口那条路装的是**同一个分区**（都按 pluginId 算），
     所以两边幂等、不会互相覆盖成不同的策略。
   */
-  hardenPluginPartition(contents.session);
-  getSurfaceOwners().claim(contents.id, owner);
+  const registry = getPluginRegistry();
+  const source = registry.sourceOf(owner.pluginId);
+  if (!source || (source.workspaceDir && source.workspaceDir !== registry.getWorkspaceDir()))
+    return;
+  hardenPluginPartition(contents.session, source);
+  getSurfaceOwners().claim(contents.id, {
+    ...owner,
+    sourceDir: source.dir,
+    workspaceDir: source.workspaceDir,
+  });
   contents.on("destroyed", () => getSurfaceOwners().release(contents.id));
 }
 
@@ -446,7 +494,12 @@ export function claimSurfaceBySession(contents: WebContents): boolean {
   */
   const source = registry
     .enabledSources()
-    .find((candidate) => session.fromPartition(pluginPartition(candidate.id)) === contents.session);
+    .find(
+      (candidate) =>
+        (!candidate.workspaceDir || candidate.workspaceDir === registry.getWorkspaceDir()) &&
+        session.fromPartition(pluginPartition(candidate.id, candidate.workspaceDir)) ===
+          contents.session,
+    );
   if (source === undefined) return false;
 
   /*
@@ -478,6 +531,7 @@ export function claimSurfaceBySession(contents: WebContents): boolean {
     const current = getSurfaceOwners().ownerOf(contents.id);
     if (current === undefined || current.surfaceId === hit.id) return;
     getSurfaceOwners().claim(contents.id, {
+      ...current,
       pluginId: source.id,
       surfaceId: hit.id,
       kind: hit.kind,

@@ -1,21 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { UsageSample } from "@/main/pisdk/session-store";
 import {
   applyUsageSamples,
-  emptyRollup,
   isZeroSample,
   modelKeyOf,
-  parseRollup,
-  pruneRollup,
-  ROLLUP_VERSION,
   type RollupSession,
-  readRollupFile,
-  rollupFilePath,
   splitModelKey,
-  writeRollupFile,
 } from "./usage-rollup";
 
 const SESSION: RollupSession = { seq: 0, seenUpdatedAt: 0, days: {} };
@@ -36,11 +26,6 @@ function sample(overrides: Partial<UsageSample> & { at: number }): UsageSample {
     ...overrides,
   };
 }
-
-const dirs: string[] = [];
-afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 describe("模型键", () => {
   it("serviceId|modelId，modelId 里带斜杠也不会拆错", () => {
@@ -129,120 +114,5 @@ describe("applyUsageSamples", () => {
 
   it("空样本直接返回原对象（稳态下每次统计都不该产生新对象）", () => {
     expect(applyUsageSamples(SESSION, [])).toBe(SESSION);
-  });
-});
-
-describe("pruneRollup", () => {
-  const rollup = {
-    version: ROLLUP_VERSION,
-    sessions: {
-      a: { seq: 1, seenUpdatedAt: 1, days: {} },
-      b: { seq: 1, seenUpdatedAt: 1, days: {} },
-    },
-  };
-
-  it("丢掉不存在的会话", () => {
-    const pruned = pruneRollup(rollup, new Set(["a"]));
-    expect(Object.keys(pruned.sessions)).toEqual(["a"]);
-  });
-
-  it("keep 为空时**原样返回**：会话列表读失败不能抹掉历史用量", () => {
-    const pruned = pruneRollup(rollup, new Set());
-    expect(pruned).toBe(rollup);
-  });
-
-  it("没有变化时返回同一个引用（调用方据此决定要不要落盘）", () => {
-    expect(pruneRollup(rollup, new Set(["a", "b"]))).toBe(rollup);
-  });
-});
-
-describe("parseRollup", () => {
-  it("认识自己写出来的形状", () => {
-    const parsed = parseRollup({
-      version: ROLLUP_VERSION,
-      sessions: {
-        s1: {
-          seq: 7,
-          seenUpdatedAt: 100,
-          first: 10,
-          last: 20,
-          days: {
-            "2026-09-24": {
-              i: 1,
-              o: 2,
-              cr: 3,
-              cw: 4,
-              m: { "svc|m": { i: 1, o: 2, cr: 3, cw: 4 } },
-            },
-          },
-        },
-      },
-    });
-    expect(parsed.sessions.s1?.seq).toBe(7);
-    expect(parsed.sessions.s1?.days["2026-09-24"]?.m["svc|m"]).toEqual({
-      i: 1,
-      o: 2,
-      cr: 3,
-      cw: 4,
-    });
-    expect(parsed.sessions.s1?.first).toBe(10);
-  });
-
-  it("版本不认识就整份作废（宁可重扫，也不用语义不同的数据算）", () => {
-    expect(parseRollup({ version: 99, sessions: { s: { seq: 1, days: {} } } }).sessions).toEqual(
-      {},
-    );
-  });
-
-  it("坏条目跳过、坏顶层回退空账本，绝不抛错", () => {
-    expect(parseRollup(null).sessions).toEqual({});
-    expect(parseRollup("字符串").sessions).toEqual({});
-    expect(parseRollup([]).sessions).toEqual({});
-    const parsed = parseRollup({
-      version: ROLLUP_VERSION,
-      sessions: { good: { seq: 1, days: {} }, bad: "不是对象", bad2: { seq: 1, days: 5 } },
-    });
-    expect(Object.keys(parsed.sessions)).toEqual(["good"]);
-  });
-
-  it("缺字段按 0 补齐，坏数字不吞掉整条", () => {
-    const parsed = parseRollup({
-      version: ROLLUP_VERSION,
-      sessions: { s: { days: { "2026-09-24": { i: "很多", o: 2 } } } },
-    });
-    expect(parsed.sessions.s?.seq).toBe(0);
-    expect(parsed.sessions.s?.days["2026-09-24"]).toEqual({ i: 0, o: 2, cr: 0, cw: 0, m: {} });
-  });
-
-  it("空账本的形状与 ROLLUP_VERSION 一致", () => {
-    expect(emptyRollup()).toEqual({ version: ROLLUP_VERSION, sessions: {} });
-  });
-});
-
-describe("磁盘往返", () => {
-  it("写出去读回来一致；文件缺失时给空账本", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "oint-rollup-"));
-    dirs.push(dir);
-    const file = rollupFilePath(dir);
-    expect(file.endsWith("usage-stats.json")).toBe(true);
-
-    await expect(readRollupFile(file)).resolves.toEqual(emptyRollup());
-
-    const rollup = applyUsageSamples({ seq: 3, seenUpdatedAt: 9, days: {} }, [
-      sample({ at: at(2026, 9, 24), inputTokens: 5 }),
-    ]);
-    await writeRollupFile(file, { version: ROLLUP_VERSION, sessions: { s1: rollup } });
-    const read = await readRollupFile(file);
-    expect(read.sessions.s1?.days).toEqual(rollup.days);
-  });
-
-  it("文件被写坏时回退空账本（统计是派生数据，坏了重扫即可）", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "oint-rollup-bad-"));
-    dirs.push(dir);
-    const file = rollupFilePath(dir);
-    await writeFile(file, "{ 这不是 JSON", "utf8");
-    await expect(readRollupFile(file)).resolves.toEqual(emptyRollup());
-    // 也确认它真的没有把坏文件改写成别的东西（读路径不该有副作用）
-    expect(await readFile(file, "utf8")).toBe("{ 这不是 JSON");
   });
 });

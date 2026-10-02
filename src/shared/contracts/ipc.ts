@@ -43,7 +43,7 @@ export const IPC = {
     cancelQueued: "chat:cancel-queued",
     compact: "chat:compact",
     event: "chat:event",
-    /** 拉取某会话当前流式消息的完整快照（增量缺口时整条补齐，见 ChatStreamSnapshot） */
+    /** 读取当前原生会话视图（初次订阅或 revision 缺口时恢复） */
     snapshot: "chat:snapshot",
   },
   approvals: {
@@ -197,7 +197,7 @@ export const IPC = {
     enable: "plugins:enable",
     disable: "plugins:disable",
     reload: "plugins:reload",
-    /** 安装一个 .ointplug 包（弹文件选择框） */
+    /** 安装一个原生插件 ZIP 包（弹文件选择框） */
     install: "plugins:install",
     /** 卸载一个插件；keepData 决定是否保留它的私有数据目录 */
     uninstall: "plugins:uninstall",

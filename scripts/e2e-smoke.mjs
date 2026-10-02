@@ -25,7 +25,7 @@ const MODEL_ID = probeEnv("MODEL") ?? "deepseek-v4-flash";
 
 const PORT = 19333;
 const ROOT = process.cwd();
-const TMP = path.join(os.tmpdir(), "oint-e2e");
+const TMP = path.join(os.tmpdir(), `oint-e2e-${Date.now()}-${process.pid}`);
 const USER_DATA = path.join(TMP, "userdata");
 const WORK_DIR = path.join(TMP, "work");
 const DATA_DIR = path.join(TMP, "data");
@@ -60,6 +60,10 @@ class CdpClient {
     this.ws = ws;
     this.nextId = 1;
     this.pending = new Map();
+    ws.addEventListener("close", () => {
+      for (const { reject } of this.pending.values()) reject(new Error("CDP connection closed"));
+      this.pending.clear();
+    });
     ws.addEventListener("message", (event) => {
       const message = JSON.parse(event.data);
       if (!message.id || !this.pending.has(message.id)) return;
@@ -162,16 +166,56 @@ async function evaluate(expression) {
   return result.result.value;
 }
 
-/** 轮询求值直到表达式返回真值；用于等待 run-ended / approval-requested */
+/** Wait for a committed native snapshot or approval notification. */
 async function waitFor(expression, label, timeoutMs = 120000) {
   const deadline = Date.now() + timeoutMs;
   let last;
   while (Date.now() < deadline) {
-    last = await evaluate(expression).catch(() => undefined);
+    last = await evaluate(expression);
     if (last) return last;
     await sleep(300);
   }
   throw new Error(`等待超时：${label}（最后取值 ${JSON.stringify(last)}）`);
+}
+
+// Start the send without awaiting its completion: a high-risk tool may be waiting for the approval below.
+async function beginRun(text) {
+  await evaluate(`(async () => {
+    const before = await window.oint.chat.snapshot(window.__e2e.sessionId);
+    window.__e2e.baseCount = before?.state.messages.length ?? 0;
+    window.__e2e.events.length = 0;
+    window.__e2e.sendDone = false;
+    window.__e2e.sendError = null;
+    window.__e2e.pendingSend = window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(text)}).then(
+      () => { window.__e2e.sendDone = true; },
+      (error) => { window.__e2e.sendError = String(error); window.__e2e.sendDone = true; },
+    );
+    return true;
+  })()`);
+}
+
+async function finishRun(label) {
+  await waitFor(`(async () => {
+    if (!window.__e2e.sendDone) return false;
+    if (window.__e2e.sendError) return true;
+    const snapshot = await window.oint.chat.snapshot(window.__e2e.sessionId);
+    return !!snapshot && !snapshot.state.running && snapshot.state.messages.length > window.__e2e.baseCount;
+  })()`, label);
+  return evaluate(`(async () => {
+    await window.__e2e.pendingSend;
+    if (window.__e2e.sendError) throw new Error(window.__e2e.sendError);
+    const snapshot = await window.oint.chat.snapshot(window.__e2e.sessionId);
+    if (!snapshot || snapshot.state.running) throw new Error("Conversation is not committed and idle");
+    const messages = snapshot.state.messages.slice(window.__e2e.baseCount);
+    const parts = messages.flatMap((message) => message.parts);
+    return {
+      text: messages.filter((message) => message.role === "assistant").flatMap((message) => message.parts).filter((part) => part.type === "text").map((part) => part.text).join("\\n"),
+      tools: parts.filter((part) => part.type === "tool-call"),
+      errored: messages.some((message) => message.status === "error"),
+      hasApproval: window.__e2e.events.some((event) => event.type === "approval-requested"),
+      approvalResolved: window.__e2e.events.some((event) => event.type === "approval-resolved"),
+    };
+  })()`);
 }
 
 // ==================== 技能夹具 ====================
@@ -208,7 +252,6 @@ async function main() {
   console.error("缺少 OINT_PROBE_API_KEY 环境变量，无法执行端到端冒烟");
     process.exit(1);
   }
-  fs.rmSync(TMP, { recursive: true, force: true });
   fs.mkdirSync(WORK_DIR, { recursive: true });
   // 技能夹具必须在启动之前就位，晚于 launchApp 就扫不到了
   ok("技能夹具写入", `${writeSkillFixture()}（技能名 ${SKILL_NAME}，标记 ${SKILL_MARKER}）`);
@@ -267,177 +310,50 @@ async function main() {
       `服务 ${settingsEcho.serviceCount} 个，模型 ${settingsEcho.modelId}，keyRoundTrip=${settingsEcho.keyRoundTrip}`,
     );
 
-    // ---- 事件采集器 + 建会话 ----
+    // Approval notices are the only event authority used here; conversation state comes from snapshots.
     const sessionId = await evaluate(`(async () => {
-      if (!window.__e2e) {
-        window.__e2e = { events: [] };
-        window.__e2e.unsub = window.oint.chat.onEvent((event) => window.__e2e.events.push(event));
-      }
-      window.__e2e.events.length = 0;
       const session = await window.oint.sessions.create({ title: "E2E 冒烟会话" });
-      window.__e2e.sessionId = session.id;
+      window.__e2e = { events: [], sessionId: session.id, sendDone: true };
+      window.__e2e.unsub = window.oint.chat.onEvent(({sessionId, event}) => {
+        if (sessionId === window.__e2e.sessionId && (event.type === "approval-requested" || event.type === "approval-resolved")) window.__e2e.events.push(event);
+      });
       return session.id;
     })()`);
     ok("会话创建", `sessionId=${sessionId}`);
 
-    // ---- 第一轮：纯文本流式对话 ----
-    await evaluate(
-      `window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify("只回复两个字：你好")})`,
-    );
-    await waitFor(
-      `window.__e2e.events.some((e) => e.type === "run-ended")`,
-      "第一轮流式对话结束",
-    );
-    const firstRun = await evaluate(`(() => {
-      const texts = window.__e2e.events.filter((e) => e.type === "part-upsert" && e.part && e.part.type === "text");
-      const lastText = texts.length ? texts[texts.length - 1].part.text : "";
-      const ended = window.__e2e.events.find((e) => e.type === "run-ended");
-      const errored = window.__e2e.events.some((e) => e.type === "message-updated" && e.patch && e.patch.status === "error");
-      return { text: lastText, reason: ended ? ended.reason : null, errored };
-    })()`);
-    assertStep(
-      "流式对话产生文本",
-      typeof firstRun.text === "string" && firstRun.text.length > 0 && !firstRun.errored,
-      `文本=${JSON.stringify(firstRun.text)}，reason=${firstRun.reason}`,
-    );
+    await beginRun("只回复两个字：你好");
+    const firstRun = await finishRun("第一轮 committed 对话结束");
+    assertStep("对话产生已提交文本", firstRun.text.length > 0 && !firstRun.errored, JSON.stringify(firstRun.text));
 
-    // ---- 第二轮：低风险 bash（默认权限下应自动放行）----
-    await evaluate(`(async () => {
-      window.__e2e.events.length = 0;
-      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
-        '请用 bash 工具执行 node -e "console.log(2+3)"，完成后只回复结果数字',
-      )});
-      return true;
-    })()`);
-    await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第二轮 bash 结束");
-    const bashRun = await evaluate(`(() => {
-      // 工具调用在渲染侧表现为 part-upsert 的 tool-call part（不是 harness 的 tool_end 事件）
-      const parts = window.__e2e.events
-        .filter((e) => e.type === "part-upsert" && e.part && e.part.type === "tool-call")
-        .map((e) => e.part);
-      const done = parts.find((p) => p.status === "done");
-      const approval = window.__e2e.events.find((e) => e.type === "approval-requested");
-      return {
-        hasApproval: !!approval,
-        toolName: done ? done.toolName : null,
-        isError: done ? !!done.isError : null,
-        result: done ? done.result : null,
-      };
-    })()`);
-    assertStep(
-      "低风险 bash 自动放行",
-      bashRun.toolName === "bash" && bashRun.isError === false && bashRun.hasApproval === false,
-      `工具=${bashRun.toolName}，结果=${JSON.stringify(bashRun.result)}，是否弹审批=${bashRun.hasApproval}`,
-    );
+    await beginRun('请用 bash 工具执行 node -e "console.log(2+3)"，完成后只回复结果数字');
+    const bashRun = await finishRun("第二轮 bash 结束");
+    const bash = bashRun.tools.find((tool) => tool.toolName === "bash" && tool.status === "done");
+    assertStep("低风险 bash 自动放行", !!bash && !bash.isError && !bashRun.hasApproval, JSON.stringify(bashRun));
 
-    // ---- 第三轮：高风险 write（默认权限下应弹审批，用户允许一次）----
     const writeTarget = path.join(WORK_DIR, "e2e-written.txt");
-    await evaluate(`(async () => {
-      window.__e2e.events.length = 0;
-      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
-        `请用 write 工具把内容 hello-e2e 写入文件 ${writeTarget}，完成后只回复 OK`,
-      )});
-      return true;
-    })()`);
-    const approvalId = await waitFor(
-      `(() => {
-        const e = window.__e2e.events.find((item) => item.type === "approval-requested");
-        return e ? e.request.id : null;
-      })()`,
-      "高风险工具触发审批",
-      120000,
-    );
-    await evaluate(
-      `window.oint.approvals.respond(${JSON.stringify(approvalId)}, "allow_once")`,
-    );
-    await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第三轮审批后结束");
-    const writeRun = await evaluate(`(() => {
-      const parts = window.__e2e.events
-        .filter((e) => e.type === "part-upsert" && e.part && e.part.type === "tool-call")
-        .map((e) => e.part);
-      const done = parts.find((p) => p.status === "done");
-      const resumed = window.__e2e.events.some((e) => e.type === "approval-resolved");
-      return {
-        toolName: done ? done.toolName : null,
-        isError: done ? !!done.isError : null,
-        approvalResolved: resumed,
-      };
-    })()`);
-    assertStep(
-      "高风险工具审批后执行",
-      writeRun.toolName === "write" &&
-        writeRun.isError === false &&
-        writeRun.approvalResolved &&
-        fs.existsSync(writeTarget),
-      `工具=${writeRun.toolName}，isError=${writeRun.isError}，审批已决=${writeRun.approvalResolved}，文件存在=${fs.existsSync(writeTarget)}`,
-    );
+    await beginRun(`请用 write 工具把内容 hello-e2e 写入文件 ${writeTarget}，完成后只回复 OK`);
+    const approvalId = await waitFor(`(() => {
+      if (window.__e2e.sendError) throw new Error(window.__e2e.sendError);
+      return window.__e2e.events.find((event) => event.type === "approval-requested")?.request.id ?? null;
+    })()`, "高风险工具触发审批");
+    await evaluate(`window.oint.approvals.respond(${JSON.stringify(approvalId)}, "allow_once")`);
+    const writeRun = await finishRun("第三轮审批后结束");
+    const written = writeRun.tools.find((tool) => tool.toolName === "write" && tool.status === "done");
+    assertStep("高风险工具审批后执行", !!written && !written.isError && writeRun.approvalResolved && fs.existsSync(writeTarget), JSON.stringify(writeRun));
 
-    // ---- 第四轮：完全访问模式（write 不再弹审批）----
     const fullTarget = path.join(WORK_DIR, "e2e-full.txt");
     await evaluate(`(async () => {
       const settings = await window.oint.settings.read();
       await window.oint.settings.write({ ...settings, permissionMode: "full" });
-      window.__e2e.events.length = 0;
-      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
-        `请用 write 工具把内容 full-mode 写入文件 ${fullTarget}，完成后只回复 OK`,
-      )});
-      return true;
     })()`);
-    await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第四轮完全访问结束");
-    const fullRun = await evaluate(`(() => {
-      const parts = window.__e2e.events
-        .filter((e) => e.type === "part-upsert" && e.part && e.part.type === "tool-call")
-        .map((e) => e.part);
-      const done = parts.find((p) => p.status === "done");
-      const approval = window.__e2e.events.find((e) => e.type === "approval-requested");
-      return {
-        hasApproval: !!approval,
-        toolName: done ? done.toolName : null,
-        isError: done ? !!done.isError : null,
-      };
-    })()`);
-    assertStep(
-      "完全访问模式免审批",
-      fullRun.toolName === "write" &&
-        fullRun.isError === false &&
-        fullRun.hasApproval === false &&
-        fs.existsSync(fullTarget),
-      `工具=${fullRun.toolName}，isError=${fullRun.isError}，是否弹审批=${fullRun.hasApproval}`,
-    );
+    await beginRun(`请用 write 工具把内容 full-mode 写入文件 ${fullTarget}，完成后只回复 OK`);
+    const fullRun = await finishRun("第四轮完全访问结束");
+    const fullWrite = fullRun.tools.find((tool) => tool.toolName === "write" && tool.status === "done");
+    assertStep("完全访问模式免审批", !!fullWrite && !fullWrite.isError && !fullRun.hasApproval && fs.existsSync(fullTarget), JSON.stringify(fullRun));
 
-    // ---- 第五轮：技能注入（系统提示里的 <available_skills> 索引）----
-    // 断言只认一件事：模型回复里出现夹具技能名。多说别的、格式不同都不算失败；
-    // 失败时 detail 带上完整回复，用于区分「索引没注入」与「模型没按要求输出」。
-    await evaluate(`(async () => {
-      window.__e2e.events.length = 0;
-      await window.oint.chat.send(window.__e2e.sessionId, ${JSON.stringify(
-        "不要调用任何工具，直接回答：你当前可用的技能（skills）有哪些？只输出技能名字，用逗号分隔。",
-      )});
-      return true;
-    })()`);
-    await waitFor(`window.__e2e.events.some((e) => e.type === "run-ended")`, "第五轮技能问答结束");
-    const skillRun = await evaluate(`(() => {
-      // 同一个文本 part 会随流式多次 part-upsert，按 (messageId, partIndex) 保留最新快照再拼接
-      const latestTexts = new Map();
-      for (const e of window.__e2e.events) {
-        if (e.type === "part-upsert" && e.part && e.part.type === "text") {
-          latestTexts.set(e.messageId + "#" + e.partIndex, e.part.text || "");
-        }
-      }
-      const ended = window.__e2e.events.find((e) => e.type === "run-ended");
-      const approval = window.__e2e.events.find((e) => e.type === "approval-requested");
-      return {
-        text: [...latestTexts.values()].join("\\n"),
-        reason: ended ? ended.reason : null,
-        hasApproval: !!approval,
-      };
-    })()`);
-    const skillHit = typeof skillRun.text === "string" && skillRun.text.toLowerCase().includes(SKILL_NAME);
-    assertStep(
-      "技能注入（系统提示的技能索引）",
-      skillHit,
-      `技能名=${SKILL_NAME}，标记=${SKILL_MARKER}，命中=${skillHit}，reason=${skillRun.reason}，是否弹审批=${skillRun.hasApproval}，模型回复=${JSON.stringify(skillRun.text)}`,
-    );
+    await beginRun("不要调用任何工具，直接回答：你当前可用的技能（skills）有哪些？只输出技能名字，用逗号分隔。");
+    const skillRun = await finishRun("第五轮技能问答结束");
+    assertStep("技能注入（系统提示的技能索引）", skillRun.text.toLowerCase().includes(SKILL_NAME), JSON.stringify(skillRun.text));
 
     // ---- 持久化：渲染层回读 ----
     const persisted = await evaluate(`(async () => {
@@ -455,7 +371,7 @@ async function main() {
     );
 
     // ---- 优雅退出 ----
-    await evaluate(`window.oint.window.close()`);
+    await evaluate(`window.oint.window.close()`).catch(() => undefined);
     const exited = await waitForExit(child, 15000);
     ok("优雅退出", exited ? "进程已退出" : "进程未在 15s 内退出（后续强制结束）");
     cdp.close();
@@ -506,7 +422,7 @@ async function main() {
       JSON.stringify(listShape),
     );
 
-    await evaluate(`window.oint.window.close()`);
+    await evaluate(`window.oint.window.close()`).catch(() => undefined);
     await waitForExit(child, 15000);
     cdp.close();
     cdp = null;
@@ -517,7 +433,10 @@ async function main() {
     if (cdp) cdp.close();
     killApp(child);
     await sleep(500);
-    fs.rmSync(TMP, { recursive: true, force: true });
+    const cleanupTarget = fs.realpathSync(TMP);
+    const temporaryRoot = fs.realpathSync(os.tmpdir());
+    if (path.dirname(cleanupTarget) !== temporaryRoot || !path.basename(cleanupTarget).startsWith("oint-e2e-")) throw new Error("Unsafe probe cleanup target");
+    fs.rmSync(cleanupTarget, { recursive: true, force: true });
   }
 
   console.log("-".repeat(64));

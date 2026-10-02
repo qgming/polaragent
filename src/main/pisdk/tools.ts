@@ -24,7 +24,7 @@ import { createBrowserTools } from "./tools/browser";
 import { createReadToolWithLineNumbers } from "./tools/read";
 import { createReadImageTool, READ_IMAGE_TOOL_NAME } from "./tools/read-image";
 import { createGlobTool, createGrepTool } from "./tools/search";
-import { createTodoState, createTodoTool, type TodoState } from "./tools/todo";
+import { createTodoTool } from "./tools/todo";
 import { createWebTools } from "./tools/web";
 
 /**
@@ -40,8 +40,6 @@ export interface BuildToolsOptions {
    * 调用方需要旧行为。生产路径的两处调用都必须传。
    */
   searchRoots?: readonly string[];
-  todo?: TodoState;
-  persistTodo?: (state: TodoState) => void | Promise<void>;
 }
 
 /** 工具名常量，供权限层与 UI 复用 */ export const TOOL_NAMES = {
@@ -189,7 +187,7 @@ export function buildTools(
     { ...createEditTool(), description: EDIT_DESCRIPTION },
     createGrepTool({ allowedRoots: options.searchRoots }),
     createGlobTool({ allowedRoots: options.searchRoots }),
-    createTodoTool({ todo: options.todo ?? createTodoState(), persistTodo: options.persistTodo }),
+    createTodoTool(),
     // 浏览器工具：操作的是主进程持有的 guest，与本会话的工作目录无关（见 tools/browser.ts）
     ...(browserAutomation === undefined ? [] : createBrowserTools(browserAutomation)),
     // 网络工具：同样是主进程单例（WebService），与工作目录无关（见 tools/web.ts）

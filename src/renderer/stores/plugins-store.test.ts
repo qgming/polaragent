@@ -39,7 +39,7 @@ function viewFixture(patch: Partial<PluginView> = {}): PluginView {
     newlyRequested: [],
     contributionNames: { skills: [], prompts: [], subagents: [], mcpServers: [] },
     hooks: [],
-    hasMain: false,
+    hasCode: false,
     surfaces: [
       {
         id: "git",

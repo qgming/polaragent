@@ -12,12 +12,11 @@ import { ScrollArea } from "@/renderer/components/ui/scroll-area";
 import { Switch } from "@/renderer/components/ui/switch";
 import { cn } from "@/renderer/lib/utils";
 import { usePluginsStore } from "@/renderer/stores/plugins-store";
-import {
-  hookFailsClosed,
-  type PluginPermissionView,
-  type PluginState,
-  type PluginSurfaceInfo,
-  type PluginView,
+import type {
+  PluginPermissionView,
+  PluginState,
+  PluginSurfaceInfo,
+  PluginView,
 } from "@/shared/contracts/plugin";
 import {
   CONTRIBUTION_NAME_ROWS,
@@ -263,7 +262,7 @@ export function PluginDetailDialog({
                   对声明式插件（没有 main）不显示：它们不跑代码，说这一句只会
                   让人以为所有插件都危险。
                 */}
-                {view.hasMain && (
+                {view.hasCode && (
                   <p className="rounded-lg border border-amber-600/25 bg-amber-600/[0.06] p-2.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
                     {t("plugins.trustBoundary")}
                   </p>
@@ -273,7 +272,7 @@ export function PluginDetailDialog({
               {/*
                 **钩子逐条列出来。**
 
-                与"贡献物要列名字"同源但更硬：`PreToolUse` 能**拦住工具调用**，
+                与"贡献物要列名字"同源但更硬：`beforeTool` 能**拦住工具调用**，
                 而用户做"装不装 / 留不留"的判断时必须看见它会介入哪些调用。
                 ZCode 的插件详情页也是逐条列钩子的 —— 那是对比里唯一值得照抄的界面细节。
 
@@ -285,14 +284,12 @@ export function PluginDetailDialog({
                   <div className="space-y-1.5">
                     {view.hooks.map((hook) => (
                       <div
-                        key={hook.id}
+                        key={hook}
                         className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-border/60 px-2.5 py-1.5 text-[11.5px]"
                       >
-                        <span className={cn(mono, "text-ink-2")}>{hook.event}</span>
-                        <span className={cn(mono, "text-ink-4")}>
-                          {hook.matcher ?? t("plugins.hookAllTools")}
-                        </span>
-                        {hookFailsClosed(hook) && hook.event === "PreToolUse" && (
+                        <span className={cn(mono, "text-ink-2")}>{hook}</span>
+                        <span className={cn(mono, "text-ink-4")}>{t("plugins.hookAllTools")}</span>
+                        {hook === "beforeTool" && (
                           <span className="rounded-full bg-current/15 px-1.5 text-[9.5px] text-ink-3">
                             {t("plugins.hookFailsClosed")}
                           </span>

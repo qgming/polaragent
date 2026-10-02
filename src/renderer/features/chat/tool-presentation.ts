@@ -311,7 +311,6 @@ export interface SubagentDetailData {
 export const SUBAGENT_STATUS_LABEL_KEYS: Record<SubagentRunStatus, string> = {
   running: "rightPanel.subagentRunning",
   completed: "rightPanel.subagentCompleted",
-  truncated: "rightPanel.subagentTruncated",
   failed: "rightPanel.subagentFailed",
   aborted: "rightPanel.subagentAborted",
   denied: "rightPanel.subagentDenied",
@@ -1048,7 +1047,6 @@ export function parseBrowserDetail(
     if (typeof record.total === "number")
       fields.push({ label: "total", value: String(record.total) });
     if (typeof record.truncated === "boolean") {
-      fields.push({ label: "truncated", value: String(record.truncated) });
     }
   } else if (toolName === BROWSER_TOOL_NAMES.evaluate && record !== null) {
     if (record.ok === true) {

@@ -3,7 +3,6 @@ import {
   PLUGIN_PERMISSIONS,
   type PluginContributionSummary,
   type PluginPermissionView,
-  UNENFORCED_PLUGIN_PERMISSIONS,
 } from "@/shared/contracts/plugin";
 import {
   contributionChips,
@@ -25,7 +24,7 @@ describe("permissionLabelKey", () => {
   it("已定义的权限返回字面量文案键", () => {
     expect(permissionLabelKey("ui.panel")).toBe("plugins.perm.uiPanel");
     expect(permissionLabelKey("shell.exec")).toBe("plugins.perm.shellExec");
-    expect(permissionLabelKey("fs.read")).toBe("plugins.perm.fsRead");
+    expect(permissionLabelKey("fs.read")).toBeUndefined();
   });
 
   it("**宿主认识的每一项权限都有展示文案** —— 加权限时漏改这里会红", () => {
@@ -52,61 +51,16 @@ describe("permissionLabelKey", () => {
   it("权限 id 自带点号，但文案键必须是扁平的 camelCase", () => {
     // 拼串（`plugins.perm.${id}`）会撞上 i18next 的点号嵌套语义，
     // 这条用例把「表驱动」这个形状本身钉住。
-    const key = permissionLabelKey("fs.write");
-    expect(key).toBe("plugins.perm.fsWrite");
+    const key = permissionLabelKey("clipboard.write");
+    expect(key).toBe("plugins.perm.clipboardWrite");
     expect(key).not.toContain("..");
   });
 });
 
 describe("isPermissionEnforced", () => {
-  /**
-   * **这份清单被逐字钉住，是为了让每一次改动都是有意的。**
-   *
-   * 它是一张"承诺与实现不符"的账：列进去 = 界面上会打「未生效」，用户因此知道
-   * 那条权限今天不管用。两件事都会让它必须被编辑，而两件都是好事：
-   *
-   * - **实现了某一项** → 从集合里删掉它，界面自动不再标注（这条用例会红，提醒你确认
-   *   执行点真的接上了：权限卡不该在能力已经生效之后还说它没生效）；
-   * - **新增一项没实现的能力** → 加进来，界面如实标注（否则又是一条做不到的承诺）。
-   */
-  it("未生效清单逐条钉住（加一项 / 删一项都要改这里）", () => {
-    expect([...UNENFORCED_PLUGIN_PERMISSIONS].sort()).toEqual([
-      "fs.delete",
-      "fs.read",
-      "fs.write",
-      "session.read",
-      "shell.openExternal",
-      "ui.view",
-    ]);
-  });
-
-  it("清单里的每一项都是宿主认识的权限 —— 拼错一个 id 会让标记悄悄失效", () => {
-    const known = new Set<string>(PLUGIN_PERMISSIONS);
-    const unknown = [...UNENFORCED_PLUGIN_PERMISSIONS].filter((id) => !known.has(id));
-    expect(unknown, `这些 id 不在 PLUGIN_PERMISSIONS 里：${unknown.join(", ")}`).toEqual([]);
-  });
-
-  it("已实现的能力一律算「生效」—— 没在清单里就是有执行点", () => {
-    // 正向：这几条今天都有真执行点（贡献面门禁、界面桥、MCP 装载、命令/工具注册、钩子）
-    expect(isPermissionEnforced("skills.contribute")).toBe(true);
-    expect(isPermissionEnforced("net.fetch")).toBe(true);
-    expect(isPermissionEnforced("shell.exec")).toBe(true);
-    expect(isPermissionEnforced("agent.tool.register")).toBe(true);
-    /*
-      **钩子这条是从"未生效"转过来的**（清单里删掉了它，同时删掉了上面那份清单的一项）。
-      留一条断言在这里，是因为"钩子实现了但权限卡还在说它未生效"是一个会活很久的
-      静默错误：界面在告诫用户"它不管用"，而它其实会拦住工具调用。
-    */
-    expect(isPermissionEnforced("hostHooks.register")).toBe(true);
-    // 反向：这几条仍然没有执行点
+  it("all published capabilities have a real enforcement point", () => {
+    expect(PLUGIN_PERMISSIONS.every(isPermissionEnforced)).toBe(true);
     expect(isPermissionEnforced("fs.write")).toBe(false);
-    expect(isPermissionEnforced("session.read")).toBe(false);
-  });
-
-  it("表外的权限算「生效」—— 未知不等于未生效", () => {
-    // 一个新客户端贡献的权限、或宿主删掉的旧权限：界面显示 id 原文 + 「未知」，
-    // 但**不该**再叠一枚「未生效」—— 那会变成"我不认识它，所以它没用"的错误断言。
-    expect(isPermissionEnforced("future.unknown.permission")).toBe(true);
   });
 });
 

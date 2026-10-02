@@ -172,7 +172,13 @@ export function registerPluginScheme(): void {
  */
 const handled = new WeakSet<Session>();
 
-export function installPluginProtocolOn(target: Session): void {
+export interface SurfaceProtocolSource {
+  id: string;
+  dir: string;
+  workspaceDir?: string;
+}
+
+export function installPluginProtocolOn(target: Session, binding?: SurfaceProtocolSource): void {
   if (handled.has(target)) return;
   /*
     **先注册成功，再记账。**
@@ -186,6 +192,13 @@ export function installPluginProtocolOn(target: Session): void {
 
     const registry = getPluginRegistry();
     if (!registry.loaded) await registry.reload();
+    const bindingIsCurrent = (): boolean =>
+      !binding ||
+      (binding.id === parsed.pluginId &&
+        registry.find(binding.id)?.enabled === true &&
+        registry.sourceOf(binding.id)?.dir === binding.dir &&
+        (!binding.workspaceDir || binding.workspaceDir === registry.getWorkspaceDir()));
+    if (!bindingIsCurrent()) return fail(403, "Plugin surface source is no longer active");
 
     /*
       **只有已启用且清单合法的插件能服务资源。**
@@ -214,6 +227,7 @@ export function installPluginProtocolOn(target: Session): void {
       return fail(404, "Not found");
     }
 
+    if (!bindingIsCurrent()) return fail(403, "Plugin surface source is no longer active");
     const contentType = MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream";
     return new Response(new Uint8Array(body), { status: 200, headers: baseHeaders(contentType) });
   });

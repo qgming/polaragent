@@ -16,6 +16,26 @@ export async function probeKernel(load = (name) => import(name)) {
     const { BACKGROUND_CONTEXT: context } = await load("@earendil-works/chord/context");
     const { Harness, createRegistry } = await load("@earendil-works/pi-durable");
     const { createModels } = await load("@earendil-works/pi-ai/models");
+    await check("official plugin RPC and Chord loader", async () => {
+      const client = await load("@earendil-works/pi-client");
+      const server = await load("@earendil-works/pi-server");
+      const protocol = await load("@earendil-works/pi-protocol");
+      const chord = await load("@earendil-works/chord");
+      const loader = await load("@earendil-works/chord/node");
+      for (const api of [client.Client, client.createClientServiceTransport, server.Server,
+        chord.createFacetHost, chord.defineFacet, loader.createFacetBundleLoader]) {
+        if (typeof api !== "function") throw new Error("Missing official plugin API");
+      }
+      const payload = new Uint8Array([1, 2, 3, 4]);
+      const frame = protocol.encodeFrame(payload);
+      const decoder = new protocol.FrameDecoder();
+      const messages = [...decoder.push(frame.subarray(0, 2)), ...decoder.push(frame.subarray(2))];
+      decoder.end();
+      if (messages.length !== 1 || !messages[0].every((value, index) => value === payload[index])) {
+        throw new Error("Native incremental byte framing failed");
+      }
+      return "native Client/Server/protocol and facet loader imports, framed bytes";
+    });
     await check("pi-ai model catalog", async () => {
       const all = await load("@earendil-works/pi-ai/providers/all");
       const providers = all.getBuiltinProviders();

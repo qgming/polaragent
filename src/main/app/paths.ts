@@ -51,7 +51,7 @@ const DIR_MODE = 0o700;
  * 拼出来的路径一定落在 plugins/ 里。
  */
 export function pluginDirName(id: string): string {
-  return id.replace(/[^a-z0-9._-]/gi, "_");
+  return encodeURIComponent(id).replace(/\.\./g, "%2E%2E");
 }
 
 /** 插件根目录：`<dataDir>/plugins` */

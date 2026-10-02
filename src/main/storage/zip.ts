@@ -126,7 +126,7 @@ export async function extractZipFile(
 /**
  * 读一个 zip 里**根级**的某个文件，不解压到磁盘。
  *
- * 插件安装要先用它读 `plugin.json` 判"这是一个什么插件"，再决定装到哪个目录 ——
+ * 插件安装要先用它读 `package.json` 判"这是一个什么插件"，再决定装到哪个目录 ——
  * 先解压再判的话，一个恶意包在"还没校验"的时候就已经写进磁盘了。
  */
 export async function readZipEntry(
@@ -141,8 +141,8 @@ export async function readZipEntry(
     return undefined;
   }
   /*
-    认两种布局：清单在根（`plugin.json`），或者在**唯一的一层子目录**里
-    （`my-plugin/plugin.json`）。
+    认两种布局：清单在根（`package.json`），或者在**唯一的一层子目录**里
+    （`my-plugin/package.json`）。
     后者是"右键压缩一个文件夹"的产物 —— 作者十有八九是那么打包的，
     而拒收它只会让每个人都要学一遍"要把文件放在压缩包根"。
   */

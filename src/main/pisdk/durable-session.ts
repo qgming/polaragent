@@ -1,4 +1,4 @@
-import type { Context } from "@earendil-works/chord";
+import type { Context, JsonRepresentation } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
@@ -6,12 +6,36 @@ import {
   type Conversation,
   type ConversationId,
   type Cursor,
+  createSession,
   defineDoc,
   type EntryId,
   type EntryRecord,
   type Harness,
+  type Session,
   type Storage,
+  type UsageState,
 } from "@earendil-works/pi-durable";
+import type { SessionUsageRecord } from "@/shared/contracts/session";
+import { observeUsage, sumNativeUsage } from "./native-usage";
+import type { SessionIndexEntry } from "./sessions-index";
+
+export const SessionMetadataDoc = defineDoc<{ attributes: JsonRepresentation<SessionIndexEntry> }>({
+  kind: "oint.metadata",
+  version: 1,
+  scope: "session",
+  initial: () => ({ attributes: {} }),
+});
+export const SessionPerformanceDoc = defineDoc<{
+  performance: JsonRepresentation<Omit<SessionUsageRecord, "tokenUsage">> | null;
+}>({
+  kind: "oint.performance",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ performance: null }),
+});
+export class SessionHandleReleased extends Error {}
 
 export const AppSessionDoc = defineDoc({
   kind: "oint.session",
@@ -83,12 +107,14 @@ export class AppSessionHandle {
   private releasePromise?: Promise<void>;
   private released?: () => void;
   private closePromise?: Promise<void>;
+  private usageObserver?: Awaited<ReturnType<typeof observeUsage>>;
   constructor(
     readonly storage: Storage,
     readonly metadata: AppSessionMetadata,
     public activeConversationId: ConversationId,
     private readonly invalidate: () => void,
     initialMessageCount?: number,
+    readonly family?: AppSessionHandle,
   ) {
     this.messageCount = initialMessageCount;
   }
@@ -114,6 +140,7 @@ export class AppSessionHandle {
   }
 
   private finishRelease(): void {
+    this.usageObserver?.stop();
     this.unsubscribe?.();
     this.unsubscribeClose?.();
     this.closed = true;
@@ -124,11 +151,16 @@ export class AppSessionHandle {
 
   bindHarness(factory: () => Promise<Harness>): Promise<Harness> {
     return this.serialize(async () => {
-      if (this.closed || this.releasePromise) throw new Error("会话存储已关闭，请重新打开会话");
+      if (this.closed || this.releasePromise)
+        throw new SessionHandleReleased("会话存储已关闭，请重新打开会话");
       if (!this.owner) {
         await this.primeTail(BACKGROUND_CONTEXT);
-        this.owner = await factory();
-        this.unsubscribeClose = this.owner.subscribeClose(() => this.markReleasing());
+        this.owner = this.family ? await this.family.bindHarness(factory) : await factory();
+        if (!this.family) this.usageObserver = await observeUsage(this.owner, this.storage);
+        this.unsubscribeClose = this.owner.subscribeClose(() => {
+          this.markReleasing();
+          if (this.family) this.finishRelease();
+        });
         this.unsubscribe = this.owner.subscribeCommits((publication) => {
           const entries = publication.changes.flatMap((change) =>
             change.type === "entry" && change.value.conversationId === this.activeConversationId
@@ -160,13 +192,53 @@ export class AppSessionHandle {
     });
   }
 
+  async flushUsage(): Promise<void> {
+    if (this.family) await this.family.flushUsage();
+    else await this.usageObserver?.flush();
+  }
+
+  /** Reuse the live owner, or create a short-lived official Session and invalidate its closed storage. */
+  withSession<T>(operation: (session: Session) => Promise<T>): Promise<T> {
+    if (this.family) return this.family.withSession(operation);
+    return this.serialize(async () => {
+      if (this.closed || this.releasePromise) throw new SessionHandleReleased("会话存储已释放");
+      if (this.owner) return operation(this.owner);
+      const session = createSession(this.storage);
+      try {
+        return await operation(session);
+      } finally {
+        this.markReleasing();
+        try {
+          await session.close(BACKGROUND_CONTEXT);
+        } finally {
+          this.finishRelease();
+        }
+      }
+    });
+  }
+
+  readStorage<T>(operation: (storage: Storage) => Promise<T>): Promise<T> {
+    if (this.family) return this.family.readStorage(operation);
+    return this.serialize(() => {
+      if (this.closed || this.releasePromise) throw new SessionHandleReleased("会话存储已释放");
+      return operation(this.storage);
+    });
+  }
+
   close(): Promise<void> {
     this.markReleasing();
     this.closePromise ??= this.serialize(async () => {
       if (this.closed) return;
       try {
-        if (this.owner) await this.owner.close(BACKGROUND_CONTEXT);
-        else await this.storage.close(BACKGROUND_CONTEXT);
+        if (!this.family) {
+          if (this.owner) {
+            try {
+              await this.flushUsage();
+            } finally {
+              await this.owner.close(BACKGROUND_CONTEXT);
+            }
+          } else await this.storage.close(BACKGROUND_CONTEXT);
+        }
       } finally {
         this.finishRelease();
       }
@@ -326,43 +398,11 @@ export class AppSessionHandle {
 
   async getStats(context: Context) {
     await this.loadHistory(context);
-    const usage = emptyUsage();
-    const conversations = await this.storage.scanConversations(
-      {},
-      Number.MAX_SAFE_INTEGER,
-      undefined,
-      context,
+    const usage = sumNativeUsage(
+      (await readDocument(this.storage, "pi.usage", this.activeConversationId)) as
+        | UsageState
+        | undefined,
     );
-    for (const conversation of conversations.items) {
-      const ledger = await readDocument(this.storage, "pi.usage", conversation.id);
-      for (const category of [ledger?.models, ledger?.tools]) {
-        if (!category || typeof category !== "object" || Array.isArray(category)) continue;
-        for (const bucket of Object.values(category)) {
-          if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
-          for (const key of [
-            "input",
-            "output",
-            "cacheRead",
-            "cacheWrite",
-            "totalTokens",
-          ] as const) {
-            const value = bucket[key];
-            if (typeof value === "number") usage[key] += value;
-          }
-          for (const key of ["reasoning", "cacheWrite1h"] as const) {
-            const value = bucket[key];
-            if (typeof value === "number") usage[key] = (usage[key] ?? 0) + value;
-          }
-          const cost = bucket.cost;
-          if (cost && typeof cost === "object" && !Array.isArray(cost)) {
-            for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"] as const) {
-              const value = cost[key];
-              if (typeof value === "number") usage.cost[key] += value;
-            }
-          }
-        }
-      }
-    }
     const messageCount = this.messageCount ?? 0;
     return { messageCount, usage };
   }

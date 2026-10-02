@@ -1,37 +1,5 @@
-// 开发工具箱 —— 四个确定性的小工具，全部是**插件内置的代码**。
-//
-// ## ⚠️ 为什么扩展名是 `.cjs` 而不是 `.js`
-//
-// **踩过，而且很难查。** 这个文件用的是 `require()`（CommonJS），而 Node 决定
-// "一个 `.js` 文件是 CJS 还是 ESM"靠的是**向上找最近的 `package.json` 的 `type` 字段**。
-// 插件目录里没有 `package.json`，于是它一路找到**应用根**那份 —— 而应用是
-// `"type": "module"`。结果：这个文件被当成 ESM 执行，
-// `require is not defined in ES module scope`，进程**退出码 1**。
-//
-// 而宿主当时只报得出"插件进程在完成握手前退出（退出码 1）"—— 原因完全看不出来。
-//
-// `.cjs` **永远是 CommonJS**，与最近的 package.json 无关；`.mjs` 永远是 ESM。
-// 插件想避开这个坑，就用这两个之一；用 `.js` 的话得自己放一份 `package.json`。
-//
-// ## 这个文件在演示什么
-//
-// 「插件给模型加工具」这件事**不需要任何外部服务**：没有 MCP server、没有网络、
-// 没有云端。一个 `main.js` + 一段纯函数就够了 —— 模型看到的工具与连了远端 MCP
-// 的那些**完全一样**（同一张工具表、同一种调用形状）。
-//
-// ## 权限：只要 `agent.tool.register`
-//
-// 没有 `fs`、没有 `shell.exec`、没有 `net.fetch`。这四个工具全是纯函数，
-// 所以**一个危险权限都不申请** —— 用户面对权限卡时看到的是清一色的低风险。
-// 这是刻意的示范：给模型加能力不必等于给它权限。
-//
-// ## 与技能的分工
-//
-// `skills/using-toolkit/SKILL.md` 讲的是"什么时候该用这些工具、输入要先怎么处理"。
-// 工具本身只说"我接受什么"，技能说"你该怎么想"。两者一起才是完整的贡献：
-// 光有工具，模型可能拿 `hash` 去算它本该用 `read` 读的文件。
-
-const { createHash, randomUUID } = require("node:crypto");
+import { createHash, randomUUID } from "node:crypto";
+import { defineFacet, defineService } from "@earendil-works/chord";
 
 /** 支持的哈希算法。**白名单而不是透传** —— 透传的话模型可以传 `md5-sha1` 之类 */
 const HASH_ALGORITHMS = ["sha256", "sha512", "sha1", "md5"];
@@ -192,51 +160,26 @@ function runTime(args) {
 
 const HANDLERS = { hash: runHash, encode: runEncode, uuid: runUuid, time: runTime };
 
-// ── 与宿主的协议 ──────────────────────────────────────────────────────────────
 
-process.parentPort.on("message", (event) => {
-  const message = event.data;
-  if (message === null || typeof message !== "object") return;
-
-  if (message.type === "init") {
-    process.parentPort.postMessage({
-      type: "ready",
-      v: 1,
-      tools: TOOLS,
-      commands: [],
+export default defineFacet({
+  id: "dev.oint.toolkit.agent",
+  setup(env) {
+    const description = env.replicatedState({
+      tools: TOOLS.map((tool) => ({ ...tool, replay: ["hash", "encode"].includes(tool.name) ? "safe" : "unsafe" })),
+      commands: [], sections: [],
     });
-    return;
-  }
-
-  if (message.type === "call") {
-    const handler = HANDLERS[message.tool];
-    if (handler === undefined) {
-      // 宿主不会调用没声明的工具，但真到了这一步也要回一条可读的错误而不是静默
-      process.parentPort.postMessage({
-        type: "result",
-        id: message.id,
-        error: `不认识工具「${message.tool}」`,
-      });
-      return;
-    }
-
-    /*
-      **工具实现抛错一律变成 `error` 字段，不让它冒出去。**
-      未捕获的异常会打到进程的顶层，而宿主的处理是"挂起的调用全部按进程退出结算" ——
-      那意味着模型看到的是"插件已退出"，而不是"你给的 base64 不合法"。
-      前者让它以为自己搞坏了什么，后者它自己能修。
-    */
-    let result;
-    try {
-      result = handler(message.args ?? {});
-    } catch (error) {
-      result = { error: `工具执行出错：${error instanceof Error ? error.message : String(error)}` };
-    }
-
-    process.parentPort.postMessage({
-      type: "result",
-      id: message.id,
-      ...(result.error === undefined ? { text: result.text } : { error: result.error }),
+    env.provide(defineService("oint.plugin.agent"), {
+      description,
+      async execute(name, args, _invocation, context) {
+        context.abortSignal?.throwIfAborted();
+        const handler = HANDLERS[name];
+        if (!handler) throw new Error(`Unknown toolkit tool: ${name}`);
+        const result = handler(args);
+        return { content: [{ type: "text", text: result.error ?? result.text }], isError: result.error !== undefined };
+      },
+      async command() { throw new Error("Toolkit has no commands"); },
+      async beforeTool() { return {}; },
+      async afterTool(_call, result) { return result; },
     });
-  }
+  },
 });

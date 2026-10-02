@@ -1,3 +1,5 @@
+> 历史设计资料：当前插件实现与作者格式以 [Native plugin API](plugin-native-api.md) 为准。本文保留早期分析，不作为现行实现指南。
+
 # Oint 插件系统实现报告：两种界面形态 + 两个真实插件走查
 
 > **这份报告解决什么**：`docs/plugin-system-plan.md` 是总体方案，本报告把它**落到两个具体插件上** ——

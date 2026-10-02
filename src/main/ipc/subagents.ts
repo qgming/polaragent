@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { shell } from "electron";
+import { getChatRuntime } from "@/main/pisdk/runtime";
 import {
   BUILTIN_SUBAGENTS,
   loadSubagentCatalog,
@@ -17,7 +18,6 @@ import {
   toSubagentInfo,
   writeUserSubagentFile,
 } from "@/main/pisdk/subagent-catalog";
-import { reconcileSubagentRuns, stopSubagentRun } from "@/main/pisdk/subagent-runner";
 import { isPluginContributionDir } from "@/main/plugins/contributions";
 import { loadSettings } from "@/main/settings/store";
 import { IPC } from "@/shared/contracts/ipc";
@@ -116,7 +116,7 @@ export function registerSubagentsIpc(): void {
   // 读的时候顺手对账：盘上还写着 running、本进程却没有它的运行，说明拥有它的进程已经没了 ——
   // 标成 interrupted 之后再返回，面板与模型看到的就不是一条永远不会动的「还在跑」
   handle(IPC.subagents.runs, "读取子智能体运行记录", (request: { sessionId: string }) =>
-    reconcileSubagentRuns(request.sessionId),
+    getChatRuntime().listSubagents(request.sessionId),
   );
 
   handle(
@@ -125,6 +125,6 @@ export function registerSubagentsIpc(): void {
     // 不在本进程运行中的记录（例如对账出来的 interrupted）没有可停的东西：runner 返回 undefined，
     // 原样透出去即可 —— 工具侧会以「没有找到这些运行」告诉模型（见 tools/subagent.ts）
     (request: { sessionId: string; delegationId: string }): Promise<SubagentRun | undefined> =>
-      stopSubagentRun(request.sessionId, request.delegationId),
+      getChatRuntime().stopSubagent(request.sessionId, request.delegationId),
   );
 }
