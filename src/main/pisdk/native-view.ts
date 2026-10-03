@@ -22,6 +22,7 @@ import type {
   SessionCompaction,
 } from "@/shared/contracts/chat";
 import type { SessionTokenUsage } from "@/shared/contracts/session";
+import { parseAttachmentEnvelope } from "./attachments";
 import type { AppEntry, AppSessionHandle } from "./durable-session";
 import { JobsDoc } from "./jobs";
 import { mapEntriesToMessages } from "./message-mapper";
@@ -101,6 +102,31 @@ export function projectConversationView(
       delete projected.entryId;
       projected.id = `live:${live?.run?.taskId ?? view.conversation.id}:${latestId}`;
       projected.status = "streaming";
+      messages.push(projected);
+    }
+  }
+  // Steering has been sent by the user. Show it immediately while the native
+  // scheduler waits for the current model/tool step to reach a safe boundary.
+  // Its durable user entry replaces this projection when the inbox consumes it.
+  for (const item of inbox?.items ?? []) {
+    if (item.mode !== "steer" || !live?.run) continue;
+    const projected = mapEntriesToMessages([
+      {
+        record: {
+          id: item.id,
+          conversationId: view.conversation.id,
+          kind: "pi.user",
+          model: [{ role: "user", content: item.content, timestamp: createdAt }],
+        } as unknown as EntryRecord,
+        entryId: `steer:${item.id}`,
+        parentId: null,
+        sequence: 0,
+        createdAt,
+      },
+    ]).messages[0];
+    if (projected) {
+      delete projected.entryId;
+      projected.id = `steer:${item.id}`;
       messages.push(projected);
     }
   }
@@ -222,7 +248,7 @@ export function projectConversationView(
     running: live?.run !== undefined,
     runId: live?.run ? String(live.run.taskId) : null,
     queue: (inbox?.items ?? []).flatMap((item) =>
-      item.mode === "write"
+      item.mode === "write" || (item.mode === "steer" && live?.run !== undefined)
         ? []
         : [
             {
@@ -232,7 +258,11 @@ export function projectConversationView(
                 typeof item.content === "string"
                   ? item.content
                   : item.content
-                      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+                      .flatMap((part) =>
+                        part.type === "text" && parseAttachmentEnvelope(part.text) === null
+                          ? [part.text]
+                          : [],
+                      )
                       .join(""),
             },
           ],

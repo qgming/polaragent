@@ -508,6 +508,143 @@ describe("native durable chat runtime", () => {
     ).toHaveLength(1);
   });
 
+  it("edits in place and sends a selected queued input as steering exactly once", async () => {
+    let entered = false;
+    let release = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mcpTools = [
+      defineTool({
+        name: "mcp__test__hold",
+        description: "hold the current step",
+        parameters: Type.Object({}),
+        execute: async (_args, _api, context) => {
+          entered = true;
+          context.abortSignal?.addEventListener("abort", release, { once: true });
+          await hold;
+          return { content: [] };
+        },
+      }),
+    ];
+    let nextRequest: string[] = [];
+    faux.setResponses([
+      toolResponse(fauxToolCall("mcp__test__hold", {})),
+      (context) => {
+        nextRequest = textOf(context);
+        return fauxAssistantMessage("urgent addressed");
+      },
+      fauxAssistantMessage("follow-up addressed"),
+      fauxAssistantMessage("last follow-up addressed"),
+    ]);
+    const sending = runtime.send(sessionId, "start");
+    await expect.poll(() => entered).toBe(true);
+    for (const text of ["first", "urgent", "last"])
+      await runtime.queue(sessionId, text, "followUp");
+    const original = (await runtime.liveSnapshot(sessionId))?.state.queue ?? [];
+    const [first, urgent, last] = original;
+    if (!first || !urgent || !last) throw new Error("Missing queued inputs");
+
+    await expect(runtime.editQueued(sessionId, first.id, "edited first")).resolves.toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.queue).toEqual([
+      { ...first, text: "edited first" },
+      urgent,
+      last,
+    ]);
+    await expect(runtime.editQueued(sessionId, last.id, "  ")).rejects.toThrow();
+    await Promise.all([
+      runtime.sendQueued(sessionId, urgent.id),
+      runtime.sendQueued(sessionId, urgent.id),
+    ]);
+    const immediate = (await runtime.liveSnapshot(sessionId))?.state;
+    expect(immediate?.running).toBe(true);
+    expect(immediate?.queue.map((item) => item.id)).toEqual([first.id, last.id]);
+    expect(
+      immediate?.messages
+        .filter((message) => message.role === "user")
+        .map((message) =>
+          message.parts
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join(""),
+        ),
+    ).toEqual(["start", "urgent"]);
+
+    release();
+    await sending;
+    await expect.poll(() => runtime.isRunning(sessionId)).toBe(false);
+    expect(nextRequest).toContain("urgent");
+    expect(nextRequest).not.toContain("edited first");
+    const final = (await store.loadMessages(sessionId)).messages.filter(
+      (message) => message.role === "user",
+    );
+    expect(
+      final.map((message) =>
+        message.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join(""),
+      ),
+    ).toEqual(["start", "urgent", "edited first", "last"]);
+    await expect(runtime.sendQueued(sessionId, urgent.id)).resolves.toBe(false);
+    await expect(runtime.editQueued(sessionId, urgent.id, "too late")).resolves.toBe(false);
+    await expect(runtime.sendQueued("other-session", first.id)).resolves.toBe(false);
+  });
+
+  it("can immediately send an input left queued after a failed run", async () => {
+    let entered = false;
+    let release = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mcpTools = [
+      defineTool({
+        name: "mcp__test__hold",
+        description: "hold the current step",
+        parameters: Type.Object({}),
+        execute: async (_args, _api, context) => {
+          entered = true;
+          context.abortSignal?.addEventListener("abort", release, { once: true });
+          await hold;
+          return { content: [] };
+        },
+      }),
+    ];
+    faux.setResponses([
+      toolResponse(fauxToolCall("mcp__test__hold", {})),
+      fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid request" }),
+      fauxAssistantMessage("recovered"),
+    ]);
+    const sending = runtime.send(sessionId, "start");
+    await expect.poll(() => entered).toBe(true);
+    await runtime.send(sessionId, "send after failure", [{
+      kind: "text", name: "notes.txt", mimeType: "text/plain", size: 5,
+      data: Buffer.from("notes").toString("base64"), text: "notes",
+    }]);
+    const beforeFailure = (await runtime.liveSnapshot(sessionId))?.state.queue[0];
+    if (!beforeFailure) throw new Error("Missing queued attachment");
+    expect(beforeFailure.text).toBe("send after failure");
+    await runtime.editQueued(sessionId, beforeFailure.id, "edited with attachment");
+    release();
+    await sending;
+    await expect.poll(() => runtime.isRunning(sessionId)).toBe(false);
+    const queued = (await runtime.liveSnapshot(sessionId))?.state.queue[0];
+    if (!queued) throw new Error("Missing queued input after failure");
+    await expect(runtime.sendQueued(sessionId, queued.id)).resolves.toBe(true);
+    await expect
+      .poll(async () =>
+        (await store.loadMessages(sessionId)).messages.some((message) =>
+          message.parts.some((part) => part.type === "text" && part.text === "recovered"),
+        ),
+      )
+      .toBe(true);
+    expect((await runtime.liveSnapshot(sessionId))?.state.queue).toEqual([]);
+    const saved = (await store.loadMessages(sessionId)).messages.find((message) =>
+      message.parts.some((part) => part.type === "text" && part.text === "edited with attachment"),
+    );
+    expect(saved?.parts.some((part) => part.type === "attachment" && part.name === "notes.txt")).toBe(true);
+  });
+
   it("withdraws queued input and propagates cancellation into a running tool", async () => {
     let entered = false;
     let aborted = false;

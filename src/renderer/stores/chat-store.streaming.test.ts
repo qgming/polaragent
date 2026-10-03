@@ -47,6 +47,34 @@ function deferred<T>() {
 }
 
 describe("canonical native view frames", () => {
+  it("replaces sent steering with its durable entry and removes withdrawn steering", () => {
+    const initial = base(900);
+    const sent = {
+      ...message("steer:7", "send now"),
+      role: "user" as const,
+      status: "complete" as const,
+    };
+    apply({ ...initial, state: { ...initial.state, messages: [sent] } });
+    const committed = { ...sent, id: "entry:20", entryId: "entry:20" };
+    apply({
+      ...initial,
+      revision: initial.revision + 1,
+      state: { ...initial.state, messages: [committed] },
+    });
+    expect(useChatStore.getState().messagesBySession.s1).toEqual([committed]);
+    apply({
+      ...initial,
+      revision: initial.revision + 2,
+      state: { ...initial.state, messages: [committed, { ...sent, id: "steer:8" }] },
+    });
+    apply({
+      ...initial,
+      revision: initial.revision + 3,
+      state: { ...initial.state, messages: [committed] },
+    });
+    expect(useChatStore.getState().messagesBySession.s1).toEqual([committed]);
+  });
+
   it("applies official Chord text operations without a second part buffer", () => {
     const initial = base();
     apply(initial);

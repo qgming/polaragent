@@ -310,6 +310,12 @@ export const enUS = {
     compactFailed: "Compaction failed: {{error}}",
     steer: "Steer",
     queueEdit: "Edit",
+    queueSendNow: "Send now",
+    queueSendFailed: "Couldn't send. Please try again.",
+    queueEditDesc: "Edit this queued message; saving keeps its place in the queue",
+    queueEditFailed: "Couldn't save. Please try again.",
+    queueSave: "Save",
+    queueSaveHint: "Enter to save · Shift+Enter for a new line",
     /** Progress readout on the task-list dock above the composer (done/total) */
     dockTodoProgress: "{{done}}/{{total}}",
     queueRemove: "Remove",

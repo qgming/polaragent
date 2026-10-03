@@ -159,6 +159,8 @@ interface ChatState {
   queue(text: string, mode: "steer" | "followUp"): Promise<void>;
   /** 撤销一条还没被消费的排队消息（entryId 即 QueuedMessage.id）；失败只记日志 */
   cancelQueued(entryId: string): Promise<void>;
+  sendQueued(entryId: string): Promise<boolean>;
+  editQueued(sessionId: string, entryId: string, text: string): Promise<boolean>;
   /**
    * 手动压缩上下文（`/compact` 指令的动作）。
    *
@@ -631,6 +633,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     } catch (failure) {
       console.warn(`撤销排队消息失败：${String(failure)}`);
     }
+  },
+
+  async sendQueued(entryId) {
+    const sessionId = get().activeSessionId;
+    if (!sessionId) return false;
+    return window.oint.chat.sendQueued(sessionId, entryId);
+  },
+
+  async editQueued(sessionId, entryId, text) {
+    return window.oint.chat.editQueued(sessionId, entryId, text);
   },
 
   async compact(instructions) {

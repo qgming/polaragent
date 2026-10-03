@@ -121,11 +121,15 @@ export interface OintApi {
     /**
      * 撤销一条还没被消费的排队消息。
      *
-     * `entryId` 就是 `QueuedMessage.id`（主进程把它映射自内核 `queue_update` 的 entryId）。
+     * `entryId` 就是 `QueuedMessage.id`，映射自原生 InboxDoc 的 submission id。
      * 已经开跑（被消费）或已经不存在的条目是**无操作**，不抛错 —— 用户点「移除」时那条
      * 恰好被取走是正常竞态，为它弹一个错误只会让人以为操作失败。
      */
     cancelQueued(sessionId: string, entryId: string): Promise<void>;
+    /** Promote queued input to steering; the native view immediately shows it in the conversation. */
+    sendQueued(sessionId: string, entryId: string): Promise<boolean>;
+    /** Edit in place; false means the input has already left the queue. */
+    editQueued(sessionId: string, entryId: string, text: string): Promise<boolean>;
     /**
      * 手动压缩上下文（`/compact` 指令的后端）。
      *

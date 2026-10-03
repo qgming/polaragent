@@ -52,6 +52,18 @@ export function registerChatIpc(): void {
     },
   );
   handle(
+    IPC.chat.sendQueued,
+    "立即发送排队消息",
+    async (request: { sessionId: string; entryId: string }) =>
+      getChatRuntime().sendQueued(request.sessionId, request.entryId),
+  );
+  handle(
+    IPC.chat.editQueued,
+    "编辑排队消息",
+    async (request: { sessionId: string; entryId: string; text: string }) =>
+      getChatRuntime().editQueued(request.sessionId, request.entryId, request.text),
+  );
+  handle(
     IPC.chat.compact,
     "压缩上下文",
     async (request: { sessionId: string; instructions?: string }) => {

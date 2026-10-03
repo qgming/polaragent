@@ -40,13 +40,25 @@ function messageText(message: ChatMessage | undefined): string {
 export function EditMessageDialog() {
   const { t } = useTranslation();
   const editingId = useUiStore((s) => s.editingMessageId);
+  const editingQueued = useUiStore((s) => s.editingQueuedMessage);
   const close = useUiStore((s) => s.closeEditMessage);
   const sessionId = useChatStore((s) => s.activeSessionId);
   const messages = useChatStore((s) =>
     s.activeSessionId === null ? undefined : s.messagesBySession[s.activeSessionId],
   );
+  const queuedMessage = useChatStore((s) =>
+    editingQueued === null
+      ? undefined
+      : s.queueBySession[editingQueued.sessionId]?.find((item) => item.id === editingQueued.id),
+  );
   const [value, setValue] = useState("");
   const seededRef = useRef<string | null>(null);
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(false);
+  const editingKey = editingQueued
+    ? `queue:${editingQueued.sessionId}:${editingQueued.id}`
+    : editingId;
 
   const index = messages?.findIndex((m) => m.id === editingId) ?? -1;
   const discardedReplies =
@@ -59,17 +71,28 @@ export function EditMessageDialog() {
    * 那样流式事件或翻页一到，就会把用户正在打的字重置回原文。
    */
   useEffect(() => {
-    if (editingId === null) {
+    if (editingKey === null) {
       seededRef.current = null;
       setValue("");
+      setError(false);
       return;
     }
-    if (seededRef.current === editingId) return;
-    seededRef.current = editingId;
+    if (seededRef.current === editingKey) return;
+    seededRef.current = editingKey;
+    setError(false);
+    if (editingQueued) {
+      setValue(
+        useChatStore
+          .getState()
+          .queueBySession[editingQueued.sessionId]?.find((item) => item.id === editingQueued.id)
+          ?.text ?? "",
+      );
+      return;
+    }
     const list =
       sessionId === null ? undefined : useChatStore.getState().messagesBySession[sessionId];
     setValue(messageText(list?.find((message) => message.id === editingId)));
-  }, [editingId, sessionId]);
+  }, [editingId, editingKey, editingQueued, sessionId]);
 
   /**
    * 目标已不在当前会话时收起模态：编辑期间切走会话（Ctrl+K 打开搜索、Ctrl+N 新建对话）
@@ -77,13 +100,38 @@ export function EditMessageDialog() {
    * 只在该会话的消息已加载（messages 有值）时判定，避免加载途中把模态误关。
    */
   useEffect(() => {
+    if (editingQueued) {
+      if (editingQueued.sessionId !== sessionId || queuedMessage === undefined) close();
+      return;
+    }
     if (editingId === null || messages === undefined) return;
     if (index < 0) close();
-  }, [editingId, messages, index, close]);
+  }, [editingId, editingQueued, sessionId, queuedMessage, messages, index, close]);
 
   const text = value.trim();
 
   const submit = () => {
+    if (savingRef.current || text === "") return;
+    if (editingQueued) {
+      const target = editingQueued;
+      savingRef.current = true;
+      setSaving(true);
+      setError(false);
+      void useChatStore
+        .getState()
+        .editQueued(target.sessionId, target.id, text)
+        .then(() => {
+          if (useUiStore.getState().editingQueuedMessage === target) close();
+        })
+        .catch(() => {
+          if (useUiStore.getState().editingQueuedMessage === target) setError(true);
+        })
+        .finally(() => {
+          savingRef.current = false;
+          setSaving(false);
+        });
+      return;
+    }
     const id = editingId;
     // 空文本不该提交：按钮已禁用，这里只是第二道闸（回车/外部触发）
     if (id === null || text === "") return;
@@ -102,7 +150,7 @@ export function EditMessageDialog() {
 
   return (
     <Dialog
-      open={editingId !== null}
+      open={editingKey !== null}
       onOpenChange={(open) => {
         if (!open) close();
       }}
@@ -111,7 +159,9 @@ export function EditMessageDialog() {
       <DialogContent className="rounded-xl sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("chat.editMessage")}</DialogTitle>
-          <DialogDescription>{t("chat.editMessageDesc")}</DialogDescription>
+          <DialogDescription>
+            {t(editingQueued ? "chat.queueEditDesc" : "chat.editMessageDesc")}
+          </DialogDescription>
         </DialogHeader>
 
         <Textarea
@@ -121,7 +171,13 @@ export function EditMessageDialog() {
           onKeyDown={handleKeyDown}
           aria-label={t("chat.editMessage")}
           className="resize-none"
+          disabled={saving}
         />
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {t("chat.queueEditFailed")}
+          </p>
+        )}
 
         <div className="flex items-center gap-3">
           {discardedReplies > 0 && (
@@ -133,7 +189,7 @@ export function EditMessageDialog() {
             </span>
           )}
           <span className={cn(mono, "text-muted-foreground ms-auto shrink-0")}>
-            {t("chat.editSubmitHint")}
+            {t(editingQueued ? "chat.queueSaveHint" : "chat.editSubmitHint")}
           </span>
         </div>
 
@@ -141,8 +197,8 @@ export function EditMessageDialog() {
           <Button type="button" variant="ghost" onClick={close}>
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={submit} disabled={text === ""}>
-            {t("chat.send")}
+          <Button type="button" onClick={submit} disabled={text === "" || saving}>
+            {t(editingQueued ? "chat.queueSave" : "chat.send")}
           </Button>
         </DialogFooter>
       </DialogContent>

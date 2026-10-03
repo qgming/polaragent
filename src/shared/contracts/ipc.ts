@@ -41,6 +41,8 @@ export const IPC = {
     queue: "chat:queue",
     /** 撤销一条还没被消费的排队消息（用户点队列行上的 ×） */
     cancelQueued: "chat:cancel-queued",
+    sendQueued: "chat:send-queued",
+    editQueued: "chat:edit-queued",
     compact: "chat:compact",
     event: "chat:event",
     /** 读取当前原生会话视图（初次订阅或 revision 缺口时恢复） */

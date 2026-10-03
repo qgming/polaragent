@@ -47,6 +47,7 @@ export function mergeViewMessages(
     (message) =>
       !message.entryId &&
       !message.id.startsWith("live:") &&
+      !message.id.startsWith("steer:") &&
       !message.id.startsWith("receipt:") &&
       !ids.has(message.id) &&
       !admitted.has(message.id),

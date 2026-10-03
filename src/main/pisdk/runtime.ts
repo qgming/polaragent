@@ -21,11 +21,14 @@ import {
   Harness,
   type HookApi,
   hook,
+  InboxDoc,
+  LiveDoc,
   type Registry,
   type SubmissionId,
   section,
   type ToolRegistration,
   ToolTask,
+  UserEntry,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { dataDir } from "@/main/app/paths";
@@ -56,7 +59,7 @@ import type { BrowserAutomation } from "../browser/types";
 import type { WebService } from "../web/types";
 import { agentModeSection, shouldIncludeDelegationRules } from "./agent-mode-prompt";
 import type { ApprovalService } from "./approvals";
-import { buildUserContent, sessionAttachmentsDir } from "./attachments";
+import { buildUserContent, parseAttachmentEnvelope, sessionAttachmentsDir } from "./attachments";
 import { readDocument, SessionHandleReleased } from "./durable-session";
 import { errorText } from "./error-text";
 import { createExecEnv } from "./exec-env";
@@ -75,6 +78,7 @@ import {
   getSharedPermissionRuleStore,
   type PermissionRuleStore,
 } from "./permissions";
+import { allowedInPlan, RunModeDoc } from "./plan-mode";
 import { buildProviders, resolveModel } from "./providers";
 import {
   createRepeatChain,
@@ -116,7 +120,6 @@ import {
   type SubagentRunner,
 } from "./subagent-runner";
 import { autoTitleSession, type SessionTitleGenerator } from "./title-generator";
-import { allowedInPlan, RunModeDoc } from "./plan-mode";
 import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
@@ -219,6 +222,8 @@ export interface ChatRuntime {
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
 
   cancelQueued(sessionId: string, entryId: string): Promise<void>;
+  sendQueued(sessionId: string, entryId: string): Promise<boolean>;
+  editQueued(sessionId: string, entryId: string, text: string): Promise<boolean>;
 
   compact(sessionId: string, instructions?: string): Promise<CompactOutcome>;
   /** 已提交的原生会话视图，用于首次挂载与断线恢复。 */
@@ -868,7 +873,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
   ): Promise<ToolPermissionResult | undefined> {
     signal?.throwIfAborted();
     if (runtime.activeMode === "plan" && !allowedInPlan(toolName)) {
-      return { block: { reason: "计划模式只允许阅读、检索和提问。请通过‘开始执行’切换模式后再操作。" } };
+      return {
+        block: { reason: "计划模式只允许阅读、检索和提问。请通过‘开始执行’切换模式后再操作。" },
+      };
     }
     const settings = await deps.getSettings();
     // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
@@ -1000,7 +1007,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
     const spec = opened.subagent;
     const family = spec ? await ensureRuntime(opened.familyId, false) : undefined;
-    const savedMode = await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId);
+    const savedMode = await readDocument(
+      opened.storage,
+      RunModeDoc.definition.kind,
+      opened.conversationId,
+    );
     const preference = (await deps.sessionStore.readAgentMode(sessionId)) ?? settings.agentMode;
     const activeMode: AgentMode = savedMode?.mode === "plan" || family?.activeMode === "plan"
       ? "plan"
@@ -1611,7 +1622,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           await selected.configure(
             {
               extensions: [
-                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).map((plugin) => plugin.extension),
+                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).map(
+                  (plugin) => plugin.extension,
+                ),
                 runtime.extension,
               ],
             },
@@ -1770,7 +1783,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const settings = await deps.getSettings();
     const nextMode = (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
     if (nextMode !== runtime.activeMode) {
-      throw new Error("模式已保存，将在当前运行结束后的下一条消息生效。请等待当前运行结束后再发送。");
+      throw new Error(
+        "模式已保存，将在当前运行结束后的下一条消息生效。请等待当前运行结束后再发送。",
+      );
     }
     const content = attachments?.length
       ? await buildUserContent(runtime.sessionId, text, attachments)
@@ -1801,6 +1816,73 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       BACKGROUND_CONTEXT,
       runtime.conversation.id,
     );
+  }
+
+  /** Keep the submission identity and let the scheduler consume it at the next safe boundary. */
+  async function sendQueued(sessionId: string, entryId: string): Promise<boolean> {
+    const runtime = runtimes.get(sessionId);
+    if (!runtime) return false;
+    const changed = await runtime.conversation.commit(async (tx) => {
+      const live = await tx.doc(LiveDoc, runtime.conversation.id);
+      const inbox = await tx.doc(InboxDoc, runtime.conversation.id);
+      const index = inbox.items.findIndex((item) => String(item.id) === entryId);
+      const item = inbox.items[index];
+      if (!item || item.mode === "write") return false;
+      // A failed run can leave an inbox behind. With no active run there is no
+      // future boundary: admit this existing submission and start its generation.
+      if (!live.run) {
+        const entry = await tx.appendEntry(UserEntry, runtime.conversation.id, {
+          model: [{ role: "user", content: item.content, timestamp: Date.now() }],
+        });
+        tx.placeSubmission(item.id, entry.id);
+        const taskId = await tx.createTask(
+          GenerationTask,
+          {},
+          {
+            ownership: { kind: "conversation" },
+            conversationId: runtime.conversation.id,
+          },
+        );
+        live.run = { taskId, inputs: [item.id] };
+        inbox.items.splice(index, 1);
+        return true;
+      }
+      if (item.mode === "steer") return true;
+      // Send clicks retain their order; follow-ups stay behind the sent inputs.
+      const insertAt = inbox.items.reduce(
+        (position, queued, i) => (queued.mode === "steer" ? i + 1 : position),
+        0,
+      );
+      item.mode = "steer";
+      if (index > insertAt) inbox.items.splice(insertAt, 0, ...inbox.items.splice(index, 1));
+      return true;
+    }, BACKGROUND_CONTEXT);
+    runtime.harness.resume();
+    await runtime.view?.flush();
+    return changed;
+  }
+
+  async function editQueued(sessionId: string, entryId: string, text: string): Promise<boolean> {
+    if (!text.trim()) throw new Error("消息不能为空");
+    const runtime = runtimes.get(sessionId);
+    if (!runtime) return false;
+    const changed = await runtime.conversation.commit(async (tx) => {
+      const inbox = await tx.doc(InboxDoc, runtime.conversation.id);
+      const item = inbox.items.find((item) => String(item.id) === entryId);
+      if (!item || item.mode === "write") return false;
+      item.content =
+        typeof item.content === "string"
+          ? text.trim()
+          : [
+              { type: "text", text: text.trim() },
+              ...item.content.filter(
+                (part) => part.type !== "text" || parseAttachmentEnvelope(part.text) !== null,
+              ),
+            ];
+      return true;
+    }, BACKGROUND_CONTEXT);
+    await runtime.view?.flush();
+    return changed;
   }
 
   async function compact(sessionId: string, instructions?: string): Promise<CompactOutcome> {
@@ -1955,6 +2037,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     stop,
     queue,
     cancelQueued,
+    sendQueued,
+    editQueued,
     compact,
     liveSnapshot,
     isRunning,

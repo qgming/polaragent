@@ -300,6 +300,12 @@ export const zhCN = {
     compactFailed: "压缩失败：{{error}}",
     steer: "插话",
     queueEdit: "编辑",
+    queueSendNow: "立即发送",
+    queueSendFailed: "发送失败，请重试",
+    queueEditDesc: "修改待发送消息；保存后保持原来的排队位置",
+    queueEditFailed: "保存失败，请重试",
+    queueSave: "保存",
+    queueSaveHint: "Enter 保存 · Shift+Enter 换行",
     /** 队列行的移除按钮（英文包里已有同名键，这里是中文缺的那一份） */
     queueRemove: "移除",
     /** 输入框上方任务清单的进度读数（done/total） */

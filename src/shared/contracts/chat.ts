@@ -5,7 +5,7 @@ import type { AskOutcome, AskRequest } from "./interaction";
 import type { JobInfo } from "./job";
 import type { ChatMessage, ContextBreakdown, SessionStats, SessionTokenUsage } from "./session";
 
-/** 待发送队列项：steer 立即插入当前轮次，followUp 在当前轮结束后发送 */
+/** followUp 等本轮结束；steer 在会话中立即显示，由内核在下一执行边界接收。 */
 export interface QueuedMessage {
   id: string;
   text: string;

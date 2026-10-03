@@ -364,6 +364,7 @@ export function createMainWindow(): BrowserWindow {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
   const win = new BrowserWindow({
+    icon: path.join(import.meta.dirname, devServerUrl ? "../public/oint.png" : "../dist/oint.png"),
     width: 1280,
     height: 820,
     minWidth: 960,

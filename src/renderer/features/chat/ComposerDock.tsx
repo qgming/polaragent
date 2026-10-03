@@ -1,13 +1,14 @@
 "use client";
 
-import { ChevronDown, ListChecks, ListOrdered, X } from "lucide-react";
-import { useState } from "react";
+import { ArrowUp, ChevronDown, ListChecks, ListOrdered, Pencil, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TodoItem } from "@/renderer/components/assistant-ui/elements/todo-list";
 import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
+import { useUiStore } from "@/renderer/stores/ui-store";
 import type { QueuedMessage } from "@/shared/contracts/chat";
 import type { ChatMessage } from "@/shared/contracts/session";
 import { isTodoFinished, latestTodo, toTodoPanelMessages } from "./TodoPanel";
@@ -288,13 +289,8 @@ function latestTodoFromStore(
  * 待发送队列停靠块。
  *
  * 与 DSH 的 QueueDock 对齐的部分：**一行标题（图标 + 条数 + 折叠箭头）**，
- * 条数为 1 时不给折叠头、直接显示那一行；每条右侧有「移除」。
- *
- * 这里**没有**「编辑」：DSH 的编辑走 `updateQueue(itemId, {kind:"edit"})`，而内核的
- * lane 只提供 `cancelQueued`（取消），没有「改写队列项正文」的原语 —— 要支持编辑就得
- * 「取消 + 重新入队」，那会让这条消息在 lane 里的位置跑到队尾（用户看到的是它掉到最后
- * 去了）。宁可不做，也不做一个顺序会变的编辑。旧实现这里是禁用按钮 + 「功能未开放」
- * 的提示，那个占位现在删掉了：一个永远点不动的铅笔图标比没有更让人困惑。
+ * 条数为 1 时直接显示；每条可立即发送、编辑或移除。
+ * 编辑复用历史消息弹窗，内容通过原生 InboxDoc 事务原位修改。
  */
 export function QueueDock({
   items,
@@ -341,7 +337,7 @@ export function QueueDock({
   );
 }
 
-/** 队列里的一行：序号/图标 + 正文 + 模式标记 + 移除 */
+/** 队列里的一行：正文与操作。发送中锁住操作，避免连续点击重复提交。 */
 function QueueRow({
   item,
   showIcon,
@@ -351,6 +347,23 @@ function QueueRow({
   showIcon: boolean;
 }): React.JSX.Element {
   const { t } = useTranslation();
+  const pendingRef = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const sendNow = async () => {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    setFailed(false);
+    try {
+      await useChatStore.getState().sendQueued(item.id);
+    } catch {
+      setFailed(true);
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
 
   return (
     <li className="group/queue flex min-w-0 items-center gap-2.5 px-3 py-1.5">
@@ -365,24 +378,66 @@ function QueueRow({
       {item.mode === "steer" && (
         <span className={cn(typeEyebrow, "text-ink-4 shrink-0")}>{t("chat.steer")}</span>
       )}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            aria-label={t("chat.queueRemove")}
-            // hover 或键盘聚焦才显形：静止时这一行是干净的（与标签栏的 × 同一手法）
-            className={cn(
-              "grid size-5 shrink-0 place-items-center rounded-md opacity-0 transition-opacity",
-              "group-hover/queue:opacity-100 focus-visible:opacity-100",
-              "text-ink-4 hover:bg-foreground/[0.06] hover:text-foreground",
-            )}
-            onClick={() => void useChatStore.getState().cancelQueued(item.id)}
-          >
-            <X className="size-3" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{t("chat.queueRemove")}</TooltipContent>
-      </Tooltip>
+      {failed && (
+        <span role="alert" className="text-xs text-destructive">
+          {t("chat.queueSendFailed")}
+        </span>
+      )}
+      <div className="flex shrink-0 items-center gap-0.5">
+        <QueueAction
+          label={t("chat.queueSendNow")}
+          disabled={pending}
+          onClick={() => void sendNow()}
+        >
+          <ArrowUp className="size-3.5" />
+        </QueueAction>
+        <QueueAction
+          label={t("chat.queueEdit")}
+          disabled={pending}
+          onClick={() => {
+            const sessionId = useChatStore.getState().activeSessionId;
+            if (sessionId) useUiStore.getState().beginEditQueuedMessage(sessionId, item.id);
+          }}
+        >
+          <Pencil className="size-3.5" />
+        </QueueAction>
+        <QueueAction
+          label={t("chat.queueRemove")}
+          disabled={pending}
+          onClick={() => void useChatStore.getState().cancelQueued(item.id)}
+        >
+          <X className="size-3.5" />
+        </QueueAction>
+      </div>
     </li>
+  );
+}
+
+function QueueAction({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          disabled={disabled}
+          onClick={onClick}
+          className="text-ink-4 grid size-6 place-items-center rounded-md transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30 disabled:opacity-40"
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

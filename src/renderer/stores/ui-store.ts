@@ -252,6 +252,7 @@ interface UiState {
   resolveDeleteSession: ((confirmed: boolean) => void) | null;
   /** 正在编辑的用户消息 id（null = 未编辑）；由 ChatView 渲染编辑模态 */
   editingMessageId: string | null;
+  editingQueuedMessage: { sessionId: string; id: string } | null;
   /** 输入框上方那一行瞬时提示；null = 没有 */
   composerNotice: ComposerNotice | null;
 
@@ -382,6 +383,7 @@ interface UiState {
   settleDeleteSession(confirmed: boolean): void;
   /** 打开某条用户消息的编辑模态 */
   beginEditMessage(id: string): void;
+  beginEditQueuedMessage(sessionId: string, id: string): void;
   closeEditMessage(): void;
   /** 写一行输入框提示（指令被拒 / 执行结果）；同一条文案连写两次也会重新出现 */
   notifyComposer(notice: Omit<ComposerNotice, "token">): void;
@@ -409,6 +411,7 @@ export const useUiStore = create<UiState>()((set, get) => ({
   pendingDeleteSessionId: null,
   resolveDeleteSession: null,
   editingMessageId: null,
+  editingQueuedMessage: null,
   composerNotice: null,
 
   toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
@@ -653,8 +656,10 @@ export const useUiStore = create<UiState>()((set, get) => ({
     resolve?.(confirmed);
   },
 
-  beginEditMessage: (id) => set({ editingMessageId: id }),
-  closeEditMessage: () => set({ editingMessageId: null }),
+  beginEditMessage: (id) => set({ editingMessageId: id, editingQueuedMessage: null }),
+  beginEditQueuedMessage: (sessionId, id) =>
+    set({ editingMessageId: null, editingQueuedMessage: { sessionId, id } }),
+  closeEditMessage: () => set({ editingMessageId: null, editingQueuedMessage: null }),
 
   notifyComposer: (notice) => {
     composerNoticeSeq += 1;
