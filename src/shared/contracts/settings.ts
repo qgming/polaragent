@@ -58,9 +58,11 @@ export interface Settings {
   /**
    * 智能体模式：**新会话**默认用哪个；单个会话可在输入框的模式 chip 里覆盖（会话级优先）。
    *
-   * 它只改系统提示（身份、工作方式、委派路由），不改工具表 —— 见 common.ts 的 AgentMode 说明。
+   * 模式同时控制系统提示与执行策略；计划模式只读，目标追踪在所有模式中可用。
    */
   agentMode: AgentMode;
+  /** Maximum automatic continuation rounds for a new goal; defaults to 10. */
+  goalContinuationLimit?: number;
   disabledSkillNames: string[];
   /** 被禁用的子智能体名：内置预设与用户定义共用这一份禁用表（与 disabledSkillNames 同构） */
   disabledSubagentNames: string[];

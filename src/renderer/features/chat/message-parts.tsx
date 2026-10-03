@@ -1,5 +1,4 @@
 import {
-  ErrorPrimitive,
   type FileMessagePartComponent,
   groupPartByType,
   type ImageMessagePartComponent,
@@ -22,6 +21,7 @@ import { ThinkingIndicator } from "@/renderer/components/assistant-ui/elements/t
 import { ATTACHMENT_DATA_PART } from "@/renderer/runtime/attachment-payload";
 import type { AttachmentPart } from "@/shared/contracts/attachment";
 import { AttachmentCard } from "./AttachmentCard";
+import { RequestErrorDetails, RequestRetryContext } from "./RequestRetry";
 import { ToolCallPart, ToolRunGroup } from "./ToolParts";
 // 工具文案来自注册表入口（不再是 ToolParts 的导出 —— 那张表已经搬到
 // features/chat/tool-presentations.ts，与面板/设置分栏的注册表同构）
@@ -70,14 +70,36 @@ const USER_PARTS = {
  * PanelAssistantMessage）。挂在消息作用域里而不是抽到外面 —— 它渲染的就是「这条消息
  * 自己在转换时带的错误」（见 message-converter 的 toMessageStatus）。
  */
-export function MessageError(): React.JSX.Element {
-  return (
-    <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="aui-message-error-root mt-2 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive dark:bg-destructive/5">
-        <ErrorPrimitive.Message className="aui-message-error-message line-clamp-2" />
-      </ErrorPrimitive.Root>
-    </MessagePrimitive.Error>
-  );
+export function MessageError(): React.JSX.Element | null {
+  const { t } = useTranslation();
+  const managedGeneration = useContext(RequestRetryContext);
+  const message = useAuiState((s) => s.message);
+  const generationId = message.metadata?.custom?.generationId;
+  const superseded = useAuiState((s) => {
+    const generation = s.message.metadata?.custom?.generationId;
+    if (typeof generation !== "string") return false;
+    const index = s.thread.messages.findIndex((item) => item.id === s.message.id);
+    return s.thread.messages
+      .slice(index + 1)
+      .some(
+        (item) => item.role === "assistant" && item.metadata?.custom?.generationId === generation,
+      );
+  });
+  if (
+    message.status?.type !== "incomplete" ||
+    message.status.reason !== "error" ||
+    superseded ||
+    (typeof generationId === "string" && generationId === managedGeneration)
+  )
+    return null;
+  const detail = message.status.error;
+  const error =
+    typeof detail === "string"
+      ? detail
+      : detail === undefined
+        ? t("errors.generic")
+        : JSON.stringify(detail, null, 2);
+  return <RequestErrorDetails label={t("chat.requestFailed")} error={error} />;
 }
 
 /**

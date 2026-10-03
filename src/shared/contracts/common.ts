@@ -10,12 +10,17 @@ export type PermissionMode = "default" | "ai_review" | "full";
 
 /**
  * 会话模式：standard（默认）直接处理任务；orchestrate（编排）侧重委派与验收。
- * plan（计划）只允许经过核验的阅读、检索与提问工具；执行层同时禁用插件钩子。
+ * 目标与计划是两种模式共享的能力，执行权限由当前工作的约束决定。
  * 模式在新一轮输入开始时固定并持久化，运行期间改变偏好不会放宽当前轮限制。
  */
-export const AGENT_MODES = ["standard", "orchestrate", "plan"] as const;
+export const AGENT_MODES = ["standard", "orchestrate"] as const;
 
 export type AgentMode = (typeof AGENT_MODES)[number];
+
+/** Only supported modes are accepted; unknown values stay unbound. */
+export function normalizeAgentMode(raw: unknown): AgentMode | null {
+  return raw === "standard" || raw === "orchestrate" ? raw : null;
+}
 
 /** 界面上列出模式的顺序，也是设置面板与 chip 的顺序 */
 export const DEFAULT_AGENT_MODE: AgentMode = "standard";

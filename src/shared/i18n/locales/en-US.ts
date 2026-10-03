@@ -189,7 +189,6 @@ export const enUS = {
     inputPlaceholder: "Type a message. Enter to send, Shift+Enter for a new line",
     newChat: "New chat",
     welcome: "What would you like to do today?",
-    welcomePlanSubtitle: "Read, research, and make a plan. Changes begin only after you start execution.",
     welcomeSubtitle: "Hand the task to Oint — it can read and write code and run commands.",
     // New-chat page: the "which project does this run in" row and the starter prompts below it
     welcomeProject: "Project this chat runs in",
@@ -255,20 +254,60 @@ export const enUS = {
     // not "how strong is it" (that's the permission chip's axis).
     agentMode: "Agent mode",
     agentModeStandard: "Default",
-    agentModePlanDesc: "Research and plan in read-only mode; changes require starting execution",
-    planStartExecution: "Start execution",
-    planExecuteMessage: "Please start executing the plan above.",
-    planNotice:
-      "Plan mode researches and plans without making changes. Starting execution switches to Default mode.",
+    goal: "Goal",
+    goalCriteria: "Acceptance criteria",
+    goalContinuations: "Automatic continuations {{count}} / {{limit}}",
+    goalPause: "Pause",
+    goalResume: "Resume goal",
+    goalEnd: "End goal",
+    workflowExpand: "Expand details",
+    workflowCollapse: "Collapse details",
+    workflowPlanFirst:
+      "This work is read-only or requires plan review. Review and start the required plan version first.",
+    workflowBusy: "The chat is busy with another operation. Please try again shortly.",
+    workflowStale: "The plan has changed. Review the latest version before starting it.",
+    workflowMissing: "The goal or plan is missing. Ask the main AI to recreate it.",
+    workflowInvalid:
+      "This action is unavailable in the current state. Check the goal and plan status.",
+    workflowFailed: "Action could not be completed. Check the current state and try again.",
+    plan: "Plan",
+    planView: "View plan",
+    planRevise: "Revise plan",
+    planArchive: "Archive plan",
+    planHistory: "Plan history",
+    planVersion: "Version {{revision}}",
+    planRevisionInstructions: "Plan revision instructions",
+    planRevisionMessage:
+      'Revise only the plan "{{title}}" (version {{revision}}), then present a new version for review. Requested changes:\n{{instructions}}',
+    newWork: "New work",
+    planOnly: "Plan only, review before execution",
+    newWorkExecute: "Start new work and execute",
+    newWorkReadOnly: "Start new read-only research",
+    goalStatus: {
+      active: "Active",
+      paused: "Paused",
+      blocked: "Blocked",
+      completed: "Completed",
+      ended: "Ended",
+    },
+    planStarted: "Started",
+    planReviewRequired: "Awaiting your review",
+    planReadOnly: "Plan only",
+    planStatus: { draft: "Draft", ready: "Ready", archived: "Archived" },
+    planStartExecution: "Start plan",
     settingsSaveFailed: "Could not save settings. Please try again.",
     modelSaveFailed: "Could not save model. Please try again.",
     retryLoad: "Retry loading",
     loadingConversation: "Loading conversation…",
     sendFailed: "Could not send. Your draft has been kept; please try again.",
-    agentModeStandardDesc: "Works out the task type and does the work itself",
+    requestReconnecting: "Reconnecting {{count}}/{{limit}}",
+    requestFailed: "Request failed",
+    requestRetriesExhausted: "Could not reconnect after {{count}} retries",
+    requestFailedAfterRetries: "Request failed after {{count}} retries",
+    agentModeStandardDesc: "Handles the task directly and verifies the result",
     agentModeOrchestrate: "Orchestrate",
-    agentModePlan: "Plan",
-    agentModeOrchestrateDesc: "Delegates to subagents first, keeps planning and verification",
+    agentModeOrchestrateDesc:
+      "Delegates useful subtasks, then consolidates and verifies the result",
     agentModeRunning: "Could not save mode. Please try again.",
     // Switching mid-run is allowed and applies to the next turn — say so explicitly
     agentModePendingTurn: "Next send",
@@ -755,11 +794,13 @@ export const enUS = {
     // The section title carries "mode" so it doesn't read as "Agent › Default mode › Agent".
     agentSection: "Agent mode",
     agentMode: "Default mode",
+    goalContinuationLimit: "Goal continuation limit",
+    goalContinuationLimitDesc:
+      "Automatic continuations per new goal (1–100); existing goals keep their limit",
     agentModeDesc:
       "Mode for new conversations, overridable in each composer. Default handles tasks directly, Orchestrate delegates, and Plan researches without making changes.",
     agentModeStandard: "Default",
     agentModeOrchestrate: "Orchestrate",
-    agentModePlan: "Plan",
 
     // —— MCP: external tool sources (own settings section) ——
     mcp: "MCP",
@@ -993,6 +1034,21 @@ export const enUS = {
     smoothly (`Read src/a.ts` rather than `Read a file src/a.ts`).
   */
   tools: {
+    readWorkflow: "Read work status",
+    readWorkflowActive: "Reading work status",
+    setWorkContract: "Review work requirements",
+    setWorkContractActive: "Reviewing work requirements",
+    createGoal: "Create goal",
+    createGoalActive: "Creating goal",
+    updateGoal: "Update goal",
+    updateGoalActive: "Updating goal",
+    readPlan: "Read plan",
+    readPlanActive: "Reading plan",
+    savePlan: "Save plan",
+    savePlanActive: "Saving plan",
+    presentPlan: "Present plan",
+    presentPlanActive: "Presenting plan",
+
     read: "Read",
     readActive: "Reading",
     write: "Write",

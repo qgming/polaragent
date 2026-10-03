@@ -22,13 +22,23 @@ import type {
   SessionCompaction,
 } from "@/shared/contracts/chat";
 import type { SessionTokenUsage } from "@/shared/contracts/session";
+import type { WorkflowState } from "@/shared/contracts/workflow";
 import { parseAttachmentEnvelope } from "./attachments";
 import type { AppEntry, AppSessionHandle } from "./durable-session";
 import { JobsDoc } from "./jobs";
 import { mapEntriesToMessages } from "./message-mapper";
+import { modelGenerationId, projectModelRetry } from "./model-retry";
 import { type JobReportRecord, nativeReports, projectReportMessages } from "./native-reports";
 import { ApprovalDoc, detached, TodoDoc } from "./native-state";
 import { type NativeSubagent, SubagentsDoc } from "./native-subagents";
+import {
+  emptyWorkflow,
+  readWorkflow,
+  GoalDoc,
+  PlanDoc,
+  WorkDoc,
+  PlanExecutionDoc,
+} from "./workflow";
 
 export function usageTotals(ledger: UsageState | undefined): SessionTokenUsage {
   const result = {
@@ -50,6 +60,7 @@ export function usageTotals(ledger: UsageState | undefined): SessionTokenUsage {
 }
 
 export interface ViewExtras {
+  workflow?: WorkflowState;
   agents?: { runs: Record<string, NativeSubagent> };
   jobs?: { entries: Record<string, JobReportRecord> };
   approvals?: { entries: Record<string, { ownerTaskId: number; record?: unknown }> };
@@ -102,6 +113,8 @@ export function projectConversationView(
       delete projected.entryId;
       projected.id = `live:${live?.run?.taskId ?? view.conversation.id}:${latestId}`;
       projected.status = "streaming";
+      if (live?.run)
+        projected.generationId = modelGenerationId(view.conversation.id, live.run.taskId);
       messages.push(projected);
     }
   }
@@ -269,6 +282,8 @@ export function projectConversationView(
     ),
     usage: usageTotals(view.docs["pi.usage"] as UsageState | undefined),
     compaction,
+    retry: projectModelRetry(view.conversation.id, records, live, submission),
+    workflow: extras.workflow ?? emptyWorkflow(),
   });
 }
 
@@ -283,6 +298,10 @@ export async function createNativeView(input: {
   const { harness, conversation, session } = input;
   await conversation.commit(async (tx) => {
     await tx.doc(TodoDoc, conversation.id);
+    await tx.doc(GoalDoc, conversation.id);
+    await tx.doc(PlanDoc, conversation.id);
+    await tx.doc(WorkDoc, conversation.id);
+    await tx.doc(PlanExecutionDoc, conversation.id);
   }, context);
   const watch = await conversation.watch(context);
   const extras: ViewExtras = {};
@@ -292,6 +311,7 @@ export async function createNativeView(input: {
   let snapshot: ChatLiveSnapshot | undefined;
   let pending = Promise.resolve();
   let stopped = false;
+  let workflowDirty = true;
   const tasks = await session.storage.scanTasks(
     { conversationId: conversation.id, kind: "pi.compaction" },
     Number.MAX_SAFE_INTEGER,
@@ -314,6 +334,10 @@ export async function createNativeView(input: {
   const parents = new Map<number, string | null>();
   async function publish() {
     if (stopped) return;
+    if (workflowDirty) {
+      workflowDirty = false;
+      extras.workflow = await readWorkflow(harness, conversation.id);
+    }
     const current = watch.value;
     await Promise.all(
       current.entries
@@ -383,6 +407,16 @@ export async function createNativeView(input: {
   const unsubscribe = harness.subscribeCommits((publication) => {
     let changed = false;
     for (const change of publication.changes) {
+      if (
+        change.type === "document" &&
+        change.conversationId === conversation.id &&
+        [GoalDoc, PlanDoc, WorkDoc, PlanExecutionDoc].some(
+          (doc) => doc.definition.kind === change.record.kind,
+        )
+      ) {
+        workflowDirty = true;
+        changed = true;
+      }
       if (
         change.type === "task" &&
         change.value.conversationId === conversation.id &&

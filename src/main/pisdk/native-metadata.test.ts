@@ -30,11 +30,11 @@ async function setup() {
   return { directory, store };
 }
 describe("native session metadata authority", () => {
-  it("automated naming cannot overwrite a manual title and plan preference persists", async () => {
+  it("automated naming cannot overwrite a manual title and working-style preference persists", async () => {
     const { store } = await setup();
     const { id } = await store.create();
-    await store.setAgentMode(id, "plan");
-    expect(await store.readAgentMode(id)).toBe("plan");
+    await store.setAgentMode(id, "orchestrate");
+    expect(await store.readAgentMode(id)).toBe("orchestrate");
     expect(await store.renameIfUntitled?.(id, "自动标题")).toBe(true);
     await store.rename(id, "人工标题");
     expect(await store.renameIfUntitled?.(id, "迟到的自动标题")).toBe(false);

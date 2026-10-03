@@ -14,6 +14,8 @@ export interface QueuedMessage {
 
 /** 发送时的额外控制：编辑用户消息要先把 lane 回退到该消息的父条目 */
 export interface ChatSendOptions {
+  /** Explicitly begin a separate work item; ordinary follow-ups keep current constraints. */
+  work?: { kind: "new"; effects: "read-only" | "unrestricted"; requiresReview: boolean };
   /**
    * 回退到该条目再运行；`null` 表示回退到会话开头。不传则是一次普通发送。
    * 回退后必须随之追加一条消息（`text`）—— pi 拒收空 prompt，见 runtime 的 send。
@@ -28,7 +30,18 @@ export interface ChatToolReport {
   details: JsonValue;
 }
 
+/** One model request's automatic retries; attempt counts retries, excluding the first request. */
+export interface ChatRetryState {
+  generationId: string;
+  phase: "retrying" | "failed";
+  /** 1..maxAttempts while retrying; 0 for a failure that cannot be retried. */
+  attempt: number;
+  maxAttempts: number;
+  error: string;
+}
+
 export interface ChatLiveState {
+  workflow?: import("./workflow").WorkflowState;
   conversationId: number;
   messages: ChatMessage[];
   reports: Record<string, ChatToolReport>;
@@ -38,6 +51,7 @@ export interface ChatLiveState {
   queue: QueuedMessage[];
   usage: SessionTokenUsage;
   compaction: SessionCompaction | null;
+  retry?: ChatRetryState | null;
 }
 
 export interface ChatLiveSnapshot {

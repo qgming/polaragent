@@ -465,3 +465,23 @@ it("marks a remounted viewer dirty when an older write completes after reverting
   expect(unsavedOf("D:/revert-remount.txt")).toBe("original");
   expect(unsavedBaseOf("D:/revert-remount.txt")).toBe("submitted");
 });
+
+it("renders managed plans in both modes without offering edit or save", async () => {
+  stubFiles("# 正式计划");
+  window.oint.files.readFile = vi.fn(async () => ({
+    path: "D:/data/plans/plan.md",
+    text: "# 正式计划",
+    size: 16,
+    binary: false,
+    truncated: false,
+    readonly: true,
+  }));
+  window.oint.files.writeFile = vi.fn();
+  await open("D:/data/plans/plan.md");
+  expect(screen.getByRole("heading", { name: "正式计划" })).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "源码显示" }));
+  expect(editor()).toBeNull();
+  expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+  expect(screen.getByText("# 正式计划")).toBeDefined();
+  expect(window.oint.files.writeFile).not.toHaveBeenCalled();
+});

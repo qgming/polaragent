@@ -20,3 +20,4 @@ export * from "./stats";
 export * from "./subagent";
 export * from "./terminal";
 export * from "./web";
+export * from "./workflow";

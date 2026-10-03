@@ -12,9 +12,14 @@
  * 挂的是真 Composer + 真 store，只换掉 window.oint 的输出边界。
  */
 
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from "@assistant-ui/react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  type AppendMessage,
+  AssistantRuntimeProvider,
+  useExternalStoreRuntime,
+} from "@assistant-ui/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/renderer/components/ui/tooltip";
 import i18n from "@/renderer/i18n";
 import { toThreadMessage } from "@/renderer/runtime/message-converter";
 import { useChatStore } from "@/renderer/stores/chat-store";
@@ -58,7 +63,15 @@ function stubBridge() {
   vi.stubGlobal("oint", {
     skills: { list: vi.fn(async () => []) },
     prompts: { list: vi.fn(async () => []) },
+    chat: {
+      startPlan: vi.fn(async () => ({ ok: true })),
+      archivePlan: vi.fn(async () => ({ ok: true })),
+      planHistory: vi.fn(async () => []),
+      send: vi.fn(async () => undefined),
+      controlGoal: vi.fn(async () => ({ ok: true })),
+    },
     sessions: {
+      list: vi.fn(async () => [session("orchestrate")]),
       setMode: vi.fn(async (id: string, mode: AgentMode | null) => {
         setModeCalls.push({ id, mode });
         // 契约里已无失败分支（见 SessionModeFailure），所以这里不再有可配的返回值
@@ -82,6 +95,7 @@ function seedStores(options: {
     loadedSessions: {},
     runningBySession: options.running === true ? { [SESSION_ID]: true } : {},
     queueBySession: {},
+    viewsBySession: {},
   });
   useSettingsStore.setState({
     settings: {
@@ -105,7 +119,7 @@ function seedStores(options: {
   });
 }
 
-const onNew = vi.fn(async () => {});
+const onNew = vi.fn(async (_message: AppendMessage) => {});
 
 function Harness() {
   const runtime = useExternalStoreRuntime<ChatMessage>({
@@ -116,7 +130,9 @@ function Harness() {
   });
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Composer />
+      <TooltipProvider>
+        <Composer />
+      </TooltipProvider>
     </AssistantRuntimeProvider>
   );
 }
@@ -199,14 +215,19 @@ describe("AgentModeChip 显示的生效模式", () => {
 });
 
 describe("AgentModeChip 的菜单", () => {
-  it("列出两个模式，并各自说明它改了什么", async () => {
+  it("只列出默认、编排两种模式，并说明各自行为", async () => {
     seedStores({ sessionMode: null });
     render(<Harness />);
     await openChip("智能体模式");
 
     // 名字（智能体 / 编排）自己说明不了差别，所以每个选项都带一句说明
-    expect(screen.getByText("自己判断任务类型，该做的直接做")).toBeDefined();
-    expect(screen.getByText("先派子智能体去做，自己负责计划与验收")).toBeDefined();
+    expect(screen.getByText("直接处理任务并验证结果")).toBeDefined();
+    expect(screen.getByText("按需委派有益的子任务，并整合与验证结果")).toBeDefined();
+    const modes = screen
+      .getAllByRole("button")
+      .filter((button) => button.hasAttribute("aria-pressed"));
+    expect(modes).toHaveLength(2);
+    expect(screen.queryByText("目标", { exact: true })).toBeNull();
   });
 
   it("选中项标出当前生效的那个", async () => {
@@ -290,48 +311,260 @@ describe("AgentModeChip 的写入", () => {
   });
 });
 
-describe("Plan execution boundary", () => {
-  it("lists plan without starting execution on selection", async () => {
+describe("Native plans and work controls", () => {
+  function seedPlan(status: "draft" | "ready" | "archived" = "ready") {
+    seedStores({ sessionMode: "standard" });
+    useChatStore.setState({
+      viewsBySession: {
+        [SESSION_ID]: {
+          generation: 1,
+          revision: 1,
+          state: {
+            conversationId: 1,
+            messages: [],
+            reports: {},
+            admittedRequestIds: [],
+            running: false,
+            runId: null,
+            queue: [],
+            compaction: null,
+            usage: {
+              uncachedInputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            workflow: {
+              revision: 1,
+              goal: null,
+              execution: null,
+              work: {
+                workId: "work-1",
+                revision: 4,
+                requirementsRevision: 2,
+                effects: "read-only",
+                requiresReview: true,
+                pendingInputIds: [],
+                approvedPlanRef: null,
+              },
+              plan: {
+                id: "plan-1",
+                workId: "work-1",
+                revision: 3,
+                requirementsRevision: 2,
+                status,
+                title: "实施方案",
+                markdown: "# Native plan\n\nRun the **checks**.",
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  it("offers only two persistent execution styles", async () => {
     seedStores({});
     render(<Harness />);
     await openChip("智能体模式");
-    fireEvent.click(screen.getByText("计划").closest("button") as HTMLElement);
-    await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "plan" }]));
+    expect(screen.queryByText("计划")).toBeNull();
+    expect(screen.getByText("编排")).toBeDefined();
+  });
+
+  it("sends one plan-only request and keeps subsequent sends ordinary", async () => {
+    seedStores({});
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Design a migration" } });
+    await openChip("新工作");
+    fireEvent.click(screen.getByRole("button", { name: "仅制定计划，审阅后执行" }));
+    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
+    expect(onNew.mock.calls[0]?.[0]).toMatchObject({
+      runConfig: {
+        custom: {
+          workOptions: { work: { kind: "new", effects: "read-only", requiresReview: true } },
+        },
+      },
+    });
+    expect(setModeCalls).toEqual([]);
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Continue research" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(2));
+    expect(onNew.mock.calls[1]?.[0]?.runConfig?.custom?.workOptions).toBeUndefined();
+  });
+
+  it.each([
+    ["开始新工作并执行", "unrestricted"],
+    ["开始新的只读调研", "read-only"],
+  ] as const)("submits the explicit contract for %s", async (name, effects) => {
+    seedStores({});
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "New task" } });
+    await openChip("新工作");
+    fireEvent.click(screen.getByRole("button", { name }));
+    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
+    expect(onNew.mock.calls[0]?.[0]).toMatchObject({
+      runConfig: {
+        custom: {
+          workOptions: { work: { kind: "new", effects, requiresReview: false } },
+        },
+      },
+    });
+  });
+
+  it("renders markdown without a filesystem path and starts the exact version", async () => {
+    seedPlan();
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "查看计划" }));
+    expect(
+      within(screen.getByRole("dialog")).getByRole("heading", { name: "Native plan" }),
+    ).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Unsent draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始计划" }));
+    await waitFor(() =>
+      expect(window.oint.chat.startPlan).toHaveBeenCalledWith(SESSION_ID, {
+        planId: "plan-1",
+        revision: 3,
+        workId: "work-1",
+        workRevision: 4,
+        requestId: expect.any(String),
+      }),
+    );
+    expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe("Unsent draft");
+    expect(setModeCalls).toEqual([]);
     expect(onNew).not.toHaveBeenCalled();
   });
 
-  it("waits for persisted Default mode before starting execution", async () => {
-    seedStores({ sessionMode: "plan" });
-    useChatStore.setState({ sessions: [{ ...session("plan"), messageCount: 2 }] });
-    let finish!: (value: { ok: true }) => void;
-    vi.mocked(window.oint.sessions.setMode).mockImplementationOnce(
+  it.each(["draft", "archived"] as const)("cannot start a %s plan", (status) => {
+    seedPlan(status);
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: "开始计划" })).toBeNull();
+  });
+
+  it("keeps the draft when the selected version is stale", async () => {
+    seedPlan();
+    vi.mocked(window.oint.chat.startPlan).mockResolvedValueOnce({ ok: false, code: "stale" });
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始计划" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("计划版本已更新"));
+  });
+
+  it("loads history and displays an immutable older version", async () => {
+    seedPlan();
+    const plan = useChatStore.getState().viewsBySession[SESSION_ID]?.state.workflow?.plan;
+    if (!plan) throw new Error("Missing seeded plan");
+    vi.mocked(window.oint.chat.planHistory).mockResolvedValueOnce([
+      { ...plan, revision: 1, markdown: "# Earlier version" },
+    ]);
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "计划历史" }));
+    await waitFor(() => expect(window.oint.chat.planHistory).toHaveBeenCalledWith(SESSION_ID));
+    fireEvent.click(await screen.findByRole("button", { name: "实施方案 · 版本 1" }));
+    expect(
+      within(screen.getByRole("dialog")).getByRole("heading", { name: "Earlier version" }),
+    ).toBeDefined();
+    expect(
+      within(screen.getByRole("dialog")).queryByRole("button", { name: "开始计划" }),
+    ).toBeNull();
+  });
+
+  it("archives the displayed version", async () => {
+    seedPlan();
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "归档计划" }));
+    await waitFor(() =>
+      expect(window.oint.chat.archivePlan).toHaveBeenCalledWith(SESSION_ID, {
+        planId: "plan-1",
+        revision: 3,
+      }),
+    );
+  });
+
+  it("sends revision instructions in the existing work without consuming the composer", async () => {
+    seedPlan();
+    render(<Harness />);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Other draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "修改计划" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "计划修改要求" }), {
+      target: { value: "Include rollback" },
+    });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "发送" }));
+    await waitFor(() =>
+      expect(window.oint.chat.send).toHaveBeenCalledWith(
+        SESSION_ID,
+        expect.stringContaining("Include rollback"),
+        undefined,
+        expect.any(String),
+        undefined,
+      ),
+    );
+    expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe("Other draft");
+    expect(setModeCalls).toEqual([]);
+  });
+
+  it.each(["standard", "orchestrate"] as const)(
+    "uses work constraints to explain goal controls in %s",
+    async (mode) => {
+      seedPlan();
+      useChatStore.setState({ sessions: [session(mode)] });
+      const workflow = useChatStore.getState().viewsBySession[SESSION_ID]?.state.workflow;
+      if (!workflow) throw new Error("Missing seeded workflow");
+      workflow.plan = null;
+      workflow.goal = {
+        id: "goal-1",
+        workId: "work-1",
+        revision: 1,
+        objective: "Improve app",
+        criteria: ["Tests pass"],
+        status: "paused",
+        progress: "",
+        scope: "implementation",
+        continuationCount: 0,
+        continuationLimit: 10,
+      };
+      vi.mocked(window.oint.chat.controlGoal).mockResolvedValueOnce({ ok: false, code: "invalid" });
+      render(<Harness />);
+      fireEvent.click(screen.getByRole("button", { name: "继续目标" }));
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toContain("当前工作仅允许只读操作"),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "展开详情" }));
+      expect(screen.getByText("Tests pass")).toBeDefined();
+      act(() => {
+        const snapshot = useChatStore.getState().viewsBySession[SESSION_ID];
+        if (!snapshot || !workflow.goal) throw new Error("Missing seeded goal");
+        useChatStore.setState({
+          viewsBySession: {
+            [SESSION_ID]: {
+              ...snapshot,
+              state: {
+                ...snapshot.state,
+                workflow: { ...workflow, goal: { ...workflow.goal, status: "completed" } },
+              },
+            },
+          },
+        });
+      });
+      expect(document.querySelector('[data-slot="composer-dock-goal"]')).toBeNull();
+    },
+  );
+
+  it("does not carry a late plan error into another session", async () => {
+    seedPlan();
+    let finish!: (result: { ok: false; code: "stale" }) => void;
+    vi.mocked(window.oint.chat.startPlan).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
         }),
     );
     render(<Harness />);
-    fireEvent.click(screen.getByRole("button", { name: "开始执行" }));
-    expect(onNew).not.toHaveBeenCalled();
-    finish({ ok: true });
-    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
-    expect(useChatStore.getState().sessions[0]?.agentMode).toBe("standard");
-  });
-
-  it("keeps plan and input after a failed mode write", async () => {
-    seedStores({ sessionMode: "plan" });
-    useChatStore.setState({ sessions: [{ ...session("plan"), messageCount: 2 }] });
-    vi.mocked(window.oint.sessions.setMode).mockRejectedValueOnce(new Error("offline"));
-    render(<Harness />);
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "additional instructions" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "开始执行" }));
-    await waitFor(() => expect(screen.getByText("模式保存失败，请重试")).toBeDefined());
-    expect(useChatStore.getState().sessions[0]?.agentMode).toBe("plan");
-    expect((screen.getByRole("combobox") as HTMLTextAreaElement).value).toBe(
-      "additional instructions",
-    );
-    expect(onNew).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "开始计划" }));
+    const snapshot = useChatStore.getState().viewsBySession[SESSION_ID];
+    if (!snapshot) throw new Error("Missing seeded snapshot");
+    act(() => useChatStore.setState({ activeSessionId: "s2", viewsBySession: { s2: snapshot } }));
+    await act(async () => finish({ ok: false, code: "stale" }));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

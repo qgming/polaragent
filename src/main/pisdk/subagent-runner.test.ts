@@ -21,6 +21,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { MAX_CONCURRENT_SUBAGENT_RUNS } from "@/shared/contracts/subagent";
 import { parseSessionAddress, SubagentsDoc } from "./native-subagents";
+import { RunPolicyDoc } from "./execution-policy";
 import { createSessionStore, type SessionStore } from "./session-store";
 import {
   createSubagentExtension,
@@ -181,6 +182,36 @@ async function fixture(options: { blocked?: boolean; many?: number } = {}) {
 }
 
 describe("native background delegation", () => {
+  it("persists the dispatch constraint ceiling through family reopen", async () => {
+    const f = await fixture({ blocked: true });
+    await f.harness.commit(async (tx) => {
+      const policy = await tx.doc(RunPolicyDoc, f.root.id);
+      policy.mode = "orchestrate";
+      policy.work = {
+        workId: "research",
+        revision: 1,
+        requirementsRevision: 0,
+        effects: "read-only",
+        requiresReview: true,
+        pendingInputIds: [],
+        approvedPlanRef: null,
+      };
+    }, context);
+    await f.launch();
+    const [run] = await f.runner.list();
+    const child = required(await f.store.open(required(run).childSessionId));
+    const childId = child.conversationId;
+    expect(await f.harness.snapshot(RunPolicyDoc, childId, context)).toMatchObject({
+      mode: "orchestrate",
+      work: { workId: "research", effects: "read-only" },
+    });
+    await f.restart();
+    expect(await f.harness.snapshot(RunPolicyDoc, childId, context)).toMatchObject({
+      work: { workId: "research", effects: "read-only" },
+    });
+    f.unblock();
+    await f.runner.wait(undefined, "all", 1, 5, context);
+  });
   it("returns immediately, creates one child per task, shares storage, and never wakes the parent", async () => {
     const f = await fixture({ blocked: true });
     await f.launch();

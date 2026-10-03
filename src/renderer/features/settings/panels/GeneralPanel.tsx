@@ -24,6 +24,21 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
     return ok;
   };
   // 滑块拖动过程只更新本地，松开指针或键盘释放时才落盘
+  const [goalLimit, setGoalLimit] = useState(String(settings.goalContinuationLimit ?? 10));
+  useEffect(
+    () => setGoalLimit(String(settings.goalContinuationLimit ?? 10)),
+    [settings.goalContinuationLimit],
+  );
+  const commitGoalLimit = () => {
+    const value = Number(goalLimit);
+    const limit =
+      Number.isFinite(value) && goalLimit.trim()
+        ? Math.min(100, Math.max(1, Math.trunc(value)))
+        : (settings.goalContinuationLimit ?? 10);
+    setGoalLimit(String(limit));
+    if (limit !== (settings.goalContinuationLimit ?? 10))
+      void update({ goalContinuationLimit: limit });
+  };
   const [chatFontSize, setChatFontSize] = useState(settings.chatFontSize);
 
   // 外部（同步/回滚）改变设置时，同步本地编辑值
@@ -113,8 +128,28 @@ function GeneralPanelBody({ settings }: { settings: Settings }) {
               options={[
                 { value: "standard", label: t("settings.agentModeStandard") },
                 { value: "orchestrate", label: t("settings.agentModeOrchestrate") },
-                { value: "plan", label: t("settings.agentModePlan") },
               ]}
+            />
+          }
+        />
+        <SettingsField
+          label={t("settings.goalContinuationLimit")}
+          description={t("settings.goalContinuationLimitDesc")}
+          htmlFor="settings-goal-limit"
+          control={
+            <input
+              id="settings-goal-limit"
+              type="number"
+              min={1}
+              max={100}
+              step={1}
+              value={goalLimit}
+              onChange={(event) => setGoalLimit(event.target.value)}
+              onBlur={commitGoalLimit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm"
             />
           }
         />

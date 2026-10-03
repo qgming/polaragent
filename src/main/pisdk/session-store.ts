@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { dataDir, sessionWorkspaceDir, workspacesDir } from "@/main/app/paths";
-import type { AgentMode, ModelRef } from "@/shared/contracts/common";
+import { type AgentMode, type ModelRef, normalizeAgentMode } from "@/shared/contracts/common";
 import type {
   ChatMessage,
   SessionCreateOptions,
@@ -200,11 +200,6 @@ function toSummary(meta: AppSessionMetadata, entry?: LocalIndexEntry): SessionSu
     model: normalizeModelRef(entry?.model),
     agentMode: normalizeAgentMode(entry?.agentMode),
   };
-}
-
-/** 索引里的 agentMode 是外部 JSON，可能被手改坏：只认已支持的合法取值，其余按「未绑定」 */
-function normalizeAgentMode(raw: unknown): AgentMode | null {
-  return raw === "standard" || raw === "orchestrate" || raw === "plan" ? raw : null;
 }
 
 /** 索引里的 model 是外部 JSON，可能被手改坏：只认完整的 {serviceId, modelId} 字符串对 */
@@ -553,17 +548,22 @@ export function createSessionStore(
   }
   async function renameIfUntitled(id: string, title: string): Promise<boolean> {
     if (!(await openHandle(id))) return false;
-    const changed = await mutateSession(id, (session) => session.commit(async (tx) => {
-      const metadata = (await tx.doc(SessionMetadataDoc)).attributes;
-      if (metadata.title?.trim()) return false;
-      metadata.title = title;
-      return true;
-    }, BACKGROUND_CONTEXT));
+    const changed = await mutateSession(id, (session) =>
+      session.commit(async (tx) => {
+        const metadata = (await tx.doc(SessionMetadataDoc)).attributes;
+        if (metadata.title?.trim()) return false;
+        metadata.title = title;
+        return true;
+      }, BACKGROUND_CONTEXT),
+    );
     if (changed) {
       // Read the current value after commit so a concurrent manual rename wins in the cache too.
       const current = await readMetadata(id);
-      try { await index.update(id, { title: current?.title }); }
-      catch (error) { console.warn(`刷新会话目录缓存失败：${String(error)}`); }
+      try {
+        await index.update(id, { title: current?.title });
+      } catch (error) {
+        console.warn(`刷新会话目录缓存失败：${String(error)}`);
+      }
     }
     return changed;
   }

@@ -24,12 +24,13 @@ import type { ChatEventEnvelope } from "@/shared/contracts/chat";
 import type { Settings } from "@/shared/contracts/settings";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "@/shared/contracts/web";
 import type { ApprovalService } from "./approvals";
+import { readDocument } from "./durable-session";
+import { RunPolicyDoc } from "./execution-policy";
+import type { WorkflowState } from "@/shared/contracts/workflow";
 import { type ChatRuntime, createChatRuntime } from "./runtime";
 import { createSessionStore, type SessionStore } from "./session-store";
 import { createSubagentExtension, createSubagentRunner } from "./subagent-runner";
 import { createToolTestApi } from "./tools/tool-test-api";
-import { readDocument } from "./durable-session";
-import { RunModeDoc } from "./plan-mode";
 
 const providerState = vi.hoisted(() => ({ current: undefined as FauxProviderHandle | undefined }));
 const preprocessing = vi.hoisted(() => ({
@@ -262,11 +263,147 @@ async function seedPendingChild(modelId?: string) {
   return run;
 }
 
+async function workflowState(): Promise<WorkflowState> {
+  const state = (await runtime.liveSnapshot(sessionId))?.state.workflow;
+  if (!state) throw new Error("Expected workflow state");
+  return state;
+}
+async function workVersion() {
+  const work = (await workflowState()).work!;
+  return { workId: work.workId, workRevision: work.revision };
+}
+function workflowResponse(
+  name: string,
+  params: Record<string, unknown> | ((state: WorkflowState) => Record<string, unknown>),
+) {
+  return async () => {
+    const state = await workflowState();
+    return toolResponse(
+      fauxToolCall(name, {
+        ...(await workVersion()),
+        ...(typeof params === "function" ? params(state) : params),
+      }),
+    );
+  };
+}
+function planResponses(markdown = "# Approach\nImplement and verify", changed = false) {
+  return [
+    workflowResponse("set_work_contract", (state) => ({
+      resolvedInputIds: state.work!.pendingInputIds,
+      requirementsChanged: changed,
+    })),
+    workflowResponse("save_plan", (state) => ({
+      title: "Approach",
+      markdown,
+      ...(state.plan && state.plan.workId === state.work?.workId && state.plan.status !== "archived"
+        ? { planId: state.plan.id, revision: state.plan.revision }
+        : {}),
+    })),
+    workflowResponse("present_plan", (state) => ({
+      planId: state.plan!.id,
+      revision: state.plan!.revision,
+    })),
+    fauxAssistantMessage("Saved for review"),
+  ];
+}
+async function executionRequest(requestId: string) {
+  const state = await workflowState();
+  return {
+    ...(await workVersion()),
+    requestId,
+    planId: state.plan!.id,
+    revision: state.plan!.revision,
+  };
+}
+const acknowledgeInput = () =>
+  workflowResponse("set_work_contract", (state) => ({
+    resolvedInputIds: state.work!.pendingInputIds,
+    requirementsChanged: false,
+  }));
+const planOnly = {
+  work: { kind: "new" as const, effects: "read-only" as const, requiresReview: true },
+};
+
 describe("native durable chat runtime", () => {
+  it.each(["research", "implementation"] as const)(
+    "only a %s goal uses read-only automatic rounds before review",
+    async (scope) => {
+      faux.setResponses([
+        acknowledgeInput(),
+        workflowResponse("create_goal", {
+          scope,
+          objective: "Deliver research",
+          criteria: ["Research verified"],
+        }),
+        fauxAssistantMessage("First research round"),
+        workflowResponse("update_goal", (state) => ({
+          goalId: state.goal!.id,
+          revision: state.goal!.revision,
+          progress: "Research verified",
+          status: "completed",
+        })),
+        fauxAssistantMessage("Research complete"),
+      ]);
+      await runtime.send(sessionId, "研究并交付方案", [], undefined, planOnly);
+      if (scope === "research") {
+        await vi.waitFor(async () =>
+          expect((await workflowState()).goal?.status).toBe("completed"),
+        );
+        expect((await workflowState()).goal?.continuationCount).toBe(1);
+      }
+      await runtime.closeSession(sessionId);
+      expect(faux.state.callCount).toBe(scope === "research" ? 5 : 3);
+    },
+  );
+  it("retries a timed-out model request without resubmitting input or enabling hidden provider retries", async () => {
+    const providerRetries: (number | undefined)[] = [];
+    const inputs: string[][] = [];
+    faux.setResponses([
+      (messages, options) => {
+        providerRetries.push(options?.maxRetries);
+        inputs.push(textOf(messages));
+        return fauxAssistantMessage("partial", {
+          stopReason: "error",
+          errorMessage: "Request timed out.",
+        });
+      },
+      (messages, options) => {
+        providerRetries.push(options?.maxRetries);
+        inputs.push(textOf(messages));
+        return fauxAssistantMessage("recovered");
+      },
+    ]);
+    const sending = runtime.send(sessionId, "continue this exact request");
+    await vi.waitFor(
+      async () => {
+        expect((await runtime.liveSnapshot(sessionId))?.state.retry).toMatchObject({
+          phase: "retrying",
+          attempt: 1,
+          maxAttempts: 5,
+          error: "Request timed out.",
+        });
+      },
+      { timeout: 5000 },
+    );
+    await sending;
+    const state = (await runtime.liveSnapshot(sessionId))?.state;
+    expect(faux.state.callCount).toBe(2);
+    expect(providerRetries).toEqual([0, 0]);
+    expect(inputs).toEqual([["continue this exact request"], ["continue this exact request"]]);
+    expect(state?.retry).toBeNull();
+    expect(state?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    const attempts = state?.messages.filter((message) => message.role === "assistant") ?? [];
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.generationId).toBe(attempts[1]?.generationId);
+    expect(attempts[0]?.parts).toEqual([{ type: "text", text: "partial" }]);
+  });
+
   it("background naming starts from the user request without delaying chat or overriding manual names", async () => {
     await runtime.dispose();
     let resolveTitle: (title: string) => void = () => {};
-    const pendingTitle = new Promise<string>((resolve) => { resolveTitle = resolve; });
+    const pendingTitle = new Promise<string>((resolve) => {
+      resolveTitle = resolve;
+    });
     const generate = vi.fn(async () => pendingTitle);
     runtime = createChatRuntime({
       getSettings: async () => settings,
@@ -290,58 +427,619 @@ describe("native durable chat runtime", () => {
     expect(await store.readTitle(sessionId)).toBe("我的标题");
   });
 
-  it("plan blocks writes and unknown MCP tools even with full permission, and skips plugin hooks", async () => {
+  it("read-only work blocks writes and unknown MCP tools even with full permission, and skips plugin hooks", async () => {
     settings.permissionMode = "full";
-    await store.setAgentMode(sessionId, "plan");
-    const execute = vi.fn(async () => ({ content: [{ type: "text" as const, text: "unexpected" }] }));
-    mcpTools = [defineTool({ name: "mcp__test__write", description: "write", parameters: Type.Object({}), execute })];
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "unexpected" }],
+    }));
+    mcpTools = [
+      defineTool({
+        name: "mcp__test__write",
+        description: "write",
+        parameters: Type.Object({}),
+        execute,
+      }),
+    ];
     const target = path.join(directory, "forbidden.txt");
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("write", { path: target, content: "changed" })),
       toolResponse(fauxToolCall("mcp__test__write", {})),
-      fauxAssistantMessage("只读方案"),
+      fauxAssistantMessage("Read-only research"),
     ]);
-    await runtime.send(sessionId, "规划变更");
+    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
     await expect(readFile(target)).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
     expect(pluginHost.dispatch).not.toHaveBeenCalled();
     expect(approvals.request).not.toHaveBeenCalled();
   });
 
-  it("mode changes cannot relax an active plan turn and execution resumes on a new turn", async () => {
+  it("fences the first natural-language request before effects, then enforces model-recorded planning constraints", async () => {
     settings.permissionMode = "full";
-    await store.setAgentMode(sessionId, "plan");
-    const target = path.join(directory, "next-turn.txt");
+    const target = path.join(directory, "must-not-create.txt");
+    faux.setResponses([
+      toolResponse(fauxToolCall("write", { path: target, content: "before classification" })),
+      workflowResponse("set_work_contract", (state) => ({
+        effects: "read-only",
+        resolvedInputIds: state.work!.pendingInputIds,
+        requirementsChanged: false,
+      })),
+      toolResponse(fauxToolCall("write", { path: target, content: "after narrowing" })),
+      fauxAssistantMessage("Research only"),
+    ]);
+    await runtime.send(sessionId, "只给方案，不要修改文件");
+    await expect(readFile(target)).rejects.toThrow();
+    expect((await workflowState()).work).toMatchObject({
+      effects: "read-only",
+      pendingInputIds: [],
+    });
+    expect(pluginHost.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("saves native plans in either style and executes only the reviewed current revision", async () => {
+    await store.setAgentMode(sessionId, "orchestrate");
+    faux.setResponses([fauxAssistantMessage("Research only")]);
+    await runtime.send(sessionId, "research", [], undefined, planOnly);
+    expect((await workflowState()).plan).toBeNull();
+    faux.setResponses(planResponses("# First\nInspect the source."));
+    await runtime.send(sessionId, "write the plan");
+    const first = (await workflowState()).plan!;
+    expect(first.status).toBe("ready");
+    expect(await runtime.readPlan(sessionId)).toMatchObject({
+      markdown: "# First\nInspect the source.",
+    });
+    faux.setResponses(planResponses("# Revised\nInspect and verify.", true));
+    await runtime.send(sessionId, "include verification");
+    const latest = (await workflowState()).plan!;
+    expect(latest.revision).toBe(2);
+    expect(
+      await runtime.startPlan(sessionId, {
+        ...(await executionRequest("stale")),
+        revision: first.revision,
+      }),
+    ).toMatchObject({ ok: false, code: "stale" });
+    let executionInput = "";
+    faux.setResponses([
+      (context) => {
+        executionInput = textOf(context).at(-1) ?? "";
+        return fauxAssistantMessage("Executed");
+      },
+    ]);
+    const request = await executionRequest("execute-current");
+    const starts = await Promise.all([
+      runtime.startPlan(sessionId, request),
+      runtime.startPlan(sessionId, request),
+    ]);
+    expect(starts.some((result) => result.ok)).toBe(true);
+    await vi.waitFor(() => expect(executionInput).toContain("# Revised"));
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))!.state.running).toBe(false),
+    );
+    expect((await workflowState()).execution).toMatchObject({
+      status: "admitted",
+      requestId: request.requestId,
+    });
+    expect((await workflowState()).plan?.status).toBe("ready");
+    expect(executionInput).not.toContain("# First");
+    expect(await store.readAgentMode(sessionId)).toBe("orchestrate");
+    const before = faux.state.callCount;
+    expect(await runtime.startPlan(sessionId, request)).toMatchObject({ ok: true });
+    expect(faux.state.callCount).toBe(before);
+  });
+
+  it.each(["standard", "orchestrate"] as const)(
+    "automatically advances a main-AI goal in %s until verified",
+    async (mode) => {
+      await store.setAgentMode(sessionId, mode);
+      faux.setResponses([
+        acknowledgeInput(),
+        workflowResponse("create_goal", {
+          objective: "Verify feature",
+          criteria: ["Verification passes"],
+        }),
+        fauxAssistantMessage("First step done"),
+        async () => {
+          const goal = (await runtime.liveSnapshot(sessionId))!.state.workflow!.goal!;
+          return toolResponse(
+            fauxToolCall("update_goal", {
+              ...(await workVersion()),
+              goalId: goal.id,
+              revision: goal.revision,
+              progress: "Verification passed",
+              status: "completed",
+            }),
+          );
+        },
+        fauxAssistantMessage("Complete"),
+      ]);
+      await runtime.send(sessionId, "Verify feature");
+      await vi.waitFor(async () =>
+        expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe(
+          "completed",
+        ),
+      );
+      const goal = (await runtime.liveSnapshot(sessionId))?.state.workflow?.goal;
+      expect(goal?.continuationCount).toBe(1);
+      expect(goal?.progress).toBe("Verification passed");
+      expect(await store.readAgentMode(sessionId)).toBe(mode);
+    },
+  );
+
+  it.each(["standard", "orchestrate"] as const)(
+    "does not schedule goal work for ordinary chat in %s",
+    async (mode) => {
+      await store.setAgentMode(sessionId, mode);
+      faux.setResponses([fauxAssistantMessage("Hello")]);
+      await runtime.send(sessionId, "Hello");
+      expect((await runtime.liveSnapshot(sessionId))!.state.workflow!.goal).toBeNull();
+      await runtime.closeSession(sessionId);
+      expect(faux.state.callCount).toBe(1);
+    },
+  );
+
+  it("keeps goal metadata independent while required review blocks implementation and continuation", async () => {
+    settings.permissionMode = "full";
+    const target = path.join(directory, "must-not-write.txt");
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Investigate change",
+        criteria: ["Verified change"],
+      }),
+      workflowResponse("update_goal", (state) => ({
+        goalId: state.goal!.id,
+        revision: state.goal!.revision,
+        progress: "Investigated scope",
+        status: "active",
+      })),
+      toolResponse(fauxToolCall("write", { path: target, content: "forbidden" })),
+      fauxAssistantMessage("Ready to prepare a plan"),
+    ]);
+    await runtime.send(sessionId, "Investigate the change", [], undefined, planOnly);
+    expect(await workflowState()).toMatchObject({
+      goal: { status: "active", progress: "Investigated scope", continuationCount: 0 },
+      plan: null,
+    });
+    expect(await runtime.controlGoal(sessionId, "resume")).toMatchObject({ ok: false });
+    await expect(readFile(target)).rejects.toThrow();
+    await runtime.closeSession(sessionId);
+    await runtime.prepareSubagent(sessionId);
+    expect((await workflowState()).goal).toMatchObject({ status: "paused", continuationCount: 0 });
+    expect(faux.state.callCount).toBe(5);
+  });
+
+  it.each(["standard", "orchestrate"] as const)(
+    "keeps automatic continuation in admitted %s despite a preference change",
+    async (mode) => {
+      await store.setAgentMode(sessionId, mode);
+      faux.setResponses([
+        acknowledgeInput(),
+        workflowResponse("create_goal", {
+          objective: "Verify",
+          criteria: ["Verified"],
+        }),
+        async () => {
+          await store.setAgentMode(sessionId, mode === "standard" ? "orchestrate" : "standard");
+          return fauxAssistantMessage("First step");
+        },
+        async () => {
+          const opened = (await store.open(sessionId))!;
+          expect(
+            await readDocument(opened.storage, RunPolicyDoc.definition.kind, opened.conversationId),
+          ).toMatchObject({ mode });
+          const workflow = (await runtime.liveSnapshot(sessionId))!.state.workflow!;
+          return toolResponse(
+            fauxToolCall("update_goal", {
+              ...(await workVersion()),
+              goalId: workflow.goal!.id,
+              revision: workflow.goal!.revision,
+              progress: "Verified",
+              status: "completed",
+            }),
+          );
+        },
+        fauxAssistantMessage("Done"),
+      ]);
+      await runtime.send(sessionId, "Verify");
+      await vi.waitFor(async () =>
+        expect((await runtime.liveSnapshot(sessionId))!.state.workflow!.goal!.status).toBe(
+          "completed",
+        ),
+      );
+      expect(await store.readAgentMode(sessionId)).toBe(
+        mode === "standard" ? "orchestrate" : "standard",
+      );
+    },
+  );
+
+  it("restores native plan content and current restrictions without a goal or mode transition", async () => {
+    await store.setAgentMode(sessionId, "orchestrate");
+    faux.setResponses(planResponses());
+    await runtime.send(sessionId, "Prepare a plan", [], undefined, planOnly);
+    const plan = (await workflowState()).plan!;
+    await runtime.closeSession(sessionId);
+    await runtime.prepareSubagent(sessionId);
+    expect(await runtime.readPlan(sessionId)).toEqual(plan);
+    expect((await workflowState()).work?.effects).toBe("read-only");
+    const calls = faux.state.callCount;
+    faux.setResponses([
+      workflowResponse("set_work_contract", (state) => ({
+        resolvedInputIds: state.work!.pendingInputIds,
+        requirementsChanged: false,
+      })),
+      fauxAssistantMessage("This step verifies the result"),
+    ]);
+    await runtime.send(sessionId, "Explain the verification step");
+    expect((await workflowState()).plan).toEqual(plan);
+    expect((await workflowState()).work?.pendingInputIds).toEqual([]);
+    expect(faux.state.callCount).toBe(calls + 2);
+    faux.setResponses([fauxAssistantMessage("Executed")]);
+    expect(await runtime.startPlan(sessionId, await executionRequest("after-reopen"))).toEqual({
+      ok: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))!.state.running).toBe(false),
+    );
+    expect(await store.readAgentMode(sessionId)).toBe("orchestrate");
+    expect((await workflowState()).goal).toBeNull();
+  });
+
+  it("keeps manual goal pause through queued messages, working-style changes and plan execution", async () => {
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Finish original task",
+        criteria: ["Original task verified"],
+      }),
+      fauxAssistantMessage("Tracked"),
+    ]);
+    await runtime.send(sessionId, "Track this task", [], undefined, planOnly);
+    expect(await runtime.controlGoal(sessionId, "pause")).toEqual({ ok: true });
+    await store.setAgentMode(sessionId, "orchestrate");
     faux.setResponses([
       async () => {
-        await store.setAgentMode(sessionId, "standard");
+        await runtime.queue(sessionId, "Additional detail", "followUp");
+        return fauxAssistantMessage("Noted");
+      },
+      fauxAssistantMessage("Detail handled"),
+    ]);
+    await runtime.send(sessionId, "Explain the scope");
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))!.state.running).toBe(false),
+    );
+    expect((await workflowState()).goal).toMatchObject({ status: "paused", continuationCount: 0 });
+    faux.setResponses(planResponses());
+    await runtime.send(sessionId, "Save the approach");
+    faux.setResponses([fauxAssistantMessage("Plan executed")]);
+    expect(await runtime.startPlan(sessionId, await executionRequest("paused-goal-plan"))).toEqual({
+      ok: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))!.state.running).toBe(false),
+    );
+    expect((await workflowState()).goal).toMatchObject({ status: "paused", continuationCount: 0 });
+    faux.setResponses([
+      workflowResponse("update_goal", (state) => ({
+        goalId: state.goal!.id,
+        revision: state.goal!.revision,
+        progress: "Original task verified",
+        status: "completed",
+      })),
+      fauxAssistantMessage("Complete"),
+    ]);
+    expect(await runtime.controlGoal(sessionId, "resume")).toEqual({ ok: true });
+    await vi.waitFor(async () => expect((await workflowState()).goal?.status).toBe("completed"));
+    expect(await store.readAgentMode(sessionId)).toBe("orchestrate");
+  });
+
+  it("pauses at the configured continuation limit and never resumes on reopen", async () => {
+    settings.goalContinuationLimit = 1;
+    await store.setAgentMode(sessionId, "standard");
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Bounded work",
+        criteria: ["Finished"],
+      }),
+      fauxAssistantMessage("Some progress"),
+      fauxAssistantMessage("More progress"),
+    ]);
+    await runtime.send(sessionId, "Bounded work");
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe("paused"),
+    );
+    expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.continuationCount).toBe(
+      1,
+    );
+    const before = (await store.loadMessages(sessionId)).messages.length;
+    await runtime.closeSession(sessionId);
+    await runtime.prepareSubagent(sessionId);
+    expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe("paused");
+    expect((await store.loadMessages(sessionId)).messages).toHaveLength(before);
+  });
+
+  it("does not auto-continue a truncated goal response", async () => {
+    await store.setAgentMode(sessionId, "standard");
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Work",
+        criteria: ["Verified"],
+      }),
+      fauxAssistantMessage("Truncated", { stopReason: "length" }),
+    ]);
+    await runtime.send(sessionId, "Work");
+    const goal = (await runtime.liveSnapshot(sessionId))?.state.workflow?.goal;
+    expect(goal?.status).toBe("paused");
+    expect(goal?.continuationCount).toBe(0);
+  });
+
+  it("releases a plan reservation without authorization if stopped before submission admission", async () => {
+    faux.setResponses(planResponses());
+    await runtime.send(sessionId, "Plan", [], undefined, planOnly);
+    const plan = (await workflowState()).plan!;
+    const request = await executionRequest("cancelled-start");
+    preprocessing.entered = false;
+    let release = () => {};
+    preprocessing.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const start = runtime.startPlan(sessionId, request);
+    try {
+      await vi.waitFor(() => expect(preprocessing.entered).toBe(true));
+      await runtime.stop(sessionId);
+    } finally {
+      release();
+    }
+    expect(await start).toMatchObject({ ok: false });
+    expect((await workflowState()).plan).toEqual(plan);
+    expect((await workflowState()).work).toMatchObject({
+      effects: "read-only",
+      approvedPlanRef: null,
+    });
+    expect(
+      (await store.loadMessages(sessionId)).messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
+    preprocessing.wait = undefined;
+    faux.setResponses([fauxAssistantMessage("Executed on retry")]);
+    expect(await runtime.startPlan(sessionId, await executionRequest("retry-start"))).toMatchObject(
+      { ok: true },
+    );
+  });
+
+  it("executes an approved goal plan in the existing working style", async () => {
+    await store.setAgentMode(sessionId, "orchestrate");
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", { objective: "Verified feature", criteria: ["Tests pass"] }),
+      ...planResponses("# Verify\nRun the tests."),
+    ]);
+    await runtime.send(sessionId, "Prepare verification plan", [], undefined, planOnly);
+    const before = await workflowState();
+    expect(before.goal).toMatchObject({ status: "active", continuationCount: 0 });
+    faux.setResponses([
+      workflowResponse("update_goal", (state) => ({
+        goalId: state.goal!.id,
+        revision: state.goal!.revision,
+        progress: "Tests passed",
+        status: "completed",
+      })),
+      fauxAssistantMessage("Verified"),
+    ]);
+    expect(await runtime.startPlan(sessionId, await executionRequest("verify-goal"))).toEqual({
+      ok: true,
+    });
+    await vi.waitFor(async () => expect((await workflowState()).goal?.status).toBe("completed"));
+    expect((await workflowState()).goal?.id).toBe(before.goal!.id);
+    expect((await workflowState()).plan?.status).toBe("ready");
+    expect(await store.readAgentMode(sessionId)).toBe("orchestrate");
+  });
+
+  it("prioritizes delayed queued user input then continues the goal after that input completes", async () => {
+    await store.setAgentMode(sessionId, "standard");
+    let release = () => {};
+    let queued: Promise<void> | undefined;
+    const feedbackGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requests: string[] = [];
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Handle feedback",
+        criteria: ["Feedback verified"],
+      }),
+      async () => {
+        preprocessing.entered = false;
+        preprocessing.wait = feedbackGate;
+        queued = runtime.send(sessionId, "New feedback", [
+          {
+            name: "note.txt",
+            kind: "text",
+            mimeType: "text/plain",
+            size: 4,
+            data: Buffer.from("note").toString("base64"),
+          },
+        ]);
+        await vi.waitFor(() => expect(preprocessing.entered).toBe(true));
+        return fauxAssistantMessage("Initial step done");
+      },
+      async (context) => {
+        requests.push(textOf(context).at(-1) ?? "");
+        return acknowledgeInput()();
+      },
+      fauxAssistantMessage("Feedback handled"),
+      async (context) => {
+        requests.push(textOf(context).at(-1) ?? "");
+        const workflow = (await runtime.liveSnapshot(sessionId))!.state.workflow!;
+        return toolResponse(
+          fauxToolCall("update_goal", {
+            ...(await workVersion()),
+            goalId: workflow.goal!.id,
+            revision: workflow.goal!.revision,
+            progress: "Feedback verified",
+            status: "completed",
+          }),
+        );
+      },
+      fauxAssistantMessage("Complete"),
+    ]);
+    try {
+      await runtime.send(sessionId, "Handle feedback");
+    } finally {
+      release();
+    }
+    await queued;
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe(
+        "completed",
+      ),
+    );
+    expect(requests[0]).toContain("New feedback");
+    expect(requests[1]).toContain("自动续行");
+  });
+
+  it("pausing while automatic continuation is preparing prevents its later admission", async () => {
+    await store.setAgentMode(sessionId, "standard");
+    let release = () => {};
+    const continuationGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Pause safely",
+        criteria: ["Verified"],
+      }),
+      () => {
+        preprocessing.entered = false;
+        preprocessing.wait = continuationGate;
+        return fauxAssistantMessage("Initial progress");
+      },
+    ]);
+    await runtime.send(sessionId, "Pause safely");
+    try {
+      await vi.waitFor(() => expect(preprocessing.entered).toBe(true));
+      expect(await runtime.controlGoal(sessionId, "pause")).toEqual({ ok: true });
+    } finally {
+      release();
+    }
+    await runtime.closeSession(sessionId);
+    expect(faux.state.callCount).toBe(3);
+    expect(
+      (await store.loadMessages(sessionId)).messages.filter((message) => message.role === "user"),
+    ).toHaveLength(1);
+    await runtime.prepareSubagent(sessionId);
+    expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe("paused");
+  });
+
+  it("a cancelled queue receipt cannot pause the goal after newer user input", async () => {
+    await store.setAgentMode(sessionId, "standard");
+    let release = () => {};
+    let reached = false;
+    const generationGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    faux.setResponses([
+      acknowledgeInput(),
+      workflowResponse("create_goal", {
+        objective: "Use latest feedback",
+        criteria: ["Latest feedback verified"],
+      }),
+      async () => {
+        reached = true;
+        await generationGate;
+        return fauxAssistantMessage("Initial progress");
+      },
+      acknowledgeInput(),
+      fauxAssistantMessage("Latest feedback handled"),
+      async () => {
+        const workflow = (await runtime.liveSnapshot(sessionId))!.state.workflow!;
+        return toolResponse(
+          fauxToolCall("update_goal", {
+            ...(await workVersion()),
+            goalId: workflow.goal!.id,
+            revision: workflow.goal!.revision,
+            progress: "Latest feedback verified",
+            status: "completed",
+          }),
+        );
+      },
+      fauxAssistantMessage("Complete"),
+    ]);
+    const original = runtime.send(sessionId, "Use latest feedback");
+    try {
+      await vi.waitFor(() => expect(reached).toBe(true));
+      await runtime.queue(sessionId, "Discard this feedback", "followUp");
+      const queued = (await runtime.liveSnapshot(sessionId))!.state.queue.find(
+        (item) => item.text === "Discard this feedback",
+      );
+      expect(queued).toBeDefined();
+      await runtime.cancelQueued(sessionId, queued!.id);
+      await runtime.queue(sessionId, "Use this newer feedback", "followUp");
+    } finally {
+      release();
+    }
+    await original;
+    await vi.waitFor(async () =>
+      expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.status).toBe(
+        "completed",
+      ),
+    );
+    expect((await runtime.liveSnapshot(sessionId))?.state.workflow?.goal?.progress).toBe(
+      "Latest feedback verified",
+    );
+  });
+
+  it("working-style changes preserve read-only work until a separately authorized work request", async () => {
+    settings.permissionMode = "full";
+    const target = path.join(directory, "next-work.txt");
+    faux.setResponses([
+      async () => {
+        await store.setAgentMode(sessionId, "orchestrate");
         return toolResponse(fauxToolCall("write", { path: target, content: "wrong" }));
       },
-      fauxAssistantMessage("plan finished"),
+      fauxAssistantMessage("Research finished"),
     ]);
-    await runtime.send(sessionId, "plan");
+    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
     await expect(readFile(target)).rejects.toThrow();
     faux.setResponses([
+      acknowledgeInput(),
+      toolResponse(fauxToolCall("write", { path: target, content: "still forbidden" })),
+      fauxAssistantMessage("Explained"),
+    ]);
+    await runtime.send(sessionId, "Explain further");
+    await expect(readFile(target)).rejects.toThrow();
+    faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("write", { path: target, content: "approved" })),
       fauxAssistantMessage("done"),
     ]);
-    await runtime.send(sessionId, "execute");
+    await runtime.send(sessionId, "Create a separate authorized note", [], undefined, {
+      work: { kind: "new", effects: "unrestricted", requiresReview: false },
+    });
     expect(await readFile(target, "utf8")).toBe("approved");
     expect(pluginHost.dispatch).toHaveBeenCalled();
   });
 
-  it("restores the persisted plan policy before running or refreshing extensions", async () => {
-    await store.setAgentMode(sessionId, "plan");
-    faux.setResponses([fauxAssistantMessage("plan")]);
-    await runtime.send(sessionId, "plan");
-    await store.setAgentMode(sessionId, "standard");
+  it("restores work restrictions before refreshing plugins or MCP tools", async () => {
+    faux.setResponses([fauxAssistantMessage("Research")]);
+    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
+    await store.setAgentMode(sessionId, "orchestrate");
     await runtime.closeSession(sessionId);
     await runtime.prepareSubagent(sessionId);
-    const opened = await store.open(sessionId);
-    if (!opened) throw new Error("Missing session");
-    expect(await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId))
-      .toEqual({ mode: "plan" });
-    mcpTools = [defineTool({ name: "mcp__late__write", description: "late", parameters: Type.Object({}), execute: async () => ({ content: [] }) })];
+    const opened = (await store.open(sessionId))!;
+    expect(
+      await readDocument(opened.storage, RunPolicyDoc.definition.kind, opened.conversationId),
+    ).toMatchObject({ work: { effects: "read-only" } });
+    mcpTools = [
+      defineTool({
+        name: "mcp__late__write",
+        description: "late",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [] }),
+      }),
+    ];
     for (const notify of mcpListeners) notify();
     await vi.waitFor(async () => {
       const agent = await readDocument(opened.storage, "pi.agent", opened.conversationId);
@@ -349,10 +1047,13 @@ describe("native durable chat runtime", () => {
       expect(JSON.stringify(agent?.tools)).not.toContain("mcp__late__write");
       expect(JSON.stringify(agent?.tools)).not.toContain('"write"');
     });
-    faux.setResponses([fauxAssistantMessage("execute")]);
-    await runtime.send(sessionId, "execute");
-    expect(await readDocument(opened.storage, RunModeDoc.definition.kind, opened.conversationId))
-      .toEqual({ mode: "standard" });
+    faux.setResponses([acknowledgeInput(), fauxAssistantMessage("New work")]);
+    await runtime.send(sessionId, "Separate implementation task", [], undefined, {
+      work: { kind: "new", effects: "unrestricted", requiresReview: false },
+    });
+    expect(
+      await readDocument(opened.storage, RunPolicyDoc.definition.kind, opened.conversationId),
+    ).toMatchObject({ mode: "orchestrate", work: { effects: "unrestricted" } });
     const agent = await readDocument(opened.storage, "pi.agent", opened.conversationId);
     expect(JSON.stringify(agent?.extensions)).toContain("test-plugin");
     expect(JSON.stringify(agent?.tools)).toContain("mcp__late__write");
@@ -427,6 +1128,7 @@ describe("native durable chat runtime", () => {
       }),
     ];
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__call", {}, { id: "tool-1" })),
       fauxAssistantMessage("done"),
     ]);
@@ -443,7 +1145,9 @@ describe("native durable chat runtime", () => {
     const parts = (await store.loadMessages(sessionId)).messages.flatMap(
       (message) => message.parts,
     );
-    expect(parts.find((part) => part.type === "tool-call")).toMatchObject({
+    expect(
+      parts.find((part) => part.type === "tool-call" && part.toolName === "mcp__test__call"),
+    ).toMatchObject({
       result: "tool value",
       details: { source: "native" },
       status: "done",
@@ -466,6 +1170,7 @@ describe("native durable chat runtime", () => {
       name === "beforeTool" ? { block: "plugin denial", failures: [] } : { failures: [] },
     );
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__call", {})),
       fauxAssistantMessage("blocked acknowledged"),
     ]);
@@ -475,7 +1180,9 @@ describe("native durable chat runtime", () => {
     const parts = (await store.loadMessages(sessionId)).messages.flatMap(
       (message) => message.parts,
     );
-    expect(parts.find((part) => part.type === "tool-call")).toMatchObject({ isError: true });
+    expect(
+      parts.find((part) => part.type === "tool-call" && part.toolName === "mcp__test__call"),
+    ).toMatchObject({ isError: true });
   });
 
   it("injects plugin context only into the next provider request", async () => {
@@ -494,6 +1201,7 @@ describe("native durable chat runtime", () => {
     );
     let request: TranscriptContext | undefined;
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__call", {})),
       (context) => {
         request = context;
@@ -529,6 +1237,7 @@ describe("native durable chat runtime", () => {
     ];
     let nextRequest: string[] = [];
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__hold", {})),
       (context) => {
         nextRequest = textOf(context);
@@ -611,16 +1320,23 @@ describe("native durable chat runtime", () => {
       }),
     ];
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__hold", {})),
       fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid request" }),
       fauxAssistantMessage("recovered"),
     ]);
     const sending = runtime.send(sessionId, "start");
     await expect.poll(() => entered).toBe(true);
-    await runtime.send(sessionId, "send after failure", [{
-      kind: "text", name: "notes.txt", mimeType: "text/plain", size: 5,
-      data: Buffer.from("notes").toString("base64"), text: "notes",
-    }]);
+    await runtime.send(sessionId, "send after failure", [
+      {
+        kind: "text",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        size: 5,
+        data: Buffer.from("notes").toString("base64"),
+        text: "notes",
+      },
+    ]);
     const beforeFailure = (await runtime.liveSnapshot(sessionId))?.state.queue[0];
     if (!beforeFailure) throw new Error("Missing queued attachment");
     expect(beforeFailure.text).toBe("send after failure");
@@ -642,7 +1358,9 @@ describe("native durable chat runtime", () => {
     const saved = (await store.loadMessages(sessionId)).messages.find((message) =>
       message.parts.some((part) => part.type === "text" && part.text === "edited with attachment"),
     );
-    expect(saved?.parts.some((part) => part.type === "attachment" && part.name === "notes.txt")).toBe(true);
+    expect(
+      saved?.parts.some((part) => part.type === "attachment" && part.name === "notes.txt"),
+    ).toBe(true);
   });
 
   it("withdraws queued input and propagates cancellation into a running tool", async () => {
@@ -669,7 +1387,7 @@ describe("native durable chat runtime", () => {
         },
       }),
     ];
-    faux.setResponses([toolResponse(fauxToolCall("mcp__test__call", {}))]);
+    faux.setResponses([acknowledgeInput(), toolResponse(fauxToolCall("mcp__test__call", {}))]);
     const sending = runtime.send(sessionId, "hold tool");
     await expect.poll(() => entered).toBe(true);
     await runtime.queue(sessionId, "remove me", "followUp");
@@ -708,6 +1426,7 @@ describe("native durable chat runtime", () => {
       }),
     ];
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__call", {})),
       fauxAssistantMessage("must not start"),
     ]);
@@ -739,7 +1458,7 @@ describe("native durable chat runtime", () => {
       release();
     }
     await Promise.all([original, queued]);
-    expect(faux.state.callCount).toBe(1);
+    expect(faux.state.callCount).toBe(2);
     expect(
       (await store.loadMessages(sessionId)).messages.filter((message) => message.role === "user"),
     ).toHaveLength(1);
@@ -819,6 +1538,7 @@ describe("native durable chat runtime", () => {
     let actualThinking: string | undefined;
     let offered: string[] = [];
     faux.setResponses([
+      acknowledgeInput(),
       (context, options, _state, model) => {
         actualModel = model.id;
         actualThinking = options?.reasoning;
@@ -831,6 +1551,7 @@ describe("native durable chat runtime", () => {
     // Null creates a fresh native conversation; a non-tip old cutoff forces a historical native fork.
     await runtime.send(sessionId, "new tail");
     faux.setResponses([
+      acknowledgeInput(),
       (context, options, _state, model) => {
         actualModel = model.id;
         actualThinking = options?.reasoning;
@@ -850,6 +1571,7 @@ describe("native durable chat runtime", () => {
 
   it("restores todo state at a retry cutoff instead of retaining the abandoned branch", async () => {
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("todo", { todos: [{ text: "first task", status: "pending" }] })),
       fauxAssistantMessage("first plan"),
     ]);
@@ -857,11 +1579,13 @@ describe("native durable chat runtime", () => {
     const cutoff = (await store.loadMessages(sessionId)).messages.at(-1)?.entryId;
     if (cutoff === undefined) throw new Error("Missing todo cutoff");
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("todo", { todos: [{ text: "abandoned task", status: "active" }] })),
       fauxAssistantMessage("second plan"),
     ]);
     await runtime.send(sessionId, "plan two");
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("todo", { todos: [{ text: "first task", status: "done" }] })),
       fauxAssistantMessage("restored plan"),
     ]);
@@ -932,11 +1656,13 @@ describe("native durable chat runtime", () => {
     ];
     const requests: TranscriptContext[] = [];
     faux.setResponses([
+      acknowledgeInput(),
       toolResponse(fauxToolCall("mcp__test__call", {})),
       (context) => {
         requests.push(context);
         return fauxAssistantMessage("first done");
       },
+      acknowledgeInput(),
       (context) => {
         requests.push(context);
         return fauxAssistantMessage("second done");

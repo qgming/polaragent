@@ -211,18 +211,25 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
   // 没有渲染档的文件永远走原始档
   const effectiveMode: ViewMode = kind === null ? "source" : mode;
 
-  const full = draft ?? content?.text ?? "";
+  const full = content?.readonly ? content.text : (draft ?? content?.text ?? "");
   const lines = full.split("\n");
   const truncatedLines = lines.length > MAX_PREVIEW_LINES;
   const previewText = truncatedLines ? lines.slice(0, MAX_PREVIEW_LINES).join("\n") : full;
 
   // 二进制与「没读全」的文件不给编辑：主进程这两种情况都会拒写（见 main/files/service.ts）
-  const editable = content !== null && !content.binary && !content.truncated;
+  const editable = content !== null && !content.readonly && !content.binary && !content.truncated;
   const dirty = draft !== null && content !== null && draft !== content.text;
-  const canSave = dirty && !saving;
+  const canSave = editable && dirty && !saving;
 
   const save = useCallback(async () => {
-    if (sessionId === null || draft === null || content === null || savingRef.current) return;
+    if (
+      sessionId === null ||
+      draft === null ||
+      content === null ||
+      content.readonly ||
+      savingRef.current
+    )
+      return;
     const pending = beginFileSave(path, draft);
     if (pending === null) return;
     savingRef.current = true;
@@ -231,7 +238,12 @@ export function FileViewer({ path, leading }: FileViewerProps): React.JSX.Elemen
     const stillCurrent = () => mounted.current && currentPath.current === path;
     try {
       const disk = await window.oint.files.readFile({ sessionId, path });
-      if (disk.binary || disk.truncated || disk.text !== (unsavedBaseOf(path) ?? content.text)) {
+      if (
+        disk.readonly ||
+        disk.binary ||
+        disk.truncated ||
+        disk.text !== (unsavedBaseOf(path) ?? content.text)
+      ) {
         throw new Error(t("rightPanel.fileChangedOnDisk"));
       }
       const result = await window.oint.files.writeFile({ sessionId, path, text: draft });

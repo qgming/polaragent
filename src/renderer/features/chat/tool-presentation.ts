@@ -116,6 +116,11 @@ function shortenCommand(value: string): string {
 export function toolChip(args: unknown): string {
   if (!isRecord(args)) return "";
 
+  if (typeof args.workId === "string" || typeof args.planId === "string") {
+    const summary = args.title ?? args.objective;
+    return typeof summary === "string" ? shortenCommand(summary) : "";
+  }
+
   const command = args.command;
   if (typeof command === "string" && command !== "") return shortenCommand(command);
 

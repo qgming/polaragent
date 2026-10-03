@@ -17,6 +17,7 @@ import {
   type SubagentRun,
 } from "@/shared/contracts/subagent";
 import { detached } from "./native-state";
+import { RunPolicyDoc } from "./execution-policy";
 import { childSessionId, SubagentsDoc } from "./native-subagents";
 import type { SubagentStartRequest } from "./tools/subagent";
 
@@ -172,6 +173,10 @@ export function createSubagentRunner(input: {
       const child = await tx.createConversation({
         ownership: { kind: "task", taskId: anchorTaskId },
       });
+      const parentPolicy = await tx.doc(RunPolicyDoc, api.conversationId);
+      const childPolicy = await tx.doc(RunPolicyDoc, child.id);
+      childPolicy.mode = parentPolicy.mode;
+      childPolicy.work = detached(parentPolicy.work);
       const inherited = await tx.doc(AgentDoc, child.id);
       inherited.extensions = [`oint:${child.id}`];
       await configure(tx, child.id, {

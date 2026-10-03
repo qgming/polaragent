@@ -22,6 +22,7 @@ import type {
   SetSessionModelResult,
   SetSessionModeResult,
 } from "@/shared/contracts";
+import type { ChatSendOptions } from "@/shared/contracts/chat";
 import { acceptViewFrame, mergeViewMessages } from "./chat-view";
 
 /** 单页加载的消息条数 */
@@ -152,6 +153,7 @@ interface ChatState {
     text: string,
     attachments?: ChatAttachment[],
     targetSessionId?: string | null,
+    options?: ChatSendOptions,
   ): Promise<void>;
   /** 编辑用户消息：替换为新文本并从该处重跑（回退到父条目） */
   editUserMessage(messageId: string, text: string): Promise<void>;
@@ -556,7 +558,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     await get().setActiveSession(forked.id);
   },
 
-  async send(text, attachments, targetSessionId) {
+  async send(text, attachments, targetSessionId, options) {
     let sessionId = targetSessionId === undefined ? get().activeSessionId : targetSessionId;
     if (!sessionId) {
       await get().createSession();
@@ -589,7 +591,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     });
     // 带上乐观消息 id：主进程回显该用户消息时复用同 id，避免 UI 出现两条
     try {
-      await window.oint.chat.send(sessionId, text, attachments, optimistic.id);
+      await window.oint.chat.send(sessionId, text, attachments, optimistic.id, options);
     } catch (error) {
       set((state) => ({
         messagesBySession: {

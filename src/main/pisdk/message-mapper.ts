@@ -8,6 +8,7 @@ import type {
 } from "@/shared/contracts/session";
 import { type AttachmentEnvelope, parseAttachmentEnvelope } from "./attachments";
 import type { AppEntry } from "./durable-session";
+import { modelGenerationId } from "./model-retry";
 import { toolPartImages } from "./tool-images";
 
 type UserMessage = Extract<Message, { role: "user" }>;
@@ -264,9 +265,19 @@ export function mapEntriesToMessages(entries: readonly AppEntry[]): {
       if (message.role === "user") {
         messages.push(mapUserMessage(entry.entryId, message, createdAt, entry.parentId));
       } else if (message.role === "assistant") {
-        messages.push(
-          mapAssistantMessage(entry.entryId, message, createdAt, pending, entry.parentId),
+        const mapped = mapAssistantMessage(
+          entry.entryId,
+          message,
+          createdAt,
+          pending,
+          entry.parentId,
         );
+        if (entry.record.byTaskId !== undefined)
+          mapped.generationId = modelGenerationId(
+            entry.record.conversationId,
+            entry.record.byTaskId,
+          );
+        messages.push(mapped);
       } else if (message.role === "toolResult") {
         // toolResult 是独立消息条目：只回填对应 tool-call，不单独成条
         applyToolResult(message, pending);

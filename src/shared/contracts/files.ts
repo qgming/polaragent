@@ -39,6 +39,8 @@ export interface DirectoryListing {
 
 /** 读文件的结果 */
 export interface FileContent {
+  /** Application-managed artifacts may be viewed but must be revised by their owner. */
+  readonly?: boolean;
   path: string;
   /** 等宽体预览的正文 */
   text: string;

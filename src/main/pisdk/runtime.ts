@@ -25,6 +25,7 @@ import {
   LiveDoc,
   type Registry,
   type SubmissionId,
+  type Submission,
   section,
   type ToolRegistration,
   ToolTask,
@@ -42,7 +43,12 @@ import type {
   ChatSendOptions,
   CompactOutcome,
 } from "@/shared/contracts/chat";
-import { type AgentMode, DEFAULT_AGENT_MODE, type ModelRef } from "@/shared/contracts/common";
+import {
+  type AgentMode,
+  DEFAULT_AGENT_MODE,
+  type ModelRef,
+  normalizeAgentMode,
+} from "@/shared/contracts/common";
 import type { JobInfo } from "@/shared/contracts/job";
 import { mcpServerRuleName, parseMcpToolName } from "@/shared/contracts/mcp";
 import type { ContextBreakdown, SetSessionModelResult } from "@/shared/contracts/session";
@@ -52,6 +58,13 @@ import type {
   SubagentEventEnvelope,
   SubagentRun,
 } from "@/shared/contracts/subagent";
+import type {
+  GoalControl,
+  PlanRef,
+  PlanState,
+  WorkContract,
+  WorkflowResult,
+} from "@/shared/contracts/workflow";
 import { isPreTrustedMcpTool } from "@/shared/mcp/builtin-servers";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
 import { renderPrompt } from "@/shared/prompts/template";
@@ -66,6 +79,7 @@ import { createExecEnv } from "./exec-env";
 import { createInteractionService, type InteractionService } from "./interactions";
 import { createJobService, type JobService, JobsDoc } from "./jobs";
 import type { McpToolSource } from "./mcp-servers";
+import { MODEL_RETRY_POLICY } from "./model-retry";
 import { createNativeMetrics, type NativeMetrics } from "./native-metrics";
 import { compactionReceipt } from "./native-operations";
 import { nativeReports, projectReportContext } from "./native-reports";
@@ -78,7 +92,13 @@ import {
   getSharedPermissionRuleStore,
   type PermissionRuleStore,
 } from "./permissions";
-import { allowedInPlan, RunModeDoc } from "./plan-mode";
+import {
+  intersectWork,
+  toolAllowedByWork,
+  workAllowsEffects,
+  RunPolicyDoc,
+  WORKFLOW_TOOL_NAMES,
+} from "./execution-policy";
 import { buildProviders, resolveModel } from "./providers";
 import {
   createRepeatChain,
@@ -124,6 +144,26 @@ import { buildTools, restrictTools, TOOL_NAMES } from "./tools";
 import { ASK_TOOL_NAME, createAskTool } from "./tools/ask";
 import { createJobTools } from "./tools/jobs";
 import { createSubagentTools, SUBAGENT_TOOL_NAMES } from "./tools/subagent";
+import { createWorkflowTools } from "./tools/workflow";
+import {
+  controlGoal as changeGoal,
+  mutateGoal,
+  readWorkflow,
+  summarizeWorkflow,
+  beginWork,
+  registerWorkInput,
+  resolveWorkInput,
+  readPlan as getPlan,
+  archivePlan as archiveSavedPlan,
+  reservePlanExecution,
+  admitPlanExecution,
+  releasePlanExecution,
+  WorkDoc,
+  PlanDoc,
+  PlanExecutionDoc,
+  composeWorkflow,
+  type PlanExecutionRequest,
+} from "./workflow";
 
 export interface ChatRuntimeDeps {
   getSettings: () => Promise<Settings>;
@@ -219,6 +259,11 @@ export interface ChatRuntime {
     options?: ChatSendOptions,
   ): Promise<void>;
   stop(sessionId: string): Promise<void>;
+  controlGoal(sessionId: string, action: GoalControl): Promise<WorkflowResult>;
+  startPlan(sessionId: string, request: PlanExecutionRequest): Promise<WorkflowResult>;
+  readPlan(sessionId: string, ref?: PlanRef): Promise<PlanState | null>;
+  planHistory(sessionId: string): Promise<PlanState[]>;
+  archivePlan(sessionId: string, ref: PlanRef): Promise<WorkflowResult>;
   queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void>;
 
   cancelQueued(sessionId: string, entryId: string): Promise<void>;
@@ -278,6 +323,12 @@ interface SessionRuntime {
   readonly running: boolean;
   sending: boolean;
   inputEpoch: number;
+  workflowEpoch: number;
+  workflowRun: number;
+  goalArmed: boolean;
+  goalDriving: boolean;
+  goalContinuationLimit: number;
+  pendingInputs: number;
   stopping?: Promise<void>;
   compacting?: boolean;
   admission?: Promise<void>;
@@ -291,6 +342,8 @@ interface SessionRuntime {
   titleAttempted?: boolean;
   titlePending?: boolean;
   activeMode: AgentMode;
+  admittedWork: WorkContract | null;
+  startingPlan?: string;
   mcpToolsStale?: boolean;
   stats: SessionStatsState;
   contextBreakdown: Omit<ContextBreakdown, "messageTokens">;
@@ -766,7 +819,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     try {
       const title = await autoTitleSession(runtime.sessionId, {
         generate,
-        ...(admittedText?.trim() ? { source: { userText: admittedText.trim(), assistantText: "" } } : {}),
+        ...(admittedText?.trim()
+          ? { source: { userText: admittedText.trim(), assistantText: "" } }
+          : {}),
         readTitle: (id) => deps.sessionStore.readTitle(id),
         // 从会话开头取用户需求；助手尚未回复或首轮失败也能命名。
         loadMessages: async (id) =>
@@ -800,8 +855,55 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return work;
   }
 
+  const guardedPlugins = new WeakMap<Extension, Extension>();
+  function workPlugins(cwd: string) {
+    return pluginExtensions(cwd).map((plugin) => {
+      let extension = guardedPlugins.get(plugin.extension);
+      if (!extension) {
+        const allowed = async (args: unknown[]) => {
+          const api = args.find(
+            (value) => value && typeof value === "object" && "conversationId" in value,
+          ) as { conversationId: Conversation["id"] } | undefined;
+          const runtime =
+            api &&
+            [...runtimes.values()].find((item) => item.conversation.id === api.conversationId);
+          return (
+            !!runtime &&
+            !runtime.sendController?.signal.aborted &&
+            workAllowsEffects(await effectiveWork(runtime))
+          );
+        };
+        extension = defineExtension({
+          ...plugin.extension,
+          hooks: plugin.extension.hooks?.map((registration) => ({
+            ...registration,
+            handlers: Object.fromEntries(
+              Object.entries(registration.handlers).map(([name, handler]) => [
+                name,
+                async (...args: unknown[]) => {
+                  if (!(await allowed(args))) return undefined;
+                  return handler(...args);
+                },
+              ]),
+            ),
+          })),
+          sections: plugin.extension.sections?.map((item) => ({
+            ...item,
+            render: async (input, context) =>
+              (await allowed([input])) ? item.render(input, context) : undefined,
+          })),
+        });
+        guardedPlugins.set(plugin.extension, extension);
+      }
+      return { ...plugin, extension };
+    });
+  }
+
   async function refreshExtraTools(runtime: SessionRuntime, forNewTurn = false): Promise<void> {
-    if (!forNewTurn && (runtime.running || runtime.stopping !== undefined || (await hasActiveOperation(runtime)))) {
+    if (
+      !forNewTurn &&
+      (runtime.running || runtime.stopping !== undefined || (await hasActiveOperation(runtime)))
+    ) {
       runtime.mcpToolsStale = true;
       return;
     }
@@ -822,15 +924,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath),
         },
       );
+      if (!runtime.isSubagent)
+        nextTools.push(...workflowToolsFor(() => runtime, runtime.sessionId));
       const whitelist = runtime.spec?.definition.tools;
-      const plugins = runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd);
+      const plugins = workAllowsEffects(runtime.admittedWork) ? workPlugins(runtime.env.cwd) : [];
       for (const plugin of plugins) runtime.registry.install(plugin.extension);
       const available = [
         ...nextTools,
         ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
       ];
-      const selected = (whitelist === undefined ? available : restrictTools(available, whitelist))
-        .filter((tool) => runtime.activeMode !== "plan" || allowedInPlan(tool.name));
+      const selected = (
+        whitelist === undefined ? available : restrictTools(available, whitelist)
+      ).filter((tool) => toolAllowedByWork(runtime.admittedWork, tool.name));
       runtime.extension = defineExtension({
         ...runtime.extension,
         tools: nextTools.filter((tool) => selected.some((chosen) => chosen.name === tool.name)),
@@ -872,11 +977,20 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     api: HookApi,
   ): Promise<ToolPermissionResult | undefined> {
     signal?.throwIfAborted();
-    if (runtime.activeMode === "plan" && !allowedInPlan(toolName)) {
-      return {
-        block: { reason: "计划模式只允许阅读、检索和提问。请通过‘开始执行’切换模式后再操作。" },
-      };
+    const work = await effectiveWork(runtime);
+    signal?.throwIfAborted();
+    if ((WORKFLOW_TOOL_NAMES as readonly string[]).includes(toolName)) {
+      if (runtime.isSubagent)
+        return { block: { reason: "Only the main AI may access workflow tools." } };
+      return undefined;
     }
+    if (!toolAllowedByWork(work, toolName))
+      return {
+        block: {
+          reason:
+            "当前工作只允许调研或尚有待处理输入/评审。先用 set_work_contract 处理用户输入；实施需要用户授权。",
+        },
+      };
     const settings = await deps.getSettings();
     // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
     if (settings.permissionMode === "full") return undefined;
@@ -1009,14 +1123,28 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const family = spec ? await ensureRuntime(opened.familyId, false) : undefined;
     const savedMode = await readDocument(
       opened.storage,
-      RunModeDoc.definition.kind,
+      RunPolicyDoc.definition.kind,
       opened.conversationId,
     );
     const preference = (await deps.sessionStore.readAgentMode(sessionId)) ?? settings.agentMode;
-    const activeMode: AgentMode = savedMode?.mode === "plan" || family?.activeMode === "plan"
-      ? "plan"
-      : savedMode?.mode === "standard" || savedMode?.mode === "orchestrate"
-        ? savedMode.mode : preference;
+    const activeMode: AgentMode = normalizeAgentMode(savedMode?.mode) ?? preference;
+    const savedWork = await readDocument(
+      opened.storage,
+      WorkDoc.definition.kind,
+      opened.conversationId,
+    );
+    const savedExecutions = await readDocument(
+      opened.storage,
+      PlanExecutionDoc.definition.kind,
+      opened.conversationId,
+    );
+    const currentWork = family
+      ? (await readWorkflow(family.harness, family.conversation.id)).work
+      : composeWorkflow(null, null, savedWork as never, savedExecutions as never).work;
+    const admittedWork = intersectWork(
+      (savedMode?.work as WorkContract | null) ?? null,
+      currentWork,
+    );
     await ensurePluginWorkspace(cwd);
     // 允许根见 sessionAllowedRoots：cwd / dataDir 兜住技能与模板目录、
     // appPath 兜住随包分发的内置技能，tmpdir 让 read 能打开 bash spill 文件（"Full output: <path>"）。
@@ -1088,17 +1216,24 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           })
         : [];
 
-    const availableSubagents = spec === undefined ? await loadEnabledSubagents(settings, cwd) : [];
     /** 静态骨架 + 动态模式 → 完整系统提示（主会话用） */
     const composeMainPrompt = async (): Promise<string> => {
       const current = await deps.getSettings();
       // 会话级绑定优先，未绑定时跟随设置里的默认模式
       const mode = runtimeRef?.activeMode ?? activeMode;
+      const availableSubagents = await loadEnabledSubagents(current, cwd);
       const parts = [await buildSystemPrompt(current, cwd, loaded.skillsSection, mode)];
+      if (runtimeRef)
+        parts.push(
+          `Current durable workflow (read_workflow before changes):\n${JSON.stringify(summarizeWorkflow(await readWorkflow(runtimeRef.harness, runtimeRef.conversation.id)))}`,
+        );
       const index = formatSubagentsForSystemPrompt(availableSubagents);
       if (index !== "") parts.push(index);
       if (shouldIncludeDelegationRules(mode)) {
-        const delegation = buildDelegationPrompt(availableSubagents, model.id);
+        const delegation = buildDelegationPrompt(
+          availableSubagents,
+          runtimeRef?.model.id ?? model.id,
+        );
         if (delegation !== "") parts.push(delegation);
       }
       return parts.join("\n\n");
@@ -1140,9 +1275,14 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         searchRoots: sessionAllowedRoots(env.cwd, deps.appPath),
       },
     );
+    if (!spec) builtTools.push(...workflowToolsFor(() => runtimeRef, sessionId, activeMode));
     // 子智能体永远拿不到 Task 系列与 ask_user，所以「可授权」的清单里也不该出现它们
-    const undelegatable = new Set<string>([...Object.values(SUBAGENT_TOOL_NAMES), ASK_TOOL_NAME]);
-    const plugins = activeMode === "plan" ? [] : pluginExtensions(cwd);
+    const undelegatable = new Set<string>([
+      ...Object.values(SUBAGENT_TOOL_NAMES),
+      ASK_TOOL_NAME,
+      ...WORKFLOW_TOOL_NAMES,
+    ]);
+    const plugins = workAllowsEffects(admittedWork) ? workPlugins(cwd) : [];
     const availableTools = [
       ...builtTools,
       ...plugins.flatMap((plugin) => plugin.extension.tools ?? []),
@@ -1154,8 +1294,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const tools = (
       subagentWhitelist === undefined
         ? availableTools
-        : restrictTools(availableTools, subagentWhitelist))
-      .filter((tool) => activeMode !== "plan" || allowedInPlan(tool.name));
+        : restrictTools(availableTools, subagentWhitelist)
+    ).filter((tool) => toolAllowedByWork(admittedWork, tool.name));
     // 上下文分解的固定项：系统提示词与工具定义按「请求装配时」的估算值缓存
     const systemTokens = estimateTokens(systemPrompt);
     const toolsTokens = estimateToolsTokens(tools);
@@ -1199,6 +1339,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
                 runtime.conversation.id === target.conversationId,
             )?.env ?? env,
           settings: {
+            retry: MODEL_RETRY_POLICY,
+            stream: { maxRetries: 0 },
             compaction: { enabled: true, reserveTokens: 20_000, keepRecentTokens: 40_000 },
           },
         },
@@ -1227,6 +1369,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const savedUsage = await deps.sessionStore.readUsage(sessionId);
       const runtime: SessionRuntime = {
         activeMode,
+        admittedWork,
         sessionId,
         familyId: opened.familyId,
         spec,
@@ -1247,6 +1390,12 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
         sending: false,
         inputEpoch: 0,
+        workflowEpoch: 0,
+        workflowRun: 0,
+        goalArmed: false,
+        goalDriving: false,
+        goalContinuationLimit: settings.goalContinuationLimit ?? 10,
+        pendingInputs: 0,
         unsubscribers: [],
         // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
         subagentTools,
@@ -1373,13 +1522,51 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
       runtime.unsubscribers.push(
         subscribePluginExtensions(() => {
-          if (runtime.activeMode === "plan") return;
-          for (const plugin of pluginExtensions(runtime.env.cwd))
+          if (!workAllowsEffects(runtime.admittedWork)) return;
+          for (const plugin of workPlugins(runtime.env.cwd))
             runtime.registry.install(plugin.extension);
           scheduleEffect(runtime, applyExtraTools(runtime));
         }),
       );
       await applyModel(runtime, settings);
+      if (!runtime.isSubagent) {
+        await runtime.harness.commit(async (tx) => {
+          const doc = await tx.doc(WorkDoc, runtime.conversation.id);
+          if (!doc.work) return;
+          const retained: string[] = [];
+          for (const id of doc.work.pendingInputIds) {
+            const input = await tx.submissionByRequest(runtime.conversation.id, id);
+            if (input && (input.status === "queued" || input.entry !== undefined))
+              retained.push(id);
+          }
+          if (retained.length !== doc.work.pendingInputIds.length) {
+            doc.work.pendingInputIds = retained;
+            doc.work.revision++;
+            doc.revision++;
+          }
+        }, BACKGROUND_CONTEXT);
+        runtime.admittedWork = await effectiveWork(runtime);
+        await persistRunPolicy(runtime);
+        const workflow = await readWorkflow(runtime.harness, runtime.conversation.id);
+        const executions = await runtime.harness.snapshot(
+          PlanExecutionDoc,
+          runtime.conversation.id,
+          BACKGROUND_CONTEXT,
+        );
+        for (const receipt of Object.values(executions?.receipts ?? {})) {
+          // Run creation and authorization are atomic: a reservation has no admitted input.
+          if (receipt.status === "reserved")
+            await releasePlanExecution(runtime.harness, runtime.conversation.id, receipt.requestId);
+        }
+        if (workflow.execution?.status === "admitted") {
+          await runtime.conversation.abort(BACKGROUND_CONTEXT);
+          await cancelWorkActivity(runtime, "计划执行已中断，请由用户继续");
+        }
+        if (workflow.goal?.status === "active") {
+          await pauseGoal(runtime, "会话已重新打开，点击继续恢复目标。");
+          await runtime.conversation.abort(BACKGROUND_CONTEXT);
+        }
+      }
       await attachView(runtime);
       // Recovered durable tasks keep their native interruption/replay semantics. No blanket abort-on-open.
       return runtime;
@@ -1519,14 +1706,32 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     options?: ChatSendOptions,
   ): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
+    runtime.workflowEpoch++;
     if (runtime.stopping !== undefined) await runtime.stopping;
     if (runtime.sendController?.signal.aborted) await runtime.sendSettled;
-    await runtime.subagents?.abortAll("父会话开始了新一轮指令");
 
     if (runtime.running || runtime.sending) {
+      if (options?.work || options?.rewindToEntryId !== undefined)
+        throw new Error("当前运行结束后才能开始新工作或编辑历史消息。");
       await enqueueInput(runtime, text, "followUp", attachments, messageId);
       return;
     }
+    await runAdmitted(runtime, text, attachments, messageId, options);
+  }
+
+  /** Reserve admission synchronously, including plan validation and automatic continuation. */
+  async function runAdmitted(
+    runtime: SessionRuntime,
+    text: string,
+    attachments?: ChatAttachment[],
+    messageId?: string,
+    options?: ChatSendOptions,
+    prepare?: (signal: AbortSignal) => Promise<{ text: string; mode: AgentMode } | undefined>,
+    automatic = false,
+    onAdmitted?: () => void | Promise<void>,
+    onNotAdmitted?: () => Promise<void>,
+  ): Promise<boolean> {
+    runtime.workflowRun++;
     runtime.sending = true;
     const controller = new AbortController();
     runtime.sendController = controller;
@@ -1537,11 +1742,41 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     runtime.admission = new Promise<void>((resolve) => {
       runtime.admitted = resolve;
     });
+    let didAdmit = false;
     try {
-      await sendLocked(runtime, text, attachments, messageId, options, controller.signal);
+      const prepared = await prepare?.(controller.signal);
+      if (prepare && !prepared) return false;
+      controller.signal.throwIfAborted();
+      if (options?.work?.kind === "new") {
+        await cancelWorkActivity(runtime, "父会话开始了另一项工作");
+      }
+      const success = await sendLocked(
+        runtime,
+        prepared?.text ?? text,
+        attachments,
+        messageId,
+        options,
+        controller.signal,
+        prepared?.mode,
+        automatic,
+        async () => {
+          didAdmit = true;
+          await onAdmitted?.();
+        },
+      );
+      if (!success && !(automatic && runtime.pendingInputs))
+        await pauseGoal(runtime, "运行未成功完成，请检查错误后继续。");
+      return success;
     } catch (error) {
+      runtime.goalArmed = false;
       if (!controller.signal.aborted) throw error;
+      return false;
     } finally {
+      try {
+        if (!didAdmit) await onNotAdmitted?.();
+      } catch (error) {
+        console.warn("Workflow admission rollback failed", error);
+      }
       runtime.sending = false;
       runtime.admitted?.();
       runtime.admission = undefined;
@@ -1549,6 +1784,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       runtime.sendController = undefined;
       runtime.sendSettled = undefined;
       settled();
+      if (runtime.goalArmed && !runtime.goalDriving) scheduleEffect(runtime, driveGoal(runtime));
     }
   }
 
@@ -1560,7 +1796,10 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     messageId: string | undefined,
     options: ChatSendOptions | undefined,
     signal: AbortSignal,
-  ): Promise<void> {
+    mode?: AgentMode,
+    automatic = false,
+    onAdmitted?: () => void | Promise<void>,
+  ): Promise<boolean> {
     await runtime.toolRefresh;
     signal.throwIfAborted();
     if (runtime.mcpToolsStale) {
@@ -1570,19 +1809,13 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     // 模型必须在档位之前 —— 档位的就近降级按 runtime.model 的支持范围算
     const settings = await deps.getSettings();
     signal.throwIfAborted();
-    runtime.activeMode = (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
-    await runtime.harness.commit(async (tx) => {
-      (await tx.doc(RunModeDoc, runtime.conversation.id)).mode = runtime.activeMode;
-    }, BACKGROUND_CONTEXT);
-    await refreshExtraTools(runtime, true);
-    signal.throwIfAborted();
-    await applyModel(runtime, settings);
-    signal.throwIfAborted();
-    await applyThinkingLevel(runtime, settings);
-    signal.throwIfAborted();
-
+    const nextMode =
+      mode ?? (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
+    runtime.activeMode = nextMode;
+    runtime.goalContinuationLimit = settings.goalContinuationLimit ?? 10;
     runtime.repeatChain = createRepeatChain();
     const requestId = messageId ?? randomUUID();
+    let submitted = false;
     try {
       signal.throwIfAborted();
       const rewound = options?.rewindToEntryId;
@@ -1594,22 +1827,21 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
           await runtime.view?.stop();
           await runtime.metrics?.stop();
           runtime.conversation = selected;
-          // Native forks restore historical AgentDoc. Reapply the user's current choices for this new run.
+          await selected.commit(async (tx) => {
+            // Submission IDs belong to the original conversation. The replacement
+            // input is fenced below; inherited inbox markers cannot be resolved here.
+            const work = await tx.doc(WorkDoc, selected.id);
+            work.authorizationRequestId = null;
+            if (work.work) {
+              work.work.pendingInputIds = [];
+              work.work.revision++;
+              work.revision++;
+            }
+          }, BACKGROUND_CONTEXT);
           await selected.configure(
             {
               model: { provider: runtime.model.provider, modelId: runtime.model.id },
               thinkingLevel: await effectiveThinkingLevel(runtime, settings),
-              tools: [
-                ...(runtime.extension.tools ?? []),
-                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).flatMap(
-                  (plugin) => plugin.extension.tools ?? [],
-                ),
-              ].filter(
-                (tool) =>
-                  (runtime.activeMode !== "plan" || allowedInPlan(tool.name)) &&
-                  (!runtime.spec?.definition.tools || runtime.spec.definition.tools.includes(tool.name)),
-              ),
-              extensions: [runtime.extension],
               cwd: runtime.env.cwd,
             },
             BACKGROUND_CONTEXT,
@@ -1619,40 +1851,98 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
             name: `oint:${selected.id}`,
           });
           runtime.registry.install(runtime.extension);
-          await selected.configure(
-            {
-              extensions: [
-                ...(runtime.activeMode === "plan" ? [] : pluginExtensions(runtime.env.cwd)).map(
-                  (plugin) => plugin.extension,
-                ),
-                runtime.extension,
-              ],
-            },
-            BACKGROUND_CONTEXT,
-          );
           await attachState(runtime);
           await attachView(runtime);
-          await runtime.harness.commit(async (tx) => {
-            (await tx.doc(RunModeDoc, runtime.conversation.id)).mode = runtime.activeMode;
-          }, BACKGROUND_CONTEXT);
         }
       }
-      // 原样提交交错的附件信封与图片块；附件落盘完成且本次发送未取消后才受理输入。
+      if (!runtime.isSubagent && !automatic && mode === undefined) {
+        const state = await readWorkflow(runtime.harness, runtime.conversation.id);
+        if (!state.work || options?.work?.kind === "new")
+          await beginWork(runtime.harness, runtime.conversation.id, options?.work);
+      }
+      if (!runtime.startingPlan) runtime.admittedWork = await effectiveWork(runtime, true);
+      await persistRunPolicy(runtime);
+      await refreshExtraTools(runtime, true);
+      signal.throwIfAborted();
+      await applyModel(runtime, settings);
+      signal.throwIfAborted();
+      await applyThinkingLevel(runtime, settings);
+      signal.throwIfAborted();
+      signal.throwIfAborted();
+      if (!runtime.isSubagent && !automatic && mode === undefined) {
+        await registerWorkInput(runtime.harness, runtime.conversation.id, requestId);
+        runtime.admittedWork = await effectiveWork(runtime, true);
+        await persistRunPolicy(runtime);
+        await refreshExtraTools(runtime, true);
+        await mutateGoal(runtime.harness, runtime.conversation.id, (state) => {
+          if (
+            state.goal?.status === "blocked" &&
+            state.goal.workId === runtime.admittedWork?.workId
+          ) {
+            state.goal.status = "active";
+            state.goal.revision++;
+            delete state.goal.reason;
+          }
+        });
+      }
+      if (!automatic) await armGoal(runtime);
+      signal.throwIfAborted();
+      // User input is fenced before attachment processing can yield.
       const userMessage: AgentMessage = {
         role: "user",
         content: await buildUserContent(runtime.sessionId, text, attachments),
         timestamp: Date.now(),
       };
       signal.throwIfAborted();
-      const submission = await runtime.conversation.submit(
-        {
-          type: "input",
-          content: userMessage.content,
+      let submission: Submission;
+      if (automatic && runtime.pendingInputs) return false;
+      if (runtime.startingPlan) {
+        let submissionId: SubmissionId | undefined;
+        const admitted = await admitPlanExecution(
+          runtime.harness,
+          runtime.conversation.id,
+          runtime.startingPlan,
           requestId,
-          whenBusy: "followUp",
-        },
-        BACKGROUND_CONTEXT,
-      );
+          async (tx) => {
+            signal.throwIfAborted();
+            const live = await tx.doc(LiveDoc, runtime.conversation.id);
+            const inbox = await tx.doc(InboxDoc, runtime.conversation.id);
+            if (live.run || inbox.items.length)
+              throw new Error("Conversation became busy before plan admission");
+            if (await tx.submissionByRequest(runtime.conversation.id, requestId))
+              throw new Error("Execution request already exists");
+            const entry = await tx.appendEntry(UserEntry, runtime.conversation.id, {
+              model: [userMessage],
+            });
+            const input = await tx.createSubmission({
+              conversationId: runtime.conversation.id,
+              requestId,
+              type: "input",
+              status: "placed",
+              entry: entry.id,
+            });
+            submissionId = input.id;
+            const taskId = await tx.createTask(
+              GenerationTask,
+              {},
+              { ownership: { kind: "conversation" }, conversationId: runtime.conversation.id },
+            );
+            live.run = { taskId, inputs: [input.id] };
+            signal.throwIfAborted();
+          },
+        );
+        if (!admitted.ok || submissionId === undefined)
+          throw new Error("Plan admission changed before execution");
+        submission = (await runtime.harness.submission(submissionId, BACKGROUND_CONTEXT))!;
+        runtime.harness.resume();
+      } else {
+        submission = await runtime.conversation.submit(
+          { type: "input", content: userMessage.content, requestId, whenBusy: "followUp" },
+          BACKGROUND_CONTEXT,
+        );
+      }
+      submitted = true;
+      await onAdmitted?.();
       runtime.admitted?.();
       if (messageId) {
         const admitted = await submission.status(BACKGROUND_CONTEXT);
@@ -1667,13 +1957,420 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
       await runtime.view?.flush();
       await runtime.metrics?.flush();
+      const final = await submission.status(BACKGROUND_CONTEXT);
+      const entries = await runtime.conversation.entries({}, 1, undefined, BACKGROUND_CONTEXT);
+      const assistant = entries.items
+        .at(-1)
+        ?.model?.find((message) => message.role === "assistant");
+      return (
+        final.status !== "unanswered" &&
+        !signal.aborted &&
+        assistant?.role === "assistant" &&
+        assistant.stopReason === "stop"
+      );
     } catch (error) {
       if (!signal.aborted)
         emitSafe(runtime.sessionId, { type: "input-failed", messageId, error: errorText(error) });
+      return false;
+    } finally {
+      if (!submitted && !runtime.isSubagent)
+        await resolveWorkInput(runtime.harness, runtime.conversation.id, requestId, {
+          requirementsChanged: false,
+        });
     }
   }
   function jobToolsFor(sessionId: string): ToolRegistration[] {
     return createJobTools({ sessionId, jobs }) as ToolRegistration[];
+  }
+
+  async function effectiveWork(
+    runtime: SessionRuntime,
+    fresh = false,
+  ): Promise<WorkContract | null> {
+    const parent = runtime.isSubagent ? runtimes.get(runtime.familyId) : undefined;
+    const owner = parent ?? runtime;
+    const current = (await readWorkflow(owner.harness, owner.conversation.id)).work;
+    return fresh && !runtime.isSubagent ? current : intersectWork(runtime.admittedWork, current);
+  }
+  async function persistRunPolicy(runtime: SessionRuntime): Promise<void> {
+    await runtime.harness.commit(async (tx) => {
+      const doc = await tx.doc(RunPolicyDoc, runtime.conversation.id);
+      doc.mode = runtime.activeMode;
+      doc.work = runtime.admittedWork;
+    }, BACKGROUND_CONTEXT);
+  }
+  async function armGoal(runtime: SessionRuntime): Promise<void> {
+    if (runtime.isSubagent) {
+      runtime.goalArmed = false;
+      return;
+    }
+    const epoch = runtime.workflowEpoch;
+    const state = await readWorkflow(runtime.harness, runtime.conversation.id);
+    if (epoch === runtime.workflowEpoch) runtime.goalArmed = state.goal?.status !== "paused";
+  }
+  function workflowToolsFor(
+    getRuntime: () => SessionRuntime | undefined,
+    _sessionId: string,
+    _initialMode?: AgentMode,
+  ): ToolRegistration[] {
+    return [
+      ...createWorkflowTools({
+        isMain: () => getRuntime()?.isSubagent === false,
+        requireAdmittedInput: true,
+        continuationLimit: () => getRuntime()?.goalContinuationLimit ?? 10,
+        onRestrictionChanged: async () => {
+          const runtime = getRuntime();
+          if (!runtime) return;
+          runtime.admittedWork = await effectiveWork(runtime);
+          await persistRunPolicy(runtime);
+          if (!workAllowsEffects(runtime.admittedWork)) {
+            await cancelWorkActivity(runtime, "当前工作约束已收紧");
+          }
+          // Reconfigure trusted tools and remove unguarded plugin hooks when constraints tighten.
+          await refreshExtraTools(runtime, true);
+        },
+      }),
+    ] as ToolRegistration[];
+  }
+
+  type GoalFence = {
+    epoch: number;
+    run: number;
+    conversationId: Conversation["id"];
+    goalId?: string;
+  };
+  const currentGoalFence = (runtime: SessionRuntime, fence: GoalFence): boolean =>
+    runtime.workflowEpoch === fence.epoch &&
+    runtime.workflowRun === fence.run &&
+    runtime.conversation.id === fence.conversationId &&
+    runtimes.get(runtime.sessionId) === runtime;
+
+  async function pauseGoal(
+    runtime: SessionRuntime,
+    reason: string,
+    fence?: GoalFence,
+  ): Promise<void> {
+    if (fence && !currentGoalFence(runtime, fence)) return;
+    if (!fence) runtime.goalArmed = false;
+    if (runtime.isSubagent) return;
+    await mutateGoal(runtime.harness, fence?.conversationId ?? runtime.conversation.id, (state) => {
+      if (
+        fence &&
+        (!currentGoalFence(runtime, fence) ||
+          (fence.goalId !== undefined && state.goal?.id !== fence.goalId))
+      )
+        return;
+      runtime.goalArmed = false;
+      if (state.goal?.status === "active") {
+        state.goal.status = "paused";
+        state.goal.reason = reason;
+        state.goal.revision++;
+      }
+    });
+  }
+
+  /** Ephemeral authorization is never reconstructed from a durable active goal. */
+  async function driveGoal(runtime: SessionRuntime): Promise<void> {
+    if (runtime.goalDriving || runtime.isSubagent) return;
+    runtime.goalDriving = true;
+    let failureFence: GoalFence | undefined;
+    try {
+      while (
+        runtime.goalArmed &&
+        !runtime.sending &&
+        !runtime.stopping &&
+        runtimes.get(runtime.sessionId) === runtime
+      ) {
+        const epoch = runtime.workflowEpoch;
+        const mode = runtime.activeMode;
+        const conversationId = runtime.conversation.id;
+        const fence: GoalFence = { epoch, run: runtime.workflowRun, conversationId };
+        failureFence = fence;
+        const state = await readWorkflow(runtime.harness, conversationId);
+        fence.goalId = state.goal?.id;
+        const inbox = await runtime.harness.snapshot(
+          InboxDoc,
+          runtime.conversation.id,
+          BACKGROUND_CONTEXT,
+        );
+        const live = await runtime.harness.snapshot(
+          LiveDoc,
+          runtime.conversation.id,
+          BACKGROUND_CONTEXT,
+        );
+        if (!currentGoalFence(runtime, fence)) continue;
+        if (
+          !runtime.goalArmed ||
+          runtime.sending ||
+          runtime.stopping ||
+          runtime.running ||
+          runtime.compacting ||
+          runtime.pendingInputs ||
+          live?.run ||
+          inbox?.items.length
+        )
+          return;
+        if (
+          state.goal?.status !== "active" ||
+          state.goal.workId !== state.work?.workId ||
+          state.work.pendingInputIds.length ||
+          (state.goal.scope === "implementation" && !workAllowsEffects(state.work))
+        ) {
+          runtime.goalArmed = false;
+          return;
+        }
+        if (state.goal.continuationCount >= state.goal.continuationLimit) {
+          await pauseGoal(runtime, "已达到自动续行上限，点击继续可恢复。", fence);
+          return;
+        }
+        await runAdmitted(
+          runtime,
+          "",
+          undefined,
+          undefined,
+          undefined,
+          async () => {
+            fence.run = runtime.workflowRun;
+            const next = await readWorkflow(runtime.harness, conversationId);
+            if (
+              !runtime.goalArmed ||
+              !currentGoalFence(runtime, fence) ||
+              next.goal?.id !== fence.goalId ||
+              next.goal?.status !== "active" ||
+              next.goal.continuationCount >= next.goal.continuationLimit ||
+              next.work?.pendingInputIds.length ||
+              (next.goal.scope === "implementation" && !workAllowsEffects(next.work))
+            )
+              return undefined;
+            return {
+              mode,
+              text: `[目标自动续行 ${next.goal.continuationCount + 1}/${next.goal.continuationLimit}]\n继续推进现有目标，优先处理用户最新反馈。先读取 read_workflow，完成后按验收标准更新目标；需要用户信息时标记 blocked。`,
+            };
+          },
+          true,
+          async () => {
+            await mutateGoal(runtime.harness, conversationId, (draft) => {
+              if (draft.goal && draft.goal.id === fence.goalId) {
+                draft.goal.continuationCount++;
+                draft.goal.revision++;
+              }
+            });
+          },
+        );
+      }
+    } catch (error) {
+      if (failureFence) await pauseGoal(runtime, `自动续行失败：${errorText(error)}`, failureFence);
+    } finally {
+      runtime.goalDriving = false;
+    }
+  }
+
+  async function controlGoal(sessionId: string, action: GoalControl): Promise<WorkflowResult> {
+    const runtime = await ensureRuntime(sessionId);
+    if (runtime.isSubagent || !["pause", "resume", "end"].includes(action))
+      return { ok: false, code: "invalid" };
+    runtime.workflowEpoch++;
+    if (action !== "resume") {
+      runtime.goalArmed = false;
+      await stop(sessionId);
+      return changeGoal(runtime.harness, runtime.conversation.id, action);
+    }
+    const settings = await deps.getSettings();
+    const mode = (await deps.sessionStore.readAgentMode(sessionId)) ?? settings.agentMode;
+    if (
+      runtime.sending ||
+      runtime.running ||
+      runtime.stopping ||
+      runtime.pendingInputs ||
+      (await hasActiveOperation(runtime))
+    )
+      return { ok: false, code: "busy" };
+    const state = await readWorkflow(runtime.harness, runtime.conversation.id);
+    if (
+      state.goal?.workId !== state.work?.workId ||
+      state.work?.pendingInputIds.length ||
+      (state.goal?.scope === "implementation" && !workAllowsEffects(state.work))
+    )
+      return {
+        ok: false,
+        code: "invalid",
+        message: "Resolve the current work input or review before resuming this goal.",
+      };
+    if (runtime.sending || runtime.running || runtime.stopping || runtime.pendingInputs)
+      return { ok: false, code: "busy" };
+    let outcome: WorkflowResult = { ok: false, code: "failed" };
+    let accepted = false;
+    let acknowledge = () => {};
+    const acknowledgment = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const work = runAdmitted(
+      runtime,
+      "",
+      undefined,
+      undefined,
+      undefined,
+      async (signal) => {
+        signal.throwIfAborted();
+        outcome = await changeGoal(runtime.harness, runtime.conversation.id, action);
+        if (!outcome.ok) return undefined;
+        signal.throwIfAborted();
+        runtime.goalArmed = true;
+        return {
+          mode,
+          text: "用户已恢复目标。读取 read_workflow，继续现有目标并验证验收标准。",
+        };
+      },
+      false,
+      () => {
+        accepted = true;
+        outcome = { ok: true };
+        acknowledge();
+      },
+      async () => {
+        await pauseGoal(runtime, "恢复目标未能开始，请重试。");
+      },
+    );
+    scheduleEffect(
+      runtime,
+      work
+        .catch((error) => {
+          outcome = { ok: false, code: "failed", message: errorText(error) };
+        })
+        .finally(async () => {
+          if (!accepted) {
+            if (outcome.ok)
+              outcome = {
+                ok: false,
+                code: "failed",
+                message: "Goal resume was cancelled before admission.",
+              };
+          }
+          acknowledge();
+        }),
+    );
+    await acknowledgment;
+    return outcome;
+  }
+
+  async function readPlan(sessionId: string, ref?: PlanRef): Promise<PlanState | null> {
+    const runtime = await ensureRuntime(sessionId);
+    return getPlan(runtime.harness, runtime.conversation.id, ref);
+  }
+  async function planHistory(sessionId: string): Promise<PlanState[]> {
+    const runtime = await ensureRuntime(sessionId);
+    const doc = await runtime.harness.snapshot(
+      PlanDoc,
+      runtime.conversation.id,
+      BACKGROUND_CONTEXT,
+    );
+    return [...(doc?.history ?? []), ...(doc?.plan ? [doc.plan] : [])];
+  }
+  async function archivePlan(sessionId: string, ref: PlanRef): Promise<WorkflowResult> {
+    const runtime = await ensureRuntime(sessionId);
+    if (runtime.running || runtime.sending || runtime.pendingInputs)
+      return { ok: false, code: "busy" };
+    const result = await archiveSavedPlan(runtime.harness, runtime.conversation.id, ref);
+    await runtime.view?.flush();
+    return result;
+  }
+  async function startPlan(
+    sessionId: string,
+    request: PlanExecutionRequest,
+  ): Promise<WorkflowResult> {
+    const runtime = await ensureRuntime(sessionId);
+    if (
+      runtime.isSubagent ||
+      !request ||
+      typeof request.requestId !== "string" ||
+      !request.requestId.trim() ||
+      typeof request.planId !== "string" ||
+      !Number.isSafeInteger(request.revision) ||
+      !Number.isSafeInteger(request.workRevision)
+    )
+      return { ok: false, code: "invalid" };
+    if (
+      runtime.running ||
+      runtime.sending ||
+      runtime.stopping ||
+      runtime.compacting ||
+      runtime.pendingInputs ||
+      (await hasActiveOperation(runtime))
+    )
+      return { ok: false, code: "busy" };
+    runtime.workflowEpoch++;
+    let outcome: WorkflowResult = { ok: false, code: "failed" };
+    let acknowledge = () => {};
+    const acknowledgment = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const previousPolicy = runtime.admittedWork;
+    let reserved = false;
+    let accepted = false;
+    const work = runAdmitted(
+      runtime,
+      "",
+      undefined,
+      request.requestId,
+      undefined,
+      async (signal) => {
+        signal.throwIfAborted();
+        const result = await reservePlanExecution(
+          runtime.harness,
+          runtime.conversation.id,
+          request,
+        );
+        outcome = result;
+        if (!result.ok || !result.receipt) return undefined;
+        if (result.receipt.status === "admitted") {
+          accepted = true;
+          acknowledge();
+          return undefined;
+        }
+        reserved = true;
+        runtime.startingPlan = request.requestId;
+        runtime.admittedWork = result.receipt.contract;
+        const settings = await deps.getSettings();
+        const mode = (await deps.sessionStore.readAgentMode(sessionId)) ?? settings.agentMode;
+        return {
+          mode,
+          text: `用户已授权执行计划第 ${result.receipt.plan.revision} 版。按以下已确认内容完成工作并验证结果。\n\n${result.receipt.plan.markdown}`,
+        };
+      },
+      false,
+      () => {
+        accepted = true;
+        outcome = { ok: true };
+        acknowledge();
+      },
+      async () => {
+        if (accepted) return;
+        if (reserved)
+          await releasePlanExecution(runtime.harness, runtime.conversation.id, request.requestId);
+        if (outcome.ok)
+          outcome = {
+            ok: false,
+            code: "failed",
+            message: "Execution was cancelled before admission",
+          };
+        runtime.admittedWork = previousPolicy;
+        runtime.goalArmed = false;
+        await persistRunPolicy(runtime);
+      },
+    );
+    scheduleEffect(
+      runtime,
+      work
+        .catch((error) => {
+          outcome = { ok: false, code: "failed", message: errorText(error) };
+        })
+        .finally(() => {
+          runtime.startingPlan = undefined;
+          acknowledge();
+        }),
+    );
+    await acknowledgment;
+    return outcome;
   }
 
   async function hasActiveOperation(runtime: SessionRuntime): Promise<boolean> {
@@ -1727,31 +2424,46 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     return { ok: true };
   }
 
+  async function cancelWorkActivity(runtime: SessionRuntime, reason: string): Promise<void> {
+    const children = (await runtime.subagents?.list()) ?? [];
+    await runtime.subagents?.abortAll(reason);
+    await Promise.all(
+      [runtime.sessionId, ...children.map((child) => child.childSessionId)].map((id) =>
+        jobs.cancelSession(id),
+      ),
+    );
+  }
+
   async function stop(sessionId: string): Promise<void> {
     const runtime = runtimes.get(sessionId) ?? (await creations.get(sessionId));
     if (!runtime) return;
+    runtime.workflowEpoch++;
+    runtime.goalArmed = false;
     if (runtime.stopping !== undefined) return runtime.stopping;
     runtime.inputEpoch++;
     runtime.sendController?.abort();
     runtime.admitted?.();
-    await deps.approvals.cancelSession(sessionId);
-    await interactions.cancelSession(sessionId);
+    const stopping = Promise.resolve().then(async () => {
+      await pauseGoal(runtime, "用户已停止执行。");
+      await cancelWorkActivity(runtime, "用户已停止执行");
+      await deps.approvals.cancelSession(sessionId);
+      await interactions.cancelSession(sessionId);
+      await runtime.conversation.abort(BACKGROUND_CONTEXT);
+      await runtime.view?.flush();
+    });
+    runtime.stopping = stopping;
     try {
-      const stopping = runtime.conversation.abort(BACKGROUND_CONTEXT);
-      runtime.stopping = stopping;
-      try {
-        await stopping;
-        await runtime.view?.flush();
-      } finally {
-        if (runtime.stopping === stopping) runtime.stopping = undefined;
-      }
+      await stopping;
     } catch (error) {
       console.warn(`请求中止运行失败 ${sessionId}：${errorText(error)}`);
+    } finally {
+      if (runtime.stopping === stopping) runtime.stopping = undefined;
     }
   }
 
   async function queue(sessionId: string, text: string, mode: "steer" | "followUp"): Promise<void> {
     const runtime = await ensureRuntime(sessionId);
+    runtime.workflowEpoch++;
 
     runtime.repeatChain = createRepeatChain();
 
@@ -1769,41 +2481,109 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     attachments?: ChatAttachment[],
     messageId?: string,
   ): Promise<void> {
-    const admissionSignal = runtime.sendController?.signal;
-    const inputEpoch = runtime.inputEpoch;
-    const cancelled = () => {
-      if (!admissionSignal?.aborted && inputEpoch === runtime.inputEpoch) return false;
-      if (messageId) emitSafe(runtime.sessionId, { type: "input-cancelled", messageId });
-      return true;
+    runtime.pendingInputs++;
+    const queuedRequestId = messageId ?? randomUUID();
+    let submitted = false;
+    const queuedFence: GoalFence = {
+      epoch: runtime.workflowEpoch,
+      run: runtime.workflowRun,
+      conversationId: runtime.conversation.id,
     };
-    await runtime.admission;
-    if (runtime.stopping !== undefined) await runtime.stopping;
-    await runtime.toolRefresh;
-    if (cancelled()) return;
-    const settings = await deps.getSettings();
-    const nextMode = (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
-    if (nextMode !== runtime.activeMode) {
-      throw new Error(
-        "模式已保存，将在当前运行结束后的下一条消息生效。请等待当前运行结束后再发送。",
+    try {
+      const admissionSignal = runtime.sendController?.signal;
+      const inputEpoch = runtime.inputEpoch;
+      const cancelled = () => {
+        if (!admissionSignal?.aborted && inputEpoch === runtime.inputEpoch) return false;
+        if (messageId) emitSafe(runtime.sessionId, { type: "input-cancelled", messageId });
+        return true;
+      };
+      await runtime.admission;
+      if (runtime.stopping !== undefined) await runtime.stopping;
+      await runtime.toolRefresh;
+      if (cancelled()) return;
+      const settings = await deps.getSettings();
+      const nextMode =
+        (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
+      if (nextMode !== runtime.activeMode) {
+        throw new Error(
+          "模式已保存，将在当前运行结束后的下一条消息生效。请等待当前运行结束后再发送。",
+        );
+      }
+      if (cancelled()) return;
+      if (!runtime.isSubagent) {
+        await registerWorkInput(runtime.harness, runtime.conversation.id, queuedRequestId);
+        runtime.admittedWork = await effectiveWork(runtime);
+        await persistRunPolicy(runtime);
+        await armGoal(runtime);
+      }
+      if (cancelled()) return;
+      const content = attachments?.length
+        ? await buildUserContent(runtime.sessionId, text, attachments)
+        : text;
+      if (cancelled()) return;
+      if (!runtime.isSubagent)
+        queuedFence.goalId = (
+          await readWorkflow(runtime.harness, queuedFence.conversationId)
+        ).goal?.id;
+      if (cancelled()) return;
+      const submission = await runtime.conversation.submit(
+        { type: "input", content, whenBusy: mode, requestId: queuedRequestId },
+        BACKGROUND_CONTEXT,
       );
+      submitted = true;
+      if (!runtime.isSubagent)
+        scheduleEffect(
+          runtime,
+          (async () => {
+            await submission.wait(BACKGROUND_CONTEXT);
+            if (!currentGoalFence(runtime, queuedFence)) return;
+            await runtime.conversation.waitForIdle(BACKGROUND_CONTEXT);
+            await runtime.view?.flush();
+            if (!runtime.goalArmed || !currentGoalFence(runtime, queuedFence)) return;
+            const outcome = await submission.status(BACKGROUND_CONTEXT);
+            const entries = await runtime.conversation.entries(
+              {},
+              1,
+              undefined,
+              BACKGROUND_CONTEXT,
+            );
+            if (!runtime.goalArmed || !currentGoalFence(runtime, queuedFence)) return;
+            const workflow = await readWorkflow(runtime.harness, queuedFence.conversationId);
+            if (
+              !currentGoalFence(runtime, queuedFence) ||
+              (queuedFence.goalId !== undefined && workflow.goal?.id !== queuedFence.goalId)
+            )
+              return;
+            const assistant = entries.items
+              .at(-1)
+              ?.model?.find((message) => message.role === "assistant");
+            if (
+              outcome.status === "unanswered" ||
+              assistant?.role !== "assistant" ||
+              assistant.stopReason !== "stop"
+            )
+              await pauseGoal(runtime, "排队消息未成功完成，请检查后继续。", queuedFence);
+            else await driveGoal(runtime);
+          })().catch(async (error) => {
+            if (runtime.goalArmed) await pauseGoal(runtime, errorText(error), queuedFence);
+          }),
+        );
+      if (messageId) {
+        const admitted = await submission.status(BACKGROUND_CONTEXT);
+        emitSafe(runtime.sessionId, {
+          type: "input-admitted",
+          messageId,
+          ...(admitted.entry === undefined ? {} : { entryId: `entry:${admitted.entry}` }),
+        });
+      }
+      await runtime.view?.flush();
+    } finally {
+      if (!submitted && !runtime.isSubagent)
+        await resolveWorkInput(runtime.harness, runtime.conversation.id, queuedRequestId, {
+          requirementsChanged: false,
+        });
+      runtime.pendingInputs--;
     }
-    const content = attachments?.length
-      ? await buildUserContent(runtime.sessionId, text, attachments)
-      : text;
-    if (cancelled()) return;
-    const submission = await runtime.conversation.submit(
-      { type: "input", content, whenBusy: mode, requestId: messageId ?? randomUUID() },
-      BACKGROUND_CONTEXT,
-    );
-    if (messageId) {
-      const admitted = await submission.status(BACKGROUND_CONTEXT);
-      emitSafe(runtime.sessionId, {
-        type: "input-admitted",
-        messageId,
-        ...(admitted.entry === undefined ? {} : { entryId: `entry:${admitted.entry}` }),
-      });
-    }
-    await runtime.view?.flush();
   }
 
   async function cancelQueued(sessionId: string, entryId: string): Promise<void> {
@@ -1811,11 +2591,24 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (runtime === undefined) return;
     const id = Number(entryId);
     if (!Number.isSafeInteger(id) || id <= 0) return;
-    await runtime.harness.abortSubmission(
-      id as SubmissionId,
-      BACKGROUND_CONTEXT,
-      runtime.conversation.id,
-    );
+    const submission = await runtime.harness.submission(id as SubmissionId, BACKGROUND_CONTEXT);
+    const record = await submission?.status(BACKGROUND_CONTEXT);
+    if (record?.conversationId !== runtime.conversation.id || record.status !== "queued") return;
+    await runtime.harness.commit(async (tx) => {
+      const inbox = await tx.doc(InboxDoc, runtime.conversation.id);
+      if (!inbox.items.some((item) => item.id === id)) return;
+      inbox.items = inbox.items.filter((item) => item.id !== id);
+      const doc = await tx.doc(WorkDoc, runtime.conversation.id);
+      if (record.requestId && doc.work?.pendingInputIds.includes(record.requestId)) {
+        doc.work.pendingInputIds = doc.work.pendingInputIds.filter(
+          (inputId) => inputId !== record.requestId,
+        );
+        doc.work.revision++;
+        doc.revision++;
+      }
+      tx.settleSubmission(record.id, { status: "unanswered", reason: "aborted" });
+    }, BACKGROUND_CONTEXT);
+    await runtime.view?.flush();
   }
 
   /** Keep the submission identity and let the scheduler consume it at the next safe boundary. */
@@ -1866,10 +2659,18 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (!text.trim()) throw new Error("消息不能为空");
     const runtime = runtimes.get(sessionId);
     if (!runtime) return false;
+    runtime.workflowEpoch++;
     const changed = await runtime.conversation.commit(async (tx) => {
       const inbox = await tx.doc(InboxDoc, runtime.conversation.id);
       const item = inbox.items.find((item) => String(item.id) === entryId);
       if (!item || item.mode === "write") return false;
+      if (!runtime.isSubagent) {
+        const doc = await tx.doc(WorkDoc, runtime.conversation.id);
+        if (doc.work) {
+          doc.work.revision++;
+          doc.revision++;
+        }
+      }
       item.content =
         typeof item.content === "string"
           ? text.trim()
@@ -1967,6 +2768,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         if (child.spec && child.familyId === runtime.familyId) await closeSession(child.sessionId);
     }
     runtimes.delete(sessionId);
+    runtime.goalArmed = false;
+    runtime.workflowEpoch++;
     runtime.inputEpoch++;
     runtime.sendController?.abort();
     runtime.admitted?.();
@@ -2035,6 +2838,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     },
     send,
     stop,
+    controlGoal,
+    startPlan,
+    readPlan,
+    planHistory,
+    archivePlan,
     queue,
     cancelQueued,
     sendQueued,

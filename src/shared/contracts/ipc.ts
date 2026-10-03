@@ -36,6 +36,11 @@ export const IPC = {
     remove: "projects:remove",
   },
   chat: {
+    controlGoal: "chat:control-goal",
+    startPlan: "chat:start-plan",
+    readPlan: "chat:read-plan",
+    planHistory: "chat:plan-history",
+    archivePlan: "chat:archive-plan",
     send: "chat:send",
     stop: "chat:stop",
     queue: "chat:queue",

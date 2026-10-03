@@ -522,6 +522,28 @@ describe("save：写侧归一", () => {
     expect(persisted.language).toBe(DEFAULT_SETTINGS.language);
   });
 
+  it.each([
+    [undefined, 10],
+    [0, 1],
+    [101, 100],
+    [7, 7],
+    [2.5, 10],
+    ["20", 10],
+  ])("目标续行上限 %s 归一为 %s", async (raw, expected) => {
+    const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
+    await store.save({
+      ...sampleSettings("sk-1"),
+      agentMode: "orchestrate",
+      goalContinuationLimit: raw,
+    } as Settings);
+    const reloaded = await createSettingsStore(baseDir, {
+      crypto: fakeCrypto,
+      warn: () => {},
+    }).load();
+    expect(reloaded.agentMode).toBe("orchestrate");
+    expect(reloaded.goalContinuationLimit).toBe(expected);
+  });
+
   it("非法 id 的 MCP server 在写入时就被丢掉（而不是读回来才发现）", async () => {
     const store = createSettingsStore(baseDir, { crypto: fakeCrypto, warn: () => {} });
     await store.save({

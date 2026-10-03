@@ -50,9 +50,8 @@ describe("buildSystemPrompt", () => {
   it("包含工作目录、工作方式与中文回复要求", async () => {
     const prompt = await buildSystemPrompt(makeSettings(), "D:\\workspace\\demo");
     expect(prompt).toContain("D:\\workspace\\demo");
-    // 旧断言是「工作规则」；通用模式把它换成了「怎么工作」——
-    // 新的一段讲的不是编程规则清单，而是「先判断这是什么任务」（见 agent-mode-prompt.ts）
-    expect(prompt).toContain("怎么工作");
+    expect(prompt).toContain("默认直接完成任务");
+    expect(prompt).toContain("set_work_contract");
     expect(prompt).toContain("使用简体中文回复用户");
   });
 

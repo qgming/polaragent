@@ -17,8 +17,16 @@ import {
   toolPresentations,
 } from "./tool-presentations";
 
-/** 内置的 27 个工具名（与主进程交付的工具集一一对应） */
+/** 内置工具名（与主进程交付的工具集一一对应） */
 const BUILTIN = [
+  "read_workflow",
+  "set_work_contract",
+  "create_goal",
+  "update_goal",
+  "read_plan",
+  "save_plan",
+  "present_plan",
+
   "bash",
   "read",
   "write",
@@ -50,7 +58,7 @@ const BUILTIN = [
 ];
 
 describe("内置工具展示", () => {
-  it("27 项都注册上了", () => {
+  it("内置工具全部注册", () => {
     const names = toolPresentations().map((item) => item.name);
     for (const name of BUILTIN) {
       expect(names, `${name} 应该已注册`).toContain(name);

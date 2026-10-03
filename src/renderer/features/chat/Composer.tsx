@@ -33,6 +33,7 @@ import type {
   AgentMode,
   ChatMessage,
   ChatMessageUsage,
+  ChatSendOptions,
   ModelEntry,
   ModelRef,
   PermissionMode,
@@ -42,7 +43,7 @@ import type {
   SetSessionModeResult,
 } from "@/shared/contracts";
 import { resolveEffectiveModelRef } from "@/shared/model-ref";
-import { ComposerDock, QueueDock, TodoDock } from "./ComposerDock";
+import { ComposerDock, GoalDock, PlanDock, QueueDock, TodoDock } from "./ComposerDock";
 import { commandSpec, unavailableReason } from "./commands";
 import { chipTrigger, menuPanel, PickerItem } from "./composer-chrome";
 import { ComposerContextRow } from "./composer-context";
@@ -105,11 +106,11 @@ const PERMISSION_MODES = [
 ] as const;
 
 /**
- * 会话模式：默认、编排、只读计划。
+ * 会话模式：默认、编排。
  *
  * 顺序上标准在前：它是默认值，也是「不知道该选哪个」时的正确选择。
  *
- * `descKey` 说明各模式的分工与计划模式的只读边界。
+ * `descKey` 说明各模式的分工。
  */
 const AGENT_MODE_OPTIONS = [
   {
@@ -122,7 +123,6 @@ const AGENT_MODE_OPTIONS = [
     labelKey: "chat.agentModeOrchestrate",
     descKey: "chat.agentModeOrchestrateDesc",
   },
-  { value: "plan", labelKey: "chat.agentModePlan", descKey: "chat.agentModePlanDesc" },
 ] as const;
 
 /**
@@ -690,28 +690,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
    */
   const boundAgentMode = activeSession?.agentMode ?? null;
   const effectiveAgentMode: AgentMode = boundAgentMode ?? settings?.agentMode ?? "standard";
-  const [startingExecution, setStartingExecution] = useState(false);
-  const executionPending = useRef(false);
-  const startExecution = async () => {
-    if (activeSessionId === null || executionPending.current || running || compacting) return;
-    executionPending.current = true;
-    setStartingExecution(true);
-    try {
-      const result = await useChatStore.getState().setSessionMode(activeSessionId, "standard");
-      if (!result.ok) throw new Error("Mode was not saved");
-      if (useChatStore.getState().activeSessionId !== activeSessionId) return;
-      // Preserve an existing draft; it may contain additional execution instructions.
-      if (!aui.composer().getState().text.trim()) {
-        aui.composer().setText(t("chat.planExecuteMessage"));
-      }
-      aui.composer().send();
-    } catch {
-      useUiStore.getState().notifyComposer({ messageKey: "chat.agentModeRunning", level: "error" });
-    } finally {
-      executionPending.current = false;
-      setStartingExecution(false);
-    }
-  };
   const currentModel =
     modelOptions.find(
       (option) =>
@@ -939,6 +917,21 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
     aui.composer.setText("");
   };
 
+  const [workMenuOpen, setWorkMenuOpen] = useState(false);
+  const sendNewWork = (effects: "read-only" | "unrestricted", requiresReview: boolean) => {
+    if (!canSend || running || compacting || commandDraft.kind === "command") return;
+    setWorkMenuOpen(false);
+    const previous = aui.composer.getState().runConfig;
+    const workOptions: ChatSendOptions = { work: { kind: "new", effects, requiresReview } };
+    // The composer captures runConfig synchronously, including when attachments need processing.
+    aui.composer.setRunConfig({ ...previous, custom: { ...previous.custom, workOptions } });
+    try {
+      aui.composer.send();
+    } finally {
+      aui.composer.setRunConfig(previous);
+    }
+  };
+
   return (
     // 底部不留内边距：输入框以下的间距交给 Thread 的底栏（状态条上下各 3px，
     // 且那条底栏是不透明的，消息不再从输入框下方透出来）。
@@ -955,6 +948,8 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
       */}
       {!hero && (
         <ComposerDock>
+          <GoalDock key={`goal-${activeSessionId}`} />
+          <PlanDock key={`plan-${activeSessionId}`} />
           <TodoDock />
           <QueueDock items={queue} />
         </ComposerDock>
@@ -1042,27 +1037,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
               {t(composerNotice.messageKey, composerNotice.params)}
             </p>
           )}
-          {effectiveAgentMode === "plan" && (
-            <div className="flex items-center gap-2 px-2.5 text-xs text-ink-3">
-              <p className="min-w-0 flex-1">{t("chat.planNotice")}</p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={
-                  activeSessionId === null ||
-                  running ||
-                  compacting ||
-                  startingExecution ||
-                  activeSession?.messageCount === 0
-                }
-                onClick={() => void startExecution()}
-              >
-                {startingExecution && <Loader2 className="size-3 animate-spin" />}
-                {t("chat.planStartExecution")}
-              </Button>
-            </div>
-          )}
           <ComposerPrimitive.Input
             submitMode="enter"
             addAttachmentOnPaste
@@ -1106,7 +1080,7 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
                 mode={effectiveAgentMode}
                 bound={boundAgentMode}
                 // 只在没有活动会话时禁用；运行中**可以**切（生效于下一轮）
-                disabled={activeSessionId === null || startingExecution}
+                disabled={activeSessionId === null}
                 running={running}
                 onSelect={async (mode) => {
                   if (activeSessionId === null) return { ok: true as const };
@@ -1128,6 +1102,44 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
             {/* 运行中文案一律不驻留：底部这行只放控件本身 */}
             <div className="flex shrink-0 items-center gap-1.5">
               {usageRing}
+              {!running && (
+                <Popover open={workMenuOpen} onOpenChange={setWorkMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(ghostButton, "px-2 py-1 text-xs")}
+                      disabled={!canSend || compacting || commandDraft.kind === "command"}
+                      aria-label={t("chat.newWork")}
+                    >
+                      {t("chat.newWork")}
+                      <ChevronDown className="ml-1 size-3" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64 p-1">
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
+                      onClick={() => sendNewWork("read-only", true)}
+                    >
+                      {t("chat.planOnly")}
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
+                      onClick={() => sendNewWork("unrestricted", false)}
+                    >
+                      {t("chat.newWorkExecute")}
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
+                      onClick={() => sendNewWork("read-only", false)}
+                    >
+                      {t("chat.newWorkReadOnly")}
+                    </button>
+                  </PopoverContent>
+                </Popover>
+              )}
               {running ? (
                 <Button
                   type="button"

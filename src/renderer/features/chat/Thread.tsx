@@ -38,6 +38,7 @@ import {
   UserMessageParts,
 } from "./message-parts";
 import { isMessageSequenceSynced } from "./message-seq";
+import { RequestFailureCard, RequestRetryContext, RequestRetryStatus } from "./RequestRetry";
 import { TurnFiles } from "./TurnFiles";
 import { turnFileSummaries } from "./turn-files";
 import { useStickToBottom } from "./use-stick-to-bottom";
@@ -317,6 +318,15 @@ interface ThreadViewProps {
 export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: ThreadViewProps) {
   const { t } = useTranslation();
   const messages = useAuiState((s) => s.thread.messages);
+  const lastMessageByGeneration = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const message of messages) {
+      const generationId = message.metadata?.custom?.generationId;
+      if (message.role === "assistant" && typeof generationId === "string")
+        latest.set(generationId, message.id);
+    }
+    return latest;
+  }, [messages]);
   /**
    * 这一屏是不是「新会话页」：没有选中会话、或刚新建了一个还没有消息的会话。
    *
@@ -331,6 +341,9 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
   useStickToBottom(viewportRef);
 
   const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const retry = useChatStore((s) =>
+    s.activeSessionId === null ? null : (s.viewsBySession[s.activeSessionId]?.state.retry ?? null),
+  );
   const loadError = useChatStore((s) =>
     s.activeSessionId === null ? undefined : s.sessionLoadErrors[s.activeSessionId],
   );
@@ -601,49 +614,61 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
                 style={{ fontFamily: "var(--chat-font)", fontSize: "var(--chat-font-size)" }}
                 className="mb-2 flex flex-col gap-y-(--density-gap) empty:hidden"
               >
-                {messages.map((message, index) => {
-                  const prev = messages[index - 1];
-                  const next = messages[index + 1];
-                  const isSearchTarget = jump?.messageId === message.id;
-                  // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
-                  const isRunEnd = next?.role !== "assistant";
-                  // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
-                  const isRunStart = index === activeRunStart;
-                  // 本回合的文件改动挂在这一回合**最后一条**消息下面（见 turn-files 的说明）
-                  const turnFiles = turnFilesByMessage.get(message.id);
-                  return (
-                    <Fragment key={message.id}>
-                      {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
-                        <DayDivider timestamp={message.createdAt} />
-                      )}
-                      {/* 搜索落点用内阴影做左侧栏（gutter bar），避免出现/消失时引起排版跳动 */}
-                      <div
-                        data-message-id={message.id}
-                        data-search-hit={isSearchTarget ? "true" : undefined}
-                        className={cn(
-                          "relative rounded-md",
-                          isSearchTarget &&
-                            "shadow-[inset_2px_0_0_0_color-mix(in_oklab,var(--foreground)_35%,transparent)]",
+                <RequestRetryContext.Provider value={retry?.generationId ?? null}>
+                  {messages.map((message, index) => {
+                    const prev = messages[index - 1];
+                    const next = messages[index + 1];
+                    const isSearchTarget = jump?.messageId === message.id;
+                    // 下一条不是助手消息，说明本段运行到此结束 —— 操作栏挂在这一条上
+                    const isRunEnd = next?.role !== "assistant";
+                    // 只有**当前这次**运行的段首亮状态行（见 activeRunStart 的说明）
+                    const isRunStart = index === activeRunStart;
+                    // 本回合的文件改动挂在这一回合**最后一条**消息下面（见 turn-files 的说明）
+                    const turnFiles = turnFilesByMessage.get(message.id);
+                    const generationId = message.metadata?.custom?.generationId;
+                    const emptyRetryAttempt =
+                      typeof generationId === "string" &&
+                      message.status?.type === "incomplete" &&
+                      message.status.reason === "error" &&
+                      message.content.length === 0 &&
+                      (generationId === retry?.generationId ||
+                        lastMessageByGeneration.get(generationId) !== message.id);
+                    return (
+                      <Fragment key={message.id}>
+                        {prev !== undefined && !isSameDay(prev.createdAt, message.createdAt) && (
+                          <DayDivider timestamp={message.createdAt} />
                         )}
-                      >
-                        <IsRunEndContext.Provider value={isRunEnd}>
-                          <IsRunStartContext.Provider value={isRunStart}>
-                            <ThreadPrimitive.MessageByIndex
-                              index={index}
-                              components={MESSAGE_COMPONENTS}
-                            />
-                          </IsRunStartContext.Provider>
-                        </IsRunEndContext.Provider>
-                        {/*
+                        {/* 搜索落点用内阴影做左侧栏（gutter bar），避免出现/消失时引起排版跳动 */}
+                        <div
+                          hidden={emptyRetryAttempt}
+                          data-message-id={message.id}
+                          data-search-hit={isSearchTarget ? "true" : undefined}
+                          className={cn(
+                            "relative rounded-md",
+                            isSearchTarget &&
+                              "shadow-[inset_2px_0_0_0_color-mix(in_oklab,var(--foreground)_35%,transparent)]",
+                          )}
+                        >
+                          <IsRunEndContext.Provider value={isRunEnd}>
+                            <IsRunStartContext.Provider value={isRunStart}>
+                              <ThreadPrimitive.MessageByIndex
+                                index={index}
+                                components={MESSAGE_COMPONENTS}
+                              />
+                            </IsRunStartContext.Provider>
+                          </IsRunEndContext.Provider>
+                          {/*
                           「本轮文件改动」挂在消息**之外**（同级的下一块），不在消息根里面：
                           消息根带着 hover 操作栏与消息操作（复制/重试/分支）的语义，
                           把这一块塞进去会让「复制这条消息」把它也算作消息内容。
                         */}
-                        {turnFiles !== undefined && <TurnFiles summary={turnFiles} />}
-                      </div>
-                    </Fragment>
-                  );
-                })}
+                          {turnFiles !== undefined && <TurnFiles summary={turnFiles} />}
+                        </div>
+                      </Fragment>
+                    );
+                  })}
+                </RequestRetryContext.Provider>
+                <RequestRetryStatus key={activeSessionId} retry={retry} />
               </div>
 
               {/* 审批卡接在消息流尾部（提问卡不在这里：它固定在输入框上方，见 ViewportFooter） */}
@@ -661,6 +686,11 @@ export function ThreadView({ approvals = [], onResolve, asks = [], onRespond }: 
                 className="sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible pt-4 pb-0"
               >
                 <ScrollToBottom />
+                {retry?.phase === "failed" && (
+                  <div className="px-4">
+                    <RequestFailureCard retry={retry} />
+                  </div>
+                )}
                 {/*
                   提问卡固定在输入框**上方**、不跟随消息流：模型问话时用户多半正在读别处，
                   卡片跟着消息尾部滚走等于把唯一能作答的入口藏起来。放在 sticky 脚注里

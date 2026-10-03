@@ -1,16 +1,41 @@
 "use client";
 
-import { ArrowUp, ChevronDown, ListChecks, ListOrdered, Pencil, X } from "lucide-react";
-import { useRef, useState } from "react";
+import {
+  Archive,
+  ArrowUp,
+  ChevronDown,
+  FileSearch,
+  FileText,
+  History,
+  ListChecks,
+  ListOrdered,
+  Pause,
+  Pencil,
+  Play,
+  Square,
+  Target,
+  X,
+} from "lucide-react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { MarkdownBlock } from "@/renderer/components/assistant-ui/elements/markdown-text";
 import type { TodoItem } from "@/renderer/components/assistant-ui/elements/todo-list";
 import { typeEyebrow } from "@/renderer/components/assistant-ui/type";
+import { Button } from "@/renderer/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/renderer/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/renderer/components/ui/tooltip";
 import { cn } from "@/renderer/lib/utils";
 import { useChatStore } from "@/renderer/stores/chat-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { QueuedMessage } from "@/shared/contracts/chat";
 import type { ChatMessage } from "@/shared/contracts/session";
+import type { PlanState, WorkflowResult } from "@/shared/contracts/workflow";
 import { isTodoFinished, latestTodo, toTodoPanelMessages } from "./TodoPanel";
 
 /**
@@ -173,13 +198,13 @@ function DockSection({
   children,
 }: {
   /** 探针与接线测试靠它定位（真实像素只有 getBoundingClientRect 说了算） */
-  slot: "composer-dock-todo" | "composer-dock-queue";
+  slot: "composer-dock-todo" | "composer-dock-queue" | "composer-dock-goal" | "composer-dock-plan";
   /** 上面还有别的段 → 画一条上分隔线 */
   divided: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div data-slot={slot} className={cn(divided && "border-t border-border/60")}>
+    <div data-slot={slot} className={cn(divided && "border-t border-border/60 first:border-t-0")}>
       {children}
     </div>
   );
@@ -228,7 +253,7 @@ export function TodoDock(): React.JSX.Element | null {
   const total = todo.items.length;
 
   return (
-    <DockSection slot="composer-dock-todo" divided={false}>
+    <DockSection slot="composer-dock-todo" divided>
       <button
         type="button"
         aria-expanded={expanded}
@@ -384,14 +409,14 @@ function QueueRow({
         </span>
       )}
       <div className="flex shrink-0 items-center gap-0.5">
-        <QueueAction
+        <DockAction
           label={t("chat.queueSendNow")}
           disabled={pending}
           onClick={() => void sendNow()}
         >
           <ArrowUp className="size-3.5" />
-        </QueueAction>
-        <QueueAction
+        </DockAction>
+        <DockAction
           label={t("chat.queueEdit")}
           disabled={pending}
           onClick={() => {
@@ -400,27 +425,31 @@ function QueueRow({
           }}
         >
           <Pencil className="size-3.5" />
-        </QueueAction>
-        <QueueAction
+        </DockAction>
+        <DockAction
           label={t("chat.queueRemove")}
           disabled={pending}
           onClick={() => void useChatStore.getState().cancelQueued(item.id)}
         >
           <X className="size-3.5" />
-        </QueueAction>
+        </DockAction>
       </div>
     </li>
   );
 }
 
-function QueueAction({
+function DockAction({
   label,
-  disabled,
+  disabled = false,
+  expanded,
+  controls,
   onClick,
   children,
 }: {
   label: string;
-  disabled: boolean;
+  disabled?: boolean;
+  expanded?: boolean;
+  controls?: string;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -430,6 +459,8 @@ function QueueAction({
         <button
           type="button"
           aria-label={label}
+          aria-expanded={expanded}
+          aria-controls={controls}
           disabled={disabled}
           onClick={onClick}
           className="text-ink-4 grid size-6 place-items-center rounded-md transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30 disabled:opacity-40"
@@ -439,5 +470,411 @@ function QueueAction({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** Shared header: summary, status, icon actions, then the disclosure control. */
+function WorkflowDockHeader({
+  icon,
+  label,
+  title,
+  status,
+  expanded,
+  detailsId,
+  onToggle,
+  actions,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  status: string;
+  expanded: boolean;
+  detailsId: string;
+  onToggle: () => void;
+  actions: React.ReactNode;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-3 py-1.5">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={onToggle}
+        className="flex min-w-0 flex-1 items-center gap-2.5 self-stretch rounded-sm text-start text-[13px] text-foreground transition-colors hover:bg-foreground/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/30"
+      >
+        {icon}
+        <span className="shrink-0 font-medium">{label}</span>
+        <span className="min-w-0 flex-1 truncate" title={title}>
+          {title}
+        </span>
+      </button>
+      <span className="shrink-0 text-xs text-ink-3">{status}</span>
+      <div className="flex shrink-0 items-center gap-0.5">
+        {actions}
+        <DockAction
+          label={t(expanded ? "chat.workflowCollapse" : "chat.workflowExpand")}
+          expanded={expanded}
+          controls={detailsId}
+          onClick={onToggle}
+        >
+          <DockChevron expanded={expanded} />
+        </DockAction>
+      </div>
+    </div>
+  );
+}
+
+function workflowErrorKey(
+  result: Extract<WorkflowResult, { ok: false }>,
+  pendingPlan = false,
+): string {
+  if (result.code === "invalid" && pendingPlan) return "chat.workflowPlanFirst";
+  return {
+    busy: "chat.workflowBusy",
+    stale: "chat.workflowStale",
+    missing: "chat.workflowMissing",
+    invalid: "chat.workflowInvalid",
+    failed: "chat.workflowFailed",
+  }[result.code];
+}
+
+/** Workflow state arrives through the same revisioned live view as messages. */
+export function GoalDock(): React.JSX.Element | null {
+  const { t } = useTranslation();
+  const detailsId = useId();
+  const sessionId = useChatStore((s) => s.activeSessionId);
+  const goal = useChatStore((s) =>
+    sessionId &&
+    s.viewsBySession[sessionId]?.state.workflow?.goal?.workId ===
+      s.viewsBySession[sessionId]?.state.workflow?.work?.workId
+      ? s.viewsBySession[sessionId]?.state.workflow?.goal
+      : null,
+  );
+  const [expanded, setExpanded] = useState(false);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!goal || !sessionId || goal.status === "completed" || goal.status === "ended") return null;
+  const control = async (action: import("@/shared/contracts/workflow").GoalControl) => {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      const result = await window.oint.chat.controlGoal(sessionId, action);
+      const chat = useChatStore.getState();
+      const work = chat.viewsBySession[sessionId]?.state.workflow?.work;
+      setError(
+        result.ok
+          ? null
+          : workflowErrorKey(
+              result,
+              action === "resume" &&
+                (work?.effects === "read-only" ||
+                  (work?.requiresReview === true && !work.approvedPlanRef)),
+            ),
+      );
+      if (result.ok) await useChatStore.getState().loadSessions();
+    } catch {
+      setError("chat.workflowFailed");
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <DockSection slot="composer-dock-goal" divided>
+      <WorkflowDockHeader
+        icon={<Target aria-hidden="true" className="size-3.5 shrink-0 text-ink-3" />}
+        label={t("chat.goal")}
+        title={goal.objective}
+        status={t(`chat.goalStatus.${goal.status}`)}
+        expanded={expanded}
+        detailsId={detailsId}
+        onToggle={() => setExpanded((value) => !value)}
+        actions={
+          <>
+            <DockAction
+              label={t(goal.status === "active" ? "chat.goalPause" : "chat.goalResume")}
+              disabled={pending}
+              onClick={() => void control(goal.status === "active" ? "pause" : "resume")}
+            >
+              {goal.status === "active" ? (
+                <Pause aria-hidden="true" className="size-3.5" />
+              ) : (
+                <Play aria-hidden="true" className="size-3.5" />
+              )}
+            </DockAction>
+            <DockAction
+              label={t("chat.goalEnd")}
+              disabled={pending}
+              onClick={() => void control("end")}
+            >
+              <Square aria-hidden="true" className="size-3.5" />
+            </DockAction>
+          </>
+        }
+      />
+      {expanded && (
+        <div
+          id={detailsId}
+          className="app-scrollbar max-h-52 space-y-2 overflow-y-auto px-3 pb-2 text-[13px]"
+        >
+          <p className="whitespace-pre-wrap break-words">{goal.objective}</p>
+          {goal.criteria.length > 0 && (
+            <div>
+              <p className="text-ink-3">{t("chat.goalCriteria")}</p>
+              <ul className="list-disc space-y-1 pl-4">
+                {[...new Set(goal.criteria)].map((criterion) => (
+                  <li key={criterion}>{criterion}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {goal.progress && <p className="whitespace-pre-wrap break-words">{goal.progress}</p>}
+          {goal.reason && (
+            <p className="whitespace-pre-wrap break-words text-ink-3">{goal.reason}</p>
+          )}
+          <p className="text-xs text-ink-4">
+            {t("chat.goalContinuations", {
+              count: goal.continuationCount,
+              limit: goal.continuationLimit,
+            })}
+          </p>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="px-3 pb-2 text-xs text-destructive">
+          {t(error)}
+        </p>
+      )}
+    </DockSection>
+  );
+}
+
+export function PlanDock(): React.JSX.Element | null {
+  const { t } = useTranslation();
+  const detailsId = useId();
+  const sessionId = useChatStore((s) => s.activeSessionId);
+  const workflow = useChatStore((s) =>
+    sessionId ? s.viewsBySession[sessionId]?.state.workflow : null,
+  );
+  const plan = workflow?.plan;
+  const work = workflow?.work;
+  const busy = useChatStore((s) =>
+    sessionId
+      ? s.runningBySession[sessionId] || s.compactions[sessionId]?.phase === "running"
+      : false,
+  );
+  const [expanded, setExpanded] = useState(false);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<"view" | "revise" | "history" | null>(null);
+  const [history, setHistory] = useState<PlanState[]>([]);
+  const [selected, setSelected] = useState<PlanState | null>(null);
+  const [revisionText, setRevisionText] = useState("");
+  if (!plan || !sessionId) return null;
+  const ref = { planId: plan.id, revision: plan.revision };
+  const current = selected ?? plan;
+  const started =
+    workflow.execution?.status === "admitted" &&
+    workflow.execution.planRef.planId === plan.id &&
+    workflow.execution.planRef.revision === plan.revision;
+  const canStart =
+    plan.status === "ready" &&
+    work?.workId === plan.workId &&
+    work.requirementsRevision === plan.requirementsRevision &&
+    work.pendingInputIds.length === 0 &&
+    !started;
+  const status =
+    plan.status === "archived"
+      ? t("chat.planStatus.archived")
+      : started
+        ? t("chat.planStarted")
+        : plan.status === "ready" && work?.workId === plan.workId
+          ? t(
+              work.requiresReview
+                ? "chat.planReviewRequired"
+                : work.effects === "read-only"
+                  ? "chat.planReadOnly"
+                  : "chat.planStatus.ready",
+            )
+          : t(`chat.planStatus.${plan.status}`);
+  const act = async (action: "start" | "archive" | "revise" | "history") => {
+    if (pendingRef.current || (busy && action !== "history")) return;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      if (action === "history") {
+        setHistory(await window.oint.chat.planHistory(sessionId));
+        setDialog("history");
+      } else if (action === "revise") {
+        if (!revisionText.trim()) return;
+        await useChatStore.getState().send(
+          t("chat.planRevisionMessage", {
+            title: plan.title,
+            revision: plan.revision,
+            instructions: revisionText.trim(),
+          }),
+          undefined,
+          sessionId,
+        );
+        setRevisionText("");
+        setDialog(null);
+      } else {
+        const result =
+          action === "archive"
+            ? await window.oint.chat.archivePlan(sessionId, ref)
+            : work
+              ? await window.oint.chat.startPlan(sessionId, {
+                  ...ref,
+                  requestId: crypto.randomUUID(),
+                  workId: work.workId,
+                  workRevision: work.revision,
+                })
+              : { ok: false as const, code: "missing" as const };
+        if (!result.ok) setError(workflowErrorKey(result));
+      }
+    } catch {
+      setError("chat.workflowFailed");
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <DockSection slot="composer-dock-plan" divided>
+      <WorkflowDockHeader
+        icon={<FileText aria-hidden="true" className="size-3.5 shrink-0 text-ink-3" />}
+        label={t("chat.plan")}
+        title={plan.title}
+        status={`${status} · v${plan.revision}`}
+        expanded={expanded}
+        detailsId={detailsId}
+        onToggle={() => setExpanded((value) => !value)}
+        actions={
+          <>
+            {canStart && !busy && (
+              <DockAction
+                label={t("chat.planStartExecution")}
+                disabled={pending}
+                onClick={() => void act("start")}
+              >
+                <Play aria-hidden="true" className="size-3.5" />
+              </DockAction>
+            )}
+            <DockAction
+              label={t("chat.planView")}
+              onClick={() => {
+                setSelected(null);
+                setDialog("view");
+              }}
+            >
+              <FileSearch aria-hidden="true" className="size-3.5" />
+            </DockAction>
+            {plan.status !== "archived" && (
+              <>
+                <DockAction
+                  label={t("chat.planRevise")}
+                  disabled={pending || busy}
+                  onClick={() => setDialog("revise")}
+                >
+                  <Pencil aria-hidden="true" className="size-3.5" />
+                </DockAction>
+                <DockAction
+                  label={t("chat.planArchive")}
+                  disabled={pending || busy}
+                  onClick={() => void act("archive")}
+                >
+                  <Archive aria-hidden="true" className="size-3.5" />
+                </DockAction>
+              </>
+            )}
+            <DockAction
+              label={t("chat.planHistory")}
+              disabled={pending}
+              onClick={() => void act("history")}
+            >
+              <History aria-hidden="true" className="size-3.5" />
+            </DockAction>
+          </>
+        }
+      />
+      {expanded && (
+        <div id={detailsId} className="app-scrollbar max-h-64 overflow-y-auto px-3 pb-2">
+          <MarkdownBlock text={plan.markdown} />
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="px-3 pb-2 text-xs text-destructive">
+          {t(error)}
+        </p>
+      )}
+      <Dialog
+        open={dialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setDialog(null);
+        }}
+      >
+        <DialogContent className="max-h-[85vh] sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {dialog === "revise"
+                ? t("chat.planRevise")
+                : dialog === "history"
+                  ? t("chat.planHistory")
+                  : current.title}
+            </DialogTitle>
+            <DialogDescription>
+              {t("chat.planVersion", { revision: current.revision })}
+            </DialogDescription>
+          </DialogHeader>
+          {dialog === "revise" ? (
+            <>
+              <textarea
+                aria-label={t("chat.planRevisionInstructions")}
+                value={revisionText}
+                onChange={(event) => setRevisionText(event.target.value)}
+                className="min-h-32 rounded-md border bg-background p-3 text-sm"
+              />
+              <Button
+                disabled={pending || busy || !revisionText.trim()}
+                onClick={() => void act("revise")}
+              >
+                {t("chat.send")}
+              </Button>
+            </>
+          ) : dialog === "history" ? (
+            <div className="app-scrollbar max-h-[65vh] space-y-2 overflow-y-auto">
+              {history.map((version) => (
+                <button
+                  key={`${version.id}:${version.revision}`}
+                  type="button"
+                  className="block w-full rounded-md border p-3 text-start hover:bg-muted"
+                  onClick={() => {
+                    setSelected(version);
+                    setDialog("view");
+                  }}
+                >
+                  {version.title} · {t("chat.planVersion", { revision: version.revision })}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="app-scrollbar max-h-[65vh] overflow-y-auto">
+              <MarkdownBlock text={current.markdown} />
+            </div>
+          )}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {t(error)}
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
+    </DockSection>
   );
 }

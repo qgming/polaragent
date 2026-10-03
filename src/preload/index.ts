@@ -42,6 +42,12 @@ const api = {
     setCwd: (id, cwd) => ipcRenderer.invoke(IPC.sessions.setCwd, { id, cwd }),
   },
   chat: {
+    controlGoal: (sessionId, action) =>
+      ipcRenderer.invoke(IPC.chat.controlGoal, { sessionId, action }),
+    startPlan: (sessionId, ref) => ipcRenderer.invoke(IPC.chat.startPlan, { sessionId, ref }),
+    readPlan: (sessionId, ref) => ipcRenderer.invoke(IPC.chat.readPlan, { sessionId, ref }),
+    planHistory: (sessionId) => ipcRenderer.invoke(IPC.chat.planHistory, { sessionId }),
+    archivePlan: (sessionId, ref) => ipcRenderer.invoke(IPC.chat.archivePlan, { sessionId, ref }),
     send: (sessionId, text, attachments, messageId, options) =>
       ipcRenderer.invoke(IPC.chat.send, { sessionId, text, attachments, messageId, options }),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chat.stop, { sessionId }),

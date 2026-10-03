@@ -34,11 +34,7 @@ describe("formatSubagentsForSystemPrompt", () => {
     expect(text).toContain("<source>builtin</source>");
   });
 
-  /**
-   * 索引里**不再有 <tools> 段**：子智能体拿到的是主代理同一批工具（唯一例外是不能委派），
-   * 那是所有子智能体共享的一条规则，写进索引就是 N 份重复 —— 而索引每轮都付 token。
-   */
-  it("索引里不列工具（工具对所有子智能体都一样，不属于每条定义）", () => {
+  it("索引只列路由信息，不重复运行时工具清单", () => {
     const text = formatSubagentsForSystemPrompt([def({ source: "builtin" })]);
 
     expect(text).not.toContain("<tools>");
@@ -120,7 +116,7 @@ describe("buildDelegationPrompt", () => {
     const text = buildDelegationPrompt(BUILTIN_SUBAGENTS, "m1");
 
     // 指路：告诉模型去索引里看每个子智能体的判据
-    expect(text).toContain("什么时候该派");
+    expect(text).toContain("判断谁适合当前任务");
     expect(text).toContain("<available_subagents>");
 
     // 跨子智能体的纪律（本段的职责）
@@ -129,19 +125,21 @@ describe("buildDelegationPrompt", () => {
     expect(text).toContain("不要用 TaskStop");
   });
 
-  it("两面都点明：既不要「因为有专家就派」，也不要「每步都不难就全自己做」", () => {
+  it("按收益委派独立工作，允许主代理处理小任务与整合", () => {
     const text = buildDelegationPrompt(BUILTIN_SUBAGENTS, "m1");
 
-    // 两个方向的误用都要写：只写一面会让模型倒向另一面
-    expect(text).toContain("不要因为「有这个专家」就派");
-    expect(text).toContain("也不要因为「每一步都不难」就全自己做");
+    expect(text).toContain("能独立推进");
+    expect(text).toContain("成本超过收益时自己完成");
+    expect(text).toContain("收尾整合可以自己做");
+    expect(text).toContain("不重复调查");
   });
 
   it("点明「完成不等于结论正确」：验收要靠自己读一遍改动", () => {
     const text = buildDelegationPrompt(BUILTIN_SUBAGENTS, "m1");
 
     expect(text).toContain("不等于");
-    expect(text).toContain("read");
+    expect(text).toContain("检查实际改动和验证证据");
+    expect(text).toContain("不重复已有验证");
   });
 
   it("带上主会话模型名（子智能体默认继承它）", () => {
@@ -158,16 +156,14 @@ describe("buildSubagentSystemPrompt", () => {
     expect(text).toContain("不能再委派");
   });
 
-  /**
-   * 工具与主代理一致这件事要**明说**：否则子智能体会沿用旧印象
-   *（"我是子智能体，大概只有只读工具"）而不敢跑命令、不敢验证 ——
-   * 那正是这次改动要修掉的行为。
-   */
-  it("明说工具与主代理完全一致，并鼓励动手验证", () => {
+  it("继承父工作限制，并在实际授权范围内验证", () => {
     const text = buildSubagentSystemPrompt(def(), "/w");
 
-    expect(text).toContain("完全一致");
-    expect(text).toContain("该跑的命令要跑");
+    expect(text).toContain("继承父工作的执行约束");
+    expect(text).toContain("工具按实际授权提供");
+    expect(text).toContain("必要验证");
+    expect(text).not.toContain("完全一致");
+    expect(text).toContain("Goal 和 Plan 由主代理维护");
   });
 
   it("允许改文件但限定范围", () => {

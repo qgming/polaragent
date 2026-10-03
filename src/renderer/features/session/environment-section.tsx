@@ -22,7 +22,6 @@ const PERMISSION_KEYS: Record<PermissionMode, string> = {
 /** 智能体模式的词条同理沿用 composer 的模式 chip */
 const AGENT_MODE_KEYS: Record<AgentMode, string> = {
   standard: "chat.agentModeStandard",
-  plan: "chat.agentModePlan",
   orchestrate: "chat.agentModeOrchestrate",
 };
 

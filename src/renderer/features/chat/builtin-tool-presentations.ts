@@ -234,3 +234,47 @@ registerToolPresentation({
   resting: "tools.taskStop",
   active: "tools.taskStopActive",
 });
+
+// 通用目标与计划能力。
+registerToolPresentation({
+  name: "read_workflow",
+  Icon: FileTextIcon,
+  resting: "tools.readWorkflow",
+  active: "tools.readWorkflowActive",
+});
+registerToolPresentation({
+  name: "set_work_contract",
+  Icon: FileTextIcon,
+  resting: "tools.setWorkContract",
+  active: "tools.setWorkContractActive",
+});
+registerToolPresentation({
+  name: "create_goal",
+  Icon: FileTextIcon,
+  resting: "tools.createGoal",
+  active: "tools.createGoalActive",
+});
+registerToolPresentation({
+  name: "update_goal",
+  Icon: FileTextIcon,
+  resting: "tools.updateGoal",
+  active: "tools.updateGoalActive",
+});
+registerToolPresentation({
+  name: "read_plan",
+  Icon: FileTextIcon,
+  resting: "tools.readPlan",
+  active: "tools.readPlanActive",
+});
+registerToolPresentation({
+  name: "save_plan",
+  Icon: FileTextIcon,
+  resting: "tools.savePlan",
+  active: "tools.savePlanActive",
+});
+registerToolPresentation({
+  name: "present_plan",
+  Icon: FileTextIcon,
+  resting: "tools.presentPlan",
+  active: "tools.presentPlanActive",
+});
