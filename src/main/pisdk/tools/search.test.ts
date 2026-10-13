@@ -32,14 +32,18 @@ type GlobOutcome = Awaited<ReturnType<ReturnType<typeof createGlobTool>["execute
 /*
   allowedRoots 是**构造期**选项（不是工具参数）：围栏在生产路径由 buildTools 注入
   `sessionAllowedRoots(cwd, appPath)`。这里做成第三个入参是为了让用例能明确地
-  「带围栏」或「不带围栏」各跑一遍。
+  「带围栏」或「不带围栏」各跑一遍。第四个入参是「完全访问」的放行口（见 SearchToolOptions）。
 */
 function runGrep(
   cwd: string,
   params: GrepParams,
   allowedRoots?: readonly string[],
+  unrestricted?: () => boolean,
 ): Promise<GrepOutcome> {
-  return createGrepTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
+  return createGrepTool({
+    ...(allowedRoots === undefined ? {} : { allowedRoots }),
+    ...(unrestricted === undefined ? {} : { unrestricted }),
+  }).execute(
     params,
     createToolTestApi({ ...toolContext(cwd), callId: "call-grep" }),
     BACKGROUND_CONTEXT,
@@ -50,8 +54,12 @@ function runGlob(
   cwd: string,
   params: GlobParams,
   allowedRoots?: readonly string[],
+  unrestricted?: () => boolean,
 ): Promise<GlobOutcome> {
-  return createGlobTool({ ...(allowedRoots === undefined ? {} : { allowedRoots }) }).execute(
+  return createGlobTool({
+    ...(allowedRoots === undefined ? {} : { allowedRoots }),
+    ...(unrestricted === undefined ? {} : { unrestricted }),
+  }).execute(
     params,
     createToolTestApi({ ...toolContext(cwd), callId: "call-glob" }),
     BACKGROUND_CONTEXT,
@@ -319,5 +327,25 @@ describe("glob", () => {
 
     expect(text).not.toContain("Error:");
     expect(dataLines(text)).toContain("a.ts");
+  });
+
+  it("完全访问时围栏放行：越界路径照常检索，开关关上后恢复拦截", async () => {
+    let unrestricted = false;
+    // 先确认关着时挡住（与上面的围栏用例同一形状），再打开开关重试
+    const blocked = textOf(
+      await runGlob(root, { pattern: "*.ts", path: path.dirname(outsideFile) }, [root], () => unrestricted),
+    );
+    expect(blocked).toContain("Path outside the allowed workspace");
+
+    unrestricted = true;
+    const opened = textOf(
+      await runGrep(
+        root,
+        { pattern: "outside alpha", path: path.dirname(outsideFile) },
+        [root],
+        () => unrestricted,
+      ),
+    );
+    expect(opened).toContain("outside alpha");
   });
 });

@@ -123,9 +123,9 @@ describe("系统 MCP 预设注册表", () => {
 describe("isSystemServerEnabled", () => {
   it("设置里没选过时跟随预设默认值（全部默认开）", () => {
     const settings = makeSettings();
-    const wolfram = findBuiltinMcpServer("wolfram");
-    if (wolfram === undefined) throw new Error("预设缺失");
-    expect(isSystemServerEnabled(settings, wolfram)).toBe(true);
+    const wikipedia = findBuiltinMcpServer("wikipedia");
+    if (wikipedia === undefined) throw new Error("预设缺失");
+    expect(isSystemServerEnabled(settings, wikipedia)).toBe(true);
   });
 
   it("显式选择优先：可以把某台关掉", () => {
@@ -138,8 +138,8 @@ describe("isSystemServerEnabled", () => {
 
 describe("isSystemServerTrusted", () => {
   it("系统预设一律免审批（没有开关，也不读设置）", () => {
-    expect(isSystemServerTrusted("wolfram")).toBe(true);
-    expect(isSystemServerTrusted("dynamic-feed")).toBe(true);
+    expect(isSystemServerTrusted("context7")).toBe(true);
+    expect(isSystemServerTrusted("grep-app")).toBe(true);
   });
 
   it("用户自己加的 server 不走「系统预设免审批」这条路径", () => {
@@ -155,11 +155,11 @@ describe("isSystemServerTrusted", () => {
  */
 describe("isPreTrustedMcpTool", () => {
   it("系统预设的聚合工具免审批", () => {
-    expect(isPreTrustedMcpTool("mcp__wolfram__call")).toBe(true);
+    expect(isPreTrustedMcpTool("mcp__context7__call")).toBe(true);
   });
 
   it("系统预设的内层工具名同样免审批（模型可能直接写限定名）", () => {
-    expect(isPreTrustedMcpTool("mcp__wolfram__WolframAlpha")).toBe(true);
+    expect(isPreTrustedMcpTool("mcp__context7__resolve-library-id")).toBe(true);
   });
 
   it("用户自加 server 的工具不免审批（仍走规则 / 弹卡）", () => {
@@ -169,7 +169,7 @@ describe("isPreTrustedMcpTool", () => {
   it("内置工具与非法名字一律返回 false（免得误伤别的工具）", () => {
     expect(isPreTrustedMcpTool("bash")).toBe(false);
     expect(isPreTrustedMcpTool("mcp_tools")).toBe(false);
-    expect(isPreTrustedMcpTool("mcp__wolfram")).toBe(false);
+    expect(isPreTrustedMcpTool("mcp__context7")).toBe(false);
   });
 });
 

@@ -40,6 +40,11 @@ export interface BuildToolsOptions {
    * 调用方需要旧行为。生产路径的两处调用都必须传。
    */
   searchRoots?: readonly string[];
+  /**
+   * **完全访问**时返回 true：grep / glob 跳过 `searchRoots` 围栏（任意路径可检索）。
+   * getter 现查 —— 与 exec-env 的 unrestricted 同一口径（见 runtime 的 pathUnrestricted）。
+   */
+  searchUnrestricted?: () => boolean;
 }
 
 /** 工具名常量，供权限层与 UI 复用 */ export const TOOL_NAMES = {
@@ -185,8 +190,8 @@ export function buildTools(
     createReadImageTool(),
     { ...createWriteTool(), description: WRITE_DESCRIPTION },
     { ...createEditTool(), description: EDIT_DESCRIPTION },
-    createGrepTool({ allowedRoots: options.searchRoots }),
-    createGlobTool({ allowedRoots: options.searchRoots }),
+    createGrepTool({ allowedRoots: options.searchRoots, unrestricted: options.searchUnrestricted }),
+    createGlobTool({ allowedRoots: options.searchRoots, unrestricted: options.searchUnrestricted }),
     createTodoTool(),
     // 浏览器工具：操作的是主进程持有的 guest，与本会话的工作目录无关（见 tools/browser.ts）
     ...(browserAutomation === undefined ? [] : createBrowserTools(browserAutomation)),

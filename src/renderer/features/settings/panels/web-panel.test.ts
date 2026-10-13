@@ -13,12 +13,11 @@ import {
 } from "@/shared/contracts/web";
 
 describe("provider 元数据", () => {
-  it("每个 provider 都有元数据（面板按它渲染下拉项与提示）", () => {
+  it("每个 provider 都有元数据（面板按它渲染下拉项）", () => {
     for (const id of WEB_SEARCH_PROVIDERS) {
       const meta = WEB_SEARCH_PROVIDER_META[id];
       expect(meta, id).toBeDefined();
       expect(meta.label.length, id).toBeGreaterThan(0);
-      expect(meta.hint.length, id).toBeGreaterThan(0);
     }
   });
 

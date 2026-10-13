@@ -118,6 +118,36 @@ describe("createExecEnv 路径守卫", () => {
     }
   });
 
+  it("完全访问时放开允许根校验：任意路径可读写，且开关可中途切换", async () => {
+    // 与 runtime 的接线同构：getter 现查，权限模式中途改了立即生效（见 pathUnrestricted）
+    let unrestricted = false;
+    const free = await createExecEnv({ cwd: root, unrestricted: () => unrestricted });
+
+    // 关着的时候照旧越界被拒
+    const blocked = await free.readTextFile(outsideFile, BACKGROUND_CONTEXT);
+    expect(blocked.ok).toBe(false);
+
+    unrestricted = true;
+    writeFileSync(outsideFile, "admin view\n");
+    try {
+      const readOutside = getOrThrow(await free.readTextFile(outsideFile, BACKGROUND_CONTEXT));
+      expect(readOutside).toBe("admin view\n");
+
+      const writeOutside = path.join(os.tmpdir(), `oint-free-${process.pid}.txt`);
+      try {
+        getOrThrow(await free.writeFile(writeOutside, "written anywhere", BACKGROUND_CONTEXT));
+        expect(existsSync(writeOutside)).toBe(true);
+        // 相对路径仍按 cwd 解析、~ 仍指向家目录 —— 放开的只是允许根校验，不是路径语义
+        expect(getOrThrow(await free.exists("read-me.txt", BACKGROUND_CONTEXT))).toBe(true);
+        expect(getOrThrow(await free.exists("~", BACKGROUND_CONTEXT))).toBe(true);
+      } finally {
+        rmSync(writeOutside, { force: true });
+      }
+    } finally {
+      rmSync(outsideFile, { force: true });
+    }
+  });
+
   it("cwd 内 exec 可用且能取回 stdout（无可用 shell 则跳过）", async () => {
     let output = "";
     const result = await env.exec(

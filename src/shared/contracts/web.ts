@@ -185,38 +185,31 @@ export const WEB_SEARCH_PROVIDER_META: Record<
     needsKey: boolean;
     /** 申请 Key 的地址 */
     keyUrl?: string;
-    /** 设置面板上的一句话说明 */
-    hint: string;
   }
 > = {
   searxng: {
     label: "SearXNG",
     needsKey: false,
-    hint: "免 Key，元搜索引擎；需要实例开启 JSON 输出",
   },
   tavily: {
     label: "Tavily",
     needsKey: true,
     keyUrl: "https://tavily.com",
-    hint: "为 AI 优化的搜索 API，可选返回答案摘要",
   },
   exa: {
     label: "Exa",
     needsKey: true,
     keyUrl: "https://exa.ai",
-    hint: "神经 / 关键词检索，偏技术内容",
   },
   serper: {
     label: "Serper",
     needsKey: true,
     keyUrl: "https://serper.dev",
-    hint: "Google 搜索结果，可指定语言与地区",
   },
   brave: {
     label: "Brave",
     needsKey: true,
     keyUrl: "https://brave.com/search/api/",
-    hint: "独立索引，隐私友好",
   },
 };
 

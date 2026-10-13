@@ -19,7 +19,6 @@ import { useChatStore } from "@/renderer/stores/chat-store";
 import { SUBAGENT_TOOL_NAMES, useSubagentStore } from "@/renderer/stores/subagent-store";
 import { useUiStore } from "@/renderer/stores/ui-store";
 import type { ChatMessage } from "@/shared/contracts";
-import type { ChatSendOptions } from "@/shared/contracts/chat";
 import { OintAttachmentAdapter } from "./attachment-adapter";
 import { appendMessageToAttachments } from "./attachment-payload";
 import { startEventBridge } from "./event-bridge";
@@ -159,12 +158,7 @@ export function OintRuntimeProvider({
         }
         await useChatStore
           .getState()
-          .send(
-            text,
-            attachments,
-            targetSessionId,
-            message.runConfig?.custom?.workOptions as ChatSendOptions | undefined,
-          );
+          .send(text, attachments, targetSessionId);
       } catch (error) {
         const draft = {
           text: appendMessageToText(message),

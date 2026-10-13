@@ -416,3 +416,17 @@ export async function releasePlanExecution(
     return { ok: true };
   }, BACKGROUND_CONTEXT);
 }
+/** 执行轮次完整跑完后打上终态标记；失败或被中止的回执保持原样，界面继续可见。 */
+export async function completePlanExecution(
+  harness: Harness,
+  conversationId: ConversationId,
+  requestId: string,
+): Promise<void> {
+  await harness.commit(async (tx) => {
+    const doc = await tx.doc(PlanExecutionDoc, conversationId);
+    const receipt = doc.receipts[requestId];
+    if (!receipt || receipt.status !== "admitted" || receipt.finished) return;
+    receipt.finished = true;
+    doc.revision += 1;
+  }, BACKGROUND_CONTEXT);
+}

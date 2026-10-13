@@ -200,6 +200,7 @@ async function resolveSearchRoot(
   requested: string | undefined,
   cwd: string,
   allowedRoots?: readonly string[],
+  unrestricted?: () => boolean,
 ): Promise<RootResolution> {
   const requestedRoot = path.resolve(cwd, requested ?? ".");
   const realRoot = await realpath(requestedRoot).catch(() => undefined);
@@ -210,7 +211,7 @@ async function resolveSearchRoot(
   if (info === undefined) {
     return { ok: false, message: `Path not found: ${realRoot}` };
   }
-  if (allowedRoots !== undefined && allowedRoots.length > 0) {
+  if (allowedRoots !== undefined && allowedRoots.length > 0 && !unrestricted?.()) {
     const access = await validateRealPathAccess(realRoot, [...allowedRoots]);
     if (!access.ok) {
       /*
@@ -312,9 +313,13 @@ Keep patterns simple: a regex with nested quantifiers tested against a very long
  * `allowedRoots` 是**这道围栏唯一的来源**：不传 = 不做围栏（单测与不关心会话边界的
  * 调用方走这条）。生产路径必须传 —— runtime 的两处 buildTools 都把
  * `sessionAllowedRoots(cwd, appPath)` 交进来。
+ *
+ * `unrestricted` 是「完全访问」的放行口（与 exec-env 同一口径）：返回 true 时跳过围栏，
+ * 任意路径可检索。getter 现查，权限模式中途切换立即生效。
  */
 export interface SearchToolOptions {
   allowedRoots?: readonly string[];
+  unrestricted?: () => boolean;
 }
 
 /** 构造 grep 工具（只读；path 决定检索根，相对路径按会话工作目录解析） */
@@ -337,7 +342,12 @@ export function createGrepTool(
           files: 0,
           truncated: false,
         });
-      const resolution = await resolveSearchRoot(params.path, env.cwd, options.allowedRoots);
+      const resolution = await resolveSearchRoot(
+        params.path,
+        env.cwd,
+        options.allowedRoots,
+        options.unrestricted,
+      );
       if (!resolution.ok) return failure(resolution.message);
 
       let pattern: RegExp;
@@ -459,7 +469,12 @@ export function createGlobTool(
       const requestedRoot = path.resolve(env.cwd, params.path ?? ".");
       const failure = (message: string): ToolExecutionResult<JsonRepresentation<GlobToolDetails>> =>
         textResult(`Error: ${message}`, { root: requestedRoot, matches: 0, truncated: false });
-      const resolution = await resolveSearchRoot(params.path, env.cwd, options.allowedRoots);
+      const resolution = await resolveSearchRoot(
+        params.path,
+        env.cwd,
+        options.allowedRoots,
+        options.unrestricted,
+      );
       if (!resolution.ok) return failure(resolution.message);
 
       const pattern = compileWildcard(params.pattern);

@@ -279,10 +279,6 @@ export const enUS = {
     planRevisionInstructions: "Plan revision instructions",
     planRevisionMessage:
       'Revise only the plan "{{title}}" (version {{revision}}), then present a new version for review. Requested changes:\n{{instructions}}',
-    newWork: "New work",
-    planOnly: "Plan only, review before execution",
-    newWorkExecute: "Start new work and execute",
-    newWorkReadOnly: "Start new read-only research",
     goalStatus: {
       active: "Active",
       paused: "Paused",
@@ -304,14 +300,8 @@ export const enUS = {
     requestFailed: "Request failed",
     requestRetriesExhausted: "Could not reconnect after {{count}} retries",
     requestFailedAfterRetries: "Request failed after {{count}} retries",
-    agentModeStandardDesc: "Handles the task directly and verifies the result",
     agentModeOrchestrate: "Orchestrate",
-    agentModeOrchestrateDesc:
-      "Delegates useful subtasks, then consolidates and verifies the result",
     agentModeRunning: "Could not save mode. Please try again.",
-    // Switching mid-run is allowed and applies to the next turn — say so explicitly
-    agentModePendingTurn: "Next send",
-    agentModeNextTurn: "Applies to your next send after the current run finishes",
     model: "Model",
     thinkingLevel: "Thinking level",
     loadingOlder: "Loading…",
@@ -824,36 +814,19 @@ export const enUS = {
     mcpPluginOverridden: "Overridden by your own config",
     mcpPluginManaged: "Provided by a plugin: disable that plugin to turn it off",
     mcpPresetCategory: {
-      knowledge: "Knowledge & reference",
+      knowledge: "Knowledge & docs",
       search: "Search & fetch",
-      academic: "Academic & science",
-      earth: "Earth & climate",
-      health: "Health & medicine",
-      finance: "Finance & statistics",
-      culture: "Culture & daily life",
     },
     mcpBuiltin: {
-      wolfram:
-        "General computation and knowledge: math, units, physical constants, population and economic data, with cited results",
-      wikipedia: "Encyclopedia articles on any topic (300+ languages), with summaries and sections",
-      wikidata: "Structured knowledge graph: entity properties and relations, plus SPARQL queries",
-      edgepedia: "Citation-backed general encyclopedia search",
-      deepwiki:
-        "Architecture explanations and Q&A for any public GitHub repository — understand a project without cloning it",
-      mdn: "Web platform docs plus cross-browser compatibility data (HTML / CSS / JavaScript / Web APIs)",
       context7:
         "Up-to-date docs and code examples for any library or framework, so the model stops coding against stale APIs (keyless, rate limited)",
+      deepwiki:
+        "Architecture explanations and Q&A for any public GitHub repository — understand a project without cloning it",
+      wikipedia: "Encyclopedia articles on any topic (300+ languages), with summaries and sections",
+      arxiv:
+        "Global preprints (any discipline): search, fetch metadata by ID, and read full paper text",
       exaSearch: "Semantic web search and page fetching (keyless, rate limited)",
       grepApp: "Search real code snippets across public GitHub repos, any language",
-      arxiv: "Global preprint search (any discipline) with metadata and full text",
-      pubmed: "Global biomedical literature search with MeSH terms and citations",
-      crossref: "Global DOI metadata: journals, authors, citation links across publishers",
-      openMeteo:
-        "Weather anywhere on Earth: current, hourly/daily forecast, historical, marine and air quality",
-      whoGho: "WHO Global Health Observatory: 3,000+ indicators across 194 countries",
-      worldbank: "World Bank development indicators: 200+ countries, 29,000+ indicators, 60 years",
-      dynamicFeed:
-        "90+ live-data tools: weather alerts, hazards, space weather, CVEs, flight delays, drug shortages, sanctions screening",
     },
     mcpReconnect: "Reconnect",
     mcpReconnecting: "Connecting…",
@@ -906,20 +879,16 @@ export const enUS = {
     // Web search: backend configuration for the web_search / web_fetch tools
     webSearchSection: "Search provider",
     webEnabled: "Enable web search",
-    webEnabledDesc: "When off, the model cannot see web_search or web_fetch",
     webProvider: "Provider",
     webNoKey: "no key",
     webApiKey: "API key",
     webApiKeySaved: "Saved. Leave empty to keep it",
     webApiKeyGet: "Get an API key",
     webInstances: "SearXNG instances",
-    webInstancesHint:
-      "One address per line; leave empty to use the built-in ones. Note: a public instance must enable JSON output (json must be listed in its search.formats), otherwise it is skipped",
-    webInstancesBuiltin:
-      "Built-in instances ({{count}}): tried in order when none are configured, up to 3 attempts",
+    webInstancesHint: "One address per line; leave empty to use the built-in ones (public instances must enable JSON output)",
+    webInstancesBuiltin: "Built-in instances ({{count}}), tried in order when none are configured",
     webTavilyDepth: "Search depth",
     webTavilyAnswer: "Include AI answer",
-    webTavilyAnswerDesc: "Ask Tavily for a generated answer (uses more credits)",
     webSerperGl: "Region code (gl)",
     webSerperHl: "Language code (hl)",
     webExaType: "Search type",
@@ -929,16 +898,9 @@ export const enUS = {
     webTesting: "Testing…",
     webTestOk: "Connected, {{count}} results",
     webLimitsSection: "Result limits",
-    webLimitsDesc:
-      "These are deployment-side limits, not model arguments: the model can only tighten them",
     webMaxResults: "Source limit",
-    webMaxResultsDesc: "Most sources one web_search call returns (1–20)",
     webFetchChars: "Fetch output limit",
-    webFetchCharsDesc: "Character limit for one web_fetch response",
     webFetchTimeout: "Fetch timeout (seconds)",
-    webFetchTimeoutDesc: "Per-URL fetch timeout; on expiry the call aborts with an error",
-    webFooter:
-      "Both tools are read-only and never touch workspace files, so they need no approval. Fetching only reaches public addresses: loopback, private-network and link-local targets are refused, and cross-origin redirects are not followed automatically.",
   },
   approval: {
     allowOnce: "Allow once",

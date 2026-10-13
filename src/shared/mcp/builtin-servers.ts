@@ -33,7 +33,7 @@
 //
 // ## 工具预算：为什么每台 server 只有一个聚合工具
 //
-// 这张表有十几台 server、上百个工具。每个工具的 JSON Schema 每轮都会进请求体 ——
+// 每台 server 都自带一批工具，每个工具的 JSON Schema 每轮都会进请求体 ——
 // 全量展开会直接把上下文与费用推高，还会撞上工具数上限被静默截断。
 // 所以每台 server 恒定只暴露一个聚合工具 `mcp__<serverId>__call`，
 // 细节由内置工具 `mcp_tools` 按需读取。详见 contracts/mcp.ts 里 MCP_GATEWAY_TOOL_NAME 的说明。
@@ -43,25 +43,10 @@ import { isValidMcpServerId, parseMcpToolName } from "@/shared/contracts/mcp";
 import type { Settings } from "@/shared/contracts/settings";
 
 /** 面板里的领域分组（只影响展示顺序与分组标题，不影响任何行为） */
-export type McpPresetCategory =
-  | "knowledge"
-  | "search"
-  | "academic"
-  | "earth"
-  | "health"
-  | "finance"
-  | "culture";
+export type McpPresetCategory = "knowledge" | "search";
 
 /** 分组顺序：越靠前越「通用」 */
-export const MCP_PRESET_CATEGORIES: readonly McpPresetCategory[] = [
-  "knowledge",
-  "search",
-  "academic",
-  "earth",
-  "health",
-  "finance",
-  "culture",
-];
+export const MCP_PRESET_CATEGORIES: readonly McpPresetCategory[] = ["knowledge", "search"];
 
 /** 一条系统预设的声明（不含 createdAt / enabled —— 那两个由下面的转换函数算出来） */
 export interface BuiltinMcpServer {
@@ -87,42 +72,20 @@ export interface BuiltinMcpServer {
 /**
  * 随包分发的系统 MCP 预设（顺序即面板里的展示顺序，按领域分组）。
  *
+ * 这是一张**精选清单**：只收最通用、最高频的那几台（库文档、仓库解读、百科、论文、
+ * 网搜、代码搜索），其余垂直领域（天气、健康、金融等）一律留给用户按需自加。
  * 加一条之前先做三件事：① 用真实握手确认端点活着、且**不带任何 Key** 能列出工具；
  * ② 真调一次工具确认返回的是真实数据（「能握手」不等于「能用」——
  * 实测见过握手与 tools/list 全过、只有 tools/call 才 403 的端点）；
  * ③ 想清楚它是不是「通用 + 全球」的。
  */
 export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
-  // —— 知识与百科 ——
+  // —— 知识与文档 ——
   {
-    id: "wolfram",
-    name: "Wolfram",
-    url: "https://agenttools.wolfram.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.wolfram",
-    category: "knowledge",
-    defaultEnabled: true,
-  },
-  {
-    id: "wikipedia",
-    name: "Wikipedia",
-    url: "https://wikipedia.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.wikipedia",
-    category: "knowledge",
-    defaultEnabled: true,
-  },
-  {
-    id: "wikidata",
-    name: "Wikidata",
-    url: "https://wikidata.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.wikidata",
-    category: "knowledge",
-    defaultEnabled: true,
-  },
-  {
-    id: "edgepedia",
-    name: "Edgepedia",
-    url: "https://www.edgechat.ai/mcp",
-    descriptionKey: "settings.mcpBuiltin.edgepedia",
+    id: "context7",
+    name: "Context7",
+    url: "https://mcp.context7.com/mcp",
+    descriptionKey: "settings.mcpBuiltin.context7",
     category: "knowledge",
     defaultEnabled: true,
   },
@@ -135,18 +98,18 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
     defaultEnabled: true,
   },
   {
-    id: "mdn",
-    name: "MDN",
-    url: "https://mcp.mdn.mozilla.net/mcp",
-    descriptionKey: "settings.mcpBuiltin.mdn",
+    id: "wikipedia",
+    name: "Wikipedia",
+    url: "https://wikipedia.caseyjhand.com/mcp",
+    descriptionKey: "settings.mcpBuiltin.wikipedia",
     category: "knowledge",
     defaultEnabled: true,
   },
   {
-    id: "context7",
-    name: "Context7",
-    url: "https://mcp.context7.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.context7",
+    id: "arxiv",
+    name: "arXiv",
+    url: "https://arxiv.caseyjhand.com/mcp",
+    descriptionKey: "settings.mcpBuiltin.arxiv",
     category: "knowledge",
     defaultEnabled: true,
   },
@@ -166,75 +129,6 @@ export const BUILTIN_MCP_SERVERS: readonly BuiltinMcpServer[] = [
     url: "https://mcp.grep.app",
     descriptionKey: "settings.mcpBuiltin.grepApp",
     category: "search",
-    defaultEnabled: true,
-  },
-
-  // —— 学术与科学 ——
-  {
-    id: "arxiv",
-    name: "arXiv",
-    url: "https://arxiv.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.arxiv",
-    category: "academic",
-    defaultEnabled: true,
-  },
-  {
-    id: "pubmed",
-    name: "PubMed",
-    url: "https://pubmed.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.pubmed",
-    category: "academic",
-    defaultEnabled: true,
-  },
-  {
-    id: "crossref",
-    name: "Crossref",
-    url: "https://crossref.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.crossref",
-    category: "academic",
-    defaultEnabled: true,
-  },
-
-  // —— 地球与气候 ——
-  {
-    id: "open-meteo",
-    name: "Open-Meteo",
-    url: "https://open-meteo.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.openMeteo",
-    category: "earth",
-    defaultEnabled: true,
-  },
-
-  // —— 健康与医学 ——
-  {
-    id: "who-gho",
-    name: "WHO GHO",
-    url: "https://who-gho.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.whoGho",
-    category: "health",
-    defaultEnabled: true,
-  },
-
-  // —— 金融与统计 ——
-  {
-    id: "worldbank",
-    name: "World Bank",
-    url: "https://worldbank.caseyjhand.com/mcp",
-    descriptionKey: "settings.mcpBuiltin.worldbank",
-    category: "finance",
-    defaultEnabled: true,
-  },
-  // 注：Manifold Markets（预测市场）曾被收录，但它的端点在实测环境里 DNS/连接全部失败
-  //（api.manifold.markets/v0/mcp 与三个变体都不可达）。按「每条预设都必须真实握手通过」的
-  // 准入标准，它先不进内置 —— 想用的人可以在「用户」页签自己加。
-
-  // —— 文化与生活 ——
-  {
-    id: "dynamic-feed",
-    name: "DynamicFeed",
-    url: "https://dynamicfeed.ai/mcp",
-    descriptionKey: "settings.mcpBuiltin.dynamicFeed",
-    category: "culture",
     defaultEnabled: true,
   },
 ];

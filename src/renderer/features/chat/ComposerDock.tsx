@@ -682,6 +682,9 @@ export function PlanDock(): React.JSX.Element | null {
     workflow.execution?.status === "admitted" &&
     workflow.execution.planRef.planId === plan.id &&
     workflow.execution.planRef.revision === plan.revision;
+  // 与目标停靠区同一套收尾约定：执行完整跑完的计划不再驻留输入框上方
+  const finished = started && workflow.execution?.finished === true;
+  if (finished) return null;
   const canStart =
     plan.status === "ready" &&
     work?.workId === plan.workId &&

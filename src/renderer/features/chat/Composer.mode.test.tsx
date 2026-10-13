@@ -215,14 +215,14 @@ describe("AgentModeChip 显示的生效模式", () => {
 });
 
 describe("AgentModeChip 的菜单", () => {
-  it("只列出默认、编排两种模式，并说明各自行为", async () => {
+  it("只列出默认、编排两种模式，不带选项说明小字", async () => {
     seedStores({ sessionMode: null });
     render(<Harness />);
     await openChip("智能体模式");
 
-    // 名字（智能体 / 编排）自己说明不了差别，所以每个选项都带一句说明
-    expect(screen.getByText("直接处理任务并验证结果")).toBeDefined();
-    expect(screen.getByText("按需委派有益的子任务，并整合与验证结果")).toBeDefined();
+    // 生效时机与选项说明这类小字已按产品要求移除，这里守住移除结果
+    expect(screen.queryByText("直接处理任务并验证结果")).toBeNull();
+    expect(screen.queryByText("按需委派有益的子任务，并整合与验证结果")).toBeNull();
     const modes = screen
       .getAllByRole("button")
       .filter((button) => button.hasAttribute("aria-pressed"));
@@ -285,21 +285,16 @@ describe("AgentModeChip 的写入", () => {
     await waitFor(() => expect(setModeCalls).toEqual([{ id: SESSION_ID, mode: "orchestrate" }]));
   });
 
-  it("运行中切换时说明生效时机（否则用户不知道现在切了算不算）", async () => {
+  /**
+   * 「下次发送」这类生效时机小字已按产品要求整体移除（chip 与菜单里都没有），
+   * 这里守住移除结果，防止回归时又冒出来。
+   */
+  it("运行中也不显示生效时机小字（该提示已移除）", async () => {
     seedStores({ sessionMode: null, running: true });
     render(<Harness />);
     await openChip("智能体模式");
 
-    // 菜单里给一句「将在下一轮生效」，而不是让用户猜
-    expect(screen.getByText(/下次发送时生效/)).toBeDefined();
-  });
-
-  it("不在运行时不给那句生效时机说明（那是运行中才有的信息）", async () => {
-    seedStores({ sessionMode: null, running: false });
-    render(<Harness />);
-    await openChip("智能体模式");
-
-    expect(screen.queryByText(/下次发送时生效/)).toBeNull();
+    expect(screen.queryByText(/下次发送/)).toBeNull();
   });
 
   it("没有活动会话时 chip 禁用（没有可写入的会话）", async () => {
@@ -312,8 +307,20 @@ describe("AgentModeChip 的写入", () => {
 });
 
 describe("Native plans and work controls", () => {
-  function seedPlan(status: "draft" | "ready" | "archived" = "ready") {
+  function seedPlan(
+    status: "draft" | "ready" | "archived" = "ready",
+    execution?: { finished?: boolean },
+  ) {
     seedStores({ sessionMode: "standard" });
+    const plan = {
+      id: "plan-1",
+      workId: "work-1",
+      revision: 3,
+      requirementsRevision: 2,
+      status,
+      title: "实施方案",
+      markdown: "# Native plan\n\nRun the **checks**.",
+    };
     useChatStore.setState({
       viewsBySession: {
         [SESSION_ID]: {
@@ -337,7 +344,26 @@ describe("Native plans and work controls", () => {
             workflow: {
               revision: 1,
               goal: null,
-              execution: null,
+              execution: execution
+                ? {
+                    requestId: "req-1",
+                    workId: "work-1",
+                    workRevision: 4,
+                    planRef: { planId: plan.id, revision: plan.revision },
+                    plan,
+                    contract: {
+                      workId: "work-1",
+                      revision: 4,
+                      requirementsRevision: 2,
+                      effects: "unrestricted",
+                      requiresReview: false,
+                      pendingInputIds: [],
+                      approvedPlanRef: { planId: plan.id, revision: plan.revision },
+                    },
+                    status: "admitted" as const,
+                    ...(execution.finished === undefined ? {} : { finished: execution.finished }),
+                  }
+                : null,
               work: {
                 workId: "work-1",
                 revision: 4,
@@ -347,15 +373,7 @@ describe("Native plans and work controls", () => {
                 pendingInputIds: [],
                 approvedPlanRef: null,
               },
-              plan: {
-                id: "plan-1",
-                workId: "work-1",
-                revision: 3,
-                requirementsRevision: 2,
-                status,
-                title: "实施方案",
-                markdown: "# Native plan\n\nRun the **checks**.",
-              },
+              plan,
             },
           },
         },
@@ -369,47 +387,6 @@ describe("Native plans and work controls", () => {
     await openChip("智能体模式");
     expect(screen.queryByText("计划")).toBeNull();
     expect(screen.getByText("编排")).toBeDefined();
-  });
-
-  it("sends one plan-only request and keeps subsequent sends ordinary", async () => {
-    seedStores({});
-    render(<Harness />);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Design a migration" } });
-    await openChip("新工作");
-    fireEvent.click(screen.getByRole("button", { name: "仅制定计划，审阅后执行" }));
-    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
-    expect(onNew.mock.calls[0]?.[0]).toMatchObject({
-      runConfig: {
-        custom: {
-          workOptions: { work: { kind: "new", effects: "read-only", requiresReview: true } },
-        },
-      },
-    });
-    expect(setModeCalls).toEqual([]);
-    fireEvent.keyDown(document, { key: "Escape" });
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "Continue research" } });
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(2));
-    expect(onNew.mock.calls[1]?.[0]?.runConfig?.custom?.workOptions).toBeUndefined();
-  });
-
-  it.each([
-    ["开始新工作并执行", "unrestricted"],
-    ["开始新的只读调研", "read-only"],
-  ] as const)("submits the explicit contract for %s", async (name, effects) => {
-    seedStores({});
-    render(<Harness />);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "New task" } });
-    await openChip("新工作");
-    fireEvent.click(screen.getByRole("button", { name }));
-    await waitFor(() => expect(onNew).toHaveBeenCalledTimes(1));
-    expect(onNew.mock.calls[0]?.[0]).toMatchObject({
-      runConfig: {
-        custom: {
-          workOptions: { work: { kind: "new", effects, requiresReview: false } },
-        },
-      },
-    });
   });
 
   it("renders markdown without a filesystem path and starts the exact version", async () => {
@@ -440,6 +417,18 @@ describe("Native plans and work controls", () => {
     seedPlan(status);
     render(<Harness />);
     expect(screen.queryByRole("button", { name: "开始计划" })).toBeNull();
+  });
+
+  it("keeps the dock while the execution is still unfinished", () => {
+    seedPlan("ready", {});
+    render(<Harness />);
+    expect(screen.getByRole("button", { name: "查看计划" })).toBeDefined();
+  });
+
+  it("hides the dock once the plan execution finished", () => {
+    seedPlan("ready", { finished: true });
+    render(<Harness />);
+    expect(screen.queryByRole("button", { name: "查看计划" })).toBeNull();
   });
 
   it("keeps the draft when the selected version is stale", async () => {

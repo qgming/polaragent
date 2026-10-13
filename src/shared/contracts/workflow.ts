@@ -53,6 +53,8 @@ export interface PlanExecutionReceipt {
   plan: PlanState;
   contract: WorkContract;
   status: "reserved" | "admitted" | "released";
+  /** 执行轮次完整跑完后打上；被中止或失败时保持原状，界面继续展示这份计划。 */
+  finished?: boolean;
   inputId?: string;
 }
 

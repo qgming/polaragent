@@ -92,6 +92,15 @@ export interface CreateExecEnvOptions {
   cwd: string;
   /** 额外允许访问的根目录（如数据目录、技能目录）；默认包含 cwd */
   allowedRoots?: string[];
+  /**
+   * **完全访问**（`settings.permissionMode === "full"`）时返回 true：路径守卫不再校验
+   * 允许根，任意路径（绝对、相对、~、file://）都可读写 —— 与 Windows 管理员同一份文件视图。
+   *
+   * 用 getter 而不是布尔：权限模式可以在会话中途切换，每个文件操作现查一次。
+   * 它只放开「允许根校验」，`exec` 的环境变量白名单（child-env）不在此列 ——
+   * 那管的是凭据外泄，不是路径边界。
+   */
+  unrestricted?: () => boolean;
 }
 
 /** 路径守卫校验结果 */
@@ -129,6 +138,7 @@ function outsideRootError(absolutePath: string, reason: string): FileError {
  *
  * 1. **路径类方法有守卫**：readFile / writeFile / listDir 等先校验目标落在 allowedRoots 内
  *    （**先解析 realpath**，见 guard），越界返回 FileError。
+ *    例外：完全访问模式（`unrestricted` 返回 true）跳过允许根校验。
  *
  * 2. **`exec` 不受路径守卫约束**：它仍然可以跑任意命令、读写任意路径 —— 路径守卫
  *    在这一层**不构成任何限制**。管住它的是上层权限门（pisdk/permissions.ts）：
@@ -164,6 +174,8 @@ export async function createExecEnv(options: CreateExecEnvOptions): Promise<Exec
    */
   async function guard(requested: string): Promise<GuardedPath> {
     const absolute = toAbsolutePath(requested, cwd);
+    // 完全访问：跳过允许根校验（也免掉 realpath —— 它只服务于包含判定），直接放行
+    if (options.unrestricted?.()) return { ok: true, path: absolute };
     const resolved = await resolveRealPath(absolute);
     const allowed = (await realRoots()).some((root) => isInsidePath(resolved, root));
     return allowed

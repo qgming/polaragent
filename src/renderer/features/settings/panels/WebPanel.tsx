@@ -150,7 +150,6 @@ export function WebPanel() {
       <SettingsSection title={t("settings.webSearchSection")}>
         <SettingsField
           label={t("settings.webEnabled")}
-          description={t("settings.webEnabledDesc")}
           control={
             <Switch
               size="sm"
@@ -162,7 +161,6 @@ export function WebPanel() {
 
         <SettingsField
           label={t("settings.webProvider")}
-          description={meta.hint}
           control={
             <Select
               value={provider}
@@ -278,7 +276,6 @@ export function WebPanel() {
             />
             <SettingsField
               label={t("settings.webTavilyAnswer")}
-              description={t("settings.webTavilyAnswerDesc")}
               control={
                 <Switch
                   size="sm"
@@ -387,13 +384,9 @@ export function WebPanel() {
         </div>
       </SettingsSection>
 
-      <SettingsSection
-        title={t("settings.webLimitsSection")}
-        description={t("settings.webLimitsDesc")}
-      >
+      <SettingsSection title={t("settings.webLimitsSection")}>
         <SettingsField
           label={t("settings.webMaxResults")}
-          description={t("settings.webMaxResultsDesc")}
           control={
             <Input
               type="number"
@@ -408,7 +401,6 @@ export function WebPanel() {
         />
         <SettingsField
           label={t("settings.webFetchChars")}
-          description={t("settings.webFetchCharsDesc")}
           control={
             <Input
               type="number"
@@ -426,7 +418,6 @@ export function WebPanel() {
         />
         <SettingsField
           label={t("settings.webFetchTimeout")}
-          description={t("settings.webFetchTimeoutDesc")}
           control={
             <Input
               type="number"
@@ -442,8 +433,6 @@ export function WebPanel() {
           }
         />
       </SettingsSection>
-
-      <p className="text-xs text-ink-3">{t("settings.webFooter")}</p>
     </div>
   );
 }

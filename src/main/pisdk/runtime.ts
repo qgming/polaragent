@@ -158,6 +158,7 @@ import {
   reservePlanExecution,
   admitPlanExecution,
   releasePlanExecution,
+  completePlanExecution,
   WorkDoc,
   PlanDoc,
   PlanExecutionDoc,
@@ -328,6 +329,11 @@ interface SessionRuntime {
   goalArmed: boolean;
   goalDriving: boolean;
   goalContinuationLimit: number;
+  /**
+   * 完全访问模式下为 true：exec-env 的路径守卫放开允许根校验（任意路径可读写）。
+   * 初值取会话创建时的设置，之后每次工具调用随 gateTool 现读刷新 —— 与审批门的口径一致。
+   */
+  pathUnrestricted: boolean;
   pendingInputs: number;
   stopping?: Promise<void>;
   compacting?: boolean;
@@ -922,6 +928,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
 
         {
           searchRoots: sessionAllowedRoots(runtime.env.cwd, deps.appPath),
+          searchUnrestricted: () => runtime.pathUnrestricted,
         },
       );
       if (!runtime.isSubagent)
@@ -992,7 +999,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         },
       };
     const settings = await deps.getSettings();
-    // 「完全访问」模式：不再逐次审批（仍受 exec-env 的路径白名单约束）
+    // 完全访问的口径在这里统一刷新：既免逐次审批，也放开 exec-env 的路径守卫（见 env.unrestricted）
+    runtime.pathUnrestricted = settings.permissionMode === "full";
     if (settings.permissionMode === "full") return undefined;
     const risk = assessToolRisk(toolName, args);
     if (risk === "low") return undefined;
@@ -1155,6 +1163,9 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     const env = await createExecEnv({
       cwd,
       allowedRoots: [...sessionAllowedRoots(cwd, deps.appPath), sessionAttachmentsDir(sessionId)],
+      // 完全访问模式放开路径守卫；getter 现查 runtime 字段 —— gateTool 每次工具调用都会刷新它，
+      // 所以中途改设置立即生效，不需要重建会话。
+      unrestricted: () => runtimeRef?.pathUnrestricted ?? settings.permissionMode === "full",
     });
 
     const loaded = await loadAgentResources(env, settings, cwd, deps.appPath);
@@ -1270,9 +1281,11 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         grep / glob 的检索围栏（见 tools/search.ts 的 resolveSearchRoot）。
         子智能体拿到的是同一批工具对象，所以它也自动受同一个围栏约束 ——
         这正是「过滤发生在已装配好的那份工具表上」的好处（见 restrictTools 的说明）。
+        完全访问模式放开围栏：getter 现查 pathUnrestricted（env 的 unrestricted 同一口径）。
       */
       {
         searchRoots: sessionAllowedRoots(env.cwd, deps.appPath),
+        searchUnrestricted: () => runtimeRef?.pathUnrestricted ?? settings.permissionMode === "full",
       },
     );
     if (!spec) builtTools.push(...workflowToolsFor(() => runtimeRef, sessionId, activeMode));
@@ -1395,6 +1408,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
         goalArmed: false,
         goalDriving: false,
         goalContinuationLimit: settings.goalContinuationLimit ?? 10,
+        pathUnrestricted: settings.permissionMode === "full",
         pendingInputs: 0,
         unsubscribers: [],
         // 会话创建时装配的那一份（MCP 热替换时整表替换，必须原样带回去，否则这些工具会凭空消失）
@@ -1711,8 +1725,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     if (runtime.sendController?.signal.aborted) await runtime.sendSettled;
 
     if (runtime.running || runtime.sending) {
-      if (options?.work || options?.rewindToEntryId !== undefined)
-        throw new Error("当前运行结束后才能开始新工作或编辑历史消息。");
+      if (options?.rewindToEntryId !== undefined)
+        throw new Error("当前运行结束后才能编辑历史消息。");
       await enqueueInput(runtime, text, "followUp", attachments, messageId);
       return;
     }
@@ -1747,9 +1761,6 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       const prepared = await prepare?.(controller.signal);
       if (prepare && !prepared) return false;
       controller.signal.throwIfAborted();
-      if (options?.work?.kind === "new") {
-        await cancelWorkActivity(runtime, "父会话开始了另一项工作");
-      }
       const success = await sendLocked(
         runtime,
         prepared?.text ?? text,
@@ -1813,6 +1824,8 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       mode ?? (await deps.sessionStore.readAgentMode(runtime.sessionId)) ?? settings.agentMode;
     runtime.activeMode = nextMode;
     runtime.goalContinuationLimit = settings.goalContinuationLimit ?? 10;
+    // 路径守卫的放开口径与审批门同源（完全访问 = 任意路径可读写），每轮随设置现读
+    runtime.pathUnrestricted = settings.permissionMode === "full";
     runtime.repeatChain = createRepeatChain();
     const requestId = messageId ?? randomUUID();
     let submitted = false;
@@ -1857,8 +1870,7 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
       }
       if (!runtime.isSubagent && !automatic && mode === undefined) {
         const state = await readWorkflow(runtime.harness, runtime.conversation.id);
-        if (!state.work || options?.work?.kind === "new")
-          await beginWork(runtime.harness, runtime.conversation.id, options?.work);
+        if (!state.work) await beginWork(runtime.harness, runtime.conversation.id);
       }
       if (!runtime.startingPlan) runtime.admittedWork = await effectiveWork(runtime, true);
       await persistRunPolicy(runtime);
@@ -2361,6 +2373,19 @@ export function createChatRuntime(deps: ChatRuntimeDeps): ChatRuntime {
     scheduleEffect(
       runtime,
       work
+        .then(async (success) => {
+          // 只有完整跑完的执行才打终态标记：失败或被中止的计划留在界面上，还能看清状态
+          if (!reserved || !success) return;
+          try {
+            await completePlanExecution(
+              runtime.harness,
+              runtime.conversation.id,
+              request.requestId,
+            );
+          } catch (error) {
+            console.warn(`标记计划执行完成失败 ${sessionId}：${errorText(error)}`);
+          }
+        })
         .catch((error) => {
           outcome = { ok: false, code: "failed", message: errorText(error) };
         })

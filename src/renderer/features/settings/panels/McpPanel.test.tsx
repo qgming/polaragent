@@ -71,10 +71,10 @@ const SYSTEM_VIEWS: McpServerView[] = [
   }),
   view({
     config: config({
-      id: "arxiv",
-      name: "arXiv",
+      id: "grep-app",
+      name: "grep.app",
       enabled: false,
-      url: "https://arxiv.caseyjhand.com/mcp",
+      url: "https://mcp.grep.app",
     }),
     state: { status: "idle", tools: [] },
   }),
@@ -156,12 +156,12 @@ describe("McpPanel", () => {
     render(<McpPanel />);
 
     expect(await screen.findByText("Context7")).toBeTruthy();
-    expect(screen.getByText("arXiv")).toBeTruthy();
+    expect(screen.getByText("grep.app")).toBeTruthy();
     // 说明来自注册表的 i18n 键（品牌名不翻译，说明跟着界面语言走）
     expect(screen.getByText(/任意库与框架的最新版本文档与代码示例/)).toBeTruthy();
-    // 三十多台预设按领域分组：不分组的话一屏平铺，找「有没有天气类的」只能靠眼扫
-    expect(screen.getByText("知识与百科")).toBeTruthy();
-    expect(screen.getByText("学术与科学")).toBeTruthy();
+    // 预设按领域分组：不分组的话一屏平铺，找某一类只能靠眼扫
+    expect(screen.getByText("知识与文档")).toBeTruthy();
+    expect(screen.getByText("搜索与抓取")).toBeTruthy();
     expect(screen.queryByText("我的 server")).toBeNull();
     expect(screen.queryByRole("button", { name: "添加服务器" })).toBeNull();
   });

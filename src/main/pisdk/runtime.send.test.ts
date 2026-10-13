@@ -31,6 +31,7 @@ import { type ChatRuntime, createChatRuntime } from "./runtime";
 import { createSessionStore, type SessionStore } from "./session-store";
 import { createSubagentExtension, createSubagentRunner } from "./subagent-runner";
 import { createToolTestApi } from "./tools/tool-test-api";
+import { beginWork } from "./workflow";
 
 const providerState = vi.hoisted(() => ({ current: undefined as FauxProviderHandle | undefined }));
 const preprocessing = vi.hoisted(() => ({
@@ -320,9 +321,27 @@ const acknowledgeInput = () =>
     resolvedInputIds: state.work!.pendingInputIds,
     requirementsChanged: false,
   }));
-const planOnly = {
-  work: { kind: "new" as const, effects: "read-only" as const, requiresReview: true },
-};
+/**
+ * 旧的 `planOnly` 发送选项已随「新工作」入口移除。测试改为在持久层预建同一份契约：
+ * effects/requiresReview 在首轮请求前即生效，与旧路径产出的工作状态完全一致。
+ */
+async function seedPlanOnlyWork() {
+  const opened = (await store.open(sessionId))!;
+  if (!opened) throw new Error("Missing fixture session");
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const harness = await opened.session.bindHarness(() =>
+    Harness.open(opened.storage, { models, registry: createRegistry() }, BACKGROUND_CONTEXT),
+  );
+  try {
+    const root = await harness.conversation(opened.conversationId, BACKGROUND_CONTEXT);
+    if (!root) throw new Error("Missing fixture root");
+    await beginWork(harness, root.id, { effects: "read-only", requiresReview: true });
+  } finally {
+    await harness.close(BACKGROUND_CONTEXT);
+    await opened.session.unbindHarness(harness);
+  }
+}
 
 describe("native durable chat runtime", () => {
   it.each(["research", "implementation"] as const)(
@@ -344,11 +363,13 @@ describe("native durable chat runtime", () => {
         })),
         fauxAssistantMessage("Research complete"),
       ]);
-      await runtime.send(sessionId, "研究并交付方案", [], undefined, planOnly);
+      await seedPlanOnlyWork();
+      await runtime.send(sessionId, "研究并交付方案");
       if (scope === "research") {
-        await vi.waitFor(async () =>
-          expect((await workflowState()).goal?.status).toBe("completed"),
-        );
+        // 目标完成的提交早于续行轮的收尾请求：先等第 5 次调用落地，
+        // 否则 closeSession 会把在途请求中止掉（间歇性少一次调用）。
+        await vi.waitFor(() => expect(faux.state.callCount).toBe(5));
+        expect((await workflowState()).goal?.status).toBe("completed");
         expect((await workflowState()).goal?.continuationCount).toBe(1);
       }
       await runtime.closeSession(sessionId);
@@ -447,7 +468,8 @@ describe("native durable chat runtime", () => {
       toolResponse(fauxToolCall("mcp__test__write", {})),
       fauxAssistantMessage("Read-only research"),
     ]);
-    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Research only");
     await expect(readFile(target)).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
     expect(pluginHost.dispatch).not.toHaveBeenCalled();
@@ -479,7 +501,8 @@ describe("native durable chat runtime", () => {
   it("saves native plans in either style and executes only the reviewed current revision", async () => {
     await store.setAgentMode(sessionId, "orchestrate");
     faux.setResponses([fauxAssistantMessage("Research only")]);
-    await runtime.send(sessionId, "research", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "research");
     expect((await workflowState()).plan).toBeNull();
     faux.setResponses(planResponses("# First\nInspect the source."));
     await runtime.send(sessionId, "write the plan");
@@ -595,7 +618,8 @@ describe("native durable chat runtime", () => {
       toolResponse(fauxToolCall("write", { path: target, content: "forbidden" })),
       fauxAssistantMessage("Ready to prepare a plan"),
     ]);
-    await runtime.send(sessionId, "Investigate the change", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Investigate the change");
     expect(await workflowState()).toMatchObject({
       goal: { status: "active", progress: "Investigated scope", continuationCount: 0 },
       plan: null,
@@ -655,7 +679,8 @@ describe("native durable chat runtime", () => {
   it("restores native plan content and current restrictions without a goal or mode transition", async () => {
     await store.setAgentMode(sessionId, "orchestrate");
     faux.setResponses(planResponses());
-    await runtime.send(sessionId, "Prepare a plan", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Prepare a plan");
     const plan = (await workflowState()).plan!;
     await runtime.closeSession(sessionId);
     await runtime.prepareSubagent(sessionId);
@@ -693,7 +718,8 @@ describe("native durable chat runtime", () => {
       }),
       fauxAssistantMessage("Tracked"),
     ]);
-    await runtime.send(sessionId, "Track this task", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Track this task");
     expect(await runtime.controlGoal(sessionId, "pause")).toEqual({ ok: true });
     await store.setAgentMode(sessionId, "orchestrate");
     faux.setResponses([
@@ -776,7 +802,8 @@ describe("native durable chat runtime", () => {
 
   it("releases a plan reservation without authorization if stopped before submission admission", async () => {
     faux.setResponses(planResponses());
-    await runtime.send(sessionId, "Plan", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Plan");
     const plan = (await workflowState()).plan!;
     const request = await executionRequest("cancelled-start");
     preprocessing.entered = false;
@@ -814,7 +841,8 @@ describe("native durable chat runtime", () => {
       workflowResponse("create_goal", { objective: "Verified feature", criteria: ["Tests pass"] }),
       ...planResponses("# Verify\nRun the tests."),
     ]);
-    await runtime.send(sessionId, "Prepare verification plan", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Prepare verification plan");
     const before = await workflowState();
     expect(before.goal).toMatchObject({ status: "active", continuationCount: 0 });
     faux.setResponses([
@@ -991,7 +1019,7 @@ describe("native durable chat runtime", () => {
     );
   });
 
-  it("working-style changes preserve read-only work until a separately authorized work request", async () => {
+  it("working-style changes preserve read-only work", async () => {
     settings.permissionMode = "full";
     const target = path.join(directory, "next-work.txt");
     faux.setResponses([
@@ -1001,7 +1029,8 @@ describe("native durable chat runtime", () => {
       },
       fauxAssistantMessage("Research finished"),
     ]);
-    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Research only");
     await expect(readFile(target)).rejects.toThrow();
     faux.setResponses([
       acknowledgeInput(),
@@ -1010,21 +1039,12 @@ describe("native durable chat runtime", () => {
     ]);
     await runtime.send(sessionId, "Explain further");
     await expect(readFile(target)).rejects.toThrow();
-    faux.setResponses([
-      acknowledgeInput(),
-      toolResponse(fauxToolCall("write", { path: target, content: "approved" })),
-      fauxAssistantMessage("done"),
-    ]);
-    await runtime.send(sessionId, "Create a separate authorized note", [], undefined, {
-      work: { kind: "new", effects: "unrestricted", requiresReview: false },
-    });
-    expect(await readFile(target, "utf8")).toBe("approved");
-    expect(pluginHost.dispatch).toHaveBeenCalled();
   });
 
   it("restores work restrictions before refreshing plugins or MCP tools", async () => {
     faux.setResponses([fauxAssistantMessage("Research")]);
-    await runtime.send(sessionId, "Research only", [], undefined, planOnly);
+    await seedPlanOnlyWork();
+    await runtime.send(sessionId, "Research only");
     await store.setAgentMode(sessionId, "orchestrate");
     await runtime.closeSession(sessionId);
     await runtime.prepareSubagent(sessionId);
@@ -1047,16 +1067,6 @@ describe("native durable chat runtime", () => {
       expect(JSON.stringify(agent?.tools)).not.toContain("mcp__late__write");
       expect(JSON.stringify(agent?.tools)).not.toContain('"write"');
     });
-    faux.setResponses([acknowledgeInput(), fauxAssistantMessage("New work")]);
-    await runtime.send(sessionId, "Separate implementation task", [], undefined, {
-      work: { kind: "new", effects: "unrestricted", requiresReview: false },
-    });
-    expect(
-      await readDocument(opened.storage, RunPolicyDoc.definition.kind, opened.conversationId),
-    ).toMatchObject({ mode: "orchestrate", work: { effects: "unrestricted" } });
-    const agent = await readDocument(opened.storage, "pi.agent", opened.conversationId);
-    expect(JSON.stringify(agent?.extensions)).toContain("test-plugin");
-    expect(JSON.stringify(agent?.tools)).toContain("mcp__late__write");
   });
 
   it("persists messages, authoritative entry links and system instructions", async () => {

@@ -33,7 +33,6 @@ import type {
   AgentMode,
   ChatMessage,
   ChatMessageUsage,
-  ChatSendOptions,
   ModelEntry,
   ModelRef,
   PermissionMode,
@@ -109,20 +108,10 @@ const PERMISSION_MODES = [
  * 会话模式：默认、编排。
  *
  * 顺序上标准在前：它是默认值，也是「不知道该选哪个」时的正确选择。
- *
- * `descKey` 说明各模式的分工。
  */
 const AGENT_MODE_OPTIONS = [
-  {
-    value: "standard",
-    labelKey: "chat.agentModeStandard",
-    descKey: "chat.agentModeStandardDesc",
-  },
-  {
-    value: "orchestrate",
-    labelKey: "chat.agentModeOrchestrate",
-    descKey: "chat.agentModeOrchestrateDesc",
-  },
+  { value: "standard", labelKey: "chat.agentModeStandard" },
+  { value: "orchestrate", labelKey: "chat.agentModeOrchestrate" },
 ] as const;
 
 /**
@@ -253,20 +242,16 @@ function PermissionChip({ mode }: { mode: PermissionMode }) {
  *
  * 运行中可以保存下次使用的模式；当前运行仍保留原模式及权限边界。
  * 当前运行结束后，下一次发送使用新模式。
- * 运行中额外给一句说明（`running` 为 true 时显示），否则用户会疑惑「现在切了到底算不算」。
  */
 function AgentModeChip({
   mode,
   bound,
   disabled,
-  running,
   onSelect,
 }: {
   mode: AgentMode;
   bound: AgentMode | null;
   disabled: boolean;
-  /** 本会话正在运行：此时切换会在**下一轮**生效，菜单里说明这一点 */
-  running: boolean;
   onSelect: (mode: AgentMode) => Promise<SetSessionModeResult>;
 }) {
   const { t } = useTranslation();
@@ -293,9 +278,6 @@ function AgentModeChip({
           disabled={disabled}
         >
           <span>{t(current.labelKey)}</span>
-          {running && (
-            <span className="text-[10px] text-ink-4">{t("chat.agentModePendingTurn")}</span>
-          )}
           {/*
             会话自己指定过（不跟随默认）时留一个记号，与思考 chip 的 clamped 记号同一手法：
             让「我改过这个会话」这件事在收起状态也看得见。
@@ -328,21 +310,12 @@ function AgentModeChip({
                 });
             }}
           >
-            <span className="flex min-w-0 flex-col gap-0.5">
-              <span>{t(item.labelKey)}</span>
-              {/* 名字说不清差别，所以每个选项都带一句它到底改了什么 */}
-              <span className="text-ink-3 text-[11.5px] leading-snug">{t(item.descKey)}</span>
-            </span>
+            {t(item.labelKey)}
           </PickerItem>
         ))}
         {failed ? (
           <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] text-destructive">
             {t("chat.agentModeRunning")}
-          </p>
-        ) : running ? (
-          // 运行中切换是允许的，但要说清生效时机，否则用户会以为「现在就该换」
-          <p className="text-ink-3 px-2.5 pt-1 pb-1.5 text-[11.5px]">
-            {t("chat.agentModeNextTurn")}
           </p>
         ) : null}
       </PopoverContent>
@@ -917,21 +890,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
     aui.composer.setText("");
   };
 
-  const [workMenuOpen, setWorkMenuOpen] = useState(false);
-  const sendNewWork = (effects: "read-only" | "unrestricted", requiresReview: boolean) => {
-    if (!canSend || running || compacting || commandDraft.kind === "command") return;
-    setWorkMenuOpen(false);
-    const previous = aui.composer.getState().runConfig;
-    const workOptions: ChatSendOptions = { work: { kind: "new", effects, requiresReview } };
-    // The composer captures runConfig synchronously, including when attachments need processing.
-    aui.composer.setRunConfig({ ...previous, custom: { ...previous.custom, workOptions } });
-    try {
-      aui.composer.send();
-    } finally {
-      aui.composer.setRunConfig(previous);
-    }
-  };
-
   return (
     // 底部不留内边距：输入框以下的间距交给 Thread 的底栏（状态条上下各 3px，
     // 且那条底栏是不透明的，消息不再从输入框下方透出来）。
@@ -1081,7 +1039,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
                 bound={boundAgentMode}
                 // 只在没有活动会话时禁用；运行中**可以**切（生效于下一轮）
                 disabled={activeSessionId === null}
-                running={running}
                 onSelect={async (mode) => {
                   if (activeSessionId === null) return { ok: true as const };
                   return useChatStore.getState().setSessionMode(activeSessionId, mode);
@@ -1102,44 +1059,6 @@ export function Composer({ variant = "docked" }: { variant?: ComposerVariant } =
             {/* 运行中文案一律不驻留：底部这行只放控件本身 */}
             <div className="flex shrink-0 items-center gap-1.5">
               {usageRing}
-              {!running && (
-                <Popover open={workMenuOpen} onOpenChange={setWorkMenuOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(ghostButton, "px-2 py-1 text-xs")}
-                      disabled={!canSend || compacting || commandDraft.kind === "command"}
-                      aria-label={t("chat.newWork")}
-                    >
-                      {t("chat.newWork")}
-                      <ChevronDown className="ml-1 size-3" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-64 p-1">
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
-                      onClick={() => sendNewWork("read-only", true)}
-                    >
-                      {t("chat.planOnly")}
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
-                      onClick={() => sendNewWork("unrestricted", false)}
-                    >
-                      {t("chat.newWorkExecute")}
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-start text-sm hover:bg-muted"
-                      onClick={() => sendNewWork("read-only", false)}
-                    >
-                      {t("chat.newWorkReadOnly")}
-                    </button>
-                  </PopoverContent>
-                </Popover>
-              )}
               {running ? (
                 <Button
                   type="button"

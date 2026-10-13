@@ -443,12 +443,12 @@ describe("createMcpServers：系统预设层", () => {
   });
 
   it("设置里的显式选择优先：关掉某台后它不再连接（视图里仍在，标成停用）", async () => {
-    const { log, servers } = systemSetup([], { context7: false, arxiv: false });
+    const { log, servers } = systemSetup([], { context7: false, wikipedia: false });
 
     const views = await servers.reload();
 
     expect(log).not.toContain("connect:context7");
-    expect(log).not.toContain("connect:arxiv");
+    expect(log).not.toContain("connect:wikipedia");
     // 其余预设不受影响
     expect(log).toContain("connect:deepwiki");
     expect(views.find((view) => view.config.id === "context7")?.config.enabled).toBe(false);
